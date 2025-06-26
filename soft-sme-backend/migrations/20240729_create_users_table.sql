@@ -1,3 +1,5 @@
+-- This migration assumes the companies table already exists. Make sure 20240728_create_companies_table.sql runs first.
+
 -- Create users table
 CREATE TABLE IF NOT EXISTS users (
   id SERIAL PRIMARY KEY,
