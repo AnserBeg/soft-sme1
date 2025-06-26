@@ -67,6 +67,30 @@ console.log('Registered employee routes');
 app.use('/api/time-tracking', authMiddleware, timeTrackingRoutes);
 console.log('Registered time tracking routes');
 
+// Database check endpoint
+app.get('/api/db-check', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT table_name 
+      FROM information_schema.tables 
+      WHERE table_schema = 'public' 
+      ORDER BY table_name;
+    `);
+    
+    res.json({
+      success: true,
+      tables: result.rows.map(row => row.table_name),
+      count: result.rows.length
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+console.log('Registered database check route at /api/db-check');
+
 // Test database connection
 pool.query('SELECT NOW()', (err, res) => {
   if (err) {
