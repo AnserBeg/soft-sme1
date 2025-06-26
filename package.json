@@ -1,0 +1,12 @@
+{
+  "dependencies": {
+    "@mui/x-data-grid": "^8.5.0",
+    "@mui/x-date-pickers": "^8.5.0",
+    "date-fns": "^4.1.0",
+    "dayjs": "^1.11.13",
+    "jwt-decode": "^4.0.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "main": "dist-electron/main.cjs"
+}
