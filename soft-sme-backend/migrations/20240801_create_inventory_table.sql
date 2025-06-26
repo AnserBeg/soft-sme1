@@ -11,12 +11,9 @@ CREATE TABLE IF NOT EXISTS inventory (
   part_type VARCHAR(10) NOT NULL DEFAULT 'stock'
 );
 
--- Add a check constraint to ensure part_type is either 'stock' or 'supply'
-ALTER TABLE inventory
-  ADD CONSTRAINT IF NOT EXISTS check_part_type CHECK (part_type IN ('stock', 'supply'));
-
--- Create an index on part_type for better query performance
-CREATE INDEX IF NOT EXISTS idx_inventory_part_type ON inventory(part_type);
+-- Drop the index if it exists, then create it for better query performance
+DROP INDEX IF EXISTS idx_inventory_part_type;
+CREATE INDEX idx_inventory_part_type ON inventory(part_type);
 
 -- Create a trigger to automatically update the updated_at timestamp
 CREATE OR REPLACE FUNCTION update_inventory_updated_at_column()

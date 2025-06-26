@@ -1,2 +1,0 @@
-ALTER TABLE users
-ADD COLUMN access_role VARCHAR(50) NOT NULL DEFAULT 'Employee'; 
