@@ -70,7 +70,9 @@ router.post('/register-company', async (req: Request, res: Response) => {
 
       const user = userResult.rows[0];
 
-      // Create session for admin user
+      await client.query('COMMIT');
+
+      // Create session for admin user (after commit)
       const deviceInfo = SessionManager.extractDeviceInfo(req);
       const locationInfo = SessionManager.extractLocationInfo(req);
       const ipAddress = req.ip || req.connection.remoteAddress || 'unknown';
@@ -83,8 +85,6 @@ router.post('/register-company', async (req: Request, res: Response) => {
         userAgent,
         locationInfo
       );
-
-      await client.query('COMMIT');
 
       // Return user data and tokens
       res.status(201).json({
