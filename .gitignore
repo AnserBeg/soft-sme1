@@ -106,6 +106,8 @@ Thumbs.db
 
 # Database
 *.sql
+# Allow migration SQL files
+!soft-sme-backend/migrations/*.sql
 *.sqlite
 *.db
 

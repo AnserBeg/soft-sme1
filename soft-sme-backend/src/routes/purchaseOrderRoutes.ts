@@ -2,6 +2,8 @@ import express, { Request, Response } from 'express';
 import { pool } from '../db';
 import PDFDocument from 'pdfkit';
 import { getNextPurchaseOrderNumberForYear } from '../utils/sequence';
+import fs from 'fs';
+import path from 'path';
 
 const router = express.Router();
 
@@ -343,98 +345,169 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-// PDF Generation Route
-router.get('/:id/pdf', async (req, res) => {
+// PDF Generation Route for open purchase orders
+router.get('/:id/pdf', async (req: Request, res: Response) => {
   const { id } = req.params;
-  console.log(`PDF generation requested for PO ID: ${id}`);
-
   try {
-    // Fetch Purchase Order Header
-    const poResult = await pool.query(
-      `SELECT po.*, v.vendor_name 
-       FROM purchasehistory po
-       LEFT JOIN vendormaster v ON po.vendor_id = v.vendor_id
-       WHERE po.purchase_id = $1`,
+    // Fetch business profile
+    const businessProfileResult = await pool.query('SELECT * FROM business_profile ORDER BY id DESC LIMIT 1');
+    const businessProfile = businessProfileResult.rows[0];
+
+    const purchaseOrderResult = await pool.query(
+      `SELECT ph.*, vm.vendor_name, vm.street_address as vendor_street_address, vm.city as vendor_city, vm.province as vendor_province, vm.country as vendor_country, vm.telephone_number as vendor_phone, vm.email as vendor_email FROM PurchaseHistory ph JOIN VendorMaster vm ON ph.vendor_id = vm.vendor_id WHERE ph.purchase_id = $1`,
       [id]
     );
 
-    if (poResult.rows.length === 0) {
-      return res.status(404).send('Purchase Order not found');
+    if (purchaseOrderResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Purchase order not found' });
     }
-    const purchaseOrder = poResult.rows[0];
 
-    // Fetch Line Items
+    const purchaseOrder = purchaseOrderResult.rows[0];
     const lineItemsResult = await pool.query(
-      'SELECT * FROM purchaselineitems WHERE purchase_id = $1 ORDER BY line_item_id',
+      'SELECT * FROM purchaselineitems WHERE purchase_id = $1',
       [id]
     );
-    const lineItems = lineItemsResult.rows;
+    purchaseOrder.lineItems = lineItemsResult.rows;
 
-    // Create a new PDF document
     const doc = new PDFDocument({ margin: 50 });
-
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename=purchase_order_${purchaseOrder.purchase_number}.pdf`);
-
+    let filename = `Purchase_Order_${purchaseOrder.purchase_number}.pdf`;
+    filename = encodeURIComponent(filename);
+    res.setHeader('Content-disposition', 'attachment; filename="' + filename + '"');
+    res.setHeader('Content-type', 'application/pdf');
     doc.pipe(res);
 
-    // Header
-    doc.fontSize(20).text('Purchase Order', { align: 'center' });
-    doc.moveDown();
-
-    // PO Details
-    doc.fontSize(12);
-    doc.text(`Purchase Order #: ${purchaseOrder.purchase_number}`, { continued: true });
-    doc.text(`Vendor: ${purchaseOrder.vendor_name}`, { align: 'right' });
-    doc.text(`Date: ${new Date(purchaseOrder.purchase_date).toLocaleDateString()}`, { continued: true });
-    doc.text(`Bill #: ${purchaseOrder.bill_number || 'N/A'}`, { align: 'right' });
-    doc.moveDown(2);
-
-    // Line Items Table
-    const tableTop = doc.y;
-    const itemX = 50;
-    const descriptionX = 150;
-    const qtyX = 350;
-    const unitCostX = 420;
-    const amountX = 500;
-
-    doc.fontSize(10).font('Helvetica-Bold');
-    doc.text('Part #', itemX, tableTop);
-    doc.text('Description', descriptionX, tableTop);
-    doc.text('Quantity', qtyX, tableTop, { width: 60, align: 'right' });
-    doc.text('Unit Cost', unitCostX, tableTop, { width: 70, align: 'right' });
-    doc.text('Amount', amountX, tableTop, { width: 70, align: 'right' });
-    doc.font('Helvetica');
-
-    let i = 0;
-    for (const item of lineItems) {
-      const y = tableTop + 25 + (i * 25);
-      doc.text(item.part_number, itemX, y);
-      doc.text(item.part_description, descriptionX, y);
-      doc.text(item.quantity.toString(), qtyX, y, { width: 60, align: 'right' });
-      doc.text(parseFloat(item.unit_cost).toFixed(2), unitCostX, y, { width: 70, align: 'right' });
-      doc.text(parseFloat(item.line_total).toFixed(2), amountX, y, { width: 70, align: 'right' });
-      i++;
+    // --- HEADER ---
+    let headerY = 50;
+    let logoHeight = 100;
+    let logoWidth = 180;
+    let pageWidth = 600;
+    let logoX = 50;
+    let companyTitleX = logoX + logoWidth + 20;
+    let companyTitleY = headerY + (logoHeight - 16) / 2; // Vertically center with logo
+    // Logo (left)
+    if (businessProfile && businessProfile.logo_url) {
+      const logoPath = path.join(__dirname, '../../', businessProfile.logo_url);
+      if (fs.existsSync(logoPath)) {
+        try {
+          doc.image(logoPath, logoX, headerY, { fit: [logoWidth, logoHeight] });
+        } catch (error) {
+          console.error('Error adding logo to PDF:', error);
+        }
+      }
     }
-    
-    // Summary
-    const summaryTop = tableTop + 25 + (lineItems.length * 25) + 20;
-    doc.font('Helvetica-Bold');
-    doc.text(`Subtotal:`, 400, summaryTop, {width: 90, align: 'right'});
-    doc.text(`${parseFloat(purchaseOrder.subtotal).toFixed(2)}`, 500, summaryTop, {width: 70, align: 'right'});
-    
-    doc.text(`GST:`, 400, summaryTop + 15, {width: 90, align: 'right'});
-    doc.text(`${parseFloat(purchaseOrder.total_gst_amount).toFixed(2)}`, 500, summaryTop + 15, {width: 70, align: 'right'});
-    
-    doc.text(`Total:`, 400, summaryTop + 30, {width: 90, align: 'right'});
-    doc.text(`${parseFloat(purchaseOrder.total_amount).toFixed(2)}`, 500, summaryTop + 30, {width: 70, align: 'right'});
+    // Company name (right of logo, single line, smaller font)
+    if (businessProfile) {
+      doc.font('Helvetica-Bold').fontSize(16).fillColor('#000000').text(
+        (businessProfile.business_name || '').toUpperCase(),
+        companyTitleX,
+        companyTitleY,
+        { align: 'left', width: pageWidth - companyTitleX - 50 }
+      );
+    }
+    // Move Y below header
+    let y = headerY + logoHeight + 4;
+    // Horizontal line
+    doc.moveTo(50, y).lineTo(550, y).strokeColor('#444444').lineWidth(1).stroke();
+    y += 18;
 
-    // Finalize the PDF and end the stream
+    // --- Company & Vendor Info Block ---
+    // Headings
+    doc.font('Helvetica-Bold').fontSize(12).fillColor('#000000').text('Company Information', 50, y);
+    doc.font('Helvetica-Bold').fontSize(12).fillColor('#000000').text('Vendor', 320, y);
+    y += 16;
+    // Company info (left column)
+    doc.font('Helvetica').fontSize(11).fillColor('#000000').text(businessProfile?.business_name || '', 50, y);
+    doc.text(businessProfile?.street_address || '', 50, y + 14);
+    doc.text(
+      [businessProfile?.city, businessProfile?.province, businessProfile?.country].filter(Boolean).join(', '),
+      50, y + 28
+    );
+    doc.text(businessProfile?.email || '', 50, y + 42);
+    doc.text(businessProfile?.telephone_number || '', 50, y + 56);
+    // Vendor info (right column)
+    doc.font('Helvetica').fontSize(11).fillColor('#000000').text(purchaseOrder.vendor_name || '', 320, y);
+    doc.text(purchaseOrder.vendor_street_address || '', 320, y + 14);
+    doc.text(
+      [purchaseOrder.vendor_city, purchaseOrder.vendor_province, purchaseOrder.vendor_country].filter(Boolean).join(', '),
+      320, y + 28
+    );
+    doc.text(purchaseOrder.vendor_email || '', 320, y + 42);
+    doc.text(purchaseOrder.vendor_phone || '', 320, y + 56);
+    y += 72;
+    // Horizontal line
+    doc.moveTo(50, y).lineTo(550, y).strokeColor('#444444').lineWidth(1).stroke();
+    y += 18;
+
+    // --- Purchase Order Details ---
+    doc.font('Helvetica-Bold').fontSize(14).fillColor('#000000').text('PURCHASE ORDER', 50, y);
+    y += 22;
+    doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Purchase Order #:', 50, y);
+    doc.font('Helvetica').fontSize(11).fillColor('#000000').text(purchaseOrder.purchase_number, 170, y);
+    doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Order Date:', 320, y);
+    doc.font('Helvetica').fontSize(11).fillColor('#000000').text(
+      purchaseOrder.purchase_date ? new Date(purchaseOrder.purchase_date).toLocaleDateString() : '',
+      400, y
+    );
+    y += 24;
+    // Horizontal line
+    doc.moveTo(50, y).lineTo(550, y).strokeColor('#444444').lineWidth(1).stroke();
+    y += 14;
+
+    // --- Line Item Table ---
+    const tableHeaders = ['SN', 'Item Code', 'Description', 'Qty', 'Unit', 'Unit Price', 'Line Total'];
+    const colWidths = [30, 70, 140, 40, 40, 80, 80];
+    let currentX = 50;
+    doc.font('Helvetica-Bold').fontSize(10).fillColor('#000000');
+    tableHeaders.forEach((header, i) => {
+      doc.text(header, currentX, y, { width: colWidths[i], align: 'left' });
+      currentX += colWidths[i];
+    });
+    y += 16;
+    doc.moveTo(50, y - 2).lineTo(550, y - 2).strokeColor('#888888').stroke();
+    doc.font('Helvetica').fontSize(10).fillColor('#000000');
+    let sn = 1;
+    purchaseOrder.lineItems.forEach((item: any) => {
+      currentX = 50;
+      doc.text(sn.toString(), currentX, y, { width: colWidths[0], align: 'left' });
+      currentX += colWidths[0];
+      doc.text(item.part_number, currentX, y, { width: colWidths[1], align: 'left' });
+      currentX += colWidths[1];
+      doc.text(item.part_description, currentX, y, { width: colWidths[2], align: 'left' });
+      currentX += colWidths[2];
+      doc.text(parseFloat(item.quantity).toString(), currentX, y, { width: colWidths[3], align: 'left' });
+      currentX += colWidths[3];
+      doc.text(item.unit, currentX, y, { width: colWidths[4], align: 'left' });
+      currentX += colWidths[4];
+      doc.text(parseFloat(item.unit_cost).toFixed(2), currentX, y, { width: colWidths[5], align: 'right' });
+      currentX += colWidths[5];
+      doc.text(parseFloat(item.line_total).toFixed(2), currentX, y, { width: colWidths[6], align: 'right' });
+      y += 16;
+      // Draw row line
+      doc.moveTo(50, y - 2).lineTo(550, y - 2).strokeColor('#eeeeee').stroke();
+      sn++;
+      if (y > doc.page.height - 100) {
+        doc.addPage();
+        y = 50;
+      }
+    });
+    y += 10;
+    doc.moveTo(50, y).lineTo(550, y).strokeColor('#444444').stroke();
+    y += 10;
+
+    // --- Totals Section ---
+    doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Sub Total:', 400, y, { align: 'left', width: 80 });
+    doc.font('Helvetica').fontSize(11).fillColor('#000000').text(parseFloat(purchaseOrder.subtotal).toFixed(2), 480, y, { align: 'right', width: 70 });
+    y += 16;
+    doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Total GST:', 400, y, { align: 'left', width: 80 });
+    doc.font('Helvetica').fontSize(11).fillColor('#000000').text(parseFloat(purchaseOrder.total_gst_amount).toFixed(2), 480, y, { align: 'right', width: 70 });
+    y += 16;
+    doc.font('Helvetica-Bold').fontSize(13).fillColor('#000000').text('Total:', 400, y, { align: 'left', width: 80 });
+    doc.font('Helvetica-Bold').fontSize(13).fillColor('#000000').text(parseFloat(purchaseOrder.total_amount).toFixed(2), 480, y, { align: 'right', width: 70 });
+
     doc.end();
-
-  } catch (error) {
-    console.error('Error generating PDF:', error);
-    res.status(500).send('Error generating PDF');
+  } catch (err) {
+    console.error(`Error generating PDF for purchase order ${id}:`, err);
+    res.status(500).json({ error: 'Internal server error during PDF generation' });
   }
 });
 

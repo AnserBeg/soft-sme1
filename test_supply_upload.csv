@@ -1,0 +1,8 @@
+part_number,part_description,unit,quantity,last_unit_cost,reorder_point,part_type
+SUP001,Office Supplies - Paper,Each,500,0.05,100,supply
+SUP002,Printer Ink Cartridge,Each,20,25.00,5,supply
+SUP003,Cleaning Supplies - Wipes,Each,100,2.50,25,supply
+SUP004,Electrical Wire,ft,200,1.75,50,supply
+SUP005,Plumbing Pipe,ft,150,3.25,30,supply
+SUP006,Duplicate Supply Test,Each,15,5.00,10,supply
+SUP006,Duplicate Supply Test,Each,25,6.50,10,supply 

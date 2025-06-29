@@ -11,7 +11,7 @@ export function Navbar() {
       <div className="container mx-auto px-4">
         <div className="flex h-16 items-center justify-between">
           <div className="flex items-center">
-            <Link href="/" className="text-xl font-bold text-gray-900">
+            <Link href="./" className="text-xl font-bold text-gray-900">
               Soft SME
             </Link>
           </div>
@@ -20,7 +20,7 @@ export function Navbar() {
             {session ? (
               <>
                 <Link
-                  href="/dashboard"
+                  href="./dashboard"
                   className="text-gray-600 hover:text-gray-900"
                 >
                   Dashboard
@@ -35,13 +35,13 @@ export function Navbar() {
             ) : (
               <>
                 <Link
-                  href="/login"
+                  href="./login"
                   className="text-gray-600 hover:text-gray-900"
                 >
                   Sign In
                 </Link>
                 <Link
-                  href="/register"
+                  href="./register"
                   className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
                 >
                   Sign Up

@@ -1,0 +1,7 @@
+part_number,part_description,unit,quantity,last_unit_cost,reorder_point,part_type
+ABC123,Sample Part Description,Each,10,25.50,5,stock
+XYZ789,Another Part,cm,5,15.75,2,supply
+DEF456,Test Component,ft,20,8.25,10,stock
+GHI789,Supply Material,kg,15,12.00,5,supply
+JKL012,Duplicate Part Test,Each,8,18.50,3,stock
+JKL012,Duplicate Part Test,Each,12,22.00,3,stock 

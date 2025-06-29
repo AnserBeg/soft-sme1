@@ -1,6 +1,9 @@
 import express, { Request, Response } from 'express';
 import { pool } from '../db';
 import { getNextSequenceNumberForYear } from '../utils/sequence';
+import PDFDocument from 'pdfkit';
+import fs from 'fs';
+import path from 'path';
 
 const router = express.Router();
 
@@ -252,39 +255,159 @@ router.post('/:id/convert-to-sales-order', async (req: Request, res: Response) =
 router.get('/:id/pdf', async (req: Request, res: Response) => {
   const { id } = req.params;
   try {
-    const result = await pool.query(`
+    // Fetch business profile
+    const businessProfileResult = await pool.query('SELECT * FROM business_profile ORDER BY id DESC LIMIT 1');
+    const businessProfile = businessProfileResult.rows[0];
+
+    const quoteResult = await pool.query(`
       SELECT 
         q.*,
         c.customer_name,
-        c.street_address,
-        c.city,
-        c.province,
-        c.country,
+        c.street_address as customer_street_address,
+        c.city as customer_city,
+        c.province as customer_province,
+        c.country as customer_country,
         c.contact_person,
-        c.email,
-        c.telephone_number,
-        c.created_at as customer_created_at,
-        c.updated_at as customer_updated_at
+        c.email as customer_email,
+        c.telephone_number as customer_phone
       FROM quotes q
       JOIN customermaster c ON q.customer_id = c.customer_id
       WHERE q.quote_id = $1
     `, [id]);
 
-    if (result.rows.length === 0) {
+    if (quoteResult.rows.length === 0) {
       return res.status(404).json({ error: 'Quote not found' });
     }
 
-    const quote = result.rows[0];
-    
-    // For now, return a simple JSON response
-    // In a real implementation, you would generate a PDF here
-    res.status(200).json({
-      message: 'PDF generation not implemented yet',
-      quote: quote
-    });
-  } catch (error) {
-    console.error('quoteRoutes: Error generating PDF:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    const quote = quoteResult.rows[0];
+
+    const doc = new PDFDocument({ margin: 50 });
+    let filename = `Quote_${quote.quote_number}.pdf`;
+    filename = encodeURIComponent(filename);
+    res.setHeader('Content-disposition', 'attachment; filename="' + filename + '"');
+    res.setHeader('Content-type', 'application/pdf');
+    doc.pipe(res);
+
+    // --- HEADER ---
+    let headerY = 50;
+    let logoHeight = 100;
+    let logoWidth = 180;
+    let pageWidth = 600;
+    let logoX = 50;
+    let companyTitleX = logoX + logoWidth + 20;
+    let companyTitleY = headerY + (logoHeight - 16) / 2; // Vertically center with logo
+    // Logo (left)
+    if (businessProfile && businessProfile.logo_url) {
+      const logoPath = path.join(__dirname, '../../', businessProfile.logo_url);
+      if (fs.existsSync(logoPath)) {
+        try {
+          doc.image(logoPath, logoX, headerY, { fit: [logoWidth, logoHeight] });
+        } catch (error) {
+          console.error('Error adding logo to PDF:', error);
+        }
+      }
+    }
+    // Company name (right of logo, single line, smaller font)
+    if (businessProfile) {
+      doc.font('Helvetica-Bold').fontSize(16).fillColor('#000000').text(
+        (businessProfile.business_name || '').toUpperCase(),
+        companyTitleX,
+        companyTitleY,
+        { align: 'left', width: pageWidth - companyTitleX - 50 }
+      );
+    }
+    // Move Y below header
+    let y = headerY + logoHeight + 4;
+    // Horizontal line
+    doc.moveTo(50, y).lineTo(550, y).strokeColor('#444444').lineWidth(1).stroke();
+    y += 18;
+
+    // --- Company & Customer Info Block ---
+    // Headings
+    doc.font('Helvetica-Bold').fontSize(12).fillColor('#000000').text('Company Information', 50, y);
+    doc.font('Helvetica-Bold').fontSize(12).fillColor('#000000').text('Customer', 320, y);
+    y += 16;
+    // Company info (left column)
+    doc.font('Helvetica').fontSize(11).fillColor('#000000').text(businessProfile?.business_name || '', 50, y);
+    doc.text(businessProfile?.street_address || '', 50, y + 14);
+    doc.text(
+      [businessProfile?.city, businessProfile?.province, businessProfile?.country].filter(Boolean).join(', '),
+      50, y + 28
+    );
+    doc.text(businessProfile?.email || '', 50, y + 42);
+    doc.text(businessProfile?.telephone_number || '', 50, y + 56);
+    // Customer info (right column)
+    doc.font('Helvetica').fontSize(11).fillColor('#000000').text(quote.customer_name || '', 320, y);
+    doc.text(quote.customer_street_address || '', 320, y + 14);
+    doc.text(
+      [quote.customer_city, quote.customer_province, quote.customer_country].filter(Boolean).join(', '),
+      320, y + 28
+    );
+    doc.text(quote.customer_email || '', 320, y + 42);
+    doc.text(quote.customer_phone || '', 320, y + 56);
+    y += 72;
+    // Horizontal line
+    doc.moveTo(50, y).lineTo(550, y).strokeColor('#444444').lineWidth(1).stroke();
+    y += 18;
+
+    // --- Quote Details ---
+    doc.font('Helvetica-Bold').fontSize(14).fillColor('#000000').text('QUOTE', 50, y);
+    y += 22;
+    doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Quote #:', 50, y);
+    doc.font('Helvetica').fontSize(11).fillColor('#000000').text(quote.quote_number, 170, y);
+    doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Quote Date:', 320, y);
+    doc.font('Helvetica').fontSize(11).fillColor('#000000').text(
+      quote.quote_date ? new Date(quote.quote_date).toLocaleDateString() : '',
+      400, y
+    );
+    y += 16;
+    doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Valid Until:', 50, y);
+    doc.font('Helvetica').fontSize(11).fillColor('#000000').text(
+      quote.valid_until ? new Date(quote.valid_until).toLocaleDateString() : '',
+      170, y
+    );
+    doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Status:', 320, y);
+    doc.font('Helvetica').fontSize(11).fillColor('#000000').text(quote.status || 'Draft', 400, y);
+    y += 24;
+    // Horizontal line
+    doc.moveTo(50, y).lineTo(550, y).strokeColor('#444444').lineWidth(1).stroke();
+    y += 14;
+
+    // --- Product Information ---
+    doc.font('Helvetica-Bold').fontSize(12).fillColor('#000000').text('Product Information', 50, y);
+    y += 16;
+    doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Product Name:', 50, y);
+    doc.font('Helvetica').fontSize(11).fillColor('#000000').text(quote.product_name || 'N/A', 170, y);
+    y += 16;
+    doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Description:', 50, y);
+    doc.font('Helvetica').fontSize(11).fillColor('#000000').text(quote.product_description || 'N/A', 170, y);
+    y += 24;
+    // Horizontal line
+    doc.moveTo(50, y).lineTo(550, y).strokeColor('#444444').lineWidth(1).stroke();
+    y += 14;
+
+    // --- Pricing Section ---
+    doc.font('Helvetica-Bold').fontSize(12).fillColor('#000000').text('Pricing', 50, y);
+    y += 20;
+    doc.font('Helvetica-Bold').fontSize(13).fillColor('#000000').text('Estimated Cost:', 400, y, { align: 'left', width: 80 });
+    doc.font('Helvetica-Bold').fontSize(13).fillColor('#000000').text(parseFloat(quote.estimated_cost).toFixed(2), 480, y, { align: 'right', width: 70 });
+
+    // --- Terms and Conditions ---
+    y += 40;
+    doc.font('Helvetica-Bold').fontSize(12).fillColor('#000000').text('Terms and Conditions', 50, y);
+    y += 16;
+    doc.font('Helvetica').fontSize(10).fillColor('#000000').text('• This quote is valid until the date specified above.', 50, y);
+    y += 12;
+    doc.font('Helvetica').fontSize(10).fillColor('#000000').text('• Prices are subject to change without notice.', 50, y);
+    y += 12;
+    doc.font('Helvetica').fontSize(10).fillColor('#000000').text('• Payment terms: Net 30 days from invoice date.', 50, y);
+    y += 12;
+    doc.font('Helvetica').fontSize(10).fillColor('#000000').text('• Delivery timeline will be confirmed upon order placement.', 50, y);
+
+    doc.end();
+  } catch (err) {
+    console.error(`Error generating PDF for quote ${id}:`, err);
+    res.status(500).json({ error: 'Internal server error during PDF generation' });
   }
 });
 

@@ -5,7 +5,7 @@ const path = require('path'); // Import path for file handling
 const fs = require('fs'); // Import fs for file system operations
 const PDFDocument = require('pdfkit'); // Import pdfkit for PDF generation
 const cors = require('cors'); // Import cors
-const { authMiddleware, adminAuth } = require('./src/middleware/authMiddleware');
+const { authMiddleware, adminAuth } = require('./dist/middleware/authMiddleware');
 const { spawn } = require('child_process');
 require('dotenv').config();
 
@@ -70,68 +70,37 @@ app.use('/uploads', express.static('uploads'));
 // Add this with other route registrations
 const businessProfileRouter = require('./routes/businessProfile').default || require('./routes/businessProfile');
 const timeTrackingRouter = require('./routes/timeTracking').default || require('./routes/timeTracking');
-const authRoutes = require('./src/routes/authRoutes').default;
+const authRoutes = require('./dist/routes/authRoutes').default;
+const inventoryRoutes = require('./dist/routes/inventoryRoutes').default;
+const employeeRoutes = require('./dist/routes/employeeRoutes').default;
+const purchaseOrderRoutes = require('./dist/routes/purchaseOrderRoutes').default;
+const salesOrderRoutes = require('./dist/routes/salesOrderRoutes').default;
+const quoteRoutes = require('./dist/routes/quoteRoutes').default;
+const marginScheduleRoutes = require('./dist/routes/marginScheduleRoutes').default;
+const purchaseHistoryRoutes = require('./dist/routes/purchaseHistoryRoutes').default;
+const customerRoutes = require('./dist/routes/customerRoutes').default;
+const vendorRoutes = require('./dist/routes/vendorRoutes').default;
+const productRoutes = require('./dist/routes/productRoutes').default;
 
 app.use('/api/business-profile', businessProfileRouter);
 app.use('/api/time-tracking', timeTrackingRouter);
 app.use('/api/auth', authRoutes);
+app.use('/api/inventory', inventoryRoutes);
+app.use('/api/employees', employeeRoutes);
+app.use('/api/purchase-orders', purchaseOrderRoutes);
+app.use('/api/sales-orders', salesOrderRoutes);
+app.use('/api/quotes', quoteRoutes);
+app.use('/api/margin-schedule', marginScheduleRoutes);
+app.use('/api/purchase-history', purchaseHistoryRoutes);
+app.use('/api/customers', customerRoutes);
+app.use('/api/vendors', vendorRoutes);
+app.use('/api/products', productRoutes);
 
 // API endpoint to get all employees for a company (Admin Only)
-app.get('/api/employees', authMiddleware, adminAuth, async (req, res) => {
-  const companyId = req.user?.companyId;
-
-  if (!companyId) {
-    return res.status(400).json({ message: 'Company ID not found in token' });
-  }
-
-  try {
-    const result = await pool.query(
-      'SELECT id, username, email, role, force_password_change FROM users WHERE company_id = $1',
-      [companyId]
-    );
-    res.json(result.rows);
-  } catch (err) {
-    console.error('Error fetching employees:', err);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
+// Note: This route is now handled by modular employeeRoutes
 
 // API endpoint to delete an employee (Admin Only)
-app.delete('/api/employees/:id', authMiddleware, adminAuth, async (req, res) => {
-  const { id } = req.params; // Employee ID to delete
-  const companyId = req.user?.companyId; // Company ID from authenticated admin's token
-
-  if (!companyId) {
-    return res.status(400).json({ message: 'Company ID not found in token' });
-  }
-
-  try {
-    // Ensure the employee belongs to the admin's company before deleting
-    const checkResult = await pool.query('SELECT company_id FROM users WHERE id = $1', [id]);
-    if (checkResult.rows.length === 0 || checkResult.rows[0].company_id !== companyId) {
-      return res.status(403).json({ message: 'Unauthorized to delete this employee or employee not found' });
-    }
-
-    // Prevent admin from deleting themselves (optional, but good practice)
-    if (parseInt(id) === req.user?.userId) {
-      return res.status(400).json({ message: 'Cannot delete your own admin account through this endpoint' });
-    }
-
-    const result = await pool.query(
-      'DELETE FROM users WHERE id = $1 AND company_id = $2 RETURNING id',
-      [id, companyId]
-    );
-
-    if (result.rowCount === 0) {
-      return res.status(404).json({ message: 'Employee not found or not in your company' });
-    }
-
-    res.json({ message: 'Employee deleted successfully', deletedUserId: id });
-  } catch (err) {
-    console.error(`Error deleting employee ${id}:`, err);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
+// Note: This route is now handled by modular employeeRoutes
 
 // Basic route
 app.get('/', async (req, res) => {
@@ -145,87 +114,16 @@ app.get('/', async (req, res) => {
 });
 
 // API endpoint to get all vendors
-app.get('/api/vendors', async (req, res) => {
-  try {
-    const result = await pool.query('SELECT vendor_id, vendor_name, street_address, city, province, country, contact_person, telephone_number, email, website FROM VendorMaster');
-    res.json(result.rows);
-  } catch (err) {
-    console.error('Error fetching vendors:', err);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
+// Note: This route is now handled by modular vendorRoutes
 
 // API endpoint to add a new vendor
-app.post('/api/vendors', async (req, res) => {
-  const client = await pool.connect();
-  try {
-    const { name, street_address, city, province, country, contact, phone, email, website } = req.body;
-
-    // Insert into VendorMaster
-    const result = await client.query(
-      'INSERT INTO VendorMaster (vendor_name, street_address, city, province, country, contact_person, telephone_number, email, website) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING vendor_id, vendor_name',
-      [name, street_address, city, province, country, contact, phone, email, website]
-    );
-
-    const newVendor = result.rows[0];
-
-    res.status(201).json({ message: 'Vendor created successfully', vendor: newVendor });
-  } catch (err) {
-    console.error('Error creating vendor:', err);
-    res.status(500).json({ error: 'Internal server error' });
-  } finally {
-    client.release();
-  }
-});
+// Note: This route is now handled by modular vendorRoutes
 
 // API endpoint to get all customers
-app.get('/api/customers', async (req, res) => {
-  try {
-    const result = await pool.query('SELECT customer_id, customer_name, street_address, city, province, country, contact_person, telephone_number, email, website FROM customermaster');
-    res.json(result.rows);
-  } catch (err) {
-    console.error('Error fetching customers:', err);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
+// Note: This route is now handled by modular customerRoutes
 
 // Add API endpoint to delete a purchase order by ID
-app.delete('/api/purchase-history/:purchaseId', async (req, res) => {
-  const { purchaseId } = req.params; // Get purchaseId from URL parameters
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN'); // Start a transaction
-
-    // Delete line items first (due to foreign key constraint)
-    await client.query('DELETE FROM purchaselineitems WHERE purchase_id = $1', [purchaseId]);
-    console.log(`Deleted line items for purchase order ${purchaseId}`);
-
-    // Then delete the purchase order header
-    const result = await client.query(
-      'DELETE FROM PurchaseHistory WHERE purchase_id = $1 RETURNING *;',
-      [purchaseId] // Use purchaseId from the URL
-    );
-    console.log(`Deleted purchase order header for ${purchaseId}. Rows affected: ${result.rowCount}`);
-
-    if (result.rows.length === 0) {
-      // No row was deleted, likely because the purchaseId was not found
-      await client.query('ROLLBACK'); // Rollback transaction
-      return res.status(404).json({ error: 'Purchase order not found' });
-    }
-
-    await client.query('COMMIT'); // Commit the transaction
-
-    // Return the deleted item or a success message
-    res.json({ message: 'Purchase order deleted successfully', deletedPurchaseOrder: result.rows[0] });
-
-  } catch (err) {
-    await client.query('ROLLBACK'); // Rollback transaction on error
-    console.error(`Error deleting purchase order ${purchaseId}:`, err);
-    res.status(500).json({ error: 'Internal server error' });
-  } finally {
-    client.release();
-  }
-});
+// Note: This route is now handled by modular purchaseHistoryRoutes
 
 // --- Purchase History GET Routes (Reordered for specificity) ---
 

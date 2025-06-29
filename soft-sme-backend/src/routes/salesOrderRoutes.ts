@@ -1,6 +1,9 @@
 import express, { Request, Response } from 'express';
 import { pool } from '../db';
 import { getNextSequenceNumberForYear } from '../utils/sequence';
+import PDFDocument from 'pdfkit';
+import fs from 'fs';
+import path from 'path';
 
 const router = express.Router();
 
@@ -477,6 +480,172 @@ router.delete('/:id', async (req: Request, res: Response) => {
     res.status(500).json({ error: 'Internal server error' });
   } finally {
     client.release();
+  }
+});
+
+// PDF Generation Route for sales orders
+router.get('/:id/pdf', async (req: Request, res: Response) => {
+  const { id } = req.params;
+  try {
+    // Fetch business profile
+    const businessProfileResult = await pool.query('SELECT * FROM business_profile ORDER BY id DESC LIMIT 1');
+    const businessProfile = businessProfileResult.rows[0];
+
+    const salesOrderResult = await pool.query(
+      `SELECT soh.*, cm.customer_name, cm.street_address as customer_street_address, cm.city as customer_city, cm.province as customer_province, cm.country as customer_country, cm.telephone_number as customer_phone, cm.email as customer_email FROM salesorderhistory soh JOIN customermaster cm ON soh.customer_id = cm.customer_id WHERE soh.sales_order_id = $1`,
+      [id]
+    );
+
+    if (salesOrderResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Sales order not found' });
+    }
+
+    const salesOrder = salesOrderResult.rows[0];
+    const lineItemsResult = await pool.query(
+      'SELECT * FROM salesorderlineitems WHERE sales_order_id = $1',
+      [id]
+    );
+    salesOrder.lineItems = lineItemsResult.rows;
+
+    const doc = new PDFDocument({ margin: 50 });
+    let filename = `Sales_Order_${salesOrder.sales_order_number}.pdf`;
+    filename = encodeURIComponent(filename);
+    res.setHeader('Content-disposition', 'attachment; filename="' + filename + '"');
+    res.setHeader('Content-type', 'application/pdf');
+    doc.pipe(res);
+
+    // --- HEADER ---
+    let headerY = 50;
+    let logoHeight = 100;
+    let logoWidth = 180;
+    let pageWidth = 600;
+    let logoX = 50;
+    let companyTitleX = logoX + logoWidth + 20;
+    let companyTitleY = headerY + (logoHeight - 16) / 2; // Vertically center with logo
+    // Logo (left)
+    if (businessProfile && businessProfile.logo_url) {
+      const logoPath = path.join(__dirname, '../../', businessProfile.logo_url);
+      if (fs.existsSync(logoPath)) {
+        try {
+          doc.image(logoPath, logoX, headerY, { fit: [logoWidth, logoHeight] });
+        } catch (error) {
+          console.error('Error adding logo to PDF:', error);
+        }
+      }
+    }
+    // Company name (right of logo, single line, smaller font)
+    if (businessProfile) {
+      doc.font('Helvetica-Bold').fontSize(16).fillColor('#000000').text(
+        (businessProfile.business_name || '').toUpperCase(),
+        companyTitleX,
+        companyTitleY,
+        { align: 'left', width: pageWidth - companyTitleX - 50 }
+      );
+    }
+    // Move Y below header
+    let y = headerY + logoHeight + 4;
+    // Horizontal line
+    doc.moveTo(50, y).lineTo(550, y).strokeColor('#444444').lineWidth(1).stroke();
+    y += 18;
+
+    // --- Company & Customer Info Block ---
+    // Headings
+    doc.font('Helvetica-Bold').fontSize(12).fillColor('#000000').text('Company Information', 50, y);
+    doc.font('Helvetica-Bold').fontSize(12).fillColor('#000000').text('Customer', 320, y);
+    y += 16;
+    // Company info (left column)
+    doc.font('Helvetica').fontSize(11).fillColor('#000000').text(businessProfile?.business_name || '', 50, y);
+    doc.text(businessProfile?.street_address || '', 50, y + 14);
+    doc.text(
+      [businessProfile?.city, businessProfile?.province, businessProfile?.country].filter(Boolean).join(', '),
+      50, y + 28
+    );
+    doc.text(businessProfile?.email || '', 50, y + 42);
+    doc.text(businessProfile?.telephone_number || '', 50, y + 56);
+    // Customer info (right column)
+    doc.font('Helvetica').fontSize(11).fillColor('#000000').text(salesOrder.customer_name || '', 320, y);
+    doc.text(salesOrder.customer_street_address || '', 320, y + 14);
+    doc.text(
+      [salesOrder.customer_city, salesOrder.customer_province, salesOrder.customer_country].filter(Boolean).join(', '),
+      320, y + 28
+    );
+    doc.text(salesOrder.customer_email || '', 320, y + 42);
+    doc.text(salesOrder.customer_phone || '', 320, y + 56);
+    y += 72;
+    // Horizontal line
+    doc.moveTo(50, y).lineTo(550, y).strokeColor('#444444').lineWidth(1).stroke();
+    y += 18;
+
+    // --- Sales Order Details ---
+    doc.font('Helvetica-Bold').fontSize(14).fillColor('#000000').text('SALES ORDER', 50, y);
+    y += 22;
+    doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Sales Order #:', 50, y);
+    doc.font('Helvetica').fontSize(11).fillColor('#000000').text(salesOrder.sales_order_number, 170, y);
+    doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Sales Date:', 320, y);
+    doc.font('Helvetica').fontSize(11).fillColor('#000000').text(
+      salesOrder.sales_date ? new Date(salesOrder.sales_date).toLocaleDateString() : '',
+      400, y
+    );
+    y += 24;
+    // Horizontal line
+    doc.moveTo(50, y).lineTo(550, y).strokeColor('#444444').lineWidth(1).stroke();
+    y += 14;
+
+    // --- Line Item Table ---
+    const tableHeaders = ['SN', 'Item Code', 'Description', 'Qty', 'Unit', 'Unit Price', 'Line Total'];
+    const colWidths = [30, 70, 140, 40, 40, 80, 80];
+    let currentX = 50;
+    doc.font('Helvetica-Bold').fontSize(10).fillColor('#000000');
+    tableHeaders.forEach((header, i) => {
+      doc.text(header, currentX, y, { width: colWidths[i], align: 'left' });
+      currentX += colWidths[i];
+    });
+    y += 16;
+    doc.moveTo(50, y - 2).lineTo(550, y - 2).strokeColor('#888888').stroke();
+    doc.font('Helvetica').fontSize(10).fillColor('#000000');
+    let sn = 1;
+    salesOrder.lineItems.forEach((item: any) => {
+      currentX = 50;
+      doc.text(sn.toString(), currentX, y, { width: colWidths[0], align: 'left' });
+      currentX += colWidths[0];
+      doc.text(item.part_number, currentX, y, { width: colWidths[1], align: 'left' });
+      currentX += colWidths[1];
+      doc.text(item.part_description, currentX, y, { width: colWidths[2], align: 'left' });
+      currentX += colWidths[2];
+      doc.text(parseFloat(item.quantity_sold).toString(), currentX, y, { width: colWidths[3], align: 'left' });
+      currentX += colWidths[3];
+      doc.text(item.unit, currentX, y, { width: colWidths[4], align: 'left' });
+      currentX += colWidths[4];
+      doc.text(parseFloat(item.unit_price).toFixed(2), currentX, y, { width: colWidths[5], align: 'right' });
+      currentX += colWidths[5];
+      doc.text(parseFloat(item.line_amount).toFixed(2), currentX, y, { width: colWidths[6], align: 'right' });
+      y += 16;
+      // Draw row line
+      doc.moveTo(50, y - 2).lineTo(550, y - 2).strokeColor('#eeeeee').stroke();
+      sn++;
+      if (y > doc.page.height - 100) {
+        doc.addPage();
+        y = 50;
+      }
+    });
+    y += 10;
+    doc.moveTo(50, y).lineTo(550, y).strokeColor('#444444').stroke();
+    y += 10;
+
+    // --- Totals Section ---
+    doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Sub Total:', 400, y, { align: 'left', width: 80 });
+    doc.font('Helvetica').fontSize(11).fillColor('#000000').text(parseFloat(salesOrder.subtotal).toFixed(2), 480, y, { align: 'right', width: 70 });
+    y += 16;
+    doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Total GST:', 400, y, { align: 'left', width: 80 });
+    doc.font('Helvetica').fontSize(11).fillColor('#000000').text(parseFloat(salesOrder.total_gst_amount).toFixed(2), 480, y, { align: 'right', width: 70 });
+    y += 16;
+    doc.font('Helvetica-Bold').fontSize(13).fillColor('#000000').text('Total:', 400, y, { align: 'left', width: 80 });
+    doc.font('Helvetica-Bold').fontSize(13).fillColor('#000000').text(parseFloat(salesOrder.total_amount).toFixed(2), 480, y, { align: 'right', width: 70 });
+
+    doc.end();
+  } catch (err) {
+    console.error(`Error generating PDF for sales order ${id}:`, err);
+    res.status(500).json({ error: 'Internal server error during PDF generation' });
   }
 });
 
