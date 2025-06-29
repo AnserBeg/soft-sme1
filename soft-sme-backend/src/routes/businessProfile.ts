@@ -7,6 +7,30 @@ import { authMiddleware } from '../middleware/authMiddleware';
 
 const router = express.Router();
 
+// Helper function to normalize logo URL
+const normalizeLogoUrl = (logoUrl: string | null): string | null => {
+  if (!logoUrl) return null;
+  
+  // If it's already a relative path starting with /uploads/, return as is
+  if (logoUrl.startsWith('/uploads/')) {
+    return logoUrl;
+  }
+  
+  // If it's a Windows path, extract the filename and convert to relative path
+  if (logoUrl.includes('\\') || logoUrl.includes(':/') || logoUrl.includes(':\\')) {
+    const filename = logoUrl.split(/[\\\/]/).pop();
+    return filename ? `/uploads/${filename}` : null;
+  }
+  
+  // If it's just a filename, add the /uploads/ prefix
+  if (!logoUrl.startsWith('/') && !logoUrl.startsWith('http')) {
+    return `/uploads/${logoUrl}`;
+  }
+  
+  // If it's a full URL, return as is
+  return logoUrl;
+};
+
 // Configure multer for file upload
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
@@ -45,7 +69,12 @@ router.get('/', authMiddleware, async (req, res) => {
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Business profile not found' });
     }
-    res.json(result.rows[0]);
+    
+    // Normalize the logo URL before returning
+    const profile = result.rows[0];
+    profile.logo_url = normalizeLogoUrl(profile.logo_url);
+    
+    res.json(profile);
   } catch (error) {
     console.error('Error fetching business profile:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -122,9 +151,12 @@ router.post('/', authMiddleware, upload.single('logo'), async (req, res) => {
       if (fs.existsSync(oldLogoPath)) {
         fs.unlinkSync(oldLogoPath);
       }
-      logoUrl = `/uploads/${req.file.filename}`;
+      logoUrl = normalizeLogoUrl(`/uploads/${req.file.filename}`);
     } else if (req.file) {
-      logoUrl = `/uploads/${req.file.filename}`;
+      logoUrl = normalizeLogoUrl(`/uploads/${req.file.filename}`);
+    } else if (existingProfile.rows[0]?.logo_url) {
+      // Normalize existing logo URL
+      logoUrl = normalizeLogoUrl(existingProfile.rows[0].logo_url);
     }
 
     if (existingProfile.rows.length === 0) {
