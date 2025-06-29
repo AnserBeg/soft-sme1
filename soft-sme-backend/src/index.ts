@@ -118,6 +118,8 @@ pool.query('SELECT NOW()', (err, res) => {
   console.log('Database connected successfully');
 });
 
+app.get('/ping', (req, res) => res.send('pong'));
+
 app.listen(Number(PORT), '0.0.0.0', () => {
   console.log(`Server is running on port ${PORT}`);
 }); 
