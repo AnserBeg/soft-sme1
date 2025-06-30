@@ -127,6 +127,17 @@ router.post('/', async (req: Request, res: Response) => {
     lineItems
   } = req.body;
 
+  // Basic validation
+  if (!vendor_id) {
+    return res.status(400).json({ error: 'vendor_id is required' });
+  }
+  if (!lineItems || !Array.isArray(lineItems) || lineItems.length === 0) {
+    return res.status(400).json({ error: 'lineItems array is required and must not be empty' });
+  }
+  if (typeof subtotal !== 'number' || typeof total_gst_amount !== 'number' || typeof total_amount !== 'number') {
+    return res.status(400).json({ error: 'subtotal, total_gst_amount, and total_amount must be numbers' });
+  }
+
   const client = await pool.connect();
 
   try {
@@ -139,12 +150,13 @@ router.post('/', async (req: Request, res: Response) => {
 
     const purchaseResult = await client.query(
       `INSERT INTO purchasehistory (
-        vendor_id, purchase_number, purchase_date, status, subtotal, total_gst_amount, total_amount, created_at, updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW()) RETURNING purchase_id`,
+        vendor_id, purchase_number, purchase_date, bill_number, status, subtotal, total_gst_amount, total_amount, created_at, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW()) RETURNING purchase_id`,
       [
         vendor_id,
         poNumber,
         new Date(), // purchase_date
+        bill_number,
         'Open',
         subtotal,
         total_gst_amount,
@@ -182,7 +194,8 @@ router.post('/', async (req: Request, res: Response) => {
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('partsPurchaseRoutes: Error creating parts purchase:', err);
-    res.status(500).json({ error: 'Internal server error' });
+    console.error('partsPurchaseRoutes: Request body:', JSON.stringify(req.body, null, 2));
+    res.status(500).json({ error: 'Internal server error', details: err instanceof Error ? err.message : 'Unknown error' });
   } finally {
     client.release();
   }
