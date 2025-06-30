@@ -212,7 +212,7 @@ router.post('/:id/convert-to-sales-order', async (req: Request, res: Response) =
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
       [formattedSONumber, quote.customer_id, new Date().toISOString().split('T')[0], 
        quote.product_name, quote.product_description, quote.estimated_cost, 'Open', quote.quote_id,
-       quote.estimated_cost, quote.estimated_cost * 0.05, quote.estimated_cost * 1.05, sequenceNumber]
+       0, 0, 0, sequenceNumber]
     );
 
     const salesOrderId = salesOrderResult.rows[0].sales_order_id;

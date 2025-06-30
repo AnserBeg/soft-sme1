@@ -134,9 +134,6 @@ router.post('/', async (req: Request, res: Response) => {
   if (!lineItems || !Array.isArray(lineItems) || lineItems.length === 0) {
     return res.status(400).json({ error: 'lineItems array is required and must not be empty' });
   }
-  if (typeof subtotal !== 'number' || typeof total_gst_amount !== 'number' || typeof total_amount !== 'number') {
-    return res.status(400).json({ error: 'subtotal, total_gst_amount, and total_amount must be numbers' });
-  }
 
   const client = await pool.connect();
 
@@ -158,18 +155,18 @@ router.post('/', async (req: Request, res: Response) => {
         new Date(), // purchase_date
         bill_number,
         'Open',
-        subtotal,
-        total_gst_amount,
-        total_amount
+        subtotal || 0,
+        total_gst_amount || 0,
+        total_amount || 0
       ]
     );
 
     const purchase_id = purchaseResult.rows[0].purchase_id;
 
     for (const item of lineItems) {
-      // Calculate line total and GST amount on the backend
-      const line_total = (item.quantity || 0) * (item.unit_cost || 0);
-      const gst_amount = line_total * (global_gst_rate / 100);
+      // Use line_total if available, otherwise calculate it
+      const line_total = item.line_total || (item.quantity || 0) * (item.unit_cost || 0);
+      const gst_amount = line_total * ((global_gst_rate || 5) / 100);
 
       await client.query(
         `INSERT INTO purchaselineitems (
