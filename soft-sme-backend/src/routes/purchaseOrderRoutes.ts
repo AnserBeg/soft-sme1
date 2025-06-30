@@ -120,11 +120,15 @@ router.post('/', async (req: Request, res: Response) => {
   const {
     vendor_id,
     bill_number,
+    bill_date,
     subtotal,
     total_gst_amount,
     total_amount,
     global_gst_rate,
-    lineItems
+    lineItems,
+    company_id, // Extract but don't use in DB insert
+    created_by, // Extract but don't use in DB insert
+    ...otherFields // Ignore any other unexpected fields
   } = req.body;
 
   // Basic validation
@@ -145,6 +149,9 @@ router.post('/', async (req: Request, res: Response) => {
     const year = now.getFullYear();
     const { poNumber } = await getNextPurchaseOrderNumberForYear(year);
 
+    // Use bill_date if provided, otherwise use current date
+    const purchaseDate = bill_date ? new Date(bill_date) : new Date();
+
     const purchaseResult = await client.query(
       `INSERT INTO purchasehistory (
         vendor_id, purchase_number, purchase_date, bill_number, status, subtotal, total_gst_amount, total_amount, created_at, updated_at
@@ -152,7 +159,7 @@ router.post('/', async (req: Request, res: Response) => {
       [
         vendor_id,
         poNumber,
-        new Date(), // purchase_date
+        purchaseDate, // Use the extracted bill_date or current date
         bill_number,
         'Open',
         subtotal || 0,
@@ -186,7 +193,7 @@ router.post('/', async (req: Request, res: Response) => {
     }
 
     await client.query('COMMIT');
-    res.status(201).json({ purchase_id });
+    res.status(201).json({ purchase_id, purchase_number: poNumber });
 
   } catch (err) {
     await client.query('ROLLBACK');
