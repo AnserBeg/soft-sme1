@@ -147,15 +147,38 @@ router.post('/', async (req: Request, res: Response) => {
     // Generate PO number with retry logic for duplicate key handling
     let poNumber: string;
     let retryCount = 0;
-    const maxRetries = 3;
+    const maxRetries = 5;
     
     do {
       const now = new Date();
       const year = now.getFullYear();
-      const result = await getNextPurchaseOrderNumberForYear(year);
-      poNumber = result.poNumber;
       
-      // Check if this PO number already exists
+      // Get all existing PO numbers for this year to find the next available one
+      const existingPOsResult = await client.query(
+        `SELECT purchase_number 
+         FROM purchasehistory 
+         WHERE purchase_number LIKE $1 
+         ORDER BY purchase_number`,
+        [`PO-${year}-%`]
+      );
+      
+      const existingNumbers = existingPOsResult.rows.map(row => 
+        parseInt(row.purchase_number.substring(8))
+      ).sort((a, b) => a - b);
+      
+      // Find the first gap or use the next number after the highest
+      let nextNumber = 1;
+      for (const num of existingNumbers) {
+        if (num !== nextNumber) {
+          break; // Found a gap
+        }
+        nextNumber++;
+      }
+      
+      poNumber = `PO-${year}-${nextNumber.toString().padStart(5, '0')}`;
+      console.log(`Generated PO number: ${poNumber} (next_number: ${nextNumber}, existing_count: ${existingNumbers.length})`);
+      
+      // Double-check if this PO number already exists (race condition protection)
       const existingResult = await client.query(
         'SELECT COUNT(*) as count FROM purchasehistory WHERE purchase_number = $1',
         [poNumber]
@@ -169,15 +192,10 @@ router.post('/', async (req: Request, res: Response) => {
       console.log(`PO number ${poNumber} already exists, retrying... (attempt ${retryCount}/${maxRetries})`);
       
       if (retryCount >= maxRetries) {
-        // Get the actual max number and increment by 1
-        const maxResult = await client.query(
-          `SELECT MAX(CAST(SUBSTRING(purchase_number, 8, 5) AS INTEGER)) as max_seq
-           FROM purchasehistory WHERE purchase_number LIKE $1`,
-          [`PO-${year}-%`]
-        );
-        const actualMaxSeq = maxResult.rows[0].max_seq || 0;
-        const emergencySeq = actualMaxSeq + 1;
-        poNumber = `PO-${year}-${emergencySeq.toString().padStart(5, '0')}`;
+        // Emergency fallback: use timestamp-based number
+        const timestamp = Date.now();
+        const emergencyNumber = timestamp % 100000; // Use last 5 digits of timestamp
+        poNumber = `PO-${year}-${emergencyNumber.toString().padStart(5, '0')}`;
         console.log(`Using emergency PO number: ${poNumber}`);
         break;
       }
@@ -238,11 +256,28 @@ router.post('/', async (req: Request, res: Response) => {
     if (err instanceof Error && err.message.includes('duplicate key value violates unique constraint')) {
       res.status(409).json({ 
         error: 'Purchase order number conflict', 
-        details: 'The generated purchase order number already exists. Please try again.',
-        code: 'DUPLICATE_PO_NUMBER'
+        details: 'The generated purchase order number already exists. This might be due to concurrent requests or existing data. Please try again.',
+        code: 'DUPLICATE_PO_NUMBER',
+        suggestion: 'Try refreshing the page and creating the purchase order again.'
+      });
+    } else if (err instanceof Error && err.message.includes('violates not-null constraint')) {
+      res.status(400).json({ 
+        error: 'Missing required data', 
+        details: 'Some required fields are missing from the request.',
+        code: 'MISSING_REQUIRED_FIELDS'
+      });
+    } else if (err instanceof Error && err.message.includes('violates foreign key constraint')) {
+      res.status(400).json({ 
+        error: 'Invalid reference', 
+        details: 'The vendor ID or other referenced data does not exist.',
+        code: 'INVALID_REFERENCE'
       });
     } else {
-      res.status(500).json({ error: 'Internal server error', details: err instanceof Error ? err.message : 'Unknown error' });
+      res.status(500).json({ 
+        error: 'Internal server error', 
+        details: err instanceof Error ? err.message : 'Unknown error',
+        code: 'INTERNAL_ERROR'
+      });
     }
   } finally {
     client.release();
