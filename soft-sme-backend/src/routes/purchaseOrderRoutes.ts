@@ -1,7 +1,7 @@
 import express, { Request, Response } from 'express';
 import { pool } from '../db';
 import PDFDocument from 'pdfkit';
-import { getNextPurchaseOrderNumberForYear, generateUniquePurchaseOrderNumber } from '../utils/sequence';
+import { getNextPurchaseOrderNumberForYear } from '../utils/sequence';
 import fs from 'fs';
 import path from 'path';
 
@@ -144,10 +144,44 @@ router.post('/', async (req: Request, res: Response) => {
   try {
     await client.query('BEGIN');
 
-    // Generate PO number in format PO-YYYY-NNNNN with retry logic
-    const now = new Date();
-    const year = now.getFullYear();
-    const poNumber = await generateUniquePurchaseOrderNumber(year);
+    // Generate PO number with retry logic for duplicate key handling
+    let poNumber: string;
+    let retryCount = 0;
+    const maxRetries = 3;
+    
+    do {
+      const now = new Date();
+      const year = now.getFullYear();
+      const result = await getNextPurchaseOrderNumberForYear(year);
+      poNumber = result.poNumber;
+      
+      // Check if this PO number already exists
+      const existingResult = await client.query(
+        'SELECT COUNT(*) as count FROM purchasehistory WHERE purchase_number = $1',
+        [poNumber]
+      );
+      
+      if (parseInt(existingResult.rows[0].count) === 0) {
+        break; // PO number is unique, proceed
+      }
+      
+      retryCount++;
+      console.log(`PO number ${poNumber} already exists, retrying... (attempt ${retryCount}/${maxRetries})`);
+      
+      if (retryCount >= maxRetries) {
+        // Get the actual max number and increment by 1
+        const maxResult = await client.query(
+          `SELECT MAX(CAST(SUBSTRING(purchase_number, 8, 5) AS INTEGER)) as max_seq
+           FROM purchasehistory WHERE purchase_number LIKE $1`,
+          [`PO-${year}-%`]
+        );
+        const actualMaxSeq = maxResult.rows[0].max_seq || 0;
+        const emergencySeq = actualMaxSeq + 1;
+        poNumber = `PO-${year}-${emergencySeq.toString().padStart(5, '0')}`;
+        console.log(`Using emergency PO number: ${poNumber}`);
+        break;
+      }
+    } while (retryCount < maxRetries);
 
     // Use bill_date if provided, otherwise use current date
     const purchaseDate = bill_date ? new Date(bill_date) : new Date();
