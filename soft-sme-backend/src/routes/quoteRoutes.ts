@@ -217,22 +217,6 @@ router.post('/:id/convert-to-sales-order', async (req: Request, res: Response) =
 
     const salesOrderId = salesOrderResult.rows[0].sales_order_id;
 
-    // Create a line item based on the quote's product information
-    await client.query(
-      `INSERT INTO salesorderlineitems (
-        sales_order_id, part_number, part_description, quantity_sold, unit, unit_price, line_amount
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [
-        salesOrderId,
-        'QUOTE-' + quote.quote_number, // Use quote number as part number
-        quote.product_description || quote.product_name,
-        1, // Default quantity
-        'Each', // Default unit
-        quote.estimated_cost, // Use estimated cost as unit price
-        quote.estimated_cost // Line amount equals unit price for quantity 1
-      ]
-    );
-
     // After successful insert, delete the quote from quotes table
     await client.query('DELETE FROM quotes WHERE quote_id = $1', [id]);
 
