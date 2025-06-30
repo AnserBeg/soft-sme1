@@ -1,7 +1,7 @@
 import express, { Request, Response } from 'express';
 import { pool } from '../db';
 import PDFDocument from 'pdfkit';
-import { getNextPurchaseOrderNumberForYear } from '../utils/sequence';
+import { getNextPurchaseOrderNumberForYear, generateUniquePurchaseOrderNumber } from '../utils/sequence';
 import fs from 'fs';
 import path from 'path';
 
@@ -144,10 +144,10 @@ router.post('/', async (req: Request, res: Response) => {
   try {
     await client.query('BEGIN');
 
-    // Generate PO number in format PO-YYYY-NNNNN
+    // Generate PO number in format PO-YYYY-NNNNN with retry logic
     const now = new Date();
     const year = now.getFullYear();
-    const { poNumber } = await getNextPurchaseOrderNumberForYear(year);
+    const poNumber = await generateUniquePurchaseOrderNumber(year);
 
     // Use bill_date if provided, otherwise use current date
     const purchaseDate = bill_date ? new Date(bill_date) : new Date();
@@ -199,7 +199,17 @@ router.post('/', async (req: Request, res: Response) => {
     await client.query('ROLLBACK');
     console.error('partsPurchaseRoutes: Error creating parts purchase:', err);
     console.error('partsPurchaseRoutes: Request body:', JSON.stringify(req.body, null, 2));
-    res.status(500).json({ error: 'Internal server error', details: err instanceof Error ? err.message : 'Unknown error' });
+    
+    // Check if it's a duplicate key violation
+    if (err instanceof Error && err.message.includes('duplicate key value violates unique constraint')) {
+      res.status(409).json({ 
+        error: 'Purchase order number conflict', 
+        details: 'The generated purchase order number already exists. Please try again.',
+        code: 'DUPLICATE_PO_NUMBER'
+      });
+    } else {
+      res.status(500).json({ error: 'Internal server error', details: err instanceof Error ? err.message : 'Unknown error' });
+    }
   } finally {
     client.release();
   }

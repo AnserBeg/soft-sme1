@@ -1,91 +1,64 @@
 const { Pool } = require('pg');
+require('dotenv').config();
 
 const pool = new Pool({
-  user: 'postgres',
-  host: 'localhost',
-  database: 'soft_sme_db',
-  password: '123',
-  port: 5432,
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
 });
 
-async function checkPurchaseTables() {
-  const client = await pool.connect();
+async function checkPurchaseOrders() {
   try {
-    // Check if purchasehistory table exists
-    const purchaseHistoryExists = await client.query(`
-      SELECT EXISTS (
-        SELECT FROM information_schema.tables
-        WHERE table_name = 'purchasehistory'
-      );
+    console.log('Checking purchase order numbers in database...\n');
+    
+    // Get all purchase orders
+    const result = await pool.query(`
+      SELECT purchase_id, purchase_number, created_at 
+      FROM purchasehistory 
+      ORDER BY purchase_number
     `);
-    console.log('purchasehistory table exists:', purchaseHistoryExists.rows[0].exists);
-
-    if (purchaseHistoryExists.rows[0].exists) {
-      // Get table structure
-      const tableStructure = await client.query(`
-        SELECT column_name, data_type, is_nullable, column_default
-        FROM information_schema.columns
-        WHERE table_name = 'purchasehistory'
-        ORDER BY ordinal_position;
-      `);
-      console.log('purchasehistory table structure:', tableStructure.rows);
-
-      // Get sample data
-      const sampleData = await client.query(`
-        SELECT * FROM "purchasehistory" LIMIT 5;
-      `);
-      console.log('Sample purchasehistory data:', sampleData.rows);
+    
+    console.log(`Total purchase orders found: ${result.rows.length}\n`);
+    
+    if (result.rows.length > 0) {
+      console.log('Existing purchase order numbers:');
+      result.rows.forEach((row, index) => {
+        console.log(`${index + 1}. ${row.purchase_number} (ID: ${row.purchase_id}, Created: ${row.created_at})`);
+      });
     }
-
-    // Check if purchaselineitems table exists
-    const lineItemsExists = await client.query(`
-      SELECT EXISTS (
-        SELECT FROM information_schema.tables 
-        WHERE table_name = 'purchaselineitems'
-      );
+    
+    // Check for duplicates
+    const duplicateResult = await pool.query(`
+      SELECT purchase_number, COUNT(*) as count
+      FROM purchasehistory 
+      GROUP BY purchase_number 
+      HAVING COUNT(*) > 1
     `);
-    console.log('purchaselineitems table exists:', lineItemsExists.rows[0].exists);
-
-    if (lineItemsExists.rows[0].exists) {
-      // Get table structure
-      const lineItemsStructure = await client.query(`
-        SELECT column_name, data_type, is_nullable, column_default
-        FROM information_schema.columns
-        WHERE table_name = 'purchaselineitems'
-        ORDER BY ordinal_position;
-      `);
-      console.log('purchaselineitems table structure:', lineItemsStructure.rows);
-
-      // Get sample data
-      const sampleLineItems = await client.query(`
-        SELECT * FROM purchaselineitems LIMIT 5;
-      `);
-      console.log('Sample purchaselineitems data:', sampleLineItems.rows);
+    
+    if (duplicateResult.rows.length > 0) {
+      console.log('\n⚠️  DUPLICATE PURCHASE ORDER NUMBERS FOUND:');
+      duplicateResult.rows.forEach(row => {
+        console.log(`   ${row.purchase_number} appears ${row.count} times`);
+      });
+    } else {
+      console.log('\n✅ No duplicate purchase order numbers found');
     }
-
-    // Check if vendormaster table exists
-    const vendorMasterExists = await client.query(`
-      SELECT EXISTS (
-        SELECT FROM information_schema.tables
-        WHERE table_name = 'vendormaster'
-      );
+    
+    // Check the latest PO number for 2025
+    const latestResult = await pool.query(`
+      SELECT MAX(CAST(SUBSTRING(purchase_number, 8, 5) AS INTEGER)) as max_seq
+      FROM purchasehistory 
+      WHERE purchase_number LIKE 'PO-2025-%'
     `);
-    console.log('vendormaster table exists:', vendorMasterExists.rows[0].exists);
-
-    if (vendorMasterExists.rows[0].exists) {
-      // Get sample vendor data
-      const sampleVendors = await client.query(`
-        SELECT * FROM "vendormaster" LIMIT 5;
-      `);
-      console.log('Sample vendormaster data:', sampleVendors.rows);
-    }
-
-  } catch (err) {
-    console.error('Error checking purchase tables:', err);
+    
+    const maxSeq = latestResult.rows[0].max_seq || 0;
+    console.log(`\nLatest sequence number for 2025: ${maxSeq}`);
+    console.log(`Next PO number would be: PO-2025-${(maxSeq + 1).toString().padStart(5, '0')}`);
+    
+  } catch (error) {
+    console.error('Error checking purchase orders:', error);
   } finally {
-    client.release();
-    pool.end();
+    await pool.end();
   }
 }
 
-checkPurchaseTables(); 
+checkPurchaseOrders(); 
