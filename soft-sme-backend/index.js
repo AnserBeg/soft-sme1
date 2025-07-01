@@ -512,6 +512,7 @@ app.post('/api/purchase-history', async (req, res) => {
 
 // API endpoint to update a purchase order by ID (for open purchase orders)
 app.put('/api/purchase-history/:id', async (req, res) => {
+  console.log('PUT /api/purchase-history/:id called with params:', req.params, 'and body:', req.body);
   const { id } = req.params;
   const client = await pool.connect();
   try {
@@ -688,13 +689,15 @@ app.put('/api/purchase-history/:id', async (req, res) => {
     }
 
     await client.query('COMMIT');
+    console.log('Successfully finished PO update');
     res.json({ message: 'Purchase order updated successfully' });
   } catch (err) {
     await client.query('ROLLBACK');
-    console.error('Error updating purchase order:', err);
+    console.error('Error updating purchase order:', err, err?.stack);
     res.status(500).json({ error: 'Internal server error' });
   } finally {
     client.release();
+    console.log('Client released');
   }
 });
 
@@ -1961,4 +1964,10 @@ app.get('/api/sales-order-line-items/:id', async (req, res) => {
     console.error('Error fetching sales order line items:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
-}); 
+});
+
+// Add this at the end of your Express setup, after all routes
+app.use((err, req, res, next) => {
+  console.error('UNCAUGHT ERROR:', err, err?.stack);
+  res.status(500).json({ error: 'Internal server error (uncaught)' });
+});
