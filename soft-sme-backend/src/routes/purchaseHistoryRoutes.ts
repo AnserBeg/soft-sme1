@@ -174,7 +174,13 @@ router.put('/:id', async (req: Request, res: Response) => {
         const invResult = await client.query('SELECT quantity_on_hand FROM inventory WHERE part_number = $1', [item.part_number]);
         const currentQuantity = invResult.rows[0]?.quantity_on_hand || 0;
         if (currentQuantity < quantity) {
-          throw new Error(`Cannot reopen PO. Reopening would result in negative inventory for part: ${item.part_number}.`);
+          await client.query('ROLLBACK');
+          console.error('Negative inventory error for part:', item);
+          return res.status(400).json({
+            error: 'Inventory cannot be negative',
+            message: `Cannot reopen PO. Reopening would result in negative inventory for part: ${item.part_number || '[unknown part]'}`,
+            part_number: item.part_number || null
+          });
         }
       }
       // If all checks pass, proceed with updates
