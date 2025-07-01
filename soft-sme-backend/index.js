@@ -623,9 +623,23 @@ app.put('/api/purchase-history/:id', async (req, res) => {
       console.log('PO transitioning from Closed to Open. Subtracting quantities from inventory.');
       for (const item of processedLineItems) {
         if (!item.part_number) continue;
+
+        // Check current inventory before subtracting
+        const invRes = await client.query(
+          'SELECT quantity_on_hand FROM Inventory WHERE part_number = $1',
+          [item.part_number]
+        );
+        const currentQty = invRes.rows[0]?.quantity_on_hand ?? 0;
+        const subtractQty = parseFloat(String(item.quantity)) || 0;
+        if (currentQty - subtractQty < 0) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: `Inventory cannot be negative for part_number: ${item.part_number}` });
+        }
+
+        // Proceed with subtraction
         const result = await client.query(
           'UPDATE Inventory SET quantity_on_hand = quantity_on_hand - $1 WHERE part_number = $2 RETURNING *',
-          [parseFloat(String(item.quantity)) || 0, item.part_number]
+          [subtractQty, item.part_number]
         );
         console.log(`Tried to subtract ${item.quantity} of ${item.part_number} from inventory. Rows affected: ${result.rowCount}`);
         if (result.rows.length > 0) {
