@@ -62,6 +62,9 @@ if (process.env.NODE_ENV !== 'production') {
   });
 }
 
+// Serve uploads directory as static files
+app.use('/uploads', express.static(path.join(__dirname, '../../uploads')));
+
 // Routes
 app.use('/api/auth', authRouter);
 console.log('Registered auth routes at /api/auth');
