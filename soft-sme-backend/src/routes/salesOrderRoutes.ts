@@ -198,6 +198,10 @@ router.post('/', async (req: Request, res: Response) => {
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('salesOrderRoutes: Error creating sales order:', err);
+    // Improved error handling for inventory
+    if (err instanceof Error && err.message && err.message.toLowerCase().includes('insufficient inventory')) {
+      return res.status(400).json({ error: err.message });
+    }
     res.status(500).json({ error: 'Internal server error' });
   } finally {
     client.release();
@@ -439,8 +443,12 @@ router.put('/:id', async (req: Request, res: Response) => {
     });
   } catch (err) {
     await client.query('ROLLBACK');
-    console.error(`salesOrderRoutes: Error updating sales order with id ${id}:`, err);
-    res.status(500).json({ error: 'Internal server error', details: (err as any).message });
+    console.error('salesOrderRoutes: Error updating sales order:', err);
+    // Improved error handling for inventory
+    if (err instanceof Error && err.message && err.message.toLowerCase().includes('insufficient inventory')) {
+      return res.status(400).json({ error: err.message });
+    }
+    res.status(500).json({ error: 'Internal server error' });
   } finally {
     client.release();
   }
