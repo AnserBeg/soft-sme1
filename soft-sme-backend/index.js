@@ -1973,6 +1973,13 @@ app.get('/api/sales-order-line-items/:id', async (req, res) => {
 
 // Add this at the end of your Express setup, after all routes
 app.use((err, req, res, next) => {
+  if (res.headersSent) {
+    return next(err);
+  }
+  // Only set status 500 if not already set to 4xx or 5xx
+  if (res.statusCode < 400) {
+    res.status(500);
+  }
   console.error('UNCAUGHT ERROR:', err, err?.stack);
-  res.status(500).json({ error: 'Internal server error (uncaught)' });
+  res.json({ error: 'Internal server error (uncaught)' });
 });
