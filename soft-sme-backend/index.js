@@ -634,7 +634,12 @@ app.put('/api/purchase-history/:id', async (req, res) => {
         const subtractQty = parseFloat(String(item.quantity)) || 0;
         if (currentQty - subtractQty < 0) {
           await client.query('ROLLBACK');
-          return res.status(400).json({ error: `Inventory cannot be negative for part_number: ${item.part_number}` });
+          console.error('Negative inventory error for part:', item);
+          return res.status(400).json({
+            error: 'Inventory cannot be negative',
+            message: `Cannot reopen PO. Reopening would result in negative inventory for part: ${item.part_number || '[unknown part]'}`,
+            part_number: item.part_number || null
+          });
         }
 
         // Proceed with subtraction
