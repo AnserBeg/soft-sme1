@@ -292,6 +292,19 @@ router.put('/:id', async (req: Request, res: Response) => {
       const oldQty = Math.round(Number(oldLineItemsMap.get(part_number) || 0));
       const diff = newQty - oldQty;
       if (diff !== 0 && part_number !== 'LABOUR') {
+        // Check if inventory would go negative
+        const invResult = await client.query(
+          'SELECT quantity_on_hand FROM inventory WHERE part_number = $1',
+          [part_number]
+        );
+        const currentQty = invResult.rows[0]?.quantity_on_hand ?? 0;
+        if (currentQty - diff < 0) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({
+            error: 'Insufficient inventory',
+            message: `Cannot update SO. Insufficient inventory for part: ${part_number}. Available: ${currentQty}, Required: ${diff > 0 ? diff : 0}`
+          });
+        }
         await client.query(
           `UPDATE inventory SET quantity_on_hand = quantity_on_hand - $1 WHERE part_number = $2`,
           [diff, part_number]
