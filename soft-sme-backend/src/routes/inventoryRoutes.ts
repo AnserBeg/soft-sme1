@@ -108,6 +108,55 @@ router.delete('/:id', async (req: Request, res: Response) => {
   }
 });
 
+// Add this after the DELETE route
+router.put('/:id', async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { quantity_on_hand, reorder_point, last_unit_cost, part_description } = req.body;
+  try {
+    // Check if the item exists
+    const existing = await pool.query('SELECT * FROM inventory WHERE part_number = $1', [id]);
+    if (existing.rows.length === 0) {
+      return res.status(404).json({ error: 'Inventory item not found' });
+    }
+
+    // Build update fields dynamically
+    const fields = [];
+    const values = [];
+    let idx = 1;
+
+    if (quantity_on_hand !== undefined) {
+      fields.push(`quantity_on_hand = $${idx++}`);
+      values.push(quantity_on_hand);
+    }
+    if (reorder_point !== undefined) {
+      fields.push(`reorder_point = $${idx++}`);
+      values.push(reorder_point);
+    }
+    if (last_unit_cost !== undefined) {
+      fields.push(`last_unit_cost = $${idx++}`);
+      values.push(last_unit_cost);
+    }
+    if (part_description !== undefined) {
+      fields.push(`part_description = $${idx++}`);
+      values.push(part_description);
+    }
+
+    if (fields.length === 0) {
+      return res.status(400).json({ error: 'No valid fields to update' });
+    }
+
+    values.push(id);
+
+    const updateQuery = `UPDATE inventory SET ${fields.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE part_number = $${idx} RETURNING *`;
+    const result = await pool.query(updateQuery, values);
+
+    res.json({ message: 'Inventory item updated successfully', updatedItem: result.rows[0] });
+  } catch (err) {
+    console.error('inventoryRoutes: Error updating inventory item:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // CSV Upload endpoint
 router.post('/upload-csv', upload.single('csvFile'), async (req: Request, res: Response) => {
   console.log('inventoryRoutes: Received CSV upload request');
