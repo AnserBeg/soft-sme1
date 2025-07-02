@@ -7,7 +7,7 @@ const router = express.Router();
 router.get('/', async (req: Request, res: Response) => {
   console.log('customerRoutes: GET / - fetching all customers');
   try {
-    const result = await pool.query('SELECT customer_id, customer_name, street_address, city, province, country, contact_person, telephone_number, email, website FROM customermaster');
+    const result = await pool.query('SELECT customer_id, customer_name, street_address, city, province, country, postal_code, contact_person, telephone_number, email, website FROM customermaster');
     // Add 'id' field to match frontend expectations
     const customersWithId = result.rows.map(customer => ({
       ...customer,
@@ -48,13 +48,13 @@ router.get('/:id', async (req: Request, res: Response) => {
 router.post('/', async (req: Request, res: Response) => {
   const client = await pool.connect();
   try {
-    const { customer_name, street_address, city, province, country, contact_person, phone_number, email, website } = req.body;
+    const { customer_name, street_address, city, province, country, postal_code, contact_person, phone_number, email, website } = req.body;
 
     console.log('Received new customer data:', req.body);
 
     const result = await client.query(
-      'INSERT INTO customermaster (customer_name, street_address, city, province, country, contact_person, telephone_number, email, website) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *',
-      [customer_name, street_address, city, province, country, contact_person, phone_number, email, website]
+      'INSERT INTO customermaster (customer_name, street_address, city, province, country, postal_code, contact_person, telephone_number, email, website) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *',
+      [customer_name, street_address, city, province, country, postal_code, contact_person, phone_number, email, website]
     );
 
     const newCustomer = result.rows[0];
@@ -75,7 +75,7 @@ router.post('/', async (req: Request, res: Response) => {
 // Update a customer by ID
 router.put('/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
-  const { customer_name, street_address, city, province, country, contact_person, phone_number, email, website } = req.body;
+  const { customer_name, street_address, city, province, country, postal_code, contact_person, phone_number, email, website } = req.body;
 
   const client = await pool.connect();
 
@@ -89,6 +89,7 @@ router.put('/:id', async (req: Request, res: Response) => {
   if (city !== undefined) { updateFields.push(`city = $${paramIndex++}`); queryParams.push(city); }
   if (province !== undefined) { updateFields.push(`province = $${paramIndex++}`); queryParams.push(province); }
   if (country !== undefined) { updateFields.push(`country = $${paramIndex++}`); queryParams.push(country); }
+  if (postal_code !== undefined) { updateFields.push(`postal_code = $${paramIndex++}`); queryParams.push(postal_code); }
   if (contact_person !== undefined) { updateFields.push(`contact_person = $${paramIndex++}`); queryParams.push(contact_person); }
   if (phone_number !== undefined) { updateFields.push(`telephone_number = $${paramIndex++}`); queryParams.push(phone_number); }
   if (email !== undefined) { updateFields.push(`email = $${paramIndex++}`); queryParams.push(email); }
