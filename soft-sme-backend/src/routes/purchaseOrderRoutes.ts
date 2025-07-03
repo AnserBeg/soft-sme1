@@ -499,7 +499,8 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
     }
     // Company name (right of logo, vertically centered with logo)
     const fontSize = 16;
-    const companyTitleY = headerY + (logoHeight / 2) - (fontSize / 2);
+    // Company name slightly above vertical center of logo
+    const companyTitleY = headerY + (logoHeight / 2) - (fontSize / 2) - 6;
     if (businessProfile) {
       doc.font('Helvetica-Bold').fontSize(fontSize).fillColor('#000000').text(
         (businessProfile.business_name || '').toUpperCase(),
@@ -508,8 +509,10 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
         { align: 'left', width: pageWidth - companyTitleX - 50 }
       );
     }
-    // Move Y below header (reduced whitespace)
-    let y = Math.max(headerY + logoHeight, companyTitleY + fontSize) + logoHeight * 0.25;
+    // Move Y below header (tight 4px gap)
+    const logoBottom = headerY + logoHeight;
+    const nameBottom = companyTitleY + fontSize;
+    let y = Math.max(logoBottom, nameBottom) + 4;
     // Horizontal line
     doc.moveTo(50, y).lineTo(550, y).strokeColor('#444444').lineWidth(1).stroke();
     y += 18;
