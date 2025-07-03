@@ -259,17 +259,17 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
         console.error('Error adding logo to PDF:', error);
       }
     }
-    // Company name (right of logo, single line, smaller font)
+    // Company name (right of logo, top-aligned with logo)
     if (businessProfile) {
       doc.font('Helvetica-Bold').fontSize(16).fillColor('#000000').text(
         (businessProfile.business_name || '').toUpperCase(),
         companyTitleX,
-        companyTitleY,
+        headerY, // top-aligned with logo
         { align: 'left', width: pageWidth - companyTitleX - 50 }
       );
     }
-    // Move Y below header
-    let y = headerY + logoHeight + 4;
+    // Move Y below header (reduced padding)
+    let y = headerY + logoHeight + 2;
     // Horizontal line
     doc.moveTo(50, y).lineTo(550, y).strokeColor('#444444').lineWidth(1).stroke();
     y += 18;
