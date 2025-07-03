@@ -459,7 +459,7 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
     const businessProfile = businessProfileResult.rows[0];
 
     const purchaseOrderResult = await pool.query(
-      `SELECT ph.*, vm.vendor_name, vm.street_address as vendor_street_address, vm.city as vendor_city, vm.province as vendor_province, vm.country as vendor_country, vm.telephone_number as vendor_phone, vm.email as vendor_email, ph.gst_rate FROM PurchaseHistory ph JOIN VendorMaster vm ON ph.vendor_id = vm.vendor_id WHERE ph.purchase_id = $1`,
+      `SELECT ph.*, vm.vendor_name, vm.street_address as vendor_street_address, vm.city as vendor_city, vm.province as vendor_province, vm.country as vendor_country, vm.telephone_number as vendor_phone, vm.email as vendor_email, vm.postal_code as vendor_postal_code, ph.gst_rate FROM PurchaseHistory ph JOIN VendorMaster vm ON ph.vendor_id = vm.vendor_id WHERE ph.purchase_id = $1`,
       [id]
     );
 
@@ -489,15 +489,13 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
     let logoX = 50;
     let companyTitleX = logoX + logoWidth + 20;
     let companyTitleY = headerY + (logoHeight - 16) / 2; // Vertically center with logo
-    // Logo (left)
-    if (businessProfile && businessProfile.logo_url) {
-      const logoPath = path.join(__dirname, '../../', businessProfile.logo_url);
-      if (fs.existsSync(logoPath)) {
-        try {
-          doc.image(logoPath, logoX, headerY, { fit: [logoWidth, logoHeight] });
-        } catch (error) {
-          console.error('Error adding logo to PDF:', error);
-        }
+    // Logo (left) - always use bundled default logo
+    const defaultLogoPath = path.join(__dirname, '../../assets/default-logo.png');
+    if (fs.existsSync(defaultLogoPath)) {
+      try {
+        doc.image(defaultLogoPath, logoX, headerY, { fit: [logoWidth, logoHeight] });
+      } catch (error) {
+        console.error('Error adding logo to PDF:', error);
       }
     }
     // Company name (right of logo, single line, smaller font)
