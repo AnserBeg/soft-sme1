@@ -1844,24 +1844,21 @@ app.get('/api/quotes/:id/pdf', async (req, res) => {
     // --- HEADER ---
     // Logo (top left)
     let y = 40;
-    if (businessProfile && businessProfile.logo_url) {
-      const logoFileName = path.basename(businessProfile.logo_url);
-      const logoPath = path.join(__dirname, 'uploads', logoFileName);
-      if (fs.existsSync(logoPath)) {
-        try {
-          doc.image(logoPath, 40, y, { fit: [200, 100] });
-        } catch (error) {
-          console.error('Error adding logo to PDF:', error);
-        }
-      } else {
-        console.warn('Logo file not found:', logoPath);
+    const logoPath = path.join(__dirname, 'assets', 'default-logo.png');
+    if (fs.existsSync(logoPath)) {
+      try {
+        doc.image(logoPath, 40, y, { fit: [200, 100] });
+      } catch (error) {
+        console.error('Error adding logo to PDF:', error);
       }
+    } else {
+      console.warn('Default logo file not found:', logoPath);
     }
     // Business name and address (top right)
     if (businessProfile) {
       doc.font('Helvetica-Bold').fontSize(14).text(businessProfile.business_name, 350, y, { align: 'left' });
       doc.font('Helvetica').fontSize(10).text(
-        `${businessProfile.street_address}\n${businessProfile.city}, ${businessProfile.province}, ${businessProfile.country}`,
+        `${businessProfile.street_address}\n${businessProfile.city}, ${businessProfile.province}, ${businessProfile.postal_code}, ${businessProfile.country}`,
         350, y + 18, { align: 'left' }
       );
     }

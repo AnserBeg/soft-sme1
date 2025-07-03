@@ -70,7 +70,8 @@ router.post('/', upload.single('logo'), async (req, res) => {
       country,
       telephoneNumber,
       email,
-      businessNumber
+      businessNumber,
+      postalCode
     } = req.body;
 
     // Check if profile exists
@@ -86,8 +87,8 @@ router.post('/', upload.single('logo'), async (req, res) => {
       const result = await client.query(
         `INSERT INTO business_profile (
           business_name, street_address, city, province, country,
-          telephone_number, email, business_number, logo_url
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+          telephone_number, email, business_number, logo_url, postal_code
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
         [
           businessName,
           streetAddress,
@@ -97,7 +98,8 @@ router.post('/', upload.single('logo'), async (req, res) => {
           telephoneNumber,
           email,
           businessNumber,
-          logoUrl
+          logoUrl,
+          postalCode
         ]
       );
       await client.query('COMMIT');
@@ -114,8 +116,9 @@ router.post('/', upload.single('logo'), async (req, res) => {
           telephone_number = $6,
           email = $7,
           business_number = $8,
-          logo_url = COALESCE($9, logo_url)
-        WHERE id = $10 RETURNING *`,
+          logo_url = COALESCE($9, logo_url),
+          postal_code = COALESCE($10, postal_code)
+        WHERE id = $11 RETURNING *`,
         [
           businessName,
           streetAddress,
@@ -126,6 +129,7 @@ router.post('/', upload.single('logo'), async (req, res) => {
           email,
           businessNumber,
           logoUrl,
+          postalCode,
           existingProfile.rows[0].id
         ]
       );

@@ -1,0 +1,1 @@
+ALTER TABLE business_profile ADD COLUMN IF NOT EXISTS postal_code VARCHAR(20); 
