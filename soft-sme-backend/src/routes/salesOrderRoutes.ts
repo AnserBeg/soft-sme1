@@ -112,27 +112,13 @@ router.post('/', async (req: Request, res: Response) => {
       default_hourly_rate,
       sequenceNumber,
     ];
-    console.log('Attempting to insert sales order:', { newSalesOrderId, formattedSONumber, salesOrderValues });
-    const insertResult = await client.query(salesOrderQuery, salesOrderValues);
-    console.log('Insert result:', insertResult);
-    // For each line item, call updateLineItem
-    const errors: any[] = [];
+    await client.query(salesOrderQuery, salesOrderValues);
+    // For each line item, upsert all fields
     for (const item of lineItems) {
-      try {
-        console.log('Calling updateLineItem with:', { newSalesOrderId, part_number: item.part_number, quantity: item.quantity, user_id });
-        await salesOrderService.updateLineItem(newSalesOrderId, item.part_number, item.quantity, user_id, client);
-      } catch (err: any) {
-        if (err.message && err.message.includes('Insufficient stock')) {
-          errors.push({ part: item.part_number, error: err.message });
-        } else {
-          throw err;
-        }
-      }
+      await salesOrderService.upsertLineItem(newSalesOrderId, item, client);
     }
-    if (errors.length > 0) {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'Insufficient inventory', details: errors });
-    }
+    // Recalculate and update summary fields
+    await salesOrderService.recalculateAndUpdateSummary(newSalesOrderId, client);
     await client.query('COMMIT');
     res.status(201).json({ message: 'Sales order created successfully', sales_order_id: newSalesOrderId, sales_order_number: formattedSONumber });
   } catch (err: any) {
@@ -177,28 +163,28 @@ router.get('/:id', async (req: Request, res: Response) => {
 router.put('/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
   const { lineItems, status, user_id } = req.body;
+  const client = await pool.connect();
   try {
-    const errors: any[] = [];
+    await client.query('BEGIN');
+    // Remove all existing line items for this order
+    await client.query('DELETE FROM salesorderlineitems WHERE sales_order_id = $1', [id]);
+    // Upsert all new line items
     for (const item of lineItems) {
-      try {
-        await salesOrderService.updateLineItem(Number(id), item.part_number, item.quantity, user_id);
-      } catch (err: any) {
-        if (err.message && err.message.includes('Insufficient stock')) {
-          errors.push({ part: item.part_number, error: err.message });
-        } else {
-          throw err;
-        }
-      }
+      await salesOrderService.upsertLineItem(Number(id), item, client);
     }
-    if (errors.length > 0) {
-      return res.status(400).json({ error: 'Insufficient inventory', details: errors });
-    }
+    // Recalculate and update summary fields
+    await salesOrderService.recalculateAndUpdateSummary(Number(id), client);
+    // Handle status change
     if (status === 'Closed') {
       await salesOrderService.closeOrder(Number(id));
     }
+    await client.query('COMMIT');
     res.status(200).json({ message: 'Sales order updated successfully' });
   } catch (err: any) {
+    await client.query('ROLLBACK');
     res.status(500).json({ error: err.message || 'Internal server error' });
+  } finally {
+    client.release();
   }
 });
 

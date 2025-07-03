@@ -48,6 +48,69 @@ export class SalesOrderService {
     }
   }
 
+  // Upsert or update a line item with all fields
+  async upsertLineItem(orderId: number, item: any, clientArg?: PoolClient): Promise<void> {
+    const client = clientArg || await this.pool.connect();
+    let startedTransaction = false;
+    try {
+      if (!clientArg) {
+        await client.query('BEGIN');
+        startedTransaction = true;
+      }
+      const lineRes = await client.query('SELECT * FROM salesorderlineitems WHERE sales_order_id = $1 AND part_number = $2 FOR UPDATE', [orderId, item.part_number]);
+      if (lineRes.rows.length > 0) {
+        await client.query(
+          `UPDATE salesorderlineitems SET quantity_sold = $1, part_description = $2, unit = $3, unit_price = $4, line_amount = $5 WHERE sales_order_id = $6 AND part_number = $7`,
+          [item.quantity, item.part_description, item.unit, item.unit_price, item.line_amount, orderId, item.part_number]
+        );
+      } else {
+        await client.query(
+          `INSERT INTO salesorderlineitems (sales_order_id, part_number, part_description, quantity_sold, unit, unit_price, line_amount) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [orderId, item.part_number, item.part_description, item.quantity, item.unit, item.unit_price, item.line_amount]
+        );
+      }
+      if (startedTransaction) await client.query('COMMIT');
+    } catch (err) {
+      if (startedTransaction) await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      if (!clientArg) client.release();
+    }
+  }
+
+  // Recalculate and update summary fields for a sales order
+  async recalculateAndUpdateSummary(orderId: number, clientArg?: PoolClient): Promise<void> {
+    const client = clientArg || await this.pool.connect();
+    let startedTransaction = false;
+    try {
+      if (!clientArg) {
+        await client.query('BEGIN');
+        startedTransaction = true;
+      }
+      const lineItemsRes = await client.query('SELECT * FROM salesorderlineitems WHERE sales_order_id = $1', [orderId]);
+      const lineItems = lineItemsRes.rows;
+      let subtotal = 0;
+      let total_gst_amount = 0;
+      let total_amount = 0;
+      for (const item of lineItems) {
+        subtotal += parseFloat(item.line_amount || 0);
+      }
+      // Assume GST is 5% for now (can be parameterized)
+      total_gst_amount = subtotal * 0.05;
+      total_amount = subtotal + total_gst_amount;
+      await client.query(
+        'UPDATE salesorderhistory SET subtotal = $1, total_gst_amount = $2, total_amount = $3 WHERE sales_order_id = $4',
+        [subtotal, total_gst_amount, total_amount, orderId]
+      );
+      if (startedTransaction) await client.query('COMMIT');
+    } catch (err) {
+      if (startedTransaction) await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      if (!clientArg) client.release();
+    }
+  }
+
   async closeOrder(orderId: number): Promise<void> {
     const client = await this.pool.connect();
     try {
