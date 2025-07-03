@@ -165,26 +165,37 @@ router.put('/:id', async (req: Request, res: Response) => {
   const { lineItems, status, user_id } = req.body;
   const client = await pool.connect();
   try {
+    console.log(`[PUT /api/sales-orders/${id}] Begin update`);
     await client.query('BEGIN');
+    console.log(`[PUT /api/sales-orders/${id}] Transaction started`);
     // Remove all existing line items for this order
     await client.query('DELETE FROM salesorderlineitems WHERE sales_order_id = $1', [id]);
+    console.log(`[PUT /api/sales-orders/${id}] Deleted old line items`);
     // Upsert all new line items
     for (const item of lineItems) {
+      console.log(`[PUT /api/sales-orders/${id}] Upserting line item`, item.part_number);
       await salesOrderService.upsertLineItem(Number(id), item, client);
     }
+    console.log(`[PUT /api/sales-orders/${id}] All line items upserted`);
     // Recalculate and update summary fields
     await salesOrderService.recalculateAndUpdateSummary(Number(id), client);
+    console.log(`[PUT /api/sales-orders/${id}] Summary recalculated`);
     // Handle status change
     if (status === 'Closed') {
+      console.log(`[PUT /api/sales-orders/${id}] Closing order`);
       await salesOrderService.closeOrder(Number(id));
+      console.log(`[PUT /api/sales-orders/${id}] Order closed`);
     }
     await client.query('COMMIT');
+    console.log(`[PUT /api/sales-orders/${id}] Transaction committed`);
     res.status(200).json({ message: 'Sales order updated successfully' });
   } catch (err: any) {
     await client.query('ROLLBACK');
+    console.error(`[PUT /api/sales-orders/${id}] Error:`, err);
     res.status(500).json({ error: err.message || 'Internal server error' });
   } finally {
     client.release();
+    console.log(`[PUT /api/sales-orders/${id}] Client released`);
   }
 });
 
