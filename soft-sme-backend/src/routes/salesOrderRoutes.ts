@@ -678,6 +678,12 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
     doc.font('Helvetica-Bold').fontSize(13).fillColor('#000000').text('Total:', 400, y, { align: 'left', width: 80 });
     doc.font('Helvetica-Bold').fontSize(13).fillColor('#000000').text(parseFloat(salesOrder.total_amount).toFixed(2), 480, y, { align: 'right', width: 70 });
 
+    // --- Business Number at the bottom ---
+    y += 40;
+    if (businessProfile && businessProfile.business_number) {
+      doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text(`Business Number: ${businessProfile.business_number}`, 50, y, { align: 'left' });
+    }
+
     doc.end();
   } catch (err) {
     console.error(`Error generating PDF for sales order ${id}:`, err);
