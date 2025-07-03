@@ -596,7 +596,8 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
     );
     doc.text(salesOrder.customer_email || '', 320, customerY + 42, { width: 230 });
     doc.text(salesOrder.customer_phone || '', 320, customerY + 56, { width: 230 });
-    y += 72;
+    // Set y to the max of the last company and customer info y values plus extra padding
+    y = Math.max(companyY + 56, customerY + 56) + 18;
     // Horizontal line
     doc.moveTo(50, y).lineTo(550, y).strokeColor('#444444').lineWidth(1).stroke();
     y += 18;
