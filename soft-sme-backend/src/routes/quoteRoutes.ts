@@ -374,8 +374,7 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
 
     // --- Pricing Section ---
     doc.font('Helvetica-Bold').fontSize(12).fillColor('#000000').text('Pricing', 50, y);
-    y += 20;
-    doc.font('Helvetica-Bold').fontSize(13).fillColor('#000000').text('Estimated Cost:', 400, y, { align: 'left', width: 80 });
+    doc.font('Helvetica-Bold').fontSize(13).fillColor('#000000').text('Estimated Price:', 400, y, { align: 'left', width: 80 });
     doc.font('Helvetica-Bold').fontSize(13).fillColor('#000000').text(parseFloat(quote.estimated_cost).toFixed(2), 480, y, { align: 'right', width: 70 });
 
     // --- Terms and Conditions ---
