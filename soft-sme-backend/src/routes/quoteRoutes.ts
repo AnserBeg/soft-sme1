@@ -280,7 +280,6 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
     let pageWidth = 600;
     let logoX = 50;
     let companyTitleX = logoX + logoWidth + 20;
-    let companyTitleY = headerY + (logoHeight - 16) / 2; // Vertically center with logo
     // Logo (left) - always use bundled default logo
     const defaultLogoPath = path.join(__dirname, '../../assets/default-logo.png');
     if (fs.existsSync(defaultLogoPath)) {
@@ -290,17 +289,19 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
         console.error('Error adding logo to PDF:', error);
       }
     }
-    // Company name (right of logo, top-aligned with logo)
+    // Company name (right of logo, vertically centered with logo)
+    const fontSize = 16;
+    const companyTitleY = headerY + (logoHeight / 2) - (fontSize / 2);
     if (businessProfile) {
-      doc.font('Helvetica-Bold').fontSize(16).fillColor('#000000').text(
+      doc.font('Helvetica-Bold').fontSize(fontSize).fillColor('#000000').text(
         (businessProfile.business_name || '').toUpperCase(),
         companyTitleX,
-        headerY, // top-aligned with logo
+        companyTitleY,
         { align: 'left', width: pageWidth - companyTitleX - 50 }
       );
     }
-    // Move Y below header (reduced padding)
-    let y = headerY + logoHeight + 2;
+    // Move Y below header (reduced whitespace)
+    let y = Math.max(headerY + logoHeight, companyTitleY + fontSize) + logoHeight * 0.25;
     // Horizontal line
     doc.moveTo(50, y).lineTo(550, y).strokeColor('#444444').lineWidth(1).stroke();
     y += 18;
