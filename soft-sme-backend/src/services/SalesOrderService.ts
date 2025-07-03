@@ -13,8 +13,10 @@ export class SalesOrderService {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
+      console.log('updateLineItem: Checking for sales order', { orderId, partId, newQty, userId });
       // Lock the sales order
       const orderRes = await client.query('SELECT * FROM salesorderhistory WHERE sales_order_id = $1 FOR UPDATE', [orderId]);
+      console.log('updateLineItem: orderRes.rows', orderRes.rows);
       if (orderRes.rows.length === 0) throw new Error('Sales order not found');
       if (orderRes.rows[0].status !== 'Open') throw new Error('Cannot modify a closed order');
       // Lock the inventory row

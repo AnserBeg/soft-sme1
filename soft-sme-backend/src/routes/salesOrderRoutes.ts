@@ -112,11 +112,14 @@ router.post('/', async (req: Request, res: Response) => {
       default_hourly_rate,
       sequenceNumber,
     ];
-    await client.query(salesOrderQuery, salesOrderValues);
+    console.log('Attempting to insert sales order:', { newSalesOrderId, formattedSONumber, salesOrderValues });
+    const insertResult = await client.query(salesOrderQuery, salesOrderValues);
+    console.log('Insert result:', insertResult);
     // For each line item, call updateLineItem
     const errors: any[] = [];
     for (const item of lineItems) {
       try {
+        console.log('Calling updateLineItem with:', { newSalesOrderId, part_number: item.part_number, quantity: item.quantity, user_id });
         await salesOrderService.updateLineItem(newSalesOrderId, item.part_number, item.quantity, user_id);
       } catch (err: any) {
         if (err.message && err.message.includes('Insufficient stock')) {
@@ -134,6 +137,7 @@ router.post('/', async (req: Request, res: Response) => {
     res.status(201).json({ message: 'Sales order created successfully', sales_order_id: newSalesOrderId, sales_order_number: formattedSONumber });
   } catch (err: any) {
     await client.query('ROLLBACK');
+    console.error('Error in POST /api/sales-orders:', err);
     res.status(500).json({ error: err.message || 'Internal server error' });
   } finally {
     client.release();
