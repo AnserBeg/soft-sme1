@@ -135,6 +135,7 @@ router.post('/', authMiddleware, upload.single('logo'), async (req, res) => {
       city,
       province,
       country,
+      postal_code,
       telephone_number,
       email,
       business_number
@@ -163,15 +164,16 @@ router.post('/', authMiddleware, upload.single('logo'), async (req, res) => {
       // Create new profile
       const result = await client.query(
         `INSERT INTO business_profile (
-          business_name, street_address, city, province, country,
+          business_name, street_address, city, province, country, postal_code,
           telephone_number, email, business_number, logo_url
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
         [
           business_name,
           street_address,
           city,
           province,
           country,
+          postal_code,
           telephone_number,
           email,
           business_number,
@@ -189,17 +191,19 @@ router.post('/', authMiddleware, upload.single('logo'), async (req, res) => {
           city = $3,
           province = $4,
           country = $5,
-          telephone_number = $6,
-          email = $7,
-          business_number = $8,
-          logo_url = $9
-        WHERE id = $10 RETURNING *`,
+          postal_code = $6,
+          telephone_number = $7,
+          email = $8,
+          business_number = $9,
+          logo_url = $10
+        WHERE id = $11 RETURNING *`,
         [
           business_name,
           street_address,
           city,
           province,
           country,
+          postal_code,
           telephone_number,
           email,
           business_number,
