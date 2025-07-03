@@ -3,6 +3,7 @@ import { pool } from '../db';
 
 const router = express.Router();
 
+// trigger redeploy
 // Get the current labour rate
 router.get('/', async (req: Request, res: Response) => {
   try {
