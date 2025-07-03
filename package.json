@@ -9,5 +9,10 @@
     "react-dom": "^18.2.0",
     "react-router-dom": "^7.6.2"
   },
-  "main": "dist-electron/main.cjs"
+  "main": "dist-electron/main.cjs",
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "jest": "^30.0.4",
+    "ts-jest": "^29.4.0"
+  }
 }

@@ -10,7 +10,7 @@
     "clean": "rimraf dist",
     "prebuild": "npm run clean",
     "migrate": "ts-node src/migrate.ts",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "jest --runInBand"
   },
   "keywords": [],
   "author": "",
@@ -43,6 +43,9 @@
     "@types/pg": "^8.15.4",
     "nodemon": "^3.0.2",
     "ts-node": "^10.9.2",
-    "typescript": "^5.3.3"
+    "typescript": "^5.3.3",
+    "jest": "^29.0.0",
+    "ts-jest": "^29.0.0",
+    "@types/jest": "^29.0.0"
   }
 }
