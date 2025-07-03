@@ -18,7 +18,7 @@ export class InventoryService {
     // Row-level lock
     const result = await db.query('SELECT quantity_on_hand FROM inventory WHERE part_number = $1 FOR UPDATE', [partId]);
     if (result.rows.length === 0) throw new Error(`Part not found: ${partId}`);
-    const onHand = result.rows[0].quantity_on_hand;
+    const onHand = parseFloat(result.rows[0].quantity_on_hand);
     const newQty = onHand + delta;
     if (newQty < 0) throw new Error(`Insufficient stock for part ${partId}. Available: ${onHand}, Requested: ${-delta}`);
     await db.query('UPDATE inventory SET quantity_on_hand = $1 WHERE part_number = $2', [newQty, partId]);
