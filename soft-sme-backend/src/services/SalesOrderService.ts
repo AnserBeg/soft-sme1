@@ -111,20 +111,24 @@ export class SalesOrderService {
     }
   }
 
-  async closeOrder(orderId: number): Promise<void> {
-    const client = await this.pool.connect();
+  async closeOrder(orderId: number, clientArg?: PoolClient): Promise<void> {
+    const client = clientArg || await this.pool.connect();
+    let startedTransaction = false;
     try {
-      await client.query('BEGIN');
+      if (!clientArg) {
+        await client.query('BEGIN');
+        startedTransaction = true;
+      }
       const orderRes = await client.query('SELECT * FROM salesorderhistory WHERE sales_order_id = $1 FOR UPDATE', [orderId]);
       if (orderRes.rows.length === 0) throw new Error('Sales order not found');
       if (orderRes.rows[0].status !== 'Open') throw new Error('Order is already closed');
       await client.query('UPDATE salesorderhistory SET status = $1 WHERE sales_order_id = $2', ['Closed', orderId]);
-      await client.query('COMMIT');
+      if (startedTransaction) await client.query('COMMIT');
     } catch (err) {
-      await client.query('ROLLBACK');
+      if (startedTransaction) await client.query('ROLLBACK');
       throw err;
     } finally {
-      client.release();
+      if (!clientArg) client.release();
     }
   }
 
