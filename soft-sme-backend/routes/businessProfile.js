@@ -106,6 +106,7 @@ router.post('/', upload.single('logo'), async (req, res) => {
       res.json(result.rows[0]);
     } else {
       // Update existing profile
+      console.log('Updating business profile with postalCode:', postalCode);
       const result = await client.query(
         `UPDATE business_profile SET
           business_name = $1,
