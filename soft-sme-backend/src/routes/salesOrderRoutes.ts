@@ -120,7 +120,7 @@ router.post('/', async (req: Request, res: Response) => {
     for (const item of lineItems) {
       try {
         console.log('Calling updateLineItem with:', { newSalesOrderId, part_number: item.part_number, quantity: item.quantity, user_id });
-        await salesOrderService.updateLineItem(newSalesOrderId, item.part_number, item.quantity, user_id);
+        await salesOrderService.updateLineItem(newSalesOrderId, item.part_number, item.quantity, user_id, client);
       } catch (err: any) {
         if (err.message && err.message.includes('Insufficient stock')) {
           errors.push({ part: item.part_number, error: err.message });

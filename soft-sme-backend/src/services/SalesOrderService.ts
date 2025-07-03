@@ -9,10 +9,14 @@ export class SalesOrderService {
     this.inventoryService = new InventoryService(pool);
   }
 
-  async updateLineItem(orderId: number, partId: string, newQty: number, userId?: number): Promise<void> {
-    const client = await this.pool.connect();
+  async updateLineItem(orderId: number, partId: string, newQty: number, userId?: number, clientArg?: PoolClient): Promise<void> {
+    const client = clientArg || await this.pool.connect();
+    let startedTransaction = false;
     try {
-      await client.query('BEGIN');
+      if (!clientArg) {
+        await client.query('BEGIN');
+        startedTransaction = true;
+      }
       console.log('updateLineItem: Checking for sales order', { orderId, partId, newQty, userId });
       // Lock the sales order
       const orderRes = await client.query('SELECT * FROM salesorderhistory WHERE sales_order_id = $1 FOR UPDATE', [orderId]);
@@ -35,12 +39,12 @@ export class SalesOrderService {
         // Delete
         await client.query('DELETE FROM salesorderlineitems WHERE sales_order_id = $1 AND part_number = $2', [orderId, partId]);
       }
-      await client.query('COMMIT');
+      if (startedTransaction) await client.query('COMMIT');
     } catch (err) {
-      await client.query('ROLLBACK');
+      if (startedTransaction) await client.query('ROLLBACK');
       throw err;
     } finally {
-      client.release();
+      if (!clientArg) client.release();
     }
   }
 
