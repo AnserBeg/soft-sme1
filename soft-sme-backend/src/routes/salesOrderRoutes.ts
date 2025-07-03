@@ -580,7 +580,7 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
     let companyY = Math.max(companyNameResult.y, y);
     doc.text(businessProfile?.street_address || '', 50, companyY + 14, { width: 250 });
     doc.text(
-      [businessProfile?.city, businessProfile?.province, businessProfile?.country].filter(Boolean).join(', '),
+      [businessProfile?.city, businessProfile?.province, businessProfile?.country, businessProfile?.postal_code].filter(Boolean).join(', '),
       50, companyY + 28, { width: 250 }
     );
     doc.text(businessProfile?.email || '', 50, companyY + 42, { width: 250 });
@@ -591,7 +591,7 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
     let customerY = Math.max(customerNameResult.y, y);
     doc.text(salesOrder.customer_street_address || '', 320, customerY + 14, { width: 230 });
     doc.text(
-      [salesOrder.customer_city, salesOrder.customer_province, salesOrder.customer_country].filter(Boolean).join(', '),
+      [salesOrder.customer_city, salesOrder.customer_province, salesOrder.customer_country, salesOrder.customer_postal_code].filter(Boolean).join(', '),
       320, customerY + 28, { width: 230 }
     );
     doc.text(salesOrder.customer_email || '', 320, customerY + 42, { width: 230 });

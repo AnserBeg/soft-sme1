@@ -253,7 +253,8 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
         c.country as customer_country,
         c.contact_person,
         c.email as customer_email,
-        c.telephone_number as customer_phone
+        c.telephone_number as customer_phone,
+        c.postal_code as customer_postal_code
       FROM quotes q
       JOIN customermaster c ON q.customer_id = c.customer_id
       WHERE q.quote_id = $1
@@ -315,7 +316,7 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
     doc.font('Helvetica').fontSize(11).fillColor('#000000').text(businessProfile?.business_name || '', 50, y);
     doc.text(businessProfile?.street_address || '', 50, y + 14);
     doc.text(
-      [businessProfile?.city, businessProfile?.province, businessProfile?.country].filter(Boolean).join(', '),
+      [businessProfile?.city, businessProfile?.province, businessProfile?.country, businessProfile?.postal_code].filter(Boolean).join(', '),
       50, y + 28
     );
     doc.text(businessProfile?.email || '', 50, y + 42);
@@ -324,7 +325,7 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
     doc.font('Helvetica').fontSize(11).fillColor('#000000').text(quote.customer_name || '', 320, y);
     doc.text(quote.customer_street_address || '', 320, y + 14);
     doc.text(
-      [quote.customer_city, quote.customer_province, quote.customer_country].filter(Boolean).join(', '),
+      [quote.customer_city, quote.customer_province, quote.customer_country, quote.customer_postal_code].filter(Boolean).join(', '),
       320, y + 28
     );
     doc.text(quote.customer_email || '', 320, y + 42);
