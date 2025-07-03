@@ -17,7 +17,8 @@ router.get('/', async (req: Request, res: Response) => {
         CAST(ph.subtotal AS FLOAT) as subtotal,
         CAST(ph.total_gst_amount AS FLOAT) as total_gst_amount,
         CAST(ph.total_amount AS FLOAT) as total_amount,
-        vm.vendor_name 
+        vm.vendor_name,
+        ph.gst_rate
       FROM purchasehistory ph 
       JOIN vendormaster vm ON ph.vendor_id = vm.vendor_id 
     `;
@@ -74,7 +75,8 @@ router.get('/open', async (req: Request, res: Response) => {
         CAST(ph.subtotal AS FLOAT) as subtotal,
         CAST(ph.total_gst_amount AS FLOAT) as total_gst_amount,
         CAST(ph.total_amount AS FLOAT) as total_amount,
-        vm.vendor_name 
+        vm.vendor_name,
+        ph.gst_rate
       FROM purchasehistory ph 
       JOIN vendormaster vm ON ph.vendor_id = vm.vendor_id 
       WHERE LOWER(ph.status) = 'open'
@@ -248,7 +250,7 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
     const businessProfile = businessProfileResult.rows[0];
 
     const purchaseOrderResult = await pool.query(
-      `SELECT ph.*, vm.vendor_name, vm.street_address as vendor_street_address, vm.city as vendor_city, vm.province as vendor_province, vm.country as vendor_country, vm.telephone_number as vendor_phone, vm.email as vendor_email FROM PurchaseHistory ph JOIN VendorMaster vm ON ph.vendor_id = vm.vendor_id WHERE ph.purchase_id = $1`,
+      `SELECT ph.*, vm.vendor_name, vm.street_address as vendor_street_address, vm.city as vendor_city, vm.province as vendor_province, vm.country as vendor_country, vm.telephone_number as vendor_phone, vm.email as vendor_email, ph.gst_rate FROM PurchaseHistory ph JOIN VendorMaster vm ON ph.vendor_id = vm.vendor_id WHERE ph.purchase_id = $1`,
       [id]
     );
 
@@ -410,7 +412,7 @@ router.get('/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
   try {
     const purchaseOrderResult = await pool.query(
-      `SELECT ph.*, ph.subtotal, ph.total_gst_amount, vm.vendor_name 
+      `SELECT ph.*, ph.subtotal, ph.total_gst_amount, vm.vendor_name, ph.gst_rate
        FROM purchasehistory ph 
        JOIN vendormaster vm ON ph.vendor_id = vm.vendor_id 
        WHERE ph.purchase_id = $1`,

@@ -17,7 +17,7 @@ router.get('/open', async (req: Request, res: Response) => {
     
     let query = `
       SELECT poh.purchase_id, poh.purchase_number, vm.vendor_name, poh.purchase_date as bill_date, 
-             poh.purchase_number as bill_number, poh.subtotal, poh.total_gst_amount, poh.total_amount, poh.status
+             poh.purchase_number as bill_number, poh.subtotal, poh.total_gst_amount, poh.total_amount, poh.status, poh.gst_rate
       FROM purchasehistory poh
       JOIN vendormaster vm ON poh.vendor_id = vm.vendor_id
       WHERE 1=1
@@ -71,7 +71,7 @@ router.get('/history', async (req: Request, res: Response) => {
   try {
     const result = await pool.query(`
       SELECT poh.purchase_id, poh.purchase_number, vm.vendor_name, poh.purchase_date as bill_date, 
-             poh.purchase_number as bill_number, poh.subtotal, poh.total_gst_amount, poh.total_amount, poh.status
+             poh.purchase_number as bill_number, poh.subtotal, poh.total_gst_amount, poh.total_amount, poh.status, poh.gst_rate
       FROM purchasehistory poh
       JOIN vendormaster vm ON poh.vendor_id = vm.vendor_id
       WHERE poh.status = 'Closed' ORDER BY poh.created_at DESC`);
@@ -89,7 +89,7 @@ router.get('/:id', async (req: Request, res: Response) => {
   console.log('purchaseOrderRoutes: GET /:id - Request received for ID:', id);
   try {
     const purchaseOrderResult = await pool.query(
-      `SELECT poh.*, vm.vendor_name FROM purchasehistory poh 
+      `SELECT poh.*, vm.vendor_name, poh.gst_rate FROM purchasehistory poh 
        JOIN vendormaster vm ON poh.vendor_id = vm.vendor_id 
        WHERE poh.purchase_id = $1`,
       [id]
@@ -125,6 +125,7 @@ router.post('/', async (req: Request, res: Response) => {
     total_gst_amount,
     total_amount,
     global_gst_rate,
+    gst_rate,
     lineItems,
     company_id, // Extract but don't use in DB insert
     created_by, // Extract but don't use in DB insert
@@ -204,10 +205,12 @@ router.post('/', async (req: Request, res: Response) => {
     // Use bill_date if provided, otherwise use current date
     const purchaseDate = bill_date ? new Date(bill_date) : new Date();
 
+    const effectiveGstRate = typeof gst_rate === 'number' && !isNaN(gst_rate) ? gst_rate : (typeof global_gst_rate === 'number' && !isNaN(global_gst_rate) ? global_gst_rate : 5.0);
+
     const purchaseResult = await client.query(
       `INSERT INTO purchasehistory (
-        vendor_id, purchase_number, purchase_date, bill_number, status, subtotal, total_gst_amount, total_amount, created_at, updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW()) RETURNING purchase_id`,
+        vendor_id, purchase_number, purchase_date, bill_number, status, subtotal, total_gst_amount, total_amount, gst_rate, created_at, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW()) RETURNING purchase_id`,
       [
         vendor_id,
         poNumber,
@@ -216,7 +219,8 @@ router.post('/', async (req: Request, res: Response) => {
         'Open',
         subtotal || 0,
         total_gst_amount || 0,
-        total_amount || 0
+        total_amount || 0,
+        effectiveGstRate
       ]
     );
 
@@ -225,7 +229,7 @@ router.post('/', async (req: Request, res: Response) => {
     for (const item of lineItems) {
       // Use line_total if available, otherwise calculate it
       const line_total = item.line_total || (item.quantity || 0) * (item.unit_cost || 0);
-      const gst_amount = line_total * ((global_gst_rate || 5) / 100);
+      const gst_amount = line_total * (effectiveGstRate / 100);
 
       await client.query(
         `INSERT INTO purchaselineitems (
@@ -337,11 +341,14 @@ router.put('/:id', async (req, res) => {
       total_amount,
       bill_number,
       purchase_date,
+      gst_rate
     } = purchaseOrderData;
 
     // Fetch old status to check for transitions
     const oldStatusResult = await client.query('SELECT status FROM "purchasehistory" WHERE purchase_id = $1', [id]);
     const oldStatus = oldStatusResult.rows[0]?.status;
+
+    const effectiveGstRateUpdate = typeof gst_rate === 'number' && !isNaN(gst_rate) ? gst_rate : 5.0;
 
     const updatePoQuery = `
       UPDATE "purchasehistory" SET
@@ -352,8 +359,9 @@ router.put('/:id', async (req, res) => {
         total_gst_amount = $5,
         total_amount = $6,
         bill_number = $7,
+        gst_rate = $8,
         updated_at = NOW()
-      WHERE purchase_id = $8
+      WHERE purchase_id = $9
       RETURNING *;
     `;
 
@@ -365,6 +373,7 @@ router.put('/:id', async (req, res) => {
       total_gst_amount,
       total_amount,
       bill_number,
+      effectiveGstRateUpdate,
       id
     ]);
 
@@ -450,7 +459,7 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
     const businessProfile = businessProfileResult.rows[0];
 
     const purchaseOrderResult = await pool.query(
-      `SELECT ph.*, vm.vendor_name, vm.street_address as vendor_street_address, vm.city as vendor_city, vm.province as vendor_province, vm.country as vendor_country, vm.telephone_number as vendor_phone, vm.email as vendor_email FROM PurchaseHistory ph JOIN VendorMaster vm ON ph.vendor_id = vm.vendor_id WHERE ph.purchase_id = $1`,
+      `SELECT ph.*, vm.vendor_name, vm.street_address as vendor_street_address, vm.city as vendor_city, vm.province as vendor_province, vm.country as vendor_country, vm.telephone_number as vendor_phone, vm.email as vendor_email, ph.gst_rate FROM PurchaseHistory ph JOIN VendorMaster vm ON ph.vendor_id = vm.vendor_id WHERE ph.purchase_id = $1`,
       [id]
     );
 
