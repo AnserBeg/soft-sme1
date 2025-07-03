@@ -575,23 +575,27 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
     doc.font('Helvetica-Bold').fontSize(12).fillColor('#000000').text('Customer', 320, y);
     y += 16;
     // Company info (left column)
-    doc.font('Helvetica').fontSize(11).fillColor('#000000').text(businessProfile?.business_name || '', 50, y);
-    doc.text(businessProfile?.street_address || '', 50, y + 14);
+    doc.font('Helvetica').fontSize(11).fillColor('#000000');
+    const companyNameResult = doc.text(businessProfile?.business_name || '', 50, y, { width: 250 });
+    let companyY = Math.max(companyNameResult.y, y);
+    doc.text(businessProfile?.street_address || '', 50, companyY + 14, { width: 250 });
     doc.text(
       [businessProfile?.city, businessProfile?.province, businessProfile?.country].filter(Boolean).join(', '),
-      50, y + 28
+      50, companyY + 28, { width: 250 }
     );
-    doc.text(businessProfile?.email || '', 50, y + 42);
-    doc.text(businessProfile?.telephone_number || '', 50, y + 56);
+    doc.text(businessProfile?.email || '', 50, companyY + 42, { width: 250 });
+    doc.text(businessProfile?.telephone_number || '', 50, companyY + 56, { width: 250 });
     // Customer info (right column)
-    doc.font('Helvetica').fontSize(11).fillColor('#000000').text(salesOrder.customer_name || '', 320, y);
-    doc.text(salesOrder.customer_street_address || '', 320, y + 14);
+    doc.font('Helvetica').fontSize(11).fillColor('#000000');
+    const customerNameResult = doc.text(salesOrder.customer_name || '', 320, y, { width: 230 });
+    let customerY = Math.max(customerNameResult.y, y);
+    doc.text(salesOrder.customer_street_address || '', 320, customerY + 14, { width: 230 });
     doc.text(
       [salesOrder.customer_city, salesOrder.customer_province, salesOrder.customer_country].filter(Boolean).join(', '),
-      320, y + 28
+      320, customerY + 28, { width: 230 }
     );
-    doc.text(salesOrder.customer_email || '', 320, y + 42);
-    doc.text(salesOrder.customer_phone || '', 320, y + 56);
+    doc.text(salesOrder.customer_email || '', 320, customerY + 42, { width: 230 });
+    doc.text(salesOrder.customer_phone || '', 320, customerY + 56, { width: 230 });
     y += 72;
     // Horizontal line
     doc.moveTo(50, y).lineTo(550, y).strokeColor('#444444').lineWidth(1).stroke();
@@ -627,20 +631,31 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
     let sn = 1;
     salesOrder.lineItems.forEach((item: any) => {
       currentX = 50;
-      doc.text(sn.toString(), currentX, y, { width: colWidths[0], align: 'left' });
+      let rowY = y;
+      // SN
+      const snResult = doc.text(sn.toString(), currentX, rowY, { width: colWidths[0], align: 'left' });
       currentX += colWidths[0];
-      doc.text(item.part_number, currentX, y, { width: colWidths[1], align: 'left' });
+      // Part Number
+      const partNumberResult = doc.text(item.part_number, currentX, rowY, { width: colWidths[1], align: 'left' });
       currentX += colWidths[1];
-      doc.text(item.part_description, currentX, y, { width: colWidths[2], align: 'left' });
+      // Part Description
+      const partDescResult = doc.text(item.part_description, currentX, rowY, { width: colWidths[2], align: 'left' });
       currentX += colWidths[2];
-      doc.text(parseFloat(item.quantity_sold).toString(), currentX, y, { width: colWidths[3], align: 'left' });
+      // Find the max y after wrapping
+      let maxRowY = Math.max(snResult.y, partNumberResult.y, partDescResult.y);
+      // Quantity
+      doc.text(parseFloat(item.quantity_sold).toString(), currentX, rowY, { width: colWidths[3], align: 'left' });
       currentX += colWidths[3];
-      doc.text(item.unit, currentX, y, { width: colWidths[4], align: 'left' });
+      // Unit
+      doc.text(item.unit, currentX, rowY, { width: colWidths[4], align: 'left' });
       currentX += colWidths[4];
-      doc.text(parseFloat(item.unit_price).toFixed(2), currentX, y, { width: colWidths[5], align: 'right' });
+      // Unit Price
+      doc.text(parseFloat(item.unit_price).toFixed(2), currentX, rowY, { width: colWidths[5], align: 'right' });
       currentX += colWidths[5];
-      doc.text(parseFloat(item.line_amount).toFixed(2), currentX, y, { width: colWidths[6], align: 'right' });
-      y += 16;
+      // Line Total
+      doc.text(parseFloat(item.line_amount).toFixed(2), currentX, rowY, { width: colWidths[6], align: 'right' });
+      // Move y to the max y of the wrapped fields plus some padding
+      y = Math.max(maxRowY, rowY) + 8;
       // Draw row line
       doc.moveTo(50, y - 2).lineTo(550, y - 2).strokeColor('#eeeeee').stroke();
       sn++;

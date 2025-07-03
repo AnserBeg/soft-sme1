@@ -37,6 +37,7 @@ router.post('/', async (req: Request, res: Response) => {
         city,
         province,
         country,
+        postal_code,
         contact_person,
         telephone_number,
         email,
@@ -44,8 +45,8 @@ router.post('/', async (req: Request, res: Response) => {
     } = req.body;
     try {
         const result = await pool.query(
-            'INSERT INTO vendormaster (vendor_name, street_address, city, province, country, contact_person, telephone_number, email, website) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *',
-            [vendor_name, street_address, city, province, country, contact_person, telephone_number, email, website]
+            'INSERT INTO vendormaster (vendor_name, street_address, city, province, country, postal_code, contact_person, telephone_number, email, website) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *',
+            [vendor_name, street_address, city, province, country, postal_code, contact_person, telephone_number, email, website]
         );
         res.status(201).json({ message: 'Vendor added successfully!', vendor: result.rows[0] });
     } catch (err) {
@@ -63,6 +64,7 @@ router.put('/:id', async (req: Request, res: Response) => {
         city,
         province,
         country,
+        postal_code,
         contact_person,
         telephone_number,
         email,
@@ -70,8 +72,8 @@ router.put('/:id', async (req: Request, res: Response) => {
     } = req.body;
     try {
         const result = await pool.query(
-            'UPDATE vendormaster SET vendor_name = $1, street_address = $2, city = $3, province = $4, country = $5, contact_person = $6, telephone_number = $7, email = $8, website = $9, updated_at = CURRENT_TIMESTAMP WHERE vendor_id = $10 RETURNING *',
-            [vendor_name, street_address, city, province, country, contact_person, telephone_number, email, website, id]
+            'UPDATE vendormaster SET vendor_name = $1, street_address = $2, city = $3, province = $4, country = $5, postal_code = $6, contact_person = $7, telephone_number = $8, email = $9, website = $10, updated_at = CURRENT_TIMESTAMP WHERE vendor_id = $11 RETURNING *',
+            [vendor_name, street_address, city, province, country, postal_code, contact_person, telephone_number, email, website, id]
         );
         if (result.rows.length === 0) {
             return res.status(404).json({ error: 'Vendor not found' });
