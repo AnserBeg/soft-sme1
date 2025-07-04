@@ -51,12 +51,9 @@ router.post('/time-entries/clock-in', async (req: Request, res: Response) => {
   }
 
   try {
-    // Get default hourly rate from sales order
-    const soRes = await pool.query('SELECT default_hourly_rate FROM salesorderhistory WHERE sales_order_id = $1', [so_id]);
-    if (soRes.rows.length === 0) {
-      return res.status(404).json({ error: 'Sales Order not found' });
-    }
-    const unit_price = soRes.rows[0].default_hourly_rate || 0;
+    // Get global labour rate
+    const rateRes = await pool.query("SELECT value FROM global_settings WHERE key = 'labour_rate'");
+    const unit_price = rateRes.rows.length > 0 ? parseFloat(rateRes.rows[0].value) : 0;
 
     const result = await pool.query(
       'INSERT INTO time_entries (profile_id, sales_order_id, clock_in, unit_price) VALUES ($1, $2, NOW(), $3) RETURNING *',
