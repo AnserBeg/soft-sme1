@@ -184,6 +184,10 @@ router.put('/:id', async (req: Request, res: Response) => {
       console.log(`[PUT /api/sales-orders/${id}] Closing order`);
       await salesOrderService.closeOrder(Number(id), client);
       console.log(`[PUT /api/sales-orders/${id}] Order closed`);
+    } else if (status === 'Open') {
+      console.log(`[PUT /api/sales-orders/${id}] Reopening order`);
+      await salesOrderService.openOrder(Number(id), client);
+      console.log(`[PUT /api/sales-orders/${id}] Order reopened`);
     }
     await client.query('COMMIT');
     console.log(`[PUT /api/sales-orders/${id}] Transaction committed`);
