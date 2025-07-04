@@ -18,6 +18,7 @@ import salesOrderRoutes from './routes/salesOrderRoutes';
 import purchaseOrderRoutes from './routes/purchaseOrderRoutes';
 import employeeRoutes from './routes/employeeRoutes';
 import timeTrackingRoutes from './routes/timeTrackingRoutes';
+import globalSettingsRouter from './routes/globalSettingsRoutes';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -84,6 +85,9 @@ console.log('Registered employee routes');
 
 app.use('/api/time-tracking', authMiddleware, timeTrackingRoutes);
 console.log('Registered time tracking routes');
+
+app.use('/api/settings', authMiddleware, globalSettingsRouter);
+console.log('Registered global settings routes');
 
 // Database check endpoint
 app.get('/api/db-check', async (req, res) => {
