@@ -1845,13 +1845,13 @@ app.get('/api/quotes/:id/pdf', async (req, res) => {
     // Logo (top left)
     let y = 40;
     const logoPath = path.join(__dirname, 'assets', 'default-logo.png');
-    if (fs.existsSync(logoPath)) {
-      try {
-        doc.image(logoPath, 40, y, { fit: [200, 100] });
-      } catch (error) {
-        console.error('Error adding logo to PDF:', error);
-      }
-    } else {
+      if (fs.existsSync(logoPath)) {
+        try {
+          doc.image(logoPath, 40, y, { fit: [200, 100] });
+        } catch (error) {
+          console.error('Error adding logo to PDF:', error);
+        }
+      } else {
       console.warn('Default logo file not found:', logoPath);
     }
     // Business name and address (top right)

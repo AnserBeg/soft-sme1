@@ -283,12 +283,12 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
     // Logo (left) - always use bundled default logo
     const defaultLogoPath = path.join(__dirname, '../../assets/default-logo.png');
     if (fs.existsSync(defaultLogoPath)) {
-      try {
+        try {
         doc.image(defaultLogoPath, logoX, headerY, { fit: [logoWidth, logoHeight] });
-      } catch (error) {
-        console.error('Error adding logo to PDF:', error);
+        } catch (error) {
+          console.error('Error adding logo to PDF:', error);
+        }
       }
-    }
     // Company name (right of logo, vertically centered with logo)
     const fontSize = 16;
     // Company name slightly above vertical center of logo

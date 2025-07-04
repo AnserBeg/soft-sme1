@@ -17,7 +17,7 @@ import purchaseOrderRouter from './routes/purchaseOrderRoutes';
 import employeeRouter from './routes/employeeRoutes';
 import marginScheduleRouter from './routes/marginScheduleRoutes';
 import timeTrackingRouter from './routes/timeTrackingRoutes';
-import labourRateRouter from './routes/labourRateRoutes';
+import globalSettingsRouter from './routes/globalSettingsRoutes';
 
 // Load environment variables
 dotenv.config();
@@ -108,8 +108,8 @@ console.log('Registered employee routes');
 app.use('/api/time-tracking', authMiddleware, timeTrackingRouter);
 console.log('Registered time tracking routes');
 
-app.use('/api/labour-rate', authMiddleware, labourRateRouter);
-console.log('Registered labour rate routes');
+app.use('/api/settings', authMiddleware, globalSettingsRouter);
+console.log('Registered global settings routes');
 
 // Health check endpoint
 app.get('/health', (req, res) => {

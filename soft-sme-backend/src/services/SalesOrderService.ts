@@ -116,7 +116,7 @@ export class SalesOrderService {
     let startedTransaction = false;
     try {
       if (!clientArg) {
-        await client.query('BEGIN');
+      await client.query('BEGIN');
         startedTransaction = true;
       }
       const orderRes = await client.query('SELECT * FROM salesorderhistory WHERE sales_order_id = $1 FOR UPDATE', [orderId]);

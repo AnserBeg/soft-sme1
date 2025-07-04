@@ -83,7 +83,7 @@ router.get('/', async (req: Request, res: Response) => {
 
 // Create a new sales order
 router.post('/', async (req: Request, res: Response) => {
-  const { customer_id, sales_date, product_name, product_description, subtotal, total_gst_amount, total_amount, status, estimated_cost, default_hourly_rate, lineItems, user_id } = req.body;
+  const { customer_id, sales_date, product_name, product_description, subtotal, total_gst_amount, total_amount, status, estimated_cost, lineItems, user_id } = req.body;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -94,8 +94,8 @@ router.post('/', async (req: Request, res: Response) => {
     const { sequenceNumber, nnnnn } = await getNextSequenceNumberForYear(currentYear);
     const formattedSONumber = `SO-${currentYear}-${nnnnn.toString().padStart(5, '0')}`;
     const salesOrderQuery = `
-      INSERT INTO salesorderhistory (sales_order_id, sales_order_number, customer_id, sales_date, product_name, product_description, subtotal, total_gst_amount, total_amount, status, estimated_cost, default_hourly_rate, sequence_number)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13);
+      INSERT INTO salesorderhistory (sales_order_id, sales_order_number, customer_id, sales_date, product_name, product_description, subtotal, total_gst_amount, total_amount, status, estimated_cost, sequence_number)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12);
     `;
     const salesOrderValues = [
       newSalesOrderId,
@@ -109,7 +109,6 @@ router.post('/', async (req: Request, res: Response) => {
       total_amount,
       status || 'Open',
       estimated_cost,
-      default_hourly_rate,
       sequenceNumber,
     ];
     await client.query(salesOrderQuery, salesOrderValues);
