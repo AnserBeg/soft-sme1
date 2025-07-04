@@ -5,36 +5,38 @@ const router = express.Router();
 
 // Get time entries for a given date
 router.get('/time-entries', async (req: Request, res: Response) => {
-  const { date } = req.query;
+  const { date, profile_id } = req.query;
 
   if (!date) {
     return res.status(400).json({ error: 'Date query parameter is required' });
   }
 
   try {
-    const result = await pool.query(
-      `SELECT
-        te.id,
-        te.profile_id,
-        p.name as profile_name,
-        te.sales_order_id,
-        soh.sales_order_number,
-        te.clock_in,
-        te.clock_out,
-        te.duration,
-        te.unit_price
-      FROM
-        time_entries te
-      JOIN
-        profiles p ON te.profile_id = p.id
-      JOIN
-        salesorderhistory soh ON te.sales_order_id = soh.sales_order_id
-      WHERE
-        te.clock_in::date = $1
-      ORDER BY
-        te.clock_in DESC`,
-      [date]
-    );
+    let query = `SELECT
+      te.id,
+      te.profile_id,
+      p.name as profile_name,
+      te.sales_order_id,
+      soh.sales_order_number,
+      te.clock_in,
+      te.clock_out,
+      te.duration,
+      te.unit_price
+    FROM
+      time_entries te
+    JOIN
+      profiles p ON te.profile_id = p.id
+    JOIN
+      salesorderhistory soh ON te.sales_order_id = soh.sales_order_id
+    WHERE
+      te.clock_in::date = $1`;
+    const params: any[] = [date];
+    if (profile_id) {
+      query += ' AND te.profile_id = $2';
+      params.push(profile_id);
+    }
+    query += ' ORDER BY te.clock_in DESC';
+    const result = await pool.query(query, params);
     res.json(result.rows);
   } catch (err) {
     console.error('Error fetching time entries:', err);
