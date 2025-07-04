@@ -180,11 +180,14 @@ router.put('/:id', async (req: Request, res: Response) => {
     await salesOrderService.recalculateAndUpdateSummary(Number(id), client);
     console.log(`[PUT /api/sales-orders/${id}] Summary recalculated`);
     // Handle status change
-    if (status === 'Closed') {
+    // Only call closeOrder/openOrder if status is actually changing
+    const currentStatusRes = await client.query('SELECT status FROM salesorderhistory WHERE sales_order_id = $1', [id]);
+    const currentStatus = currentStatusRes.rows[0]?.status;
+    if (status === 'Closed' && currentStatus !== 'Closed') {
       console.log(`[PUT /api/sales-orders/${id}] Closing order`);
       await salesOrderService.closeOrder(Number(id), client);
       console.log(`[PUT /api/sales-orders/${id}] Order closed`);
-    } else if (status === 'Open') {
+    } else if (status === 'Open' && currentStatus === 'Closed') {
       console.log(`[PUT /api/sales-orders/${id}] Reopening order`);
       await salesOrderService.openOrder(Number(id), client);
       console.log(`[PUT /api/sales-orders/${id}] Order reopened`);
