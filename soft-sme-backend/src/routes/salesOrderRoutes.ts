@@ -161,47 +161,51 @@ router.get('/:id', async (req: Request, res: Response) => {
 // Update a sales order
 router.put('/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
-  const { lineItems, status, user_id } = req.body;
+  const { lineItems, status, user_id, ...salesOrderData } = req.body;
   const client = await pool.connect();
   try {
-    console.log(`[PUT /api/sales-orders/${id}] Begin update`);
     await client.query('BEGIN');
-    console.log(`[PUT /api/sales-orders/${id}] Transaction started`);
-    // Remove all existing line items for this order
-    await client.query('DELETE FROM salesorderlineitems WHERE sales_order_id = $1', [id]);
-    console.log(`[PUT /api/sales-orders/${id}] Deleted old line items`);
-    // Upsert all new line items
-    for (const item of lineItems) {
-      console.log(`[PUT /api/sales-orders/${id}] Upserting line item`, item.part_number);
-      await salesOrderService.upsertLineItem(Number(id), item, client);
+    // Update sales order header fields if provided
+    if (Object.keys(salesOrderData).length > 0) {
+      const updateFields = [];
+      const updateValues = [];
+      let paramCount = 1;
+      for (const [key, value] of Object.entries(salesOrderData)) {
+        if (value !== undefined && value !== null) {
+          updateFields.push(`${key} = $${paramCount}`);
+          updateValues.push(value);
+          paramCount++;
+        }
+      }
+      if (updateFields.length > 0) {
+        updateValues.push(id);
+        await client.query(
+          `UPDATE salesorderhistory SET ${updateFields.join(', ')} WHERE sales_order_id = $${paramCount}`,
+          updateValues
+        );
+      }
     }
-    console.log(`[PUT /api/sales-orders/${id}] All line items upserted`);
+    // Update line items with proper inventory management
+    if (lineItems && lineItems.length >= 0) {
+      await salesOrderService.updateSalesOrder(Number(id), lineItems, client);
+    }
     // Recalculate and update summary fields
     await salesOrderService.recalculateAndUpdateSummary(Number(id), client);
-    console.log(`[PUT /api/sales-orders/${id}] Summary recalculated`);
     // Handle status change
-    // Only call closeOrder/openOrder if status is actually changing
     const currentStatusRes = await client.query('SELECT status FROM salesorderhistory WHERE sales_order_id = $1', [id]);
     const currentStatus = currentStatusRes.rows[0]?.status;
     if (status === 'Closed' && currentStatus !== 'Closed') {
-      console.log(`[PUT /api/sales-orders/${id}] Closing order`);
       await salesOrderService.closeOrder(Number(id), client);
-      console.log(`[PUT /api/sales-orders/${id}] Order closed`);
     } else if (status === 'Open' && currentStatus === 'Closed') {
-      console.log(`[PUT /api/sales-orders/${id}] Reopening order`);
       await salesOrderService.openOrder(Number(id), client);
-      console.log(`[PUT /api/sales-orders/${id}] Order reopened`);
     }
     await client.query('COMMIT');
-    console.log(`[PUT /api/sales-orders/${id}] Transaction committed`);
     res.status(200).json({ message: 'Sales order updated successfully' });
   } catch (err: any) {
     await client.query('ROLLBACK');
-    console.error(`[PUT /api/sales-orders/${id}] Error:`, err);
     res.status(500).json({ error: err.message || 'Internal server error' });
   } finally {
     client.release();
-    console.log(`[PUT /api/sales-orders/${id}] Client released`);
   }
 });
 
