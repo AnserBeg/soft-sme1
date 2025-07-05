@@ -165,13 +165,25 @@ router.put('/:id', async (req: Request, res: Response) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    const allowedFields = [
+      'customer_id',
+      'sales_date',
+      'product_name',
+      'product_description',
+      'subtotal',
+      'total_gst_amount',
+      'total_amount',
+      'status',
+      'estimated_cost',
+      'sequence_number'
+    ];
     // Update sales order header fields if provided
     if (Object.keys(salesOrderData).length > 0) {
       const updateFields = [];
       const updateValues = [];
       let paramCount = 1;
       for (const [key, value] of Object.entries(salesOrderData)) {
-        if (value !== undefined && value !== null) {
+        if (allowedFields.includes(key) && value !== undefined && value !== null) {
           updateFields.push(`${key} = $${paramCount}`);
           updateValues.push(value);
           paramCount++;
