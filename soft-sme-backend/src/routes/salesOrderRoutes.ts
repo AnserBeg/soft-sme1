@@ -342,8 +342,8 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
     doc.font('Helvetica').fontSize(11).fillColor('#000000').text(salesOrder.product_name || '', 400, y);
     y += 18;
     doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Product Description:', 50, y);
-    doc.font('Helvetica').fontSize(11).fillColor('#000000').text(salesOrder.product_description || '', 170, y, { width: 370 });
-    y += 24;
+    const descResult = doc.font('Helvetica').fontSize(11).fillColor('#000000').text(salesOrder.product_description || '', 170, y, { width: 370 });
+    y = descResult.y + 8; // Move y below the wrapped description, with padding
     doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Sales Date:', 50, y);
     doc.font('Helvetica').fontSize(11).fillColor('#000000').text(
       salesOrder.sales_date ? new Date(salesOrder.sales_date).toLocaleDateString() : '',
