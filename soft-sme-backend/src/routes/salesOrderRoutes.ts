@@ -83,7 +83,7 @@ router.get('/', async (req: Request, res: Response) => {
 
 // Create a new sales order
 router.post('/', async (req: Request, res: Response) => {
-  const { customer_id, sales_date, product_name, product_description, subtotal, total_gst_amount, total_amount, status, estimated_cost, lineItems, user_id } = req.body;
+  const { customer_id, sales_date, product_name, product_description, terms, subtotal, total_gst_amount, total_amount, status, estimated_cost, lineItems, user_id } = req.body;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -94,8 +94,8 @@ router.post('/', async (req: Request, res: Response) => {
     const { sequenceNumber, nnnnn } = await getNextSequenceNumberForYear(currentYear);
     const formattedSONumber = `SO-${currentYear}-${nnnnn.toString().padStart(5, '0')}`;
     const salesOrderQuery = `
-      INSERT INTO salesorderhistory (sales_order_id, sales_order_number, customer_id, sales_date, product_name, product_description, subtotal, total_gst_amount, total_amount, status, estimated_cost, sequence_number)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12);
+      INSERT INTO salesorderhistory (sales_order_id, sales_order_number, customer_id, sales_date, product_name, product_description, terms, subtotal, total_gst_amount, total_amount, status, estimated_cost, sequence_number)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13);
     `;
     const salesOrderValues = [
       newSalesOrderId,
@@ -104,6 +104,7 @@ router.post('/', async (req: Request, res: Response) => {
       sales_date,
       product_name,
       product_description,
+      terms,
       subtotal,
       total_gst_amount,
       total_amount,
@@ -170,6 +171,7 @@ router.put('/:id', async (req: Request, res: Response) => {
       'sales_date',
       'product_name',
       'product_description',
+      'terms',
       'subtotal',
       'total_gst_amount',
       'total_amount',
@@ -416,8 +418,19 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
     doc.font('Helvetica-Bold').fontSize(13).fillColor('#000000').text('Total:', 400, y, { align: 'left', width: 80 });
     doc.font('Helvetica-Bold').fontSize(13).fillColor('#000000').text(parseFloat(salesOrder.total_amount).toFixed(2), 480, y, { align: 'right', width: 70 });
 
-    // --- Business Number at the bottom ---
+    // --- Terms Section ---
     y += 40;
+    if (salesOrder.terms && salesOrder.terms.trim()) {
+      doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Terms:', 50, y);
+      y += 16;
+      const termsResult = doc.font('Helvetica').fontSize(10).fillColor('#000000').text(salesOrder.terms, 50, y, { 
+        width: 500,
+        align: 'left'
+      });
+      y = termsResult.y + 20;
+    }
+
+    // --- Business Number at the bottom ---
     if (businessProfile && businessProfile.business_number) {
       doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text(`Business Number: ${businessProfile.business_number}`, 50, y, { align: 'left' });
     }
