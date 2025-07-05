@@ -280,17 +280,15 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
     let logoX = 50;
     let companyTitleX = logoX + logoWidth + 20;
     let companyTitleY = headerY + (logoHeight - 16) / 2; // Vertically center with logo
-    // Logo (left)
-    if (businessProfile && businessProfile.logo_url) {
-      const logoPath = path.join(__dirname, '../../', businessProfile.logo_url);
-      if (fs.existsSync(logoPath)) {
+    // Logo (left) - always use bundled default logo
+    const defaultLogoPath = path.join(__dirname, '../../assets/default-logo.png');
+    if (fs.existsSync(defaultLogoPath)) {
         try {
-          doc.image(logoPath, logoX, headerY, { fit: [logoWidth, logoHeight] });
+        doc.image(defaultLogoPath, logoX, headerY, { fit: [logoWidth, logoHeight] });
         } catch (error) {
           console.error('Error adding logo to PDF:', error);
         }
       }
-    }
     // Company name (right of logo, single line, smaller font)
     if (businessProfile) {
       doc.font('Helvetica-Bold').fontSize(16).fillColor('#000000').text(
