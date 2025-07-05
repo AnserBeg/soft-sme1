@@ -15,9 +15,9 @@ const inventoryService = new InventoryService(pool);
 router.get('/open', async (req: Request, res: Response) => {
   try {
     const result = await pool.query(
-      `SELECT soh.*, cm.customer_name 
+      `SELECT soh.*, COALESCE(cm.customer_name, 'Unknown Customer') as customer_name 
        FROM salesorderhistory soh
-       JOIN customermaster cm ON soh.customer_id = cm.customer_id
+       LEFT JOIN customermaster cm ON soh.customer_id = cm.customer_id
        WHERE soh.status = 'Open' ORDER BY soh.sales_date DESC`
     );
     res.json(result.rows);
@@ -38,9 +38,9 @@ router.get('/history', async (req: Request, res: Response) => {
     console.log('Direct SQL Result (Closed):', debugResult.rows);
 
     const result = await pool.query(
-      `SELECT soh.*, cm.customer_name 
+      `SELECT soh.*, COALESCE(cm.customer_name, 'Unknown Customer') as customer_name 
        FROM salesorderhistory soh
-       JOIN customermaster cm ON soh.customer_id = cm.customer_id
+       LEFT JOIN customermaster cm ON soh.customer_id = cm.customer_id
        WHERE soh.status = 'Closed' ORDER BY soh.sales_date DESC`
     );
     res.json(result.rows);
@@ -61,7 +61,7 @@ router.get('/', async (req: Request, res: Response) => {
     const debugResult = await pool.query("SELECT * FROM salesorderhistory WHERE status = 'Closed'");
     console.log('Direct SQL Result (Closed):', debugResult.rows);
     let query = `
-      SELECT soh.*, cm.customer_name
+      SELECT soh.*, COALESCE(cm.customer_name, 'Unknown Customer') as customer_name
       FROM salesorderhistory soh
       LEFT JOIN customermaster cm ON soh.customer_id = cm.customer_id
     `;
@@ -137,7 +137,7 @@ router.get('/:id', async (req: Request, res: Response) => {
   }
   try {
     const salesOrderResult = await pool.query(
-      `SELECT soh.*, cm.customer_name, soh.total_gst_amount as gst_amount
+      `SELECT soh.*, COALESCE(cm.customer_name, 'Unknown Customer') as customer_name, soh.total_gst_amount as gst_amount
        FROM salesorderhistory soh
        LEFT JOIN customermaster cm ON soh.customer_id = cm.customer_id
        WHERE soh.sales_order_id = $1`,
