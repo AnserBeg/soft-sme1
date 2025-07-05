@@ -27,42 +27,91 @@ describe('SalesOrderService', () => {
   });
 
   test('add line item and adjust inventory', async () => {
-    await salesOrderService.updateLineItem(testOrderId, testPart, 2);
+    await salesOrderService.upsertLineItem(testOrderId, {
+      part_number: testPart,
+      part_description: 'Test Part',
+      quantity: 2,
+      unit: 'EA',
+      unit_price: 10,
+      line_amount: 20
+    });
     const qty = await inventoryService.getOnHand(testPart);
     expect(qty).toBe(8);
   });
 
   test('increase line item and adjust inventory', async () => {
-    await salesOrderService.updateLineItem(testOrderId, testPart, 5);
+    await salesOrderService.upsertLineItem(testOrderId, {
+      part_number: testPart,
+      part_description: 'Test Part',
+      quantity: 5,
+      unit: 'EA',
+      unit_price: 10,
+      line_amount: 50
+    });
     const qty = await inventoryService.getOnHand(testPart);
     expect(qty).toBe(5);
   });
 
   test('decrease line item and adjust inventory', async () => {
-    await salesOrderService.updateLineItem(testOrderId, testPart, 3);
+    await salesOrderService.upsertLineItem(testOrderId, {
+      part_number: testPart,
+      part_description: 'Test Part',
+      quantity: 3,
+      unit: 'EA',
+      unit_price: 10,
+      line_amount: 30
+    });
     const qty = await inventoryService.getOnHand(testPart);
     expect(qty).toBe(7);
   });
 
   test('delete line item and restore inventory', async () => {
-    await salesOrderService.updateLineItem(testOrderId, testPart, 0);
+    await salesOrderService.upsertLineItem(testOrderId, {
+      part_number: testPart,
+      part_description: 'Test Part',
+      quantity: 0,
+      unit: 'EA',
+      unit_price: 10,
+      line_amount: 0
+    });
     const qty = await inventoryService.getOnHand(testPart);
     expect(qty).toBe(10);
   });
 
   test('oversell should error', async () => {
-    await expect(salesOrderService.updateLineItem(testOrderId, testPart, 20)).rejects.toThrow(/Insufficient stock/);
+    await expect(salesOrderService.upsertLineItem(testOrderId, {
+      part_number: testPart,
+      part_description: 'Test Part',
+      quantity: 20,
+      unit: 'EA',
+      unit_price: 10,
+      line_amount: 200
+    })).rejects.toThrow(/Insufficient inventory/);
   });
 
   test('cannot modify closed order', async () => {
     await salesOrderService.closeOrder(testOrderId);
-    await expect(salesOrderService.updateLineItem(testOrderId, testPart, 1)).rejects.toThrow(/closed order/);
+    await expect(salesOrderService.upsertLineItem(testOrderId, {
+      part_number: testPart,
+      part_description: 'Test Part',
+      quantity: 1,
+      unit: 'EA',
+      unit_price: 10,
+      line_amount: 10
+    })).rejects.toThrow(/Cannot modify closed order/);
   });
 
   test('delete order restores inventory', async () => {
     // Reopen and add line item
     await pool.query(`UPDATE salesorderhistory SET status = 'Open' WHERE sales_order_id = $1`, [testOrderId]);
-    await salesOrderService.updateLineItem(testOrderId, testPart, 2);
+    await salesOrderService.upsertLineItem(testOrderId, {
+      part_number: testPart,
+      part_description: 'Test Part',
+      quantity: 2,
+      unit: 'EA',
+      unit_price: 10,
+      line_amount: 20
+    });
     await salesOrderService.deleteOrder(testOrderId);
     const qty = await inventoryService.getOnHand(testPart);
     expect(qty).toBe(10);

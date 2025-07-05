@@ -99,6 +99,12 @@ export class SalesOrderService {
         await client.query('BEGIN');
         startedTransaction = true;
       }
+      
+      // Check if order is closed
+      const orderRes = await client.query('SELECT status FROM salesorderhistory WHERE sales_order_id = $1 FOR UPDATE', [orderId]);
+      if (orderRes.rows.length === 0) throw new Error('Sales order not found');
+      if (orderRes.rows[0].status === 'Closed') throw new Error('Cannot modify closed order');
+      
       const lineRes = await client.query('SELECT * FROM salesorderlineitems WHERE sales_order_id = $1 AND part_number = $2 FOR UPDATE', [orderId, item.part_number]);
       const oldQty = lineRes.rows.length > 0 ? lineRes.rows[0].quantity_sold : 0;
       const newQty = item.quantity || 0;
