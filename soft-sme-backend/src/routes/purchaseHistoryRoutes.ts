@@ -153,8 +153,8 @@ router.put('/:id', async (req: Request, res: Response) => {
           continue; // Skip this item if unit_cost or quantity is not a valid number
         }
 
-        // Convert part_number to lowercase for consistency
-        const normalizedPartNumber = item.part_number.toString().trim().toLowerCase();
+        // Convert part_number to uppercase for consistency
+        const normalizedPartNumber = item.part_number.toString().trim().toUpperCase();
         
         console.log(`purchaseHistoryRoutes: Updating inventory for part: '${normalizedPartNumber}' (quantity: ${quantity}, unit_cost: ${unitCost})`);
         // Use INSERT ... ON CONFLICT to handle both new and existing parts
@@ -175,8 +175,8 @@ router.put('/:id', async (req: Request, res: Response) => {
       // === REOPEN PO LOGIC ===
       for (const item of lineItems) {
         const quantity = parseInt(item.quantity, 10);
-        // Convert part_number to lowercase for consistency
-        const normalizedPartNumber = item.part_number.toString().trim().toLowerCase();
+        // Convert part_number to uppercase for consistency
+        const normalizedPartNumber = item.part_number.toString().trim().toUpperCase();
         // Check for negative inventory before proceeding
         const invResult = await client.query('SELECT quantity_on_hand FROM inventory WHERE part_number = $1', [normalizedPartNumber]);
         const currentQuantity = invResult.rows[0]?.quantity_on_hand || 0;
@@ -193,8 +193,8 @@ router.put('/:id', async (req: Request, res: Response) => {
       // If all checks pass, proceed with updates
       for (const item of lineItems) {
         const quantity = parseInt(item.quantity, 10);
-        // Convert part_number to lowercase for consistency
-        const normalizedPartNumber = item.part_number.toString().trim().toLowerCase();
+        // Convert part_number to uppercase for consistency
+        const normalizedPartNumber = item.part_number.toString().trim().toUpperCase();
         await client.query(
           `UPDATE inventory 
            SET quantity_on_hand = quantity_on_hand - $1

@@ -410,8 +410,8 @@ router.put('/:id', async (req, res) => {
          const { part_number, quantity, unit_cost } = item;
          if (!part_number) continue;
   
-         // Convert part_number to lowercase for consistency
-         const normalizedPartNumber = part_number.toString().trim().toLowerCase();
+         // Convert part_number to uppercase for consistency
+         const normalizedPartNumber = part_number.toString().trim().toUpperCase();
          
          console.log(`Updating inventory for part: '${normalizedPartNumber}' (quantity: ${quantity}, unit_cost: ${unit_cost})`);
          
@@ -433,8 +433,8 @@ router.put('/:id', async (req, res) => {
        console.log(`PO ${id} transitioning to Open. Reverting inventory quantities...`);
        for (const item of lineItems) {
          if (item.part_number) {
-           // Convert part_number to lowercase for consistency
-           const normalizedPartNumber = item.part_number.toString().trim().toLowerCase();
+           // Convert part_number to uppercase for consistency
+           const normalizedPartNumber = item.part_number.toString().trim().toUpperCase();
            await client.query(
             'UPDATE "inventory" SET quantity_on_hand = quantity_on_hand - $1 WHERE part_number = $2',
             [item.quantity, normalizedPartNumber]

@@ -70,8 +70,8 @@ router.post('/', async (req: Request, res: Response) => {
     return res.status(400).json({ error: 'Part type must be either "stock" or "supply"' });
   }
 
-  // Convert part_number to lowercase for consistency
-  const normalizedPartNumber = part_number.toString().trim().toLowerCase();
+  // Convert part_number to uppercase for consistency
+  const normalizedPartNumber = part_number.toString().trim().toUpperCase();
 
   try {
     const result = await pool.query(
@@ -191,7 +191,7 @@ router.post('/upload-csv', upload.single('csvFile'), async (req: Request, res: R
           }
 
           // Clean and validate data
-          const partNumber = data.part_number.toString().trim().toLowerCase();
+          const partNumber = data.part_number.toString().trim().toUpperCase();
           const partDescription = data.part_description.toString().trim();
           const unit = data.unit ? data.unit.toString().trim() : 'Each';
           const quantity = parseFloat(data.quantity) || 0;
