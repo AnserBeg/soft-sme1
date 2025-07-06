@@ -374,7 +374,8 @@ router.post('/upload-csv', upload.single('csvFile'), async (req: Request, res: R
 router.get('/csv-template', (req: Request, res: Response) => {
   const csvTemplate = `part_number,part_description,unit,quantity,last_unit_cost,reorder_point,part_type
 ABC123,Sample Part Description,Each,10,25.50,5,stock
-XYZ789,Another Part,cm,5,15.75,2,supply`;
+XYZ789,Another Part,cm,5,15.75,2,supply
+LIQ001,Liquid Product,L,20,12.00,5,stock`;
 
   res.setHeader('Content-Type', 'text/csv');
   res.setHeader('Content-Disposition', 'attachment; filename="inventory_template.csv"');
