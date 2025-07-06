@@ -89,6 +89,16 @@ router.post('/time-entries/clock-in', async (req, res) => {
   try {
     await client.query('BEGIN');
 
+    // Check if the user is already clocked in to any sales order
+    const openEntryResult = await client.query(
+      'SELECT * FROM time_entries WHERE profile_id = $1 AND clock_out IS NULL',
+      [profile_id]
+    );
+    if (openEntryResult.rows.length > 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'You are already clocked in to a sales order. Please clock out before clocking in again.' });
+    }
+
     // Get the default hourly rate from the sales order
     const soResult = await client.query(
       'SELECT default_hourly_rate FROM salesorderhistory WHERE sales_order_id = $1',
