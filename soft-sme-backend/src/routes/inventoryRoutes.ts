@@ -74,6 +74,20 @@ router.post('/', async (req: Request, res: Response) => {
   const normalizedPartNumber = part_number.toString().trim().toUpperCase();
 
   try {
+    // Check if part number already exists
+    const existingResult = await pool.query(
+      'SELECT part_number FROM inventory WHERE part_number = $1',
+      [normalizedPartNumber]
+    );
+    
+    if (existingResult.rows.length > 0) {
+      console.log('inventoryRoutes: Duplicate part number detected:', normalizedPartNumber);
+      return res.status(409).json({ 
+        error: 'Part number already exists',
+        details: `A part with number "${normalizedPartNumber}" already exists in the inventory.`
+      });
+    }
+
     const result = await pool.query(
       'INSERT INTO inventory (part_number, part_description, unit, last_unit_cost, quantity_on_hand, reorder_point, part_type) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
       [normalizedPartNumber, part_description, unit, last_unit_cost, quantity_on_hand, reorder_point, part_type]
@@ -90,16 +104,17 @@ router.post('/', async (req: Request, res: Response) => {
 // Delete an inventory item by part_number
 router.delete('/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
-  console.log('inventoryRoutes: Received DELETE request for part_number:', id);
+  const decodedPartNumber = decodeURIComponent(id);
+  console.log('inventoryRoutes: Received DELETE request for part_number:', decodedPartNumber);
   
   try {
     const result = await pool.query(
       'DELETE FROM inventory WHERE part_number = $1 RETURNING *',
-      [id]
+      [decodedPartNumber]
     );
     
     if (result.rows.length === 0) {
-      console.log('inventoryRoutes: Part not found for deletion:', id);
+      console.log('inventoryRoutes: Part not found for deletion:', decodedPartNumber);
       return res.status(404).json({ error: 'Inventory item not found' });
     }
     
@@ -114,10 +129,11 @@ router.delete('/:id', async (req: Request, res: Response) => {
 // Add this after the DELETE route
 router.put('/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
+  const decodedPartNumber = decodeURIComponent(id);
   const { quantity_on_hand, reorder_point, last_unit_cost, part_description } = req.body;
   try {
     // Check if the item exists
-    const existing = await pool.query('SELECT * FROM inventory WHERE part_number = $1', [id]);
+    const existing = await pool.query('SELECT * FROM inventory WHERE part_number = $1', [decodedPartNumber]);
     if (existing.rows.length === 0) {
       return res.status(404).json({ error: 'Inventory item not found' });
     }
@@ -148,7 +164,7 @@ router.put('/:id', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'No valid fields to update' });
     }
 
-    values.push(id);
+    values.push(decodedPartNumber);
 
     const updateQuery = `UPDATE inventory SET ${fields.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE part_number = $${idx} RETURNING *`;
     const result = await pool.query(updateQuery, values);
