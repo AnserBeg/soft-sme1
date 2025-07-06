@@ -70,10 +70,13 @@ router.post('/', async (req: Request, res: Response) => {
     return res.status(400).json({ error: 'Part type must be either "stock" or "supply"' });
   }
 
+  // Convert part_number to lowercase for consistency
+  const normalizedPartNumber = part_number.toString().trim().toLowerCase();
+
   try {
     const result = await pool.query(
       'INSERT INTO inventory (part_number, part_description, unit, last_unit_cost, quantity_on_hand, reorder_point, part_type) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
-      [part_number, part_description, unit, last_unit_cost, quantity_on_hand, reorder_point, part_type]
+      [normalizedPartNumber, part_description, unit, last_unit_cost, quantity_on_hand, reorder_point, part_type]
     );
     const newItem = result.rows[0];
     console.log('inventoryRoutes: Successfully added new item:', newItem);
@@ -188,7 +191,7 @@ router.post('/upload-csv', upload.single('csvFile'), async (req: Request, res: R
           }
 
           // Clean and validate data
-          const partNumber = data.part_number.toString().trim();
+          const partNumber = data.part_number.toString().trim().toLowerCase();
           const partDescription = data.part_description.toString().trim();
           const unit = data.unit ? data.unit.toString().trim() : 'Each';
           const quantity = parseFloat(data.quantity) || 0;

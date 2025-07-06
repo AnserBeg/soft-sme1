@@ -410,7 +410,10 @@ router.put('/:id', async (req, res) => {
          const { part_number, quantity, unit_cost } = item;
          if (!part_number) continue;
   
-         console.log(`Updating inventory for part: '${part_number}' (quantity: ${quantity}, unit_cost: ${unit_cost})`);
+         // Convert part_number to lowercase for consistency
+         const normalizedPartNumber = part_number.toString().trim().toLowerCase();
+         
+         console.log(`Updating inventory for part: '${normalizedPartNumber}' (quantity: ${quantity}, unit_cost: ${unit_cost})`);
          
          await client.query(
            `INSERT INTO "inventory" (part_number, quantity_on_hand, last_unit_cost, part_description, unit)
@@ -420,7 +423,7 @@ router.put('/:id', async (req, res) => {
               quantity_on_hand = "inventory".quantity_on_hand + $2,
               last_unit_cost = $3,
               updated_at = NOW();`,
-           [part_number, quantity, unit_cost, item.part_description, item.unit]
+           [normalizedPartNumber, quantity, unit_cost, item.part_description, item.unit]
          );
       }
     }
@@ -430,9 +433,11 @@ router.put('/:id', async (req, res) => {
        console.log(`PO ${id} transitioning to Open. Reverting inventory quantities...`);
        for (const item of lineItems) {
          if (item.part_number) {
+           // Convert part_number to lowercase for consistency
+           const normalizedPartNumber = item.part_number.toString().trim().toLowerCase();
            await client.query(
             'UPDATE "inventory" SET quantity_on_hand = quantity_on_hand - $1 WHERE part_number = $2',
-            [item.quantity, item.part_number]
+            [item.quantity, normalizedPartNumber]
            );
          }
        }

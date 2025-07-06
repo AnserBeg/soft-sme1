@@ -153,7 +153,10 @@ router.put('/:id', async (req: Request, res: Response) => {
           continue; // Skip this item if unit_cost or quantity is not a valid number
         }
 
-        console.log(`purchaseHistoryRoutes: Updating inventory for part: '${item.part_number}' (quantity: ${quantity}, unit_cost: ${unitCost})`);
+        // Convert part_number to lowercase for consistency
+        const normalizedPartNumber = item.part_number.toString().trim().toLowerCase();
+        
+        console.log(`purchaseHistoryRoutes: Updating inventory for part: '${normalizedPartNumber}' (quantity: ${quantity}, unit_cost: ${unitCost})`);
         // Use INSERT ... ON CONFLICT to handle both new and existing parts
         await client.query(
           `INSERT INTO inventory (part_number, part_description, unit, last_unit_cost, quantity_on_hand) 
@@ -164,35 +167,39 @@ router.put('/:id', async (req: Request, res: Response) => {
              last_unit_cost = EXCLUDED.last_unit_cost,
              part_description = EXCLUDED.part_description,
              unit = EXCLUDED.unit`,
-          [item.part_number, item.part_description, item.unit, unitCost, quantity]
+          [normalizedPartNumber, item.part_description, item.unit, unitCost, quantity]
         );
-        console.log(`purchaseHistoryRoutes: Inventory update for part '${item.part_number}' completed.`);
+        console.log(`purchaseHistoryRoutes: Inventory update for part '${normalizedPartNumber}' completed.`);
       }
     } else if (status === 'Open' && oldStatus === 'Closed') {
       // === REOPEN PO LOGIC ===
       for (const item of lineItems) {
         const quantity = parseInt(item.quantity, 10);
+        // Convert part_number to lowercase for consistency
+        const normalizedPartNumber = item.part_number.toString().trim().toLowerCase();
         // Check for negative inventory before proceeding
-        const invResult = await client.query('SELECT quantity_on_hand FROM inventory WHERE part_number = $1', [item.part_number]);
+        const invResult = await client.query('SELECT quantity_on_hand FROM inventory WHERE part_number = $1', [normalizedPartNumber]);
         const currentQuantity = invResult.rows[0]?.quantity_on_hand || 0;
         if (currentQuantity < quantity) {
           await client.query('ROLLBACK');
           console.error('Negative inventory error for part:', item);
           return res.status(400).json({
             error: 'Inventory cannot be negative',
-            message: `Cannot reopen PO. Reopening would result in negative inventory for part: ${item.part_number || '[unknown part]'}`,
-            part_number: item.part_number || null
+            message: `Cannot reopen PO. Reopening would result in negative inventory for part: ${normalizedPartNumber || '[unknown part]'}`,
+            part_number: normalizedPartNumber || null
           });
         }
       }
       // If all checks pass, proceed with updates
       for (const item of lineItems) {
         const quantity = parseInt(item.quantity, 10);
+        // Convert part_number to lowercase for consistency
+        const normalizedPartNumber = item.part_number.toString().trim().toLowerCase();
         await client.query(
           `UPDATE inventory 
            SET quantity_on_hand = quantity_on_hand - $1
            WHERE part_number = $2`,
-          [quantity, item.part_number]
+          [quantity, normalizedPartNumber]
         );
       }
     }
