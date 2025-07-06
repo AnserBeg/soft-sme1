@@ -169,9 +169,10 @@ router.post('/upload-csv', upload.single('csvFile'), async (req: Request, res: R
   }
 
   const results: any[] = [];
+  const processedItems: { [key: string]: any } = {};
   const errors: string[] = [];
   const warnings: string[] = [];
-  const processedItems: { [key: string]: any } = {};
+  let rowNumber = 0; // Track actual row number from CSV file
 
   try {
     // Read and parse CSV file
@@ -184,9 +185,20 @@ router.post('/upload-csv', upload.single('csvFile'), async (req: Request, res: R
       fs.createReadStream(req.file.path)
         .pipe(csv())
         .on('data', (data) => {
+          rowNumber++; // Increment row number for each row processed
+          
+          // Skip empty rows (rows where all fields are empty or whitespace)
+          const hasData = Object.values(data).some(value => 
+            value && value.toString().trim().length > 0
+          );
+          
+          if (!hasData) {
+            return; // Skip this row
+          }
+          
           // Validate required fields
           if (!data.part_number || !data.part_description) {
-            errors.push(`Row ${results.length + 1}: Missing required fields (part_number and part_description are mandatory)`);
+            errors.push(`Row ${rowNumber}: Missing required fields (part_number and part_description are mandatory)`);
             return;
           }
 
@@ -201,23 +213,23 @@ router.post('/upload-csv', upload.single('csvFile'), async (req: Request, res: R
 
           // Validate part type
           if (partType && !['stock', 'supply'].includes(partType)) {
-            errors.push(`Row ${results.length + 1}: Invalid part_type "${partType}". Must be "stock" or "supply"`);
+            errors.push(`Row ${rowNumber}: Invalid part_type "${partType}". Must be "stock" or "supply"`);
             return;
           }
 
           // Validate numeric fields
           if (quantity < 0) {
-            errors.push(`Row ${results.length + 1}: Quantity cannot be negative`);
+            errors.push(`Row ${rowNumber}: Quantity cannot be negative`);
             return;
           }
 
           if (lastUnitCost < 0) {
-            errors.push(`Row ${results.length + 1}: Last unit cost cannot be negative`);
+            errors.push(`Row ${rowNumber}: Last unit cost cannot be negative`);
             return;
           }
 
           if (reorderPoint < 0) {
-            errors.push(`Row ${results.length + 1}: Reorder point cannot be negative`);
+            errors.push(`Row ${rowNumber}: Reorder point cannot be negative`);
             return;
           }
 
@@ -227,7 +239,7 @@ router.post('/upload-csv', upload.single('csvFile'), async (req: Request, res: R
             
             // Check if units are different
             if (existing.unit !== unit) {
-              errors.push(`Row ${results.length + 1}: Duplicate part_number "${partNumber}" with different units: "${existing.unit}" vs "${unit}"`);
+              errors.push(`Row ${rowNumber}: Duplicate part_number "${partNumber}" with different units: "${existing.unit}" vs "${unit}"`);
               return;
             }
 
@@ -236,7 +248,7 @@ router.post('/upload-csv', upload.single('csvFile'), async (req: Request, res: R
             existing.lastUnitCost = Math.max(existing.lastUnitCost, lastUnitCost);
             existing.reorderPoint = Math.max(existing.reorderPoint, reorderPoint);
             
-            warnings.push(`Row ${results.length + 1}: Merged duplicate part_number "${partNumber}" - quantities combined, higher unit cost retained`);
+            warnings.push(`Row ${rowNumber}: Merged duplicate part_number "${partNumber}" - quantities combined, higher unit cost retained`);
             return;
           }
 
@@ -249,7 +261,7 @@ router.post('/upload-csv', upload.single('csvFile'), async (req: Request, res: R
             lastUnitCost,
             reorderPoint,
             partType,
-            rowNumber: results.length + 1
+            rowNumber: rowNumber // Store the actual row number
           };
 
           results.push({
