@@ -1,0 +1,13 @@
+# Cloudflare Tunnel Configuration
+tunnel: soft-sme-backend
+credentials-file: .cloudflared/credentials.json
+
+ingress:
+  # Route API requests to your backend
+  - hostname: api.soft-sme.your-domain.com
+    service: http://localhost:3000
+    originRequest:
+      noTLSVerify: true
+  
+  # Catch-all rule for unmatched requests
+  - service: http_status:404 

@@ -249,6 +249,8 @@ router.get('/time-entries/open', async (req: Request, res: Response) => {
 router.get('/reports/time-entries', async (req: Request, res: Response) => {
   const { from, to, profile, so } = req.query;
   try {
+    console.log('Time entry report request:', { from, to, profile, so });
+    
     let query = `
       SELECT 
         te.*,
@@ -273,7 +275,12 @@ router.get('/reports/time-entries', async (req: Request, res: Response) => {
 
     query += ' ORDER BY te.clock_in DESC';
 
+    console.log('Executing query:', query);
+    console.log('Query parameters:', params);
+    
     const result = await pool.query(query, params);
+    console.log('Query result count:', result.rows.length);
+    
     res.json(result.rows);
   } catch (error) {
     console.error('Error generating time entry report:', error);
