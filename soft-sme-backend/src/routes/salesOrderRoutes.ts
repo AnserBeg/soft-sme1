@@ -444,6 +444,7 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
 
 // Export sales orders to PDF
 router.get('/export/pdf', async (req: Request, res: Response) => {
+  console.log('Sales orders PDF export endpoint hit');
   try {
     const { status } = req.query;
     let query = `
@@ -527,8 +528,9 @@ router.get('/export/pdf', async (req: Request, res: Response) => {
 
     doc.end();
   } catch (err) {
-    console.error('salesOrderRoutes: Error generating PDF:', err);
-    res.status(500).json({ error: 'Internal server error during PDF generation' });
+    const error = err as Error;
+    console.error('salesOrderRoutes: Error generating PDF:', error);
+    res.status(500).json({ error: 'Internal server error during PDF generation', details: error.message, stack: error.stack });
   }
 });
 

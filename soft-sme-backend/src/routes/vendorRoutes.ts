@@ -19,6 +19,7 @@ router.get('/', async (req: Request, res: Response) => {
 
 // Export vendors to PDF
 router.get('/export/pdf', async (req: Request, res: Response) => {
+  console.log('Vendor PDF export endpoint hit');
   try {
     const result = await pool.query('SELECT * FROM vendormaster ORDER BY vendor_name ASC');
     const vendors = result.rows;
@@ -87,7 +88,7 @@ router.get('/export/pdf', async (req: Request, res: Response) => {
     doc.end();
   } catch (err) {
     console.error('vendorRoutes: Error generating PDF:', err);
-    res.status(500).json({ error: 'Internal server error during PDF generation' });
+    res.status(500).json({ error: 'Internal server error during PDF generation', details: err.message, stack: err.stack });
   }
 });
 

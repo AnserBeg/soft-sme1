@@ -22,6 +22,7 @@ router.get('/', async (req: Request, res: Response) => {
 
 // Export products to PDF
 router.get('/export/pdf', async (req: Request, res: Response) => {
+  console.log('Product PDF export endpoint hit');
   try {
     const result = await pool.query('SELECT product_id, product_name, product_description, created_at, updated_at FROM products ORDER BY product_name ASC');
     const products = result.rows;
@@ -83,7 +84,7 @@ router.get('/export/pdf', async (req: Request, res: Response) => {
     doc.end();
   } catch (err) {
     console.error('productRoutes: Error generating PDF:', err);
-    res.status(500).json({ error: 'Internal server error during PDF generation' });
+    res.status(500).json({ error: 'Internal server error during PDF generation', details: err.message, stack: err.stack });
   }
 });
 

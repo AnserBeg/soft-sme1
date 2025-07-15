@@ -250,6 +250,7 @@ router.get('/latest-po-number', async (req: Request, res: Response) => {
 
 // Export purchase history to PDF
 router.get('/export/pdf', async (req: Request, res: Response) => {
+  console.log('Purchase history PDF export endpoint hit');
   try {
     const { status } = req.query;
     let query = `
@@ -351,8 +352,9 @@ router.get('/export/pdf', async (req: Request, res: Response) => {
 
     doc.end();
   } catch (err) {
-    console.error('purchaseHistoryRoutes: Error generating PDF:', err);
-    res.status(500).json({ error: 'Internal server error during PDF generation' });
+    const error = err as Error;
+    console.error('purchaseHistoryRoutes: Error generating PDF:', error);
+    res.status(500).json({ error: 'Internal server error during PDF generation', details: error.message, stack: error.stack });
   }
 });
 

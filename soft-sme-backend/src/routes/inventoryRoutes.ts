@@ -401,6 +401,7 @@ router.post('/upload-csv', upload.single('csvFile'), async (req: Request, res: R
 
 // Export inventory to PDF
 router.get('/export/pdf', async (req: Request, res: Response) => {
+  console.log('Inventory PDF export endpoint hit');
   try {
     const { partType } = req.query;
     let query = 'SELECT * FROM inventory';
@@ -481,7 +482,7 @@ router.get('/export/pdf', async (req: Request, res: Response) => {
     doc.end();
   } catch (err) {
     console.error('inventoryRoutes: Error generating PDF:', err);
-    res.status(500).json({ error: 'Internal server error during PDF generation' });
+    res.status(500).json({ error: 'Internal server error during PDF generation', details: err.message, stack: err.stack });
   }
 });
 

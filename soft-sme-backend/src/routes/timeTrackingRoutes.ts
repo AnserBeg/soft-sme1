@@ -292,6 +292,7 @@ router.get('/reports/time-entries', async (req: Request, res: Response) => {
 
 // Export time entry report
 router.get('/reports/time-entries/export', async (req: Request, res: Response) => {
+  console.log('Time tracking report export endpoint hit');
   const { from, to, profile, so, format } = req.query;
   
   try {
@@ -412,8 +413,9 @@ router.get('/reports/time-entries/export', async (req: Request, res: Response) =
       res.send(csv);
     }
   } catch (error) {
-    console.error('Error exporting time entry report:', error);
-    res.status(500).json({ error: 'Internal server error during export' });
+    const err = error as Error;
+    console.error('Error exporting time entry report:', err);
+    res.status(500).json({ error: 'Internal server error during export', details: err.message, stack: err.stack });
   }
 });
 

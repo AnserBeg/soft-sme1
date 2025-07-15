@@ -24,6 +24,7 @@ router.get('/', async (req: Request, res: Response) => {
 
 // Export customers to PDF
 router.get('/export/pdf', async (req: Request, res: Response) => {
+  console.log('Customer PDF export endpoint hit');
   try {
     const result = await pool.query('SELECT customer_id, customer_name, street_address, city, province, country, postal_code, contact_person, telephone_number, email, website FROM customermaster ORDER BY customer_name ASC');
     const customers = result.rows;
@@ -92,7 +93,7 @@ router.get('/export/pdf', async (req: Request, res: Response) => {
     doc.end();
   } catch (err) {
     console.error('customerRoutes: Error generating PDF:', err);
-    res.status(500).json({ error: 'Internal server error during PDF generation' });
+    res.status(500).json({ error: 'Internal server error during PDF generation', details: err.message, stack: err.stack });
   }
 });
 

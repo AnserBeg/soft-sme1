@@ -237,6 +237,7 @@ router.post('/:id/convert-to-sales-order', async (req: Request, res: Response) =
 
 // Export quotes to PDF
 router.get('/export/pdf', async (req: Request, res: Response) => {
+  console.log('Quote history PDF export endpoint hit');
   try {
     const result = await pool.query(`
       SELECT 
@@ -308,13 +309,15 @@ router.get('/export/pdf', async (req: Request, res: Response) => {
 
     doc.end();
   } catch (err) {
-    console.error('quoteRoutes: Error generating PDF:', err);
-    res.status(500).json({ error: 'Internal server error during PDF generation' });
+    const error = err as Error;
+    console.error('quoteRoutes: Error generating PDF (history):', error);
+    res.status(500).json({ error: 'Internal server error during PDF generation', details: error.message, stack: error.stack });
   }
 });
 
 // Download quote PDF
 router.get('/:id/pdf', async (req: Request, res: Response) => {
+  console.log('Quote PDF export endpoint hit');
   const { id } = req.params;
   try {
     // Fetch business profile
@@ -472,8 +475,9 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
 
     doc.end();
   } catch (err) {
-    console.error(`Error generating PDF for quote ${id}:`, err);
-    res.status(500).json({ error: 'Internal server error during PDF generation' });
+    const error = err as Error;
+    console.error('quoteRoutes: Error generating PDF (single):', error);
+    res.status(500).json({ error: 'Internal server error during PDF generation', details: error.message, stack: error.stack });
   }
 });
 
