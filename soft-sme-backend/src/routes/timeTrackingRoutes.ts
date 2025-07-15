@@ -1,5 +1,7 @@
 import express, { Request, Response } from 'express';
 import { pool } from '../db';
+import PDFDocument from 'pdfkit';
+import Papa from 'papaparse';
 
 const router = express.Router();
 
@@ -285,6 +287,133 @@ router.get('/reports/time-entries', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Error generating time entry report:', error);
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Export time entry report
+router.get('/reports/time-entries/export', async (req: Request, res: Response) => {
+  const { from, to, profile, so, format } = req.query;
+  
+  try {
+    console.log('Time entry export request:', { from, to, profile, so, format });
+    
+    let query = `
+      SELECT 
+        te.*,
+        p.name as profile_name,
+        soh.sales_order_number,
+        DATE(te.clock_in) as date
+      FROM time_entries te
+      JOIN profiles p ON te.profile_id = p.id
+      JOIN salesorderhistory soh ON te.sales_order_id = soh.sales_order_id
+      WHERE DATE(te.clock_in) BETWEEN $1 AND $2
+    `;
+    const params = [from, to];
+
+    if (profile && profile !== '') {
+      query += ' AND te.profile_id = $' + (params.length + 1);
+      params.push(profile);
+    }
+    if (so && so !== '') {
+      query += ' AND te.sales_order_id = $' + (params.length + 1);
+      params.push(so);
+    }
+
+    query += ' ORDER BY te.clock_in DESC';
+    
+    const result = await pool.query(query, params);
+    const timeEntries = result.rows;
+
+    if (format === 'pdf') {
+      // Generate PDF
+      const doc = new PDFDocument({ margin: 50 });
+      const filename = `time_entries_report_${new Date().toISOString().split('T')[0]}.pdf`;
+      res.setHeader('Content-disposition', `attachment; filename="${filename}"`);
+      res.setHeader('Content-type', 'application/pdf');
+      doc.pipe(res);
+
+      // Header
+      doc.font('Helvetica-Bold').fontSize(20).text('Time Entries Report', { align: 'center' });
+      doc.moveDown();
+      doc.font('Helvetica').fontSize(12).text(`Generated on: ${new Date().toLocaleDateString()}`, { align: 'center' });
+      doc.moveDown();
+      doc.font('Helvetica').fontSize(10).text(`Date Range: ${from} to ${to}`, { align: 'center' });
+      doc.moveDown(2);
+
+      // Table headers
+      const headers = ['Profile', 'Sales Order', 'Date', 'Clock In', 'Clock Out', 'Duration (hrs)'];
+      const columnWidths = [100, 120, 80, 80, 80, 80];
+      let y = doc.y;
+
+      // Draw header row
+      doc.font('Helvetica-Bold').fontSize(9);
+      let x = 50;
+      headers.forEach((header, index) => {
+        doc.text(header, x, y, { width: columnWidths[index] });
+        x += columnWidths[index];
+      });
+
+      y += 20;
+      doc.moveTo(50, y).lineTo(550, y).stroke();
+
+      // Draw data rows
+      doc.font('Helvetica').fontSize(8);
+      timeEntries.forEach((entry, index) => {
+        if (y > doc.page.height - 100) {
+          doc.addPage();
+          y = 50;
+        }
+
+        x = 50;
+        doc.text(entry.profile_name || '', x, y, { width: columnWidths[0] });
+        x += columnWidths[0];
+        doc.text(entry.sales_order_number || '', x, y, { width: columnWidths[1] });
+        x += columnWidths[1];
+        
+        const date = entry.date ? new Date(entry.date).toLocaleDateString() : '';
+        doc.text(date, x, y, { width: columnWidths[2] });
+        x += columnWidths[2];
+        
+        const clockIn = entry.clock_in ? new Date(entry.clock_in).toLocaleTimeString() : '';
+        doc.text(clockIn, x, y, { width: columnWidths[3] });
+        x += columnWidths[3];
+        
+        const clockOut = entry.clock_out ? new Date(entry.clock_out).toLocaleTimeString() : '-';
+        doc.text(clockOut, x, y, { width: columnWidths[4] });
+        x += columnWidths[4];
+        
+        const duration = entry.duration && !isNaN(Number(entry.duration)) ? Number(entry.duration).toFixed(2) : '-';
+        doc.text(duration, x, y, { width: columnWidths[5] });
+
+        y += 15;
+        
+        // Draw row separator
+        doc.moveTo(50, y).lineTo(550, y).stroke();
+        y += 5;
+      });
+
+      doc.end();
+    } else {
+      // Generate CSV
+      const csvData = timeEntries.map(entry => ({
+        Profile: entry.profile_name || '',
+        'Sales Order': entry.sales_order_number || '',
+        Date: entry.date ? new Date(entry.date).toLocaleDateString() : '',
+        'Clock In': entry.clock_in ? new Date(entry.clock_in).toLocaleTimeString() : '',
+        'Clock Out': entry.clock_out ? new Date(entry.clock_out).toLocaleTimeString() : '',
+        'Duration (hrs)': entry.duration && !isNaN(Number(entry.duration)) ? Number(entry.duration).toFixed(2) : ''
+      }));
+
+      const csv = Papa.unparse(csvData);
+      const filename = `time_entries_report_${new Date().toISOString().split('T')[0]}.csv`;
+      
+      res.setHeader('Content-disposition', `attachment; filename="${filename}"`);
+      res.setHeader('Content-type', 'text/csv');
+      res.send(csv);
+    }
+  } catch (error) {
+    console.error('Error exporting time entry report:', error);
+    res.status(500).json({ error: 'Internal server error during export' });
   }
 });
 
