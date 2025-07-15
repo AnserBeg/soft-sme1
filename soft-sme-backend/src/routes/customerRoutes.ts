@@ -92,8 +92,9 @@ router.get('/export/pdf', async (req: Request, res: Response) => {
 
     doc.end();
   } catch (err) {
-    console.error('customerRoutes: Error generating PDF:', err);
-    res.status(500).json({ error: 'Internal server error during PDF generation', details: err.message, stack: err.stack });
+    const error = err as Error;
+    console.error('customerRoutes: Error generating PDF:', error);
+    res.status(500).json({ error: 'Internal server error during PDF generation', details: error.message, stack: error.stack });
   }
 });
 
