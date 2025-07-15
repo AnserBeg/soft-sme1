@@ -17,7 +17,7 @@ router.get('/', async (req: Request, res: Response) => {
   }
 });
 
-// Export vendors to PDF
+// Export vendors to PDF (in-memory buffer method)
 router.get('/export/pdf', async (req: Request, res: Response) => {
   console.log('Vendor PDF export endpoint hit at', new Date().toISOString());
   try {
@@ -26,10 +26,15 @@ router.get('/export/pdf', async (req: Request, res: Response) => {
 
     const PDFDocument = require('pdfkit');
     const doc = new PDFDocument({ margin: 50 });
-    const filename = `vendors_${new Date().toISOString().split('T')[0]}.pdf`;
-    res.setHeader('Content-disposition', `attachment; filename="${filename}"`);
-    res.setHeader('Content-type', 'application/pdf');
-    doc.pipe(res);
+    const chunks: Buffer[] = [];
+    doc.on('data', (chunk: Buffer) => chunks.push(chunk));
+    doc.on('end', () => {
+      const pdfBuffer = Buffer.concat(chunks);
+      res.setHeader('Content-disposition', `attachment; filename="vendors_${new Date().toISOString().split('T')[0]}.pdf"`);
+      res.setHeader('Content-type', 'application/pdf');
+      res.end(pdfBuffer);
+      console.log('PDF buffer sent for vendor export');
+    });
 
     // Header
     doc.font('Helvetica-Bold').fontSize(20).text('Vendor List', { align: 'center' });
@@ -86,9 +91,7 @@ router.get('/export/pdf', async (req: Request, res: Response) => {
       y += 5;
     });
 
-    console.log('About to end PDF stream for vendor export');
     doc.end();
-    console.log('PDF stream ended for vendor export');
   } catch (err) {
     const error = err as Error;
     console.error('vendorRoutes: Error generating PDF:', error);
