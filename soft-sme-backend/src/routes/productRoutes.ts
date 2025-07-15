@@ -1,5 +1,6 @@
 import express, { Request, Response } from 'express';
 import { pool } from '../db';
+import PDFDocument from 'pdfkit';
 
 const router = express.Router();
 
@@ -16,6 +17,73 @@ router.get('/', async (req: Request, res: Response) => {
   } catch (err) {
     console.error('productRoutes: Error fetching products:', err);
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Export products to PDF
+router.get('/export/pdf', async (req: Request, res: Response) => {
+  try {
+    const result = await pool.query('SELECT product_id, product_name, product_description, created_at, updated_at FROM products ORDER BY product_name ASC');
+    const products = result.rows;
+
+    const doc = new PDFDocument({ margin: 50 });
+    const filename = `products_${new Date().toISOString().split('T')[0]}.pdf`;
+    res.setHeader('Content-disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-type', 'application/pdf');
+    doc.pipe(res);
+
+    // Header
+    doc.font('Helvetica-Bold').fontSize(20).text('Product List', { align: 'center' });
+    doc.moveDown();
+    doc.font('Helvetica').fontSize(12).text(`Generated on: ${new Date().toLocaleDateString()}`, { align: 'center' });
+    doc.moveDown(2);
+
+    // Table headers
+    const headers = ['Product ID', 'Product Name', 'Description', 'Created Date'];
+    const columnWidths = [100, 200, 250, 100];
+    let y = doc.y;
+
+    // Draw header row
+    doc.font('Helvetica-Bold').fontSize(10);
+    let x = 50;
+    headers.forEach((header, index) => {
+      doc.text(header, x, y, { width: columnWidths[index] });
+      x += columnWidths[index];
+    });
+
+    y += 20;
+    doc.moveTo(50, y).lineTo(700, y).stroke();
+
+    // Draw data rows
+    doc.font('Helvetica').fontSize(9);
+    products.forEach((product, index) => {
+      if (y > doc.page.height - 100) {
+        doc.addPage();
+        y = 50;
+      }
+
+      x = 50;
+      doc.text(product.product_id || '', x, y, { width: columnWidths[0] });
+      x += columnWidths[0];
+      doc.text(product.product_name || '', x, y, { width: columnWidths[1] });
+      x += columnWidths[1];
+      doc.text(product.product_description || '', x, y, { width: columnWidths[2] });
+      x += columnWidths[2];
+      
+      const createdDate = product.created_at ? new Date(product.created_at).toLocaleDateString() : '';
+      doc.text(createdDate, x, y, { width: columnWidths[3] });
+
+      y += 15;
+      
+      // Draw row separator
+      doc.moveTo(50, y).lineTo(700, y).stroke();
+      y += 5;
+    });
+
+    doc.end();
+  } catch (err) {
+    console.error('productRoutes: Error generating PDF:', err);
+    res.status(500).json({ error: 'Internal server error during PDF generation' });
   }
 });
 

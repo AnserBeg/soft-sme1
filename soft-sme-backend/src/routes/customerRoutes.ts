@@ -1,5 +1,6 @@
 import express, { Request, Response } from 'express';
 import { pool } from '../db';
+import PDFDocument from 'pdfkit';
 
 const router = express.Router();
 
@@ -18,6 +19,80 @@ router.get('/', async (req: Request, res: Response) => {
   } catch (err) {
     console.error('customerRoutes: Error fetching customers:', err);
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Export customers to PDF
+router.get('/export/pdf', async (req: Request, res: Response) => {
+  try {
+    const result = await pool.query('SELECT customer_id, customer_name, street_address, city, province, country, postal_code, contact_person, telephone_number, email, website FROM customermaster ORDER BY customer_name ASC');
+    const customers = result.rows;
+
+    const doc = new PDFDocument({ margin: 50 });
+    const filename = `customers_${new Date().toISOString().split('T')[0]}.pdf`;
+    res.setHeader('Content-disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-type', 'application/pdf');
+    doc.pipe(res);
+
+    // Header
+    doc.font('Helvetica-Bold').fontSize(20).text('Customer List', { align: 'center' });
+    doc.moveDown();
+    doc.font('Helvetica').fontSize(12).text(`Generated on: ${new Date().toLocaleDateString()}`, { align: 'center' });
+    doc.moveDown(2);
+
+    // Table headers
+    const headers = ['Customer Name', 'Contact Person', 'Email', 'Phone', 'Address'];
+    const columnWidths = [120, 100, 120, 80, 150];
+    let y = doc.y;
+
+    // Draw header row
+    doc.font('Helvetica-Bold').fontSize(10);
+    let x = 50;
+    headers.forEach((header, index) => {
+      doc.text(header, x, y, { width: columnWidths[index] });
+      x += columnWidths[index];
+    });
+
+    y += 20;
+    doc.moveTo(50, y).lineTo(520, y).stroke();
+
+    // Draw data rows
+    doc.font('Helvetica').fontSize(9);
+    customers.forEach((customer, index) => {
+      if (y > doc.page.height - 100) {
+        doc.addPage();
+        y = 50;
+      }
+
+      x = 50;
+      doc.text(customer.customer_name || '', x, y, { width: columnWidths[0] });
+      x += columnWidths[0];
+      doc.text(customer.contact_person || '', x, y, { width: columnWidths[1] });
+      x += columnWidths[1];
+      doc.text(customer.email || '', x, y, { width: columnWidths[2] });
+      x += columnWidths[2];
+      doc.text(customer.telephone_number || '', x, y, { width: columnWidths[3] });
+      x += columnWidths[3];
+      
+      const address = [
+        customer.street_address,
+        customer.city,
+        customer.province,
+        customer.country
+      ].filter(Boolean).join(', ');
+      doc.text(address, x, y, { width: columnWidths[4] });
+
+      y += 15;
+      
+      // Draw row separator
+      doc.moveTo(50, y).lineTo(520, y).stroke();
+      y += 5;
+    });
+
+    doc.end();
+  } catch (err) {
+    console.error('customerRoutes: Error generating PDF:', err);
+    res.status(500).json({ error: 'Internal server error during PDF generation' });
   }
 });
 

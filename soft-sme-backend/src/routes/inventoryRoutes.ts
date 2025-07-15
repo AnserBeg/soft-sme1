@@ -4,6 +4,7 @@ import multer from 'multer';
 import csv from 'csv-parser';
 import fs from 'fs';
 import path from 'path';
+import PDFDocument from 'pdfkit';
 
 const router = express.Router();
 
@@ -395,6 +396,92 @@ router.post('/upload-csv', upload.single('csvFile'), async (req: Request, res: R
       error: 'Error processing CSV file',
       details: error instanceof Error ? error.message : 'Unknown error'
     });
+  }
+});
+
+// Export inventory to PDF
+router.get('/export/pdf', async (req: Request, res: Response) => {
+  try {
+    const { partType } = req.query;
+    let query = 'SELECT * FROM inventory';
+    let params: any[] = [];
+
+    // Add part_type filter if provided
+    if (partType && (partType === 'stock' || partType === 'supply')) {
+      query += ' WHERE part_type = $1';
+      params.push(partType);
+    }
+
+    query += ' ORDER BY part_number ASC';
+    
+    const result = await pool.query(query, params);
+    const inventory = result.rows;
+
+    const doc = new PDFDocument({ margin: 50 });
+    const typeLabel = partType === 'stock' ? 'Stock' : partType === 'supply' ? 'Supply' : 'Inventory';
+    const filename = `${typeLabel.toLowerCase()}_${new Date().toISOString().split('T')[0]}.pdf`;
+    res.setHeader('Content-disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-type', 'application/pdf');
+    doc.pipe(res);
+
+    // Header
+    doc.font('Helvetica-Bold').fontSize(20).text(`${typeLabel} List`, { align: 'center' });
+    doc.moveDown();
+    doc.font('Helvetica').fontSize(12).text(`Generated on: ${new Date().toLocaleDateString()}`, { align: 'center' });
+    doc.moveDown(2);
+
+    // Table headers
+    const headers = ['Part #', 'Description', 'Qty on Hand', 'Unit', 'Unit Cost', 'Reorder Point', 'Value'];
+    const columnWidths = [80, 150, 80, 60, 80, 80, 80];
+    let y = doc.y;
+
+    // Draw header row
+    doc.font('Helvetica-Bold').fontSize(9);
+    let x = 50;
+    headers.forEach((header, index) => {
+      doc.text(header, x, y, { width: columnWidths[index] });
+      x += columnWidths[index];
+    });
+
+    y += 20;
+    doc.moveTo(50, y).lineTo(570, y).stroke();
+
+    // Draw data rows
+    doc.font('Helvetica').fontSize(8);
+    inventory.forEach((item, index) => {
+      if (y > doc.page.height - 100) {
+        doc.addPage();
+        y = 50;
+      }
+
+      x = 50;
+      doc.text(item.part_number || '', x, y, { width: columnWidths[0] });
+      x += columnWidths[0];
+      doc.text(item.part_description || '', x, y, { width: columnWidths[1] });
+      x += columnWidths[1];
+      doc.text((item.quantity_on_hand || 0).toString(), x, y, { width: columnWidths[2] });
+      x += columnWidths[2];
+      doc.text(item.unit || '', x, y, { width: columnWidths[3] });
+      x += columnWidths[3];
+      doc.text(`$${(item.last_unit_cost || 0).toFixed(2)}`, x, y, { width: columnWidths[4] });
+      x += columnWidths[4];
+      doc.text((item.reorder_point || 0).toString(), x, y, { width: columnWidths[5] });
+      x += columnWidths[5];
+      
+      const value = (item.quantity_on_hand || 0) * (item.last_unit_cost || 0);
+      doc.text(`$${value.toFixed(2)}`, x, y, { width: columnWidths[6] });
+
+      y += 15;
+      
+      // Draw row separator
+      doc.moveTo(50, y).lineTo(570, y).stroke();
+      y += 5;
+    });
+
+    doc.end();
+  } catch (err) {
+    console.error('inventoryRoutes: Error generating PDF:', err);
+    res.status(500).json({ error: 'Internal server error during PDF generation' });
   }
 });
 

@@ -442,4 +442,94 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
   }
 });
 
+// Export sales orders to PDF
+router.get('/export/pdf', async (req: Request, res: Response) => {
+  try {
+    const { status } = req.query;
+    let query = `
+      SELECT soh.*, COALESCE(cm.customer_name, 'Unknown Customer') as customer_name
+      FROM salesorderhistory soh
+      LEFT JOIN customermaster cm ON soh.customer_id = cm.customer_id
+    `;
+    const params: any[] = [];
+    if (status && status !== 'all') {
+      query += ' WHERE LOWER(soh.status) = $1';
+      params.push(String(status).toLowerCase());
+    }
+    query += ' ORDER BY soh.sales_date DESC';
+    
+    const result = await pool.query(query, params);
+    const salesOrders = result.rows;
+
+    const doc = new PDFDocument({ margin: 50 });
+    const filename = `sales_orders_${new Date().toISOString().split('T')[0]}.pdf`;
+    res.setHeader('Content-disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-type', 'application/pdf');
+    doc.pipe(res);
+
+    // Header
+    doc.font('Helvetica-Bold').fontSize(20).text('Sales Orders', { align: 'center' });
+    doc.moveDown();
+    doc.font('Helvetica').fontSize(12).text(`Generated on: ${new Date().toLocaleDateString()}`, { align: 'center' });
+    doc.moveDown(2);
+
+    // Table headers
+    const headers = ['Sales Order #', 'Customer', 'Product Name', 'Product Description', 'Subtotal', 'GST', 'Total', 'Status'];
+    const columnWidths = [100, 120, 100, 120, 80, 60, 80, 60];
+    let y = doc.y;
+
+    // Draw header row
+    doc.font('Helvetica-Bold').fontSize(9);
+    let x = 50;
+    headers.forEach((header, index) => {
+      doc.text(header, x, y, { width: columnWidths[index] });
+      x += columnWidths[index];
+    });
+
+    y += 20;
+    doc.moveTo(50, y).lineTo(720, y).stroke();
+
+    // Draw data rows
+    doc.font('Helvetica').fontSize(8);
+    salesOrders.forEach((order, index) => {
+      if (y > doc.page.height - 100) {
+        doc.addPage();
+        y = 50;
+      }
+
+      x = 50;
+      doc.text(order.sales_order_number || '', x, y, { width: columnWidths[0] });
+      x += columnWidths[0];
+      doc.text(order.customer_name || '', x, y, { width: columnWidths[1] });
+      x += columnWidths[1];
+      doc.text(order.product_name || '', x, y, { width: columnWidths[2] });
+      x += columnWidths[2];
+      doc.text(order.product_description || '', x, y, { width: columnWidths[3] });
+      x += columnWidths[3];
+      
+      doc.text(`$${(order.subtotal || 0).toFixed(2)}`, x, y, { width: columnWidths[4] });
+      x += columnWidths[4];
+      
+      doc.text(`$${(order.total_gst_amount || 0).toFixed(2)}`, x, y, { width: columnWidths[5] });
+      x += columnWidths[5];
+      
+      doc.text(`$${(order.total_amount || 0).toFixed(2)}`, x, y, { width: columnWidths[6] });
+      x += columnWidths[6];
+      
+      doc.text(order.status || '', x, y, { width: columnWidths[7] });
+
+      y += 15;
+      
+      // Draw row separator
+      doc.moveTo(50, y).lineTo(720, y).stroke();
+      y += 5;
+    });
+
+    doc.end();
+  } catch (err) {
+    console.error('salesOrderRoutes: Error generating PDF:', err);
+    res.status(500).json({ error: 'Internal server error during PDF generation' });
+  }
+});
+
 export default router; 

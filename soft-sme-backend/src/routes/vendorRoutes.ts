@@ -1,5 +1,8 @@
 import express, { Request, Response } from 'express';
 import { pool } from '../db';
+import PDFDocument from 'pdfkit';
+import fs from 'fs';
+import path from 'path';
 
 const router = express.Router();
 
@@ -11,6 +14,80 @@ router.get('/', async (req: Request, res: Response) => {
   } catch (err) {
     console.error('vendorRoutes: Error fetching vendors:', err);
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Export vendors to PDF
+router.get('/export/pdf', async (req: Request, res: Response) => {
+  try {
+    const result = await pool.query('SELECT * FROM vendormaster ORDER BY vendor_name ASC');
+    const vendors = result.rows;
+
+    const doc = new PDFDocument({ margin: 50 });
+    const filename = `vendors_${new Date().toISOString().split('T')[0]}.pdf`;
+    res.setHeader('Content-disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-type', 'application/pdf');
+    doc.pipe(res);
+
+    // Header
+    doc.font('Helvetica-Bold').fontSize(20).text('Vendor List', { align: 'center' });
+    doc.moveDown();
+    doc.font('Helvetica').fontSize(12).text(`Generated on: ${new Date().toLocaleDateString()}`, { align: 'center' });
+    doc.moveDown(2);
+
+    // Table headers
+    const headers = ['Vendor Name', 'Contact Person', 'Email', 'Phone', 'Address'];
+    const columnWidths = [120, 100, 120, 80, 150];
+    let y = doc.y;
+
+    // Draw header row
+    doc.font('Helvetica-Bold').fontSize(10);
+    let x = 50;
+    headers.forEach((header, index) => {
+      doc.text(header, x, y, { width: columnWidths[index] });
+      x += columnWidths[index];
+    });
+
+    y += 20;
+    doc.moveTo(50, y).lineTo(520, y).stroke();
+
+    // Draw data rows
+    doc.font('Helvetica').fontSize(9);
+    vendors.forEach((vendor, index) => {
+      if (y > doc.page.height - 100) {
+        doc.addPage();
+        y = 50;
+      }
+
+      x = 50;
+      doc.text(vendor.vendor_name || '', x, y, { width: columnWidths[0] });
+      x += columnWidths[0];
+      doc.text(vendor.contact_person || '', x, y, { width: columnWidths[1] });
+      x += columnWidths[1];
+      doc.text(vendor.email || '', x, y, { width: columnWidths[2] });
+      x += columnWidths[2];
+      doc.text(vendor.telephone_number || '', x, y, { width: columnWidths[3] });
+      x += columnWidths[3];
+      
+      const address = [
+        vendor.street_address,
+        vendor.city,
+        vendor.province,
+        vendor.country
+      ].filter(Boolean).join(', ');
+      doc.text(address, x, y, { width: columnWidths[4] });
+
+      y += 15;
+      
+      // Draw row separator
+      doc.moveTo(50, y).lineTo(520, y).stroke();
+      y += 5;
+    });
+
+    doc.end();
+  } catch (err) {
+    console.error('vendorRoutes: Error generating PDF:', err);
+    res.status(500).json({ error: 'Internal server error during PDF generation' });
   }
 });
 

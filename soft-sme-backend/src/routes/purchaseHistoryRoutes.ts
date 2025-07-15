@@ -248,6 +248,114 @@ router.get('/latest-po-number', async (req: Request, res: Response) => {
   }
 });
 
+// Export purchase history to PDF
+router.get('/export/pdf', async (req: Request, res: Response) => {
+  try {
+    const { status } = req.query;
+    let query = `
+      SELECT 
+        ph.*,
+        CAST(ph.subtotal AS FLOAT) as subtotal,
+        CAST(ph.total_gst_amount AS FLOAT) as total_gst_amount,
+        CAST(ph.total_amount AS FLOAT) as total_amount,
+        vm.vendor_name,
+        ph.gst_rate
+      FROM purchasehistory ph 
+      JOIN vendormaster vm ON ph.vendor_id = vm.vendor_id 
+    `;
+
+    const whereClauses = [];
+    const queryParams = [];
+    let paramIndex = 1;
+
+    if (status && status !== 'all') {
+      whereClauses.push(`LOWER(ph.status) = $${paramIndex++}`);
+      queryParams.push(String(status).toLowerCase());
+    }
+
+    if (whereClauses.length > 0) {
+      query += ' WHERE ' + whereClauses.join(' AND ');
+    }
+
+    query += ' ORDER BY ph.created_at DESC';
+
+    const result = await pool.query(query, queryParams);
+    const purchaseOrders = result.rows;
+
+    const doc = new PDFDocument({ margin: 50 });
+    const filename = `purchase_orders_${new Date().toISOString().split('T')[0]}.pdf`;
+    res.setHeader('Content-disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-type', 'application/pdf');
+    doc.pipe(res);
+
+    // Header
+    doc.font('Helvetica-Bold').fontSize(20).text('Purchase Orders', { align: 'center' });
+    doc.moveDown();
+    doc.font('Helvetica').fontSize(12).text(`Generated on: ${new Date().toLocaleDateString()}`, { align: 'center' });
+    doc.moveDown(2);
+
+    // Table headers
+    const headers = ['Purchase #', 'Vendor', 'Bill Date', 'Bill #', 'Subtotal', 'GST', 'Total', 'Status'];
+    const columnWidths = [100, 120, 80, 80, 80, 60, 80, 60];
+    let y = doc.y;
+
+    // Draw header row
+    doc.font('Helvetica-Bold').fontSize(9);
+    let x = 50;
+    headers.forEach((header, index) => {
+      doc.text(header, x, y, { width: columnWidths[index] });
+      x += columnWidths[index];
+    });
+
+    y += 20;
+    doc.moveTo(50, y).lineTo(670, y).stroke();
+
+    // Draw data rows
+    doc.font('Helvetica').fontSize(8);
+    purchaseOrders.forEach((order, index) => {
+      if (y > doc.page.height - 100) {
+        doc.addPage();
+        y = 50;
+      }
+
+      x = 50;
+      doc.text(order.purchase_number || '', x, y, { width: columnWidths[0] });
+      x += columnWidths[0];
+      doc.text(order.vendor_name || '', x, y, { width: columnWidths[1] });
+      x += columnWidths[1];
+      
+      const billDate = order.purchase_date ? new Date(order.purchase_date).toLocaleDateString() : '';
+      doc.text(billDate, x, y, { width: columnWidths[2] });
+      x += columnWidths[2];
+      
+      doc.text(order.purchase_number || '', x, y, { width: columnWidths[3] });
+      x += columnWidths[3];
+      
+      doc.text(`$${(order.subtotal || 0).toFixed(2)}`, x, y, { width: columnWidths[4] });
+      x += columnWidths[4];
+      
+      doc.text(`$${(order.total_gst_amount || 0).toFixed(2)}`, x, y, { width: columnWidths[5] });
+      x += columnWidths[5];
+      
+      doc.text(`$${(order.total_amount || 0).toFixed(2)}`, x, y, { width: columnWidths[6] });
+      x += columnWidths[6];
+      
+      doc.text(order.status || '', x, y, { width: columnWidths[7] });
+
+      y += 15;
+      
+      // Draw row separator
+      doc.moveTo(50, y).lineTo(670, y).stroke();
+      y += 5;
+    });
+
+    doc.end();
+  } catch (err) {
+    console.error('purchaseHistoryRoutes: Error generating PDF:', err);
+    res.status(500).json({ error: 'Internal server error during PDF generation' });
+  }
+});
+
 // Generate PDF for a specific purchase order (MOVE THIS BEFORE /:id route)
 router.get('/:id/pdf', async (req: Request, res: Response) => {
   const { id } = req.params;

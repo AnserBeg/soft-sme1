@@ -235,6 +235,84 @@ router.post('/:id/convert-to-sales-order', async (req: Request, res: Response) =
   }
 });
 
+// Export quotes to PDF
+router.get('/export/pdf', async (req: Request, res: Response) => {
+  try {
+    const result = await pool.query(`
+      SELECT 
+        q.*,
+        c.customer_name,
+        CAST(q.estimated_cost AS FLOAT) as estimated_cost,
+        q.quote_number
+      FROM quotes q
+      JOIN customermaster c ON q.customer_id = c.customer_id
+      ORDER BY q.quote_date DESC;
+    `);
+    const quotes = result.rows;
+
+    const doc = new PDFDocument({ margin: 50 });
+    const filename = `quotes_${new Date().toISOString().split('T')[0]}.pdf`;
+    res.setHeader('Content-disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-type', 'application/pdf');
+    doc.pipe(res);
+
+    // Header
+    doc.font('Helvetica-Bold').fontSize(20).text('Quote History', { align: 'center' });
+    doc.moveDown();
+    doc.font('Helvetica').fontSize(12).text(`Generated on: ${new Date().toLocaleDateString()}`, { align: 'center' });
+    doc.moveDown(2);
+
+    // Table headers
+    const headers = ['Quote #', 'Customer', 'Product', 'Estimated Cost', 'Quote Date'];
+    const columnWidths = [100, 150, 150, 100, 100];
+    let y = doc.y;
+
+    // Draw header row
+    doc.font('Helvetica-Bold').fontSize(10);
+    let x = 50;
+    headers.forEach((header, index) => {
+      doc.text(header, x, y, { width: columnWidths[index] });
+      x += columnWidths[index];
+    });
+
+    y += 20;
+    doc.moveTo(50, y).lineTo(600, y).stroke();
+
+    // Draw data rows
+    doc.font('Helvetica').fontSize(9);
+    quotes.forEach((quote, index) => {
+      if (y > doc.page.height - 100) {
+        doc.addPage();
+        y = 50;
+      }
+
+      x = 50;
+      doc.text(quote.quote_number || '', x, y, { width: columnWidths[0] });
+      x += columnWidths[0];
+      doc.text(quote.customer_name || '', x, y, { width: columnWidths[1] });
+      x += columnWidths[1];
+      doc.text(quote.product_name || '', x, y, { width: columnWidths[2] });
+      x += columnWidths[2];
+      doc.text(`$${(quote.estimated_cost || 0).toFixed(2)}`, x, y, { width: columnWidths[3] });
+      x += columnWidths[3];
+      
+      const quoteDate = quote.quote_date ? new Date(quote.quote_date).toLocaleDateString() : '';
+      doc.text(quoteDate, x, y, { width: columnWidths[4] });
+
+      y += 15;
+      
+      // Draw row separator
+      doc.moveTo(50, y).lineTo(600, y).stroke();
+      y += 5;
+    });
+
+    doc.end();
+  } catch (err) {
+    console.error('quoteRoutes: Error generating PDF:', err);
+    res.status(500).json({ error: 'Internal server error during PDF generation' });
+  }
+});
+
 // Download quote PDF
 router.get('/:id/pdf', async (req: Request, res: Response) => {
   const { id } = req.params;
