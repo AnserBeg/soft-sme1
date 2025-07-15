@@ -19,11 +19,12 @@ router.get('/', async (req: Request, res: Response) => {
 
 // Export vendors to PDF
 router.get('/export/pdf', async (req: Request, res: Response) => {
-  console.log('Vendor PDF export endpoint hit');
+  console.log('Vendor PDF export endpoint hit at', new Date().toISOString());
   try {
     const result = await pool.query('SELECT * FROM vendormaster ORDER BY vendor_name ASC');
     const vendors = result.rows;
 
+    const PDFDocument = require('pdfkit');
     const doc = new PDFDocument({ margin: 50 });
     const filename = `vendors_${new Date().toISOString().split('T')[0]}.pdf`;
     res.setHeader('Content-disposition', `attachment; filename="${filename}"`);
@@ -85,12 +86,27 @@ router.get('/export/pdf', async (req: Request, res: Response) => {
       y += 5;
     });
 
+    console.log('About to end PDF stream for vendor export');
     doc.end();
+    console.log('PDF stream ended for vendor export');
   } catch (err) {
     const error = err as Error;
     console.error('vendorRoutes: Error generating PDF:', error);
     res.status(500).json({ error: 'Internal server error during PDF generation', details: error.message, stack: error.stack });
   }
+});
+
+// Minimal PDF test endpoint for debugging
+router.get('/export/pdf-test', (req, res) => {
+  console.log('Vendor minimal PDF test endpoint hit at', new Date().toISOString());
+  const PDFDocument = require('pdfkit');
+  const doc = new PDFDocument();
+  res.setHeader('Content-disposition', 'attachment; filename="test.pdf"');
+  res.setHeader('Content-type', 'application/pdf');
+  doc.pipe(res);
+  doc.text('Test PDF');
+  doc.end();
+  console.log('Minimal PDF stream ended for vendor export');
 });
 
 // Get a specific vendor by ID
