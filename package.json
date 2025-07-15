@@ -12,6 +12,7 @@
   "main": "dist-electron/main.cjs",
   "devDependencies": {
     "@types/jest": "^30.0.0",
+    "@types/unzipper": "^0.10.11",
     "jest": "^30.0.4",
     "ts-jest": "^29.4.0"
   }

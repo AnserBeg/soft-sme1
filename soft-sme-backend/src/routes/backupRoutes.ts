@@ -3,9 +3,44 @@ import { authMiddleware } from '../middleware/authMiddleware';
 import { exec } from 'child_process';
 import fs from 'fs';
 import path from 'path';
-import * as archiver from 'archiver';
+import archiver from 'archiver';
+// @ts-ignore
+import unzipper from 'unzipper';
 
 const router = express.Router();
+
+interface BackupComponent {
+  database: string | null;
+  uploads: string | null;
+  config: string | null;
+}
+
+interface BackupManifest {
+  backup_timestamp: string;
+  backup_type: string;
+  components: BackupComponent;
+  system_info: {
+    node_version: string;
+    platform: string;
+    arch: string;
+  };
+}
+
+interface Backup {
+  manifest: string;
+  timestamp: string;
+  components: BackupComponent;
+  system_info: {
+    node_version: string;
+    platform: string;
+    arch: string;
+  };
+  size: number;
+}
+
+function isValidDate(d: any): d is Date {
+  return d instanceof Date && !isNaN(d.getTime());
+}
 
 // Get list of available backups
 router.get('/list', authMiddleware, async (req: Request, res: Response) => {
@@ -19,9 +54,9 @@ router.get('/list', authMiddleware, async (req: Request, res: Response) => {
     const files = fs.readdirSync(backupDir);
     const manifests = files.filter(f => f.startsWith('backup_manifest_'));
     
-    const backups = manifests.map(manifest => {
+    const backups: Backup[] = manifests.map(manifest => {
       const manifestPath = path.join(backupDir, manifest);
-      const manifestData = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+      const manifestData: BackupManifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
       return {
         manifest,
         timestamp: manifestData.backup_timestamp,
@@ -155,7 +190,7 @@ router.post('/create', authMiddleware, async (req: Request, res: Response) => {
     }
 
     // Create backup manifest
-    const manifest = {
+    const manifest: BackupManifest = {
       backup_timestamp: timestamp,
       backup_type: 'complete',
       components: {
@@ -218,11 +253,11 @@ router.delete('/delete/:manifest', authMiddleware, async (req: Request, res: Res
     }
 
     // Read manifest to get component files
-    const manifestData = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    const manifestData: BackupManifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
     const filesToDelete = [manifest];
 
     // Add component files to deletion list
-    Object.values(manifestData.components).forEach((component: any) => {
+    Object.values(manifestData.components).forEach((component: string | null) => {
       if (component) {
         filesToDelete.push(component);
       }
@@ -254,7 +289,7 @@ router.post('/restore/:manifest', authMiddleware, async (req: Request, res: Resp
       return res.status(404).json({ error: 'Backup not found' });
     }
 
-    const manifestData = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    const manifestData: BackupManifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
     const results: any = {};
 
     // Restore database
@@ -303,7 +338,7 @@ router.post('/restore/:manifest', authMiddleware, async (req: Request, res: Resp
 
           await new Promise<void>((resolve, reject) => {
             const input = fs.createReadStream(uploadsBackupFile);
-            const extract = archiver.create('zip', {});
+            const extract = unzipper.Parse();
 
             extract.on('error', reject);
             extract.on('close', () => {
@@ -312,7 +347,18 @@ router.post('/restore/:manifest', authMiddleware, async (req: Request, res: Resp
             });
 
             input.pipe(extract);
-            extract.extractEntryTo('uploads/', uploadsDir, false);
+            extract.on('entry', (entry: any) => {
+              if (entry.path.startsWith('uploads/')) {
+                const filePath = path.join(uploadsDir, entry.path.replace('uploads/', ''));
+                if (entry.type === 'Directory') {
+                  fs.mkdirSync(filePath, { recursive: true });
+                } else {
+                  entry.pipe(fs.createWriteStream(filePath));
+                }
+              } else {
+                entry.autodrain();
+              }
+            });
           });
         }
       } catch (error) {
@@ -328,7 +374,7 @@ router.post('/restore/:manifest', authMiddleware, async (req: Request, res: Resp
         if (fs.existsSync(configBackupFile)) {
           await new Promise<void>((resolve, reject) => {
             const input = fs.createReadStream(configBackupFile);
-            const extract = archiver.create('zip', {});
+            const extract = unzipper.Parse();
 
             extract.on('error', reject);
             extract.on('close', () => {
@@ -337,7 +383,14 @@ router.post('/restore/:manifest', authMiddleware, async (req: Request, res: Resp
             });
 
             input.pipe(extract);
-            extract.extractEntryTo('', path.join(__dirname, '../../'), false);
+            extract.on('entry', (entry: any) => {
+              const filePath = path.join(__dirname, '../../', entry.path);
+              if (entry.type === 'Directory') {
+                fs.mkdirSync(filePath, { recursive: true });
+              } else {
+                entry.pipe(fs.createWriteStream(filePath));
+              }
+            });
           });
         }
       } catch (error) {
@@ -381,12 +434,12 @@ router.get('/stats', authMiddleware, async (req: Request, res: Response) => {
 
     manifests.forEach(manifest => {
       const manifestPath = path.join(backupDir, manifest);
-      const manifestData = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+      const manifestData: BackupManifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
       const fileSize = fs.statSync(manifestPath).size;
       
       totalSize += fileSize;
       
-      const backupDate = new Date(manifestData.backup_timestamp);
+      const backupDate: Date = new Date(manifestData.backup_timestamp);
       if (!oldestBackup || backupDate < oldestBackup) {
         oldestBackup = backupDate;
       }
@@ -398,8 +451,8 @@ router.get('/stats', authMiddleware, async (req: Request, res: Response) => {
     res.json({
       total_backups: manifests.length,
       total_size: totalSize,
-      oldest_backup: oldestBackup?.toISOString(),
-      newest_backup: newestBackup?.toISOString()
+      oldest_backup: isValidDate(oldestBackup) ? (oldestBackup as Date).toISOString() : null,
+      newest_backup: isValidDate(newestBackup) ? (newestBackup as Date).toISOString() : null
     });
   } catch (error) {
     console.error('Error getting backup stats:', error);
