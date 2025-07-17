@@ -208,11 +208,11 @@ router.post('/:id/convert-to-sales-order', async (req: Request, res: Response) =
     const salesOrderResult = await client.query(
       `INSERT INTO salesorderhistory (
         sales_order_number, customer_id, sales_date, product_name, product_description,
-        estimated_cost, status, quote_id, subtotal, total_gst_amount, total_amount, sequence_number
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
+        estimated_cost, status, quote_id, subtotal, total_gst_amount, total_amount, sequence_number, terms
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *`,
       [formattedSONumber, quote.customer_id, new Date().toISOString().split('T')[0], 
        quote.product_name, quote.product_description, quote.estimated_cost, 'Open', quote.quote_id,
-       0, 0, 0, sequenceNumber]
+       0, 0, 0, sequenceNumber, quote.terms || null]
     );
 
     const salesOrderId = salesOrderResult.rows[0].sales_order_id;
