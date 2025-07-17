@@ -103,6 +103,11 @@ router.post('/', async (req: Request, res: Response) => {
       });
     });
   }
+  console.log('Integer fields:', {
+    sales_order_id: req.body.sales_order_id, sales_order_id_type: typeof req.body.sales_order_id,
+    customer_id: req.body.customer_id, customer_id_type: typeof req.body.customer_id,
+    quote_id: req.body.quote_id, quote_id_type: typeof req.body.quote_id,
+  });
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -116,14 +121,22 @@ router.post('/', async (req: Request, res: Response) => {
       INSERT INTO salesorderhistory (sales_order_id, sales_order_number, customer_id, sales_date, product_name, product_description, terms, subtotal, total_gst_amount, total_amount, status, estimated_cost, sequence_number)
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13);
     `;
+    const customerIdInt = customer_id !== undefined && customer_id !== null ? parseInt(customer_id, 10) : null;
+    const quoteIdInt = req.body.quote_id !== undefined && req.body.quote_id !== null ? parseInt(req.body.quote_id, 10) : null;
     const subtotalNum = subtotal !== undefined && subtotal !== null ? parseFloat(subtotal) : 0;
     const totalGstAmountNum = total_gst_amount !== undefined && total_gst_amount !== null ? parseFloat(total_gst_amount) : 0;
     const totalAmountNum = total_amount !== undefined && total_amount !== null ? parseFloat(total_amount) : 0;
     const estimatedCostNum = estimated_cost !== undefined && estimated_cost !== null ? parseFloat(estimated_cost) : 0;
+    const lineItemsParsed = (lineItems || []).map((item: any) => ({
+      ...item,
+      quantity_sold: item.quantity_sold !== undefined && item.quantity_sold !== null ? parseFloat(item.quantity_sold) : 0,
+      unit_price: item.unit_price !== undefined && item.unit_price !== null ? parseFloat(item.unit_price) : 0,
+      line_amount: item.line_amount !== undefined && item.line_amount !== null ? parseFloat(item.line_amount) : 0,
+    }));
     const salesOrderValues = [
       newSalesOrderId,
       formattedSONumber,
-      customer_id,
+      customerIdInt,
       sales_date,
       product_name,
       product_description,
@@ -137,7 +150,7 @@ router.post('/', async (req: Request, res: Response) => {
     ];
     await client.query(salesOrderQuery, salesOrderValues);
     // For each line item, upsert all fields
-    for (const item of lineItems) {
+    for (const item of lineItemsParsed) {
       await salesOrderService.upsertLineItem(newSalesOrderId, item, client);
     }
     // Recalculate and update summary fields
@@ -186,6 +199,29 @@ router.get('/:id', async (req: Request, res: Response) => {
 router.put('/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
   const { lineItems, status, user_id, ...salesOrderData } = req.body;
+  console.log('Incoming sales order PUT request body:', req.body);
+console.log('Summary fields:', {
+  subtotal: salesOrderData.subtotal, subtotalType: typeof salesOrderData.subtotal,
+  total_gst_amount: salesOrderData.total_gst_amount, totalGstAmountType: typeof salesOrderData.total_gst_amount,
+  total_amount: salesOrderData.total_amount, totalAmountType: typeof salesOrderData.total_amount,
+  estimated_cost: salesOrderData.estimated_cost, estimatedCostType: typeof salesOrderData.estimated_cost,
+});
+if (lineItems && lineItems.length > 0) {
+  lineItems.forEach((item: any, idx: number) => {
+    console.log(`Line item ${idx}:`, {
+      part_number: item.part_number,
+      quantity: item.quantity, quantityType: typeof item.quantity,
+      quantity_sold: item.quantity_sold, quantitySoldType: typeof item.quantity_sold,
+      unit_price: item.unit_price, unitPriceType: typeof item.unit_price,
+      line_amount: item.line_amount, lineAmountType: typeof item.line_amount,
+    });
+  });
+}
+  console.log('Integer fields:', {
+    sales_order_id: salesOrderData.sales_order_id, sales_order_id_type: typeof salesOrderData.sales_order_id,
+    customer_id: salesOrderData.customer_id, customer_id_type: typeof salesOrderData.customer_id,
+    quote_id: salesOrderData.quote_id, quote_id_type: typeof salesOrderData.quote_id,
+  });
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
