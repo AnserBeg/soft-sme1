@@ -224,7 +224,7 @@ export class SalesOrderService {
       const linesRes = await client.query('SELECT * FROM salesorderlineitems WHERE sales_order_id = $1 FOR UPDATE', [orderId]);
       // Restore inventory for all line items
       for (const line of linesRes.rows) {
-        await this.inventoryService.adjustInventory(line.part_number, line.quantity_sold, 'Sales order deleted', orderId, userId, client);
+        await this.inventoryService.adjustInventory(line.part_number, line.quantity_sold !== undefined && line.quantity_sold !== null ? parseFloat(line.quantity_sold) : 0, 'Sales order deleted', orderId, userId, client);
       }
       await client.query('DELETE FROM salesorderlineitems WHERE sales_order_id = $1', [orderId]);
       await client.query('DELETE FROM salesorderhistory WHERE sales_order_id = $1', [orderId]);
