@@ -1189,7 +1189,7 @@ app.put('/api/inventory/:partNumber', async (req, res) => {
 // API endpoint to get all margin schedule records
 app.get('/api/margin-schedule', async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM MarginSchedule');
+    const result = await pool.query('SELECT * FROM marginschedule');
     res.json(result.rows);
   } catch (err) {
     console.error('Error fetching margin schedule:', err);
@@ -1204,7 +1204,7 @@ app.post('/api/margin-schedule', async (req, res) => {
     const { cost_lower_bound, cost_upper_bound, margin_factor } = req.body;
 
     const result = await client.query(
-      'INSERT INTO MarginSchedule (cost_lower_bound, cost_upper_bound, margin_factor) VALUES ($1, $2, $3) RETURNING margin_id, cost_lower_bound, cost_upper_bound, margin_factor',
+      'INSERT INTO marginschedule (cost_lower_bound, cost_upper_bound, margin_factor) VALUES ($1, $2, $3) RETURNING margin_id, cost_lower_bound, cost_upper_bound, margin_factor',
       [cost_lower_bound, cost_upper_bound, margin_factor]
     );
 
@@ -1227,7 +1227,7 @@ app.put('/api/margin-schedule/:id', async (req, res) => {
     const { cost_lower_bound, cost_upper_bound, margin_factor } = req.body;
 
     const result = await client.query(
-      'UPDATE MarginSchedule SET cost_lower_bound = $1, cost_upper_bound = $2, margin_factor = $3 WHERE margin_id = $4 RETURNING *;',
+      'UPDATE marginschedule SET cost_lower_bound = $1, cost_upper_bound = $2, margin_factor = $3 WHERE margin_id = $4 RETURNING *;',
       [cost_lower_bound, cost_upper_bound, margin_factor, id]
     );
 
@@ -1250,7 +1250,7 @@ app.delete('/api/margin-schedule/:id', async (req, res) => {
   const client = await pool.connect();
   try {
     const result = await client.query(
-      'DELETE FROM MarginSchedule WHERE margin_id = $1 RETURNING *;',
+      'DELETE FROM marginschedule WHERE margin_id = $1 RETURNING *;',
       [id]
     );
 
