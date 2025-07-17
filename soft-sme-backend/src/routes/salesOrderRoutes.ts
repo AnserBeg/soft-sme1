@@ -84,6 +84,25 @@ router.get('/', async (req: Request, res: Response) => {
 // Create a new sales order
 router.post('/', async (req: Request, res: Response) => {
   const { customer_id, sales_date, product_name, product_description, terms, subtotal, total_gst_amount, total_amount, status, estimated_cost, lineItems, user_id } = req.body;
+  // Add this logging block:
+  console.log('Incoming sales order POST request body:', req.body);
+  console.log('Summary fields:', {
+    subtotal, subtotalType: typeof subtotal,
+    total_gst_amount, totalGstAmountType: typeof total_gst_amount,
+    total_amount, totalAmountType: typeof total_amount,
+    estimated_cost, estimatedCostType: typeof estimated_cost,
+  });
+  if (lineItems && lineItems.length > 0) {
+    lineItems.forEach((item: any, idx: number) => {
+      console.log(`Line item ${idx}:`, {
+        part_number: item.part_number,
+        quantity: item.quantity, quantityType: typeof item.quantity,
+        quantity_sold: item.quantity_sold, quantitySoldType: typeof item.quantity_sold,
+        unit_price: item.unit_price, unitPriceType: typeof item.unit_price,
+        line_amount: item.line_amount, lineAmountType: typeof item.line_amount,
+      });
+    });
+  }
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
