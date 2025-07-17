@@ -62,7 +62,8 @@ router.post('/', async (req: Request, res: Response) => {
     product_name,
     product_description,
     estimated_cost,
-    status
+    status,
+    terms
   } = req.body;
 
   if (!customer_id || !quote_date || !valid_until || !product_name || !estimated_cost) {
@@ -86,9 +87,9 @@ router.post('/', async (req: Request, res: Response) => {
     const result = await client.query(
       `INSERT INTO quotes (
         quote_number, customer_id, quote_date, valid_until, product_name, product_description,
-        estimated_cost, status, sequence_number
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *;`,
-      [formattedQuoteNumber, customer_id, quote_date, valid_until, product_name, product_description, estimated_cost, status || 'Draft', sequenceNumber]
+        estimated_cost, status, sequence_number, terms
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *;`,
+      [formattedQuoteNumber, customer_id, quote_date, valid_until, product_name, product_description, estimated_cost, status || 'Draft', sequenceNumber, terms || null]
     );
     await client.query('COMMIT');
     res.status(201).json(result.rows[0]);
@@ -111,7 +112,8 @@ router.put('/:id', async (req: Request, res: Response) => {
     product_name,
     product_description,
     estimated_cost,
-    status
+    status,
+    terms
   } = req.body;
 
   if (!customer_id || !quote_date || !valid_until || !product_name || !estimated_cost) {
@@ -143,9 +145,10 @@ router.put('/:id', async (req: Request, res: Response) => {
         product_description = $5,
         estimated_cost = $6, 
         status = $7,
+        terms = $8,
         updated_at = NOW()
-      WHERE quote_id = $8 RETURNING *;`,
-      [customer_id, quote_date, valid_until, product_name, product_description, estimated_cost, status, id]
+      WHERE quote_id = $9 RETURNING *;`,
+      [customer_id, quote_date, valid_until, product_name, product_description, estimated_cost, status, terms || null, id]
     );
     
     await client.query('COMMIT');
@@ -465,13 +468,12 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
     y += 40;
     doc.font('Helvetica-Bold').fontSize(12).fillColor('#000000').text('Terms and Conditions', 50, y);
     y += 16;
-    doc.font('Helvetica').fontSize(10).fillColor('#000000').text('• This quote is valid until the date specified above.', 50, y);
-    y += 12;
-    doc.font('Helvetica').fontSize(10).fillColor('#000000').text('• Prices are subject to change without notice.', 50, y);
-    y += 12;
-    doc.font('Helvetica').fontSize(10).fillColor('#000000').text('• Payment terms: Net 30 days from invoice date.', 50, y);
-    y += 12;
-    doc.font('Helvetica').fontSize(10).fillColor('#000000').text('• Delivery timeline will be confirmed upon order placement.', 50, y);
+    doc.font('Helvetica').fontSize(10).fillColor('#000000');
+    if (quote.terms && quote.terms.trim() !== '') {
+      doc.text(quote.terms, 50, y, { width: 500 });
+    } else {
+      doc.text('No terms and conditions specified.', 50, y);
+    }
 
     doc.end();
   } catch (err) {
