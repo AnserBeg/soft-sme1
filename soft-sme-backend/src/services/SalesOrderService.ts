@@ -232,6 +232,9 @@ export class SalesOrderService {
           console.log(`Skipping inventory adjustment for non-inventory part: ${line.part_number}`);
         }
       }
+      // Delete related time entries
+      await client.query('DELETE FROM time_entries WHERE sales_order_id = $1', [orderId]);
+      // Now delete line items and sales order
       await client.query('DELETE FROM salesorderlineitems WHERE sales_order_id = $1', [orderId]);
       await client.query('DELETE FROM salesorderhistory WHERE sales_order_id = $1', [orderId]);
       await client.query('COMMIT');
