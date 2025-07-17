@@ -529,27 +529,28 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
     y += 16;
     // Company info (left column)
     doc.font('Helvetica').fontSize(11).fillColor('#000000');
-    const companyNameResult = doc.text(businessProfile?.business_name || '', 50, y, { width: 250 });
-    let companyY = Math.max(companyNameResult.y, y);
-    doc.text(businessProfile?.street_address || '', 50, companyY + 14, { width: 250 });
-    doc.text(
+    const companyInfoLines = [
+      businessProfile?.business_name,
+      businessProfile?.street_address,
       [businessProfile?.city, businessProfile?.province, businessProfile?.country, businessProfile?.postal_code].filter(Boolean).join(', '),
-      50, companyY + 28, { width: 250 }
-    );
-    doc.text(businessProfile?.email || '', 50, companyY + 42, { width: 250 });
-    doc.text(businessProfile?.telephone_number || '', 50, companyY + 56, { width: 250 });
+      businessProfile?.email,
+      businessProfile?.telephone_number
+    ].filter(line => line && line.trim() !== '').join('\n');
+    doc.text(companyInfoLines, 50, y, { width: 250 });
     // Vendor info (right column)
     doc.font('Helvetica').fontSize(11).fillColor('#000000');
-    const vendorNameResult = doc.text(purchaseOrder.vendor_name || '', 320, y, { width: 230 });
-    let vendorY = Math.max(vendorNameResult.y, y);
-    doc.text(purchaseOrder.vendor_street_address || '', 320, vendorY + 14, { width: 230 });
-    doc.text(
+    const vendorInfoLines = [
+      purchaseOrder.vendor_name,
+      purchaseOrder.vendor_street_address,
       [purchaseOrder.vendor_city, purchaseOrder.vendor_province, purchaseOrder.vendor_country, purchaseOrder.vendor_postal_code].filter(Boolean).join(', '),
-      320, vendorY + 28, { width: 230 }
-    );
-    doc.text(purchaseOrder.vendor_email || '', 320, vendorY + 42, { width: 230 });
-    doc.text(purchaseOrder.vendor_phone || '', 320, vendorY + 56, { width: 230 });
-    y += 72;
+      purchaseOrder.vendor_email,
+      purchaseOrder.vendor_phone
+    ].filter(line => line && line.trim() !== '').join('\n');
+    doc.text(vendorInfoLines, 320, y, { width: 230 });
+    // Calculate the max height used by either block
+    const companyInfoHeight = doc.heightOfString(companyInfoLines, { width: 250 });
+    const vendorInfoHeight = doc.heightOfString(vendorInfoLines, { width: 230 });
+    y += Math.max(companyInfoHeight, vendorInfoHeight) + 4;
     // Horizontal line
     doc.moveTo(50, y).lineTo(550, y).strokeColor('#444444').lineWidth(1).stroke();
     y += 18;
@@ -585,17 +586,24 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
     purchaseOrder.lineItems.forEach((item: any) => {
       currentX = 50;
       let rowY = y;
+      // Measure heights for wrapped fields
+      const snHeight = doc.heightOfString(sn.toString(), { width: colWidths[0] });
+      const partNumberHeight = doc.heightOfString(item.part_number, { width: colWidths[1] });
+      const partDescHeight = doc.heightOfString(item.part_description, { width: colWidths[2] });
+      const qtyHeight = doc.heightOfString(parseFloat(item.quantity).toString(), { width: colWidths[3] });
+      const unitHeight = doc.heightOfString(item.unit, { width: colWidths[4] });
+      const unitCostHeight = doc.heightOfString(parseFloat(item.unit_cost).toFixed(2), { width: colWidths[5] });
+      const lineTotalHeight = doc.heightOfString(parseFloat(item.line_total).toFixed(2), { width: colWidths[6] });
+      const rowHeight = Math.max(snHeight, partNumberHeight, partDescHeight, qtyHeight, unitHeight, unitCostHeight, lineTotalHeight);
       // SN
-      const snResult = doc.text(sn.toString(), currentX, rowY, { width: colWidths[0], align: 'left' });
+      doc.text(sn.toString(), currentX, rowY, { width: colWidths[0], align: 'left' });
       currentX += colWidths[0];
       // Part Number
-      const partNumberResult = doc.text(item.part_number, currentX, rowY, { width: colWidths[1], align: 'left' });
+      doc.text(item.part_number, currentX, rowY, { width: colWidths[1], align: 'left' });
       currentX += colWidths[1];
       // Part Description
-      const partDescResult = doc.text(item.part_description, currentX, rowY, { width: colWidths[2], align: 'left' });
+      doc.text(item.part_description, currentX, rowY, { width: colWidths[2], align: 'left' });
       currentX += colWidths[2];
-      // Find the max y after wrapping
-      let maxRowY = Math.max(snResult.y, partNumberResult.y, partDescResult.y);
       // Quantity
       doc.text(parseFloat(item.quantity).toString(), currentX, rowY, { width: colWidths[3], align: 'left' });
       currentX += colWidths[3];
@@ -608,7 +616,7 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
       // Line Total
       doc.text(parseFloat(item.line_total).toFixed(2), currentX, rowY, { width: colWidths[6], align: 'right' });
       // Move y to the max y of the wrapped fields plus some padding
-      y = Math.max(maxRowY, rowY) + 8;
+      y += rowHeight + 8;
       // Draw row line
       doc.moveTo(50, y - 2).lineTo(550, y - 2).strokeColor('#eeeeee').stroke();
       sn++;
