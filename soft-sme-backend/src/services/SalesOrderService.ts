@@ -35,7 +35,7 @@ export class SalesOrderService {
       // Handle removed items - restore inventory
       for (const [partNumber, currentQty] of currentItemsMap.entries()) {
         if (!newItemsMap.has(partNumber)) {
-          inventoryChanges.set(partNumber, currentQty);
+          inventoryChanges.set(partNumber, currentQty !== undefined && currentQty !== null ? parseFloat(currentQty) : 0);
         }
       }
       // Handle added/modified items - adjust inventory
