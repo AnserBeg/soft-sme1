@@ -97,6 +97,10 @@ router.post('/', async (req: Request, res: Response) => {
       INSERT INTO salesorderhistory (sales_order_id, sales_order_number, customer_id, sales_date, product_name, product_description, terms, subtotal, total_gst_amount, total_amount, status, estimated_cost, sequence_number)
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13);
     `;
+    const subtotalNum = subtotal !== undefined && subtotal !== null ? parseFloat(subtotal) : 0;
+    const totalGstAmountNum = total_gst_amount !== undefined && total_gst_amount !== null ? parseFloat(total_gst_amount) : 0;
+    const totalAmountNum = total_amount !== undefined && total_amount !== null ? parseFloat(total_amount) : 0;
+    const estimatedCostNum = estimated_cost !== undefined && estimated_cost !== null ? parseFloat(estimated_cost) : 0;
     const salesOrderValues = [
       newSalesOrderId,
       formattedSONumber,
@@ -105,11 +109,11 @@ router.post('/', async (req: Request, res: Response) => {
       product_name,
       product_description,
       terms,
-      subtotal,
-      total_gst_amount,
-      total_amount,
+      subtotalNum,
+      totalGstAmountNum,
+      totalAmountNum,
       status || 'Open',
-      estimated_cost,
+      estimatedCostNum,
       sequenceNumber,
     ];
     await client.query(salesOrderQuery, salesOrderValues);
@@ -186,8 +190,13 @@ router.put('/:id', async (req: Request, res: Response) => {
       let paramCount = 1;
       for (const [key, value] of Object.entries(salesOrderData)) {
         if (allowedFields.includes(key) && value !== undefined && value !== null) {
+          let coercedValue = value;
+          if (key === 'subtotal') coercedValue = parseFloat(salesOrderData.subtotal);
+          if (key === 'total_gst_amount') coercedValue = parseFloat(salesOrderData.total_gst_amount);
+          if (key === 'total_amount') coercedValue = parseFloat(salesOrderData.total_amount);
+          if (key === 'estimated_cost') coercedValue = parseFloat(salesOrderData.estimated_cost);
           updateFields.push(`${key} = $${paramCount}`);
-          updateValues.push(value);
+          updateValues.push(coercedValue);
           paramCount++;
         }
       }
