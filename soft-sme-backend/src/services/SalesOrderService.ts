@@ -224,7 +224,13 @@ export class SalesOrderService {
       const linesRes = await client.query('SELECT * FROM salesorderlineitems WHERE sales_order_id = $1 FOR UPDATE', [orderId]);
       // Restore inventory for all line items
       for (const line of linesRes.rows) {
-        await this.inventoryService.adjustInventory(line.part_number, line.quantity_sold !== undefined && line.quantity_sold !== null ? parseFloat(line.quantity_sold) : 0, 'Sales order deleted', orderId, userId, client);
+        // Check if part exists in inventory
+        const invRes = await client.query('SELECT 1 FROM inventory WHERE part_number = $1', [line.part_number]);
+        if (invRes.rows.length > 0) {
+          await this.inventoryService.adjustInventory(line.part_number, line.quantity_sold !== undefined && line.quantity_sold !== null ? parseFloat(line.quantity_sold) : 0, 'Sales order deleted', orderId, userId, client);
+        } else {
+          console.log(`Skipping inventory adjustment for non-inventory part: ${line.part_number}`);
+        }
       }
       await client.query('DELETE FROM salesorderlineitems WHERE sales_order_id = $1', [orderId]);
       await client.query('DELETE FROM salesorderhistory WHERE sales_order_id = $1', [orderId]);
