@@ -77,9 +77,14 @@ export class SalesOrderService {
       // Update line items in database
       await client.query('DELETE FROM salesorderlineitems WHERE sales_order_id = $1', [orderId]);
       for (const item of newLineItems) {
+        // Defensive: coerce all numeric fields to numbers
+        const quantity = item.quantity !== undefined && item.quantity !== null ? parseFloat(item.quantity) : 0;
+        const quantity_sold = item.quantity_sold !== undefined && item.quantity_sold !== null ? parseFloat(item.quantity_sold) : 0;
+        const unit_price = item.unit_price !== undefined && item.unit_price !== null ? parseFloat(item.unit_price) : 0;
+        const line_amount = item.line_amount !== undefined && item.line_amount !== null ? parseFloat(item.line_amount) : 0;
         await client.query(
           `INSERT INTO salesorderlineitems (sales_order_id, part_number, part_description, quantity_sold, unit, unit_price, line_amount) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-          [orderId, item.part_number, item.part_description, item.quantity, item.unit, item.unit_price, item.line_amount]
+          [orderId, item.part_number, item.part_description, quantity_sold, item.unit, unit_price, line_amount]
         );
       }
       if (startedTransaction) await client.query('COMMIT');
@@ -99,15 +104,18 @@ export class SalesOrderService {
         await client.query('BEGIN');
         startedTransaction = true;
       }
-      
+      // Defensive: coerce all numeric fields to numbers
+      const quantity = item.quantity !== undefined && item.quantity !== null ? parseFloat(item.quantity) : 0;
+      const quantity_sold = item.quantity_sold !== undefined && item.quantity_sold !== null ? parseFloat(item.quantity_sold) : 0;
+      const unit_price = item.unit_price !== undefined && item.unit_price !== null ? parseFloat(item.unit_price) : 0;
+      const line_amount = item.line_amount !== undefined && item.line_amount !== null ? parseFloat(item.line_amount) : 0;
       // Check if order is closed
       const orderRes = await client.query('SELECT status FROM salesorderhistory WHERE sales_order_id = $1 FOR UPDATE', [orderId]);
       if (orderRes.rows.length === 0) throw new Error('Sales order not found');
       if (orderRes.rows[0].status === 'Closed') throw new Error('Cannot modify closed order');
-      
       const lineRes = await client.query('SELECT * FROM salesorderlineitems WHERE sales_order_id = $1 AND part_number = $2 FOR UPDATE', [orderId, item.part_number]);
       const oldQty = lineRes.rows.length > 0 ? lineRes.rows[0].quantity_sold : 0;
-      const newQty = item.quantity || 0;
+      const newQty = quantity;
       const delta = newQty - oldQty;
       if (delta !== 0) {
         await this.inventoryService.adjustInventory(item.part_number, -delta, 'Sales order line item update', orderId, undefined, client);
@@ -115,12 +123,12 @@ export class SalesOrderService {
       if (lineRes.rows.length > 0) {
         await client.query(
           `UPDATE salesorderlineitems SET quantity_sold = $1, part_description = $2, unit = $3, unit_price = $4, line_amount = $5 WHERE sales_order_id = $6 AND part_number = $7`,
-          [item.quantity, item.part_description, item.unit, item.unit_price, item.line_amount, orderId, item.part_number]
+          [quantity_sold, item.part_description, item.unit, unit_price, line_amount, orderId, item.part_number]
         );
       } else {
         await client.query(
           `INSERT INTO salesorderlineitems (sales_order_id, part_number, part_description, quantity_sold, unit, unit_price, line_amount) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-          [orderId, item.part_number, item.part_description, item.quantity, item.unit, item.unit_price, item.line_amount]
+          [orderId, item.part_number, item.part_description, quantity_sold, item.unit, unit_price, line_amount]
         );
       }
       if (startedTransaction) await client.query('COMMIT');
