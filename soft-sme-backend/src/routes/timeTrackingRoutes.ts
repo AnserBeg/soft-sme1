@@ -150,6 +150,25 @@ router.post('/time-entries/:id/clock-out', async (req: Request, res: Response) =
   }
 });
 
+// Edit a time entry (clock_in and clock_out)
+router.put('/time-entries/:id', async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { clock_in, clock_out } = req.body;
+  try {
+    const result = await pool.query(
+      'UPDATE time_entries SET clock_in = $1, clock_out = $2 WHERE id = $3 RETURNING *',
+      [clock_in, clock_out, id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Time entry not found' });
+    }
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('Error updating time entry:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Get all time tracking entries for the current user's company
 router.get('/', async (req: Request, res: Response) => {
   try {
