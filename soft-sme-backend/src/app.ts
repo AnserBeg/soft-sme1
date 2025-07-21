@@ -18,6 +18,7 @@ import employeeRouter from './routes/employeeRoutes';
 import marginScheduleRouter from './routes/marginScheduleRoutes';
 import timeTrackingRouter from './routes/timeTrackingRoutes';
 import globalSettingsRouter from './routes/globalSettingsRoutes';
+import attendanceRouter from './routes/attendanceRoutes';
 
 // Load environment variables
 dotenv.config();
@@ -107,6 +108,9 @@ console.log('Registered employee routes');
 
 app.use('/api/time-tracking', authMiddleware, timeTrackingRouter);
 console.log('Registered time tracking routes');
+
+app.use('/api/attendance', authMiddleware, attendanceRouter);
+console.log('Registered attendance routes');
 
 app.use('/api/settings', authMiddleware, globalSettingsRouter);
 console.log('Registered global settings routes');

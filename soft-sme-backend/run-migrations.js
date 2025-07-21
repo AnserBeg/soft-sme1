@@ -1,44 +1,40 @@
-const { Pool } = require('pg');
 const fs = require('fs');
 const path = require('path');
-require('dotenv').config({ path: path.resolve(__dirname, '.env') });
-
-console.log('DB_USER:', process.env.DB_USER);
-console.log('DB_HOST:', process.env.DB_HOST);
-console.log('DB_NAME:', process.env.DB_NAME);
-console.log('DB_PASSWORD:', process.env.DB_PASSWORD ? '**** (hidden)' : 'NOT SET'); // Mask password
-console.log('DB_PORT:', process.env.DB_PORT);
+const { Pool } = require('pg');
 
 const pool = new Pool({
-  user: process.env.DB_USER,
-  host: process.env.DB_HOST,
-  database: process.env.DB_NAME,
-  password: process.env.DB_PASSWORD,
-  port: parseInt(process.env.DB_PORT || '5432', 10),
+  user: process.env.DB_USER || 'postgres',
+  host: process.env.DB_HOST || 'localhost',
+  database: process.env.DB_NAME || 'soft_sme_db',
+  password: process.env.DB_PASSWORD || '123',
+  port: process.env.DB_PORT ? parseInt(process.env.DB_PORT) : 5432,
 });
 
-const runMigrations = async () => {
+async function runMigrations() {
+  const migrationsDir = path.join(__dirname, 'migrations');
+  const files = fs.readdirSync(migrationsDir)
+    .filter(f => f.endsWith('.sql'))
+    .sort();
+
   const client = await pool.connect();
   try {
-    const migrationsDir = path.join(__dirname, 'migrations');
-    const migrationFiles = fs.readdirSync(migrationsDir)
-      .filter(file => file.endsWith('.sql'))
-      .sort(); // Sorts alphabetically, which works with timestamped names
-
-    for (const file of migrationFiles) {
-      const migrationPath = path.join(migrationsDir, file);
-      const sql = fs.readFileSync(migrationPath, 'utf8');
-      console.log(`Applying migration: ${file}`);
+    for (const file of files) {
+      const filePath = path.join(migrationsDir, file);
+      const sql = fs.readFileSync(filePath, 'utf8');
+      console.log(`Running migration: ${file}`);
       await client.query(sql);
     }
-
-    console.log('All migrations applied successfully!');
+    console.log('All migrations ran successfully.');
   } catch (err) {
-    console.error('Error applying migrations:', err);
+    console.error('Migration error:', err);
+    process.exit(1);
   } finally {
     client.release();
-    await pool.end();
   }
-};
+}
 
-runMigrations(); 
+if (require.main === module) {
+  runMigrations().then(() => process.exit(0));
+}
+
+module.exports = runMigrations; 
