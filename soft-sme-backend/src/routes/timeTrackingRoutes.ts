@@ -161,10 +161,10 @@ router.put('/time-entries/:id', async (req: Request, res: Response) => {
 
     const result = await pool.query(
       `UPDATE time_entries
-       SET clock_in = $1,
-           clock_out = $2,
+       SET clock_in = $1::timestamptz,
+           clock_out = $2::timestamptz,
            duration = CASE
-             WHEN $1 IS NOT NULL AND $2 IS NOT NULL THEN EXTRACT(EPOCH FROM ($2::timestamp - $1::timestamp)) / 3600
+             WHEN $1 IS NOT NULL AND $2 IS NOT NULL THEN EXTRACT(EPOCH FROM ($2::timestamptz - $1::timestamptz)) / 3600
              ELSE duration
            END
        WHERE id = $3
