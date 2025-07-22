@@ -324,37 +324,137 @@ router.get('/reports/time-entries', async (req: Request, res: Response) => {
 // Export time entry report
 router.get('/reports/time-entries/export', async (req: Request, res: Response) => {
   console.log('Time tracking report export endpoint hit');
-  const { from, to, profile, so, format } = req.query;
+  const { from, to, profile, format } = req.query;
   
   try {
-    console.log('Time entry export request:', { from, to, profile, so, format });
-    
+    // 1. Query all time entries for the range/profile
     let query = `
       SELECT 
-        te.*,
-        p.name as profile_name,
-        soh.sales_order_number,
-        DATE(te.clock_in) as date
+        te.*, p.name as profile_name, soh.sales_order_number, DATE(te.clock_in) as date
       FROM time_entries te
       JOIN profiles p ON te.profile_id = p.id
       JOIN salesorderhistory soh ON te.sales_order_id = soh.sales_order_id
       WHERE DATE(te.clock_in) BETWEEN $1 AND $2
     `;
     const params = [from, to];
-
     if (profile && profile !== '') {
       query += ' AND te.profile_id = $' + (params.length + 1);
       params.push(profile);
     }
-    if (so && so !== '') {
-      query += ' AND te.sales_order_id = $' + (params.length + 1);
-      params.push(so);
-    }
-
     query += ' ORDER BY te.clock_in DESC';
-    
     const result = await pool.query(query, params);
     const timeEntries = result.rows;
+
+    // 2. Compute shift/idle summary and per-shift breakdowns
+    // Query all shifts for the range/profile
+    let shiftQuery = `SELECT * FROM attendance_shifts WHERE clock_in >= $1 AND clock_in < ($2::date + INTERVAL '1 day')`;
+    const shiftParams = [from, to];
+    if (profile && profile !== '') {
+      shiftQuery += ' AND profile_id = $3';
+      shiftParams.push(profile);
+    }
+    shiftQuery += ' ORDER BY clock_in DESC';
+    const shiftResult = await pool.query(shiftQuery, shiftParams);
+    const shifts = shiftResult.rows;
+
+    // Group time entries by shift
+    const shiftEntryMap: { [shiftId: number]: any[] } = {};
+    const unscheduled: any[] = [];
+    shifts.forEach(shift => { shiftEntryMap[shift.id] = []; });
+    timeEntries.forEach(entry => {
+      const entryIn = new Date(entry.clock_in).getTime();
+      let found = false;
+      for (const shift of shifts) {
+        const shiftIn = new Date(shift.clock_in).getTime();
+        const shiftOut = shift.clock_out ? new Date(shift.clock_out).getTime() : null;
+        if (shiftOut && entryIn >= shiftIn && entryIn < shiftOut) {
+          shiftEntryMap[shift.id].push(entry);
+          found = true;
+          break;
+        }
+      }
+      if (!found) unscheduled.push(entry);
+    });
+
+    // Compute shift/idle summary by profile
+    const profileShiftStats: { [profileId: number]: { hours: number, idle: number } } = {};
+    shifts.forEach(shift => {
+      if (shift.clock_in && shift.clock_out) {
+        const inTime = new Date(shift.clock_in).getTime();
+        const outTime = new Date(shift.clock_out).getTime();
+        const dur = Math.max(0, (outTime - inTime) / (1000 * 60 * 60));
+        const entries = (shiftEntryMap[shift.id] || []);
+        let booked = 0;
+        entries.forEach(e => {
+          const entryDur = typeof e.duration === 'number' ? e.duration : Number(e.duration) || 0;
+          booked += entryDur;
+        });
+        const idle = Math.max(0, dur - booked);
+        if (!profileShiftStats[shift.profile_id]) profileShiftStats[shift.profile_id] = { hours: 0, idle: 0 };
+        profileShiftStats[shift.profile_id].hours += dur;
+        profileShiftStats[shift.profile_id].idle += idle;
+      }
+    });
+
+    // 3. Build CSV sections
+    if (format === 'csv') {
+      let csvSections: string[] = [];
+      // Section 1: Shift/Idle Summary
+      csvSections.push('Shift/Idle Summary by Profile');
+      csvSections.push('Profile,Total Shift Hours,Total Idle Hours');
+      for (const [profileId, stats] of Object.entries(profileShiftStats)) {
+        const profileName = timeEntries.find(e => String(e.profile_id) === String(profileId))?.profile_name || profileId;
+        csvSections.push(`${profileName},${stats.hours.toFixed(2)},${stats.idle.toFixed(2)}`);
+      }
+      csvSections.push('');
+      // Section 2: Per-Shift Breakdown
+      csvSections.push('Per-Shift Breakdown');
+      csvSections.push('Profile,Date,Shift In,Shift Out,Shift Duration (hrs),Sales Order,Booked Hours,Idle (hrs)');
+      for (const shift of shifts) {
+        const shiftIn = shift.clock_in ? new Date(shift.clock_in) : null;
+        const shiftOut = shift.clock_out ? new Date(shift.clock_out) : null;
+        const shiftDuration = shiftIn && shiftOut ? ((shiftOut.getTime() - shiftIn.getTime()) / (1000 * 60 * 60)) : 0;
+        const entries = shiftEntryMap[shift.id] || [];
+        // Group by sales order
+        const soMap: { [so: string]: number } = {};
+        let booked = 0;
+        entries.forEach(e => {
+          const so = e.sales_order_number || 'Unknown';
+          const dur = typeof e.duration === 'number' ? e.duration : Number(e.duration) || 0;
+          soMap[so] = (soMap[so] || 0) + dur;
+          booked += dur;
+        });
+        const idle = Math.max(0, shiftDuration - booked);
+        const profileName = entries[0]?.profile_name || shift.profile_id;
+        if (Object.keys(soMap).length === 0) {
+          csvSections.push(`${profileName},${shiftIn ? shiftIn.toLocaleDateString() : ''},${shiftIn ? shiftIn.toLocaleTimeString() : ''},${shiftOut ? shiftOut.toLocaleTimeString() : ''},${shiftDuration.toFixed(2)},,,${idle.toFixed(3)}`);
+        } else {
+          for (const [so, hrs] of Object.entries(soMap)) {
+            csvSections.push(`${profileName},${shiftIn ? shiftIn.toLocaleDateString() : ''},${shiftIn ? shiftIn.toLocaleTimeString() : ''},${shiftOut ? shiftOut.toLocaleTimeString() : ''},${shiftDuration.toFixed(2)},${so},${Number(hrs).toFixed(3)},${idle.toFixed(3)}`);
+          }
+        }
+      }
+      csvSections.push('');
+      // Section 3: Unscheduled Entries
+      csvSections.push('Unscheduled Entries');
+      csvSections.push('Sales Order,Clock In,Clock Out,Duration');
+      for (const entry of unscheduled) {
+        csvSections.push(`${entry.sales_order_number || ''},${entry.clock_in ? new Date(entry.clock_in).toLocaleTimeString() : ''},${entry.clock_out ? new Date(entry.clock_out).toLocaleTimeString() : ''},${entry.duration !== null && entry.duration !== undefined && !isNaN(Number(entry.duration)) ? Number(entry.duration).toFixed(3) : ''}`);
+      }
+      csvSections.push('');
+      // Section 4: Full Time Entry Table
+      csvSections.push('Full Time Entry Table');
+      csvSections.push('Profile,Sales Order,Date,Clock In,Clock Out,Duration');
+      for (const entry of timeEntries) {
+        csvSections.push(`${entry.profile_name || ''},${entry.sales_order_number || ''},${entry.date ? new Date(entry.date).toLocaleDateString() : ''},${entry.clock_in ? new Date(entry.clock_in).toLocaleTimeString() : ''},${entry.clock_out ? new Date(entry.clock_out).toLocaleTimeString() : ''},${entry.duration !== null && entry.duration !== undefined && !isNaN(Number(entry.duration)) ? Number(entry.duration).toFixed(3) : ''}`);
+      }
+      const csv = csvSections.join('\n');
+      const filename = `time_entries_report_${new Date().toISOString().split('T')[0]}.csv`;
+      res.setHeader('Content-disposition', `attachment; filename="${filename}"`);
+      res.setHeader('Content-type', 'text/csv');
+      res.send(csv);
+      return;
+    }
 
     if (format === 'pdf') {
       // Generate PDF
