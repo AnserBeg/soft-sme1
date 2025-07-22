@@ -20,6 +20,7 @@ import employeeRoutes from './routes/employeeRoutes';
 import timeTrackingRoutes from './routes/timeTrackingRoutes';
 import globalSettingsRouter from './routes/globalSettingsRoutes';
 import backupRoutes from './routes/backupRoutes';
+import attendanceRouter from './routes/attendanceRoutes';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -86,6 +87,9 @@ console.log('Registered employee routes');
 
 app.use('/api/time-tracking', authMiddleware, timeTrackingRoutes);
 console.log('Registered time tracking routes');
+
+app.use('/api/attendance', authMiddleware, attendanceRouter);
+console.log('Registered attendance routes');
 
 app.use('/api/settings', authMiddleware, globalSettingsRouter);
 console.log('Registered global settings routes');
