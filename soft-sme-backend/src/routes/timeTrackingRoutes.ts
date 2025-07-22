@@ -153,14 +153,18 @@ router.post('/time-entries/:id/clock-out', async (req: Request, res: Response) =
 // Edit a time entry (clock_in and clock_out)
 router.put('/time-entries/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
-  const { clock_in, clock_out } = req.body;
+  let { clock_in, clock_out } = req.body;
   try {
+    // Convert empty strings to null
+    if (!clock_in || clock_in === '') clock_in = null;
+    if (!clock_out || clock_out === '') clock_out = null;
+
     const result = await pool.query(
       `UPDATE time_entries
        SET clock_in = $1,
            clock_out = $2,
            duration = CASE
-             WHEN $2 IS NOT NULL THEN EXTRACT(EPOCH FROM ($2::timestamp - $1::timestamp)) / 3600
+             WHEN $1 IS NOT NULL AND $2 IS NOT NULL THEN EXTRACT(EPOCH FROM ($2::timestamp - $1::timestamp)) / 3600
              ELSE duration
            END
        WHERE id = $3
@@ -173,7 +177,7 @@ router.put('/time-entries/:id', async (req: Request, res: Response) => {
     res.json(result.rows[0]);
   } catch (err) {
     console.error('Error updating time entry:', err);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ error: 'Internal server error', details: (err as Error).message });
   }
 });
 
