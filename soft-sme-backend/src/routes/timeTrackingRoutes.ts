@@ -5,6 +5,21 @@ import Papa from 'papaparse';
 
 const router = express.Router();
 
+// Role-based access middleware
+function mobileTimeTrackerOnly(req: Request, res: Response, next: Function) {
+  if (
+    req.user?.access_role === 'Mobile Time Tracker' ||
+    req.user?.access_role === 'Time Tracking' ||
+    req.user?.access_role === 'Admin'
+  ) {
+    return next();
+  }
+  return res.status(403).json({ message: 'Not authorized' });
+}
+
+// Apply the middleware to all routes in this router
+router.use(mobileTimeTrackerOnly);
+
 // Get time entries for a given date
 router.get('/time-entries', async (req: Request, res: Response) => {
   const { date, profile_id } = req.query;
