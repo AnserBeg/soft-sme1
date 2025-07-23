@@ -102,13 +102,18 @@ router.post('/time-entries/clock-in', async (req: Request, res: Response) => {
 router.post('/time-entries/:id/clock-out', async (req: Request, res: Response) => {
   const { id } = req.params;
 
+  console.log('Clock out route hit for ID:', id);
+
   try {
     const clockOutRes = await pool.query(
       'UPDATE time_entries SET clock_out = NOW(), duration = EXTRACT(EPOCH FROM (NOW() - clock_in)) / 3600 WHERE id = $1 AND clock_out IS NULL RETURNING *',
       [id]
     );
 
+    console.log('Clock out DB result:', clockOutRes.rows);
+
     if (clockOutRes.rows.length === 0) {
+      console.log('No open time entry found for ID:', id);
       return res.status(404).json({ error: 'Time entry not found or already clocked out' });
     }
     
