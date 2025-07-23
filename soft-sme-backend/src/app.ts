@@ -29,6 +29,7 @@ const app = express();
 const allowedOrigins = [
   'http://localhost:3000', // local dev
   'http://localhost:5173', // Vite dev server
+  'http://localhost:8080', // allow dev server
   process.env.CORS_ORIGIN, // production frontend
 ].filter(Boolean); // Remove undefined values
 
