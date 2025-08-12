@@ -26,6 +26,9 @@ import {
 } from '@mui/material';
 import { Add as AddIcon, GetApp as GetAppIcon, PictureAsPdf as PictureAsPdfIcon } from '@mui/icons-material';
 import { getProfiles, createProfile, Profile } from '../services/timeTrackingService';
+import { Delete as DeleteIcon } from '@mui/icons-material';
+import api from '../api/axios';
+import { toast } from 'react-toastify';
 import { getShifts, clockInShift, clockOutShift } from '../services/attendanceService';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -210,6 +213,30 @@ const AttendancePage: React.FC = () => {
                     {profile.name}
                   </MenuItem>
                 ))}
+                {user?.access_role === 'Admin' && selectedProfile && (
+                  <MenuItem
+                    value={-999999}
+                    onClick={async (e) => {
+                      e.preventDefault();
+                      const p = profiles.find(pr => pr.id === selectedProfile);
+                      if (!p) return;
+                      const ok = window.confirm(`Delete profile "${p.name}"? This cannot be undone.`);
+                      if (!ok) return;
+                      try {
+                        await api.delete(`/api/time-tracking/profiles/${p.id}`);
+                        setProfiles(prev => prev.filter(pr => pr.id !== p.id));
+                        setSelectedProfile('');
+                        toast.success('Profile deleted');
+                      } catch (err: any) {
+                        const msg = err?.response?.data?.error || 'Failed to delete profile';
+                        toast.error(msg);
+                      }
+                    }}
+                    sx={{ color: 'error.main' }}
+                  >
+                    Delete "{profiles.find(pr => pr.id === selectedProfile)?.name}"…
+                  </MenuItem>
+                )}
               </Select>
             </FormControl>
           </Paper>

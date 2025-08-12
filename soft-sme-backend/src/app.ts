@@ -11,6 +11,7 @@ import productRouter from './routes/productRoutes';
 import purchaseHistoryRouter from './routes/purchaseHistoryRoutes';
 import vendorRouter from './routes/vendorRoutes';
 import inventoryRouter from './routes/inventoryRoutes';
+import categoryRouter from './routes/categoryRoutes';
 import quoteRouter from './routes/quoteRoutes';
 import salesOrderRouter from './routes/salesOrderRoutes';
 import purchaseOrderRouter from './routes/purchaseOrderRoutes';
@@ -98,6 +99,9 @@ console.log('Registered vendor routes');
 
 app.use('/api/inventory', authMiddleware, inventoryRouter);
 console.log('Registered inventory routes at /api/inventory');
+
+app.use('/api/categories', authMiddleware, categoryRouter);
+console.log('Registered category routes at /api/categories');
 
 app.use('/api/quotes', authMiddleware, quoteRouter);
 console.log('Registered quote routes');

@@ -13,6 +13,7 @@ import IconButton from '@mui/material/IconButton';
 import { getStockInventory, cleanupInventorySpaces, previewCleanupEnforce, applyCleanupEnforce } from '../services/inventoryService';
 import Grid from '@mui/material/Grid';
 import UnifiedPartDialog, { PartFormValues } from '../components/UnifiedPartDialog';
+import CategorySelect from '../components/CategorySelect';
 import Dialog from '@mui/material/Dialog';
 import DialogTitle from '@mui/material/DialogTitle';
 import DialogContent from '@mui/material/DialogContent';
@@ -106,6 +107,7 @@ const InventoryPage: React.FC = () => {
   const columns = ([
     { field: 'part_number', headerName: 'Part #', flex: 1, headerAlign: 'left' },
     { field: 'part_description', headerName: 'Part Description', flex: 2, headerAlign: 'left' },
+    { field: 'category', headerName: 'Category', flex: 1, headerAlign: 'left' },
     { field: 'quantity_on_hand', headerName: 'Quantity on Hand', flex: 1, type: 'number', editable: true, align: 'center', headerAlign: 'left' },
     { field: 'unit', headerName: 'UOM', flex: 0.5, headerAlign: 'left' },
     { 
@@ -210,6 +212,11 @@ const InventoryPage: React.FC = () => {
          return Promise.reject('Invalid last unit cost');
        }
        updatedFields.last_unit_cost = newLastUnitCost;
+    }
+
+    // Add handling for category
+    if (newRow.category !== oldRow.category) {
+      updatedFields.category = newRow.category;
     }
 
     if (Object.keys(updatedFields).length === 0) {
@@ -331,7 +338,8 @@ const InventoryPage: React.FC = () => {
         ...fields,
         part_description: fields.part_description ? fields.part_description.trim() : '',
         unit: fields.unit ? fields.unit.trim() : '',
-        part_type: fields.part_type ? fields.part_type.trim() : ''
+        part_type: fields.part_type ? fields.part_type.trim() : '',
+        category: fields.category ? fields.category.trim() : 'Uncategorized'
       };
       
       await api.put(`/api/inventory/${encodeURIComponent(part_number.toUpperCase())}`, trimmedFields);
@@ -677,6 +685,9 @@ const InventoryPage: React.FC = () => {
               </Grid>
               <Grid item xs={12} sm={6}>
                 <TextField label="Part Type" value={editPart.part_type || ''} onChange={e => handleEditField('part_type', e.target.value)} fullWidth />
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <CategorySelect value={editPart.category || ''} onChange={(val) => handleEditField('category', val)} />
               </Grid>
             </Grid>
           )}

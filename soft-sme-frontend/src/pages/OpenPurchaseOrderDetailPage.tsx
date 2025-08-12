@@ -1736,7 +1736,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
               }
             }}
             title="Add New Part"
-            initialPart={{ part_number: partNumberForModal.toUpperCase() }}
+            initialPart={{ part_number: partNumberForModal.toUpperCase(), category: 'Uncategorized' }}
           />
 
           <UnifiedVendorDialog

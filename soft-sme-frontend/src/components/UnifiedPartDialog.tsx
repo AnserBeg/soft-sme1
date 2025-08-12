@@ -14,6 +14,7 @@ import {
 } from '@mui/material';
 import { toast } from 'react-toastify';
 import api from '../api/axios';
+import CategorySelect from './CategorySelect';
 
 export interface PartFormValues {
   part_number: string;
@@ -23,6 +24,7 @@ export interface PartFormValues {
   quantity_on_hand: string | number;
   reorder_point: string | number;
   part_type: string;
+  category: string;
 }
 
 interface UnifiedPartDialogProps {
@@ -36,6 +38,12 @@ interface UnifiedPartDialogProps {
 
 const UNIT_OPTIONS = ['Each', 'cm', 'ft', 'kg', 'pcs', 'L'];
 const PART_TYPE_OPTIONS = ['stock', 'supply'];
+
+interface Category {
+  category_id: number;
+  category_name: string;
+  description?: string;
+}
 
 const UnifiedPartDialog: React.FC<UnifiedPartDialogProps> = ({
   open,
@@ -53,6 +61,7 @@ const UnifiedPartDialog: React.FC<UnifiedPartDialogProps> = ({
     quantity_on_hand: '',
     reorder_point: '',
     part_type: 'stock',
+    category: 'Uncategorized',
     ...initialPart,
   });
 
@@ -72,6 +81,7 @@ const UnifiedPartDialog: React.FC<UnifiedPartDialogProps> = ({
         quantity_on_hand: initialPart?.quantity_on_hand || '',
         reorder_point: initialPart?.reorder_point || '',
         part_type: initialPart?.part_type || 'stock',
+        category: initialPart?.category || 'Uncategorized',
       });
       setErrors({});
       setIsSubmitting(false);
@@ -84,6 +94,8 @@ const UnifiedPartDialog: React.FC<UnifiedPartDialogProps> = ({
       setTimeout(() => partNumberRef.current?.focus(), 100);
     }
   }, [open]);
+
+  // Category options are provided by CategorySelect which loads them itself
 
   const handleFieldChange = (field: keyof PartFormValues, value: any) => {
     // Always uppercase part_number
@@ -174,6 +186,10 @@ const UnifiedPartDialog: React.FC<UnifiedPartDialogProps> = ({
       newErrors.part_type = 'Part Type must be either "stock" or "supply"';
     }
 
+    if (!formData.category || formData.category.trim() === '') {
+      newErrors.category = 'Category is required';
+    }
+
     // Validate numeric fields
     if (formData.part_type === 'supply') {
       // For supply items, quantity_on_hand should be "NA" - no validation needed
@@ -216,6 +232,7 @@ const UnifiedPartDialog: React.FC<UnifiedPartDialogProps> = ({
         quantity_on_hand: formData.part_type === 'supply' ? 'NA' : (formData.quantity_on_hand === '' ? 0 : parseFloat(String(formData.quantity_on_hand))),
         reorder_point: formData.reorder_point === '' ? null : parseFloat(String(formData.reorder_point)),
         part_type: formData.part_type.trim(),
+        category: formData.category.trim(),
       };
 
       await onSave(partData);
@@ -293,6 +310,15 @@ const UnifiedPartDialog: React.FC<UnifiedPartDialogProps> = ({
                   </MenuItem>
                 ))}
               </TextField>
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <CategorySelect
+                label="Category"
+                value={formData.category}
+                onChange={(val) => handleFieldChange('category', val)}
+                error={!!errors.category}
+                errorMessage={errors.category}
+              />
             </Grid>
             <Grid item xs={12}>
               <TextField

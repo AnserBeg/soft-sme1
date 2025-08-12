@@ -271,7 +271,7 @@ router.put('/:id', async (req: Request, res: Response) => {
         
         if (existingPartResult.rows.length > 0 && existingPartResult.rows[0].part_type === 'stock') {
           const existingPartNumber: string = existingPartResult.rows[0].part_number;
-          console.log(`purchaseHistoryRoutes: Reverting inventory for stock part: '${normalizedPartNumber}' (quantity: ${quantity})`);
+          console.log(`purchaseHistoryRoutes: Reverting inventory for stock part: '${existingPartNumber}' (quantity: ${quantity})`);
           await client.query(
             `UPDATE inventory 
              SET quantity_on_hand = quantity_on_hand - $1

@@ -18,6 +18,7 @@ import DialogTitle from '@mui/material/DialogTitle';
 import DialogContent from '@mui/material/DialogContent';
 import DialogActions from '@mui/material/DialogActions';
 import MenuItem from '@mui/material/MenuItem';
+import CategorySelect from '../components/CategorySelect';
 
 const SupplyPage: React.FC = () => {
   const [search, setSearch] = useState('');
@@ -81,6 +82,7 @@ const SupplyPage: React.FC = () => {
   const columns: GridColDef[] = [
     { field: 'part_number', headerName: 'Part #', flex: 1, headerAlign: 'left' },
     { field: 'part_description', headerName: 'Part Description', flex: 2, headerAlign: 'left' },
+    { field: 'category', headerName: 'Category', flex: 1, headerAlign: 'left' },
     { field: 'unit', headerName: 'UOM', flex: 0.5, headerAlign: 'left' },
     { field: 'last_unit_cost', headerName: 'Last Unit Cost', flex: 1, type: 'number', editable: true, align: 'center', headerAlign: 'left' },
     { field: 'reorder_point', headerName: 'Reorder Point', flex: 0.75, type: 'number', editable: true, align: 'center', headerAlign: 'left' },
@@ -164,6 +166,11 @@ const SupplyPage: React.FC = () => {
        updatedFields.last_unit_cost = newLastUnitCost;
     }
 
+    // Add handling for category
+    if (newRow.category !== oldRow.category) {
+      updatedFields.category = newRow.category;
+    }
+
     if (Object.keys(updatedFields).length === 0) {
         console.log('No fields changed.');
         return newRow;
@@ -233,7 +240,8 @@ const SupplyPage: React.FC = () => {
       last_unit_cost: '',
       quantity_on_hand: 'NA',
       reorder_point: '',
-      part_type: 'supply'
+      part_type: 'supply',
+      category: 'Uncategorized'
     });
     setOpenPartDialog(true);
   };
@@ -327,7 +335,8 @@ const SupplyPage: React.FC = () => {
         ...fields,
         part_description: fields.part_description ? fields.part_description.trim() : '',
         unit: fields.unit ? fields.unit.trim() : '',
-        part_type: fields.part_type ? fields.part_type.trim() : ''
+        part_type: fields.part_type ? fields.part_type.trim() : '',
+        category: fields.category ? fields.category.trim() : 'Uncategorized'
       };
       
       await api.put(`/api/inventory/${encodeURIComponent(part_number.toUpperCase())}`, trimmedFields);
@@ -587,6 +596,9 @@ const SupplyPage: React.FC = () => {
               </Grid>
               <Grid item xs={12} sm={6}>
                 <TextField label="Part Type" value={editPart.part_type || ''} onChange={e => handleEditField('part_type', e.target.value)} fullWidth />
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <CategorySelect value={editPart.category || ''} onChange={(val) => handleEditField('category', val)} />
               </Grid>
             </Grid>
           )}

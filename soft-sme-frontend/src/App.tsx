@@ -20,7 +20,7 @@ import SupplyPage from './pages/SupplyPage';
 import QuotePage from './pages/QuotePage';
 import QuoteEditorPage from './pages/QuoteEditorPage';
 
-import PurchaseOrderPage from './pages/PurchaseOrderPage';
+
 // import SalesOrderPage from './pages/SalesOrderPage';
 
 import EmployeeManagementPage from './pages/EmployeeManagementPage';
@@ -29,7 +29,6 @@ import OpenSalesOrdersPage from './pages/OpenSalesOrdersPage';
 // import SalesOrderDetailPage from './pages/SalesOrderDetailPage';
 import OpenSalesOrderDetailPage from './pages/OpenSalesOrderDetailPage';
 import OpenPurchaseOrdersPage from './pages/OpenPurchaseOrdersPage';
-import PurchaseOrderDetailPage from './pages/PurchaseOrderDetailPage';
 import OpenPurchaseOrderDetailPage from './pages/OpenPurchaseOrderDetailPage';
 import TimeTrackingPage from './pages/TimeTrackingPage';
 import TimeTrackingReportsPage from './pages/TimeTrackingReportsPage';
@@ -44,6 +43,8 @@ import UserEmailSettingsPage from './pages/UserEmailSettingsPage';
 import EmailTemplatesPage from './pages/EmailTemplatesPage';
 import { useEffect, useState } from 'react';
 import { syncPending, getPendingCount } from './services/offlineSync';
+import { ToastContainer } from 'react-toastify';
+import 'react-toastify/dist/ReactToastify.css';
 
 // Protected Route Component
 const PrivateRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -112,8 +113,8 @@ const AppRoutes: React.FC = () => {
         <Route path="products/:id" element={<ProductDetailPage />} />
         
         {/* Purchase Management */}
-        <Route path="purchase-order" element={<PurchaseOrderPage />} />
-        <Route path="purchase-order/:id" element={<PurchaseOrderDetailPage />} />
+        <Route path="purchase-order" element={<OpenPurchaseOrdersPage />} />
+        <Route path="purchase-order/:id" element={<OpenPurchaseOrderDetailPage />} />
         <Route path="open-purchase-orders" element={<OpenPurchaseOrdersPage />} />
         <Route path="open-purchase-orders/:id" element={<OpenPurchaseOrderDetailPage />} />
         
@@ -213,6 +214,7 @@ const App: React.FC = () => {
           <Router>
             <AppRoutes />
           </Router>
+          <ToastContainer position="top-right" autoClose={3000} newestOnTop={false} closeOnClick pauseOnFocusLoss draggable pauseOnHover theme="colored" />
         </LocalizationProvider>
       </AuthProvider>
     </ThemeProvider>

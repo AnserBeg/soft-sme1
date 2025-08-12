@@ -1663,7 +1663,7 @@ const SalesOrderDetailPage: React.FC = () => {
           }
         }}
         title="Add New Part"
-        initialPart={{ part_number: linePartNumberForModal.toUpperCase() }}
+        initialPart={{ part_number: linePartNumberForModal.toUpperCase(), category: 'Uncategorized' }}
       />
       <UnifiedPartDialog
         open={openPartDialogForPTO}
@@ -1696,7 +1696,7 @@ const SalesOrderDetailPage: React.FC = () => {
           }
         }}
         title="Add New Part"
-        initialPart={{ part_number: ptoPartNumberForModal.toUpperCase() }}
+        initialPart={{ part_number: ptoPartNumberForModal.toUpperCase(), category: 'Uncategorized' }}
       />
     </LocalizationProvider>
   );

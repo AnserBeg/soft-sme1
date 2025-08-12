@@ -28,7 +28,7 @@ router.get('/', async (req: Request, res: Response) => {
   console.log('inventoryRoutes: Received GET request for inventory items');
   try {
     const { partType } = req.query;
-    let query = 'SELECT part_number, part_description, unit, last_unit_cost, quantity_on_hand, reorder_point, part_type, created_at, updated_at FROM inventory';
+    let query = 'SELECT part_number, part_description, unit, last_unit_cost, quantity_on_hand, reorder_point, part_type, category, created_at, updated_at FROM inventory';
     let params: any[] = [];
 
     // Add part_type filter if provided
@@ -125,7 +125,7 @@ function isAllowedCharactersOnly(input: string): boolean {
 // Add a new inventory item
 router.post('/', async (req: Request, res: Response) => {
   console.log('inventoryRoutes: Received POST request to add new item');
-  const { part_number, part_description, unit, last_unit_cost, quantity_on_hand, reorder_point, part_type } = req.body;
+  const { part_number, part_description, unit, last_unit_cost, quantity_on_hand, reorder_point, part_type, category } = req.body;
   console.log('Request body:', req.body);
 
   // Only require part_number, part_description, unit, and part_type
@@ -166,6 +166,7 @@ router.post('/', async (req: Request, res: Response) => {
   const trimmedPartDescription = part_description.toString().trim();
   const trimmedUnit = unit.toString().trim();
   const trimmedPartType = part_type.toString().trim();
+  const trimmedCategory = category ? category.toString().trim() : 'Uncategorized';
 
   try {
     // Duplicate check with normalization: ignore dashes and spaces
@@ -184,8 +185,8 @@ router.post('/', async (req: Request, res: Response) => {
     }
 
     const result = await pool.query(
-      'INSERT INTO inventory (part_number, part_description, unit, last_unit_cost, quantity_on_hand, reorder_point, part_type) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
-      [trimmedPartNumber, trimmedPartDescription, trimmedUnit, last_unit_cost, quantity_on_hand, reorder_point, trimmedPartType]
+      'INSERT INTO inventory (part_number, part_description, unit, last_unit_cost, quantity_on_hand, reorder_point, part_type, category) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *',
+      [trimmedPartNumber, trimmedPartDescription, trimmedUnit, last_unit_cost, quantity_on_hand, reorder_point, trimmedPartType, trimmedCategory]
     );
     const newItem = result.rows[0];
     console.log('inventoryRoutes: Successfully added new item:', newItem);
@@ -225,12 +226,13 @@ router.delete('/:id', async (req: Request, res: Response) => {
 router.put('/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
   const decodedPartNumber = decodeURIComponent(id);
-  const { quantity_on_hand, reorder_point, last_unit_cost, part_description, unit, part_type } = req.body;
+  const { quantity_on_hand, reorder_point, last_unit_cost, part_description, unit, part_type, category } = req.body;
 
   // Trim string fields if provided
   const trimmedPartDescription = part_description ? part_description.toString().trim() : undefined;
   const trimmedUnit = unit ? unit.toString().trim() : undefined;
   const trimmedPartType = part_type ? part_type.toString().trim() : undefined;
+  const trimmedCategory = category ? category.toString().trim() : undefined;
   try {
     // Check if the item exists
     const existing = await pool.query('SELECT * FROM inventory WHERE part_number = $1', [decodedPartNumber]);
@@ -266,6 +268,10 @@ router.put('/:id', async (req: Request, res: Response) => {
     if (trimmedPartType !== undefined) {
       fields.push(`part_type = $${idx++}`);
       values.push(trimmedPartType);
+    }
+    if (trimmedCategory !== undefined) {
+      fields.push(`category = $${idx++}`);
+      values.push(trimmedCategory);
     }
 
     if (fields.length === 0) {
@@ -352,6 +358,7 @@ router.post('/upload-csv', upload.single('csvFile'), async (req: Request, res: R
           const lastUnitCost = parseFloat(data.last_unit_cost) || 0;
           const reorderPoint = parseFloat(data.reorder_point) || 0;
           const partType = data.part_type ? data.part_type.toString().trim().toLowerCase() : 'stock';
+          const category = data.category ? data.category.toString().trim() : 'Uncategorized';
 
           // Validate part type
           if (partType && !['stock', 'supply'].includes(partType)) {
@@ -404,6 +411,7 @@ router.post('/upload-csv', upload.single('csvFile'), async (req: Request, res: R
             lastUnitCost,
             reorderPoint,
             partType,
+            category,
             rowNumber: rowNumber // Store the actual row number
           };
 
@@ -414,7 +422,8 @@ router.post('/upload-csv', upload.single('csvFile'), async (req: Request, res: R
             quantity,
             lastUnitCost,
             reorderPoint,
-            partType
+            partType,
+            category
           });
         })
         .on('end', resolve)
@@ -467,9 +476,10 @@ router.post('/upload-csv', upload.single('csvFile'), async (req: Request, res: R
                  last_unit_cost = $2, 
                  reorder_point = $3,
                  part_description = $4,
+                 category = $5,
                  updated_at = CURRENT_TIMESTAMP
-             WHERE part_number = $5`,
-            [newQuantity, newUnitCost, newReorderPoint, item.partDescription, existing.part_number]
+             WHERE part_number = $6`,
+            [newQuantity, newUnitCost, newReorderPoint, item.partDescription, item.category, existing.part_number]
           );
 
           updatedCount++;
@@ -478,9 +488,9 @@ router.post('/upload-csv', upload.single('csvFile'), async (req: Request, res: R
           // Insert new item
           await pool.query(
             `INSERT INTO inventory 
-             (part_number, part_description, unit, last_unit_cost, quantity_on_hand, reorder_point, part_type) 
-             VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-            [item.visualPartNumber, item.partDescription, item.unit, item.lastUnitCost, item.quantity, item.reorderPoint, item.partType]
+             (part_number, part_description, unit, last_unit_cost, quantity_on_hand, reorder_point, part_type, category) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+            [item.visualPartNumber, item.partDescription, item.unit, item.lastUnitCost, item.quantity, item.reorderPoint, item.partType, item.category]
           );
 
           processedCount++;
@@ -615,10 +625,10 @@ router.get('/export/pdf', async (req: Request, res: Response) => {
 
 // Get CSV template endpoint
 router.get('/csv-template', (req: Request, res: Response) => {
-  const csvTemplate = `part_number,part_description,unit,quantity,last_unit_cost,reorder_point,part_type
-ABC123,Sample Part Description,Each,10,25.50,5,stock
-E-11,Hyphen allowed visually,pcs,5,15.75,2,stock
-(1/2)HOSE,Use parentheses for fractions,ft,20,12.00,5,stock`;
+  const csvTemplate = `part_number,part_description,unit,quantity,last_unit_cost,reorder_point,part_type,category
+ABC123,Sample Part Description,Each,10,25.50,5,stock,Fasteners
+E-11,Hyphen allowed visually,pcs,5,15.75,2,stock,Electrical
+(1/2)HOSE,Use parentheses for fractions,ft,20,12.00,5,stock,Plumbing`;
 
   res.setHeader('Content-Type', 'text/csv');
   res.setHeader('Content-Disposition', 'attachment; filename="inventory_template.csv"');
@@ -650,7 +660,8 @@ router.post('/cleanup-spaces', async (req: Request, res: Response) => {
           item.part_number !== item.part_number.trim() ||
           item.part_description !== item.part_description.trim() ||
           item.unit !== item.unit.trim() ||
-          item.part_type !== item.part_type.trim();
+          item.part_type !== item.part_type.trim() ||
+          (item.category && item.category !== item.category.trim());
         
         if (needsUpdate) {
           // Update with trimmed values
@@ -661,13 +672,15 @@ router.post('/cleanup-spaces', async (req: Request, res: Response) => {
               part_description = $2,
               unit = $3,
               part_type = $4,
+              category = $5,
               updated_at = CURRENT_TIMESTAMP
-            WHERE part_number = $5
+            WHERE part_number = $6
           `, [
             item.part_number.trim().toUpperCase(),
             item.part_description.trim(),
             item.unit.trim(),
             item.part_type.trim(),
+            item.category ? item.category.trim() : 'Uncategorized',
             item.part_number // Use original for WHERE clause
           ]);
           
