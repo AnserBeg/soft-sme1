@@ -1,0 +1,13 @@
+# Cloudflare Tunnel Environment Configuration
+# Copy these lines to your .env.local file and update with your actual Cloudflare tunnel URL
+
+VITE_CLOUDFLARE_URL=https://api.yourdomain.com
+VITE_API_BASE_URL=https://api.yourdomain.com
+
+# Instructions:
+# 1. Create a Cloudflare account at cloudflare.com
+# 2. Run: cloudflared tunnel login
+# 3. Run: cloudflared tunnel create soft-sme-backend
+# 4. If you have a domain: cloudflared tunnel route dns soft-sme-backend api.yourdomain.com
+# 5. Replace 'api.yourdomain.com' with your actual tunnel URL
+# 6. Restart your frontend application 

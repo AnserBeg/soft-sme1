@@ -1,0 +1,113 @@
+{
+  "name": "soft-sme-frontend",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "main": "dist-electron/main.cjs",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
+    "preview": "vite preview",
+    "electron:compile": "tsc -p electron/tsconfig.json && node scripts/post-compile.cjs",
+    "electron:dev": "npm run electron:compile && concurrently \"npm run dev\" \"wait-on http://localhost:3000 && electron .\"",
+    "electron:build": "npm run electron:compile && npm run build && electron-builder",
+    "electron:preview": "electron .",
+    "build:desktop": "npm run build && npm run electron:compile && electron-builder --publish=never",
+    "build:desktop:win": "npm run build && npm run electron:compile && electron-builder --win --publish=never",
+    "build:desktop:win:simple": "npm run build && npm run electron:compile && electron-builder --win --dir",
+    "build:desktop:win:portable": "npm run build && npm run electron:compile && electron-builder --win --dir --config.win.signAndEditExecutable=false",
+    "build:desktop:win:portable-exe": "npm run build && npm run electron:compile && electron-builder --win --config.win.signAndEditExecutable=false",
+    "build:desktop:mac": "npm run build && npm run electron:compile && electron-builder --mac --publish=never",
+    "build:desktop:linux": "npm run build && npm run electron:compile && electron-builder --linux --publish=never",
+    "postbuild": "node scripts/post-build.cjs",
+    "build:desktop:win:single-portable": "npm run build && npm run electron:compile && electron-builder --win portable"
+  },
+  "dependencies": {
+    "@emotion/react": "^11.11.3",
+    "@emotion/styled": "^11.11.0",
+    "@mui/icons-material": "^5.15.10",
+    "@mui/material": "^5.15.10",
+    "@mui/x-data-grid": "^6.19.4",
+    "@mui/x-date-pickers": "^6.19.4",
+    "axios": "^1.6.7",
+    "better-sqlite3": "^9.4.5",
+    "date-fns": "^2.30.0",
+    "dayjs": "^1.11.10",
+    "jspdf": "^3.0.1",
+    "jspdf-autotable": "^5.0.2",
+    "jwt-decode": "^4.0.0",
+    "papaparse": "^5.4.1",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-icons": "^5.0.1",
+    "react-router-dom": "^6.30.1",
+    "react-toastify": "^10.0.4",
+    "recharts": "^2.12.0"
+  },
+  "devDependencies": {
+    "@types/papaparse": "^5.3.16",
+    "@types/react": "^18.2.55",
+    "@types/react-dom": "^18.2.19",
+    "@typescript-eslint/eslint-plugin": "^5.62.0",
+    "@typescript-eslint/parser": "^5.62.0",
+    "@vitejs/plugin-react": "^4.2.1",
+    "concurrently": "^9.1.2",
+    "electron": "^30.0.9",
+    "electron-builder": "^26.0.12",
+    "electron-is-dev": "^3.0.1",
+    "eslint": "^8.56.0",
+    "eslint-plugin-react-hooks": "^4.6.0",
+    "eslint-plugin-react-refresh": "^0.4.5",
+    "fs-extra": "^11.3.0",
+    "typescript": "^5.2.2",
+    "vite": "^7.0.0",
+    "wait-on": "^8.0.3"
+  },
+  "build": {
+    "appId": "com.soft-sme.app",
+    "productName": "Soft SME",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist-electron/**/*",
+      "electron/**/*",
+      "frontend-dist/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "**/*.node",
+      "node_modules/better-sqlite3/**"
+    ],
+    "extraResources": [
+      {
+        "from": "../soft-sme-backend/dist",
+        "to": "backend",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Soft SME"
+    }
+  }
+}
