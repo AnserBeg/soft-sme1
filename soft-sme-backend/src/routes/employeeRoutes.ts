@@ -8,14 +8,28 @@ const router = express.Router();
 router.get('/', async (req: Request, res: Response) => {
   try {
     const company_id = req.user?.company_id;
+    
+    // Debug logging
+    console.log('Fetching employees for company_id:', company_id);
+    console.log('User object:', req.user);
+    
+    if (!company_id) {
+      console.error('No company_id found in user object');
+      return res.status(400).json({ error: 'Company ID not found' });
+    }
+    
     const result = await pool.query(
       'SELECT id, email, username, access_role FROM users WHERE company_id = $1',
       [company_id]
     );
     res.json(result.rows);
-  } catch (err) {
+  } catch (err: any) {
     console.error('employeeRoutes: Error fetching employees:', err);
-    res.status(500).json({ error: 'Internal server error' });
+    console.error('Error details:', {
+      message: err.message,
+      code: err.code
+    });
+    res.status(500).json({ error: 'Internal server error', details: err.message });
   }
 });
 
@@ -24,15 +38,50 @@ router.post('/', async (req: Request, res: Response) => {
   const { email, username, password, access_role } = req.body;
   try {
     const company_id = req.user?.company_id;
+    
+    // Debug logging
+    console.log('Creating employee with data:', {
+      email,
+      username,
+      access_role,
+      company_id,
+      user: req.user
+    });
+    
+    if (!company_id) {
+      console.error('No company_id found in user object');
+      return res.status(400).json({ error: 'Company ID not found' });
+    }
+    
     const hashedPassword = await bcrypt.hash(password, 10);
     const result = await pool.query(
       'INSERT INTO users (email, username, password_hash, access_role, company_id) VALUES ($1, $2, $3, $4, $5) RETURNING id, email, username, access_role',
       [email, username, hashedPassword, access_role, company_id]
     );
-    res.status(201).json(result.rows[0]);
-  } catch (err) {
+    res.status(201).json({ message: 'Employee created successfully', employee: result.rows[0] });
+  } catch (err: any) {
     console.error('employeeRoutes: Error creating employee:', err);
-    res.status(500).json({ error: 'Internal server error' });
+    console.error('Error details:', {
+      message: err.message,
+      code: err.code,
+      constraint: err.constraint,
+      detail: err.detail
+    });
+    
+    // Provide more specific error messages
+    if (err.code === '23505') { // Unique constraint violation
+      if (err.constraint?.includes('email')) {
+        res.status(400).json({ error: 'Email already exists' });
+      } else if (err.constraint?.includes('username')) {
+        res.status(400).json({ error: 'Username already exists' });
+      } else {
+        res.status(400).json({ error: 'Duplicate entry' });
+      }
+    } else if (err.code === '23503') { // Foreign key constraint violation
+      res.status(400).json({ error: 'Invalid company ID' });
+    } else {
+      res.status(500).json({ error: 'Internal server error', details: err.message });
+    }
   }
 });
 

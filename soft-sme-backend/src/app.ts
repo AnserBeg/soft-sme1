@@ -19,6 +19,10 @@ import marginScheduleRouter from './routes/marginScheduleRoutes';
 import timeTrackingRouter from './routes/timeTrackingRoutes';
 import globalSettingsRouter from './routes/globalSettingsRoutes';
 import attendanceRouter from './routes/attendanceRoutes';
+import aiAssistantRouter from './routes/aiAssistantRoutes';
+import emailRouter from './routes/emailRoutes';
+
+import chatRouter from './routes/chatRoutes';
 
 // Load environment variables
 dotenv.config();
@@ -115,6 +119,15 @@ console.log('Registered attendance routes');
 
 app.use('/api/settings', authMiddleware, globalSettingsRouter);
 console.log('Registered global settings routes');
+
+app.use('/api/chat', authMiddleware, chatRouter);
+console.log('Registered chat routes');
+
+app.use('/api/ai-assistant', aiAssistantRouter);
+console.log('Registered AI assistant routes');
+
+app.use('/api/email', authMiddleware, emailRouter);
+console.log('Registered email routes');
 
 // Health check endpoint
 app.get('/health', (req, res) => {

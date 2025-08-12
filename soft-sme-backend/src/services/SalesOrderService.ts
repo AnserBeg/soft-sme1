@@ -9,85 +9,169 @@ export class SalesOrderService {
     this.inventoryService = new InventoryService(pool);
   }
 
-  // Update sales order with proper inventory management
-  async updateSalesOrder(orderId: number, newLineItems: any[], clientArg?: PoolClient): Promise<void> {
+  // Update sales order with simple inventory validation
+  async updateSalesOrder(orderId: number, newLineItems: any[], clientArg?: PoolClient): Promise<null> {
     const client = clientArg || await this.pool.connect();
     let startedTransaction = false;
+    
+    console.log('🔧 Backend received newLineItems:', newLineItems);
+    
     try {
       if (!clientArg) {
         await client.query('BEGIN');
         startedTransaction = true;
       }
+      
       // Get current line items to calculate inventory changes
       const currentLineItemsRes = await client.query('SELECT * FROM salesorderlineitems WHERE sales_order_id = $1', [orderId]);
       const currentLineItems = currentLineItemsRes.rows;
-      // Create maps for easy comparison
-      const currentItemsMap = new Map();
-      const newItemsMap = new Map();
-      currentLineItems.forEach(item => {
-        currentItemsMap.set(item.part_number, item.quantity_sold);
-      });
-      newLineItems.forEach(item => {
-        newItemsMap.set(item.part_number, item.quantity || 0);
-      });
-      // Calculate inventory changes
-      const inventoryChanges = new Map();
-      // Handle removed items - restore inventory
-      for (const [partNumber, currentQty] of currentItemsMap.entries()) {
-        if (!newItemsMap.has(partNumber)) {
-          inventoryChanges.set(partNumber, currentQty !== undefined && currentQty !== null ? parseFloat(currentQty) : 0);
-        }
-      }
-      // Handle added/modified items - adjust inventory
-      for (const [partNumber, newQty] of newItemsMap.entries()) {
-        const currentQty = currentItemsMap.get(partNumber) || 0;
-        const delta = newQty - currentQty;
-        if (delta !== 0) {
-          const existingChange = inventoryChanges.get(partNumber) || 0;
-          inventoryChanges.set(partNumber, existingChange - delta);
-        }
-      }
-      // Check for negative inventory before making changes
-      const negativeInventoryErrors = [];
-      for (const [partNumber, change] of inventoryChanges.entries()) {
-        if (change < 0) {
-          const currentInventory = await this.inventoryService.getOnHand(partNumber, client);
-          if (currentInventory + change < 0) {
-            negativeInventoryErrors.push({
-              part_number: partNumber,
-              available: currentInventory,
-              requested: -change,
-              would_result_in: currentInventory + change
-            });
+      
+      // Filter out LABOUR, OVERHEAD, and SUPPLY from inventory management
+      const inventoryLineItems = currentLineItems.filter(item => 
+        item.part_number !== 'LABOUR' && item.part_number !== 'OVERHEAD' && item.part_number !== 'SUPPLY'
+      );
+      const inventoryNewLineItems = newLineItems.filter(item => 
+        item.part_number !== 'LABOUR' && item.part_number !== 'OVERHEAD' && item.part_number !== 'SUPPLY'
+      );
+      
+      // Simple inventory validation: quantity_on_hand - change_in_quantity_sold = new_quantity_on_hand
+      for (const newItem of inventoryNewLineItems) {
+        const partNumber = newItem.part_number;
+        const newQuantitySold = parseFloat(newItem.quantity_sold || 0);
+        
+        // Find current quantity sold for this part
+        const currentItem = inventoryLineItems.find(item => item.part_number === partNumber);
+        const currentQuantitySold = currentItem ? parseFloat(currentItem.quantity_sold || 0) : 0;
+        
+        // Calculate change in quantity sold
+        const changeInQuantitySold = newQuantitySold - currentQuantitySold;
+        
+        console.log(`Backend inventory validation for ${partNumber}:`, {
+          newQuantitySold,
+          currentQuantitySold,
+          changeInQuantitySold
+        });
+        
+        if (changeInQuantitySold > 0) {
+          // Get current quantity on hand
+          const currentQuantityOnHand = await this.inventoryService.getOnHand(partNumber, client);
+          
+          // Calculate new quantity on hand
+          const newQuantityOnHand = currentQuantityOnHand - changeInQuantitySold;
+          
+          console.log(`Backend inventory check for ${partNumber}:`, {
+            currentQuantityOnHand,
+            newQuantityOnHand,
+            wouldGoNegative: newQuantityOnHand < 0
+          });
+          
+          // Check if it would go negative
+          if (newQuantityOnHand < 0) {
+            throw new Error(`Insufficient inventory. Currently quantity on hand is only ${currentQuantityOnHand}`);
           }
         }
       }
-      if (negativeInventoryErrors.length > 0) {
-        const errorDetails = negativeInventoryErrors.map(err => 
-          `Part ${err.part_number}: Available ${err.available}, Requested ${err.requested}, Would result in ${err.would_result_in}`
-        ).join('; ');
-        throw new Error(`Insufficient inventory for the following parts: ${errorDetails}`);
+      
+      // Calculate inventory changes for actual updates
+      const inventoryChanges = new Map();
+      
+      // Handle removed items - restore inventory
+      for (const currentItem of inventoryLineItems) {
+        const newItem = inventoryNewLineItems.find(item => item.part_number === currentItem.part_number);
+        if (!newItem) {
+          // Item was removed, restore inventory
+          const currentQty = parseFloat(currentItem.quantity_sold || 0);
+          inventoryChanges.set(currentItem.part_number, currentQty);
+        }
       }
+      
+      // Handle added/modified items - adjust inventory
+      for (const newItem of inventoryNewLineItems) {
+        const partNumber = newItem.part_number;
+        const newQty = parseFloat(newItem.quantity_sold || 0);
+        const currentItem = inventoryLineItems.find(item => item.part_number === partNumber);
+        const currentQty = currentItem ? parseFloat(currentItem.quantity_sold || 0) : 0;
+        
+        const delta = newQty - currentQty;
+        if (delta !== 0) {
+          inventoryChanges.set(partNumber, -delta);
+        }
+      }
+      
       // Apply inventory changes
       for (const [partNumber, change] of inventoryChanges.entries()) {
         if (change !== 0) {
           await this.inventoryService.adjustInventory(partNumber, change, 'Sales order update', orderId, undefined, client);
         }
       }
+      
       // Update line items in database
-      await client.query('DELETE FROM salesorderlineitems WHERE sales_order_id = $1', [orderId]);
-      for (const item of newLineItems) {
+      // For LABOUR, OVERHEAD, and SUPPLY items, preserve existing quantity_sold values from time tracking or set to 'N/A' for SUPPLY
+      const specialItems = newLineItems.filter(item => 
+        item.part_number === 'LABOUR' || item.part_number === 'OVERHEAD' || item.part_number === 'SUPPLY'
+      );
+      const otherItems = newLineItems.filter(item => 
+        item.part_number !== 'LABOUR' && item.part_number !== 'OVERHEAD' && item.part_number !== 'SUPPLY'
+      );
+      
+      // Delete non-labour/overhead/supply items and reinsert them
+      await client.query('DELETE FROM salesorderlineitems WHERE sales_order_id = $1 AND part_number NOT IN ($2, $3, $4)', [orderId, 'LABOUR', 'OVERHEAD', 'SUPPLY']);
+      
+      // Insert other items (skip zero quantities)
+      for (const item of otherItems) {
         // Defensive: coerce all numeric fields to numbers
         const quantity = item.quantity !== undefined && item.quantity !== null ? parseFloat(item.quantity) : 0;
-        const quantity_sold = item.quantity_sold !== undefined && item.quantity_sold !== null ? parseFloat(item.quantity_sold) : 0;
+        const quantity_sold = item.quantity_sold !== undefined && item.quantity_sold !== null ? parseFloat(item.quantity_sold) : 0; // Use the quantity_sold value from frontend
         const unit_price = item.unit_price !== undefined && item.unit_price !== null ? parseFloat(item.unit_price) : 0;
         const line_amount = item.line_amount !== undefined && item.line_amount !== null ? parseFloat(item.line_amount) : 0;
+        
+        // Skip items with zero quantity sold (except special items which are handled separately)
+        if (quantity_sold <= 0) {
+          console.log(`Skipping zero quantity item: ${item.part_number} for order ${orderId}`);
+          continue;
+        }
+        
+        console.log(`Saving line item: ${item.part_number}, quantity_sold: ${quantity_sold}`);
+        
         await client.query(
           `INSERT INTO salesorderlineitems (sales_order_id, part_number, part_description, quantity_sold, unit, unit_price, line_amount) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
           [orderId, item.part_number, item.part_description, quantity_sold, item.unit, unit_price, line_amount]
         );
+        
+        console.log(`✅ Saved line item to database: ${item.part_number} with quantity_sold: ${quantity_sold}`);
+      }
+      
+      // Update LABOUR, OVERHEAD, and SUPPLY items
+      for (const item of specialItems) {
+        const quantity = item.quantity !== undefined && item.quantity !== null ? parseFloat(item.quantity) : 0;
+        const unit_price = item.unit_price !== undefined && item.unit_price !== null ? parseFloat(item.unit_price) : 0;
+        const line_amount = item.line_amount !== undefined && item.line_amount !== null ? parseFloat(item.line_amount) : 0;
+        let quantity_sold: any = quantity;
+        if (item.part_number === 'SUPPLY') {
+          // For SUPPLY, use the quantity_sold from frontend (should be 1) but it doesn't affect inventory
+          quantity_sold = item.quantity_sold !== undefined && item.quantity_sold !== null ? parseFloat(item.quantity_sold) : 1;
+        }
+        // Check if item exists
+        const existingItemRes = await client.query(
+          'SELECT quantity_sold FROM salesorderlineitems WHERE sales_order_id = $1 AND part_number = $2',
+          [orderId, item.part_number]
+        );
+        if (existingItemRes.rows.length > 0) {
+          await client.query(
+            `UPDATE salesorderlineitems SET part_description = $1, unit = $2, unit_price = $3, line_amount = $4, quantity_sold = $5 WHERE sales_order_id = $6 AND part_number = $7`,
+            [item.part_description, item.unit, unit_price, line_amount, quantity_sold, orderId, item.part_number]
+          );
+        } else {
+          await client.query(
+            `INSERT INTO salesorderlineitems (sales_order_id, part_number, part_description, quantity_sold, unit, unit_price, line_amount) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+            [orderId, item.part_number, item.part_description, quantity_sold, item.unit, unit_price, line_amount]
+          );
+        }
       }
       if (startedTransaction) await client.query('COMMIT');
+      
+      // Return null to indicate no adjustments were made (since we don't do auto-adjustments anymore)
+      return null;
     } catch (err) {
       if (startedTransaction) await client.query('ROLLBACK');
       throw err;
@@ -117,19 +201,32 @@ export class SalesOrderService {
       const oldQty = lineRes.rows.length > 0 ? lineRes.rows[0].quantity_sold : 0;
       const newQty = quantity;
       const delta = newQty - oldQty;
-      if (delta !== 0) {
+      if (delta !== 0 && item.part_number !== 'SUPPLY') {
         await this.inventoryService.adjustInventory(item.part_number, -delta, 'Sales order line item update', orderId, undefined, client);
       }
-      if (lineRes.rows.length > 0) {
-        await client.query(
-          `UPDATE salesorderlineitems SET quantity_sold = $1, part_description = $2, unit = $3, unit_price = $4, line_amount = $5 WHERE sales_order_id = $6 AND part_number = $7`,
-          [quantity_sold, item.part_description, item.unit, unit_price, line_amount, orderId, item.part_number]
-        );
+      // Handle zero quantities by deleting the line item (except for LABOUR, OVERHEAD, and SUPPLY)
+      const quantityToOrder = parseFloat(item.quantity_to_order) || 0;
+      if (quantity_sold <= 0 && quantityToOrder <= 0 && item.part_number !== 'LABOUR' && item.part_number !== 'OVERHEAD' && item.part_number !== 'SUPPLY') {
+        if (lineRes.rows.length > 0) {
+          console.log(`Deleting zero quantity line item: ${item.part_number} for order ${orderId}`);
+          await client.query(
+            `DELETE FROM salesorderlineitems WHERE sales_order_id = $1 AND part_number = $2`,
+            [orderId, item.part_number]
+          );
+        }
+        // Don't insert anything for zero quantities
       } else {
-        await client.query(
-          `INSERT INTO salesorderlineitems (sales_order_id, part_number, part_description, quantity_sold, unit, unit_price, line_amount) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-          [orderId, item.part_number, item.part_description, quantity_sold, item.unit, unit_price, line_amount]
-        );
+        if (lineRes.rows.length > 0) {
+          await client.query(
+            `UPDATE salesorderlineitems SET quantity_sold = $1, part_description = $2, unit = $3, unit_price = $4, line_amount = $5 WHERE sales_order_id = $6 AND part_number = $7`,
+            [quantity_sold, item.part_description, item.unit, unit_price, line_amount, orderId, item.part_number]
+          );
+        } else {
+          await client.query(
+            `INSERT INTO salesorderlineitems (sales_order_id, part_number, part_description, quantity_sold, unit, unit_price, line_amount) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+            [orderId, item.part_number, item.part_description, quantity_sold, item.unit, unit_price, line_amount]
+          );
+        }
       }
       if (startedTransaction) await client.query('COMMIT');
     } catch (err) {
@@ -151,13 +248,21 @@ export class SalesOrderService {
       const lineItemsRes = await client.query('SELECT * FROM salesorderlineitems WHERE sales_order_id = $1', [orderId]);
       const lineItems = lineItemsRes.rows;
       let subtotal = 0;
-      let total_gst_amount = 0;
-      let total_amount = 0;
+      
+      // Calculate subtotal from line items with proper precision
       for (const item of lineItems) {
         subtotal += parseFloat(item.line_amount || 0);
       }
-      total_gst_amount = subtotal * 0.05;
-      total_amount = subtotal + total_gst_amount;
+      
+      // Apply proper rounding to avoid floating-point precision issues
+      subtotal = Math.round(subtotal * 100) / 100;
+      
+      // Calculate GST and total with proper rounding
+      const total_gst_amount = Math.round((subtotal * 0.05) * 100) / 100;
+      const total_amount = Math.round((subtotal + total_gst_amount) * 100) / 100;
+      
+      console.log(`📊 Sales Order ${orderId} calculation: subtotal=${subtotal}, gst=${total_gst_amount}, total=${total_amount}`);
+      
       await client.query(
         'UPDATE salesorderhistory SET subtotal = $1, total_gst_amount = $2, total_amount = $3 WHERE sales_order_id = $4',
         [subtotal, total_gst_amount, total_amount, orderId]

@@ -6,11 +6,11 @@ export async function getNextSequenceNumberForYear(year: number): Promise<{ sequ
   const result = await pool.query(
     `
     SELECT MAX(seq) as max_seq FROM (
-      SELECT CAST(SUBSTRING(sequence_number, 5, 5) AS INTEGER) as seq
-      FROM quotes WHERE sequence_number LIKE $1
+      SELECT CAST(SUBSTRING(CAST(sequence_number AS TEXT), 5, 5) AS INTEGER) as seq
+      FROM quotes WHERE sequence_number IS NOT NULL AND CAST(sequence_number AS TEXT) LIKE $1
       UNION ALL
-      SELECT CAST(SUBSTRING(sequence_number, 5, 5) AS INTEGER) as seq
-      FROM salesorderhistory WHERE sequence_number LIKE $1
+      SELECT CAST(SUBSTRING(CAST(sequence_number AS TEXT), 5, 5) AS INTEGER) as seq
+      FROM salesorderhistory WHERE sequence_number IS NOT NULL AND CAST(sequence_number AS TEXT) LIKE $1
     ) AS all_seqs
     `,
     [`${yearPrefix}%`]
@@ -22,24 +22,30 @@ export async function getNextSequenceNumberForYear(year: number): Promise<{ sequ
 }
 
 export async function getNextPurchaseOrderNumberForYear(year: number): Promise<{ poNumber: string, nnnnn: number }> {
-  const yearPrefix = `${year}`;
-  
-  // Get the maximum sequence number for the current year
-  const result = await pool.query(
-    `
-    SELECT MAX(seq) as max_seq FROM (
-      SELECT CAST(SUBSTRING(purchase_number, 8, 5) AS INTEGER) as seq
-      FROM purchasehistory WHERE purchase_number LIKE $1
-    ) AS all_seqs
-    `,
-    [`PO-${yearPrefix}-%`]
+  const yearPrefix = `PO-${year}-`;
+
+  // Get all existing PO numbers for this year
+  const existingPOsResult = await pool.query(
+    `SELECT purchase_number 
+    FROM purchasehistory 
+    WHERE purchase_number LIKE $1 
+    ORDER BY purchase_number`,
+    [`${yearPrefix}%`]
   );
-  
-  const maxSeq = result.rows[0].max_seq || 0;
-  const nextSeq = maxSeq + 1;
-  const poNumber = `PO-${yearPrefix}-${nextSeq.toString().padStart(5, '0')}`;
-  
-  console.log(`Generated PO number: ${poNumber} (max_seq: ${maxSeq}, next_seq: ${nextSeq})`);
-  
-  return { poNumber, nnnnn: nextSeq };
+
+  const existingNumbers = existingPOsResult.rows.map(row => parseInt(row.purchase_number.substring(yearPrefix.length))).sort((a, b) => a - b);
+
+  let nextNumber = 1;
+  for (const num of existingNumbers) {
+    if (num !== nextNumber) {
+      break; // Found a gap
+    }
+    nextNumber++;
+  }
+
+  const poNumber = `${yearPrefix}${nextNumber.toString().padStart(5, '0')}`;
+
+  console.log(`Generated PO number: ${poNumber} (next_number: ${nextNumber}, existing_count: ${existingNumbers.length})`);
+
+  return { poNumber, nnnnn: nextNumber };
 } 

@@ -63,7 +63,9 @@ router.post('/', async (req: Request, res: Response) => {
     product_description,
     estimated_cost,
     status,
-    terms
+    terms,
+    customer_po_number,
+    vin_number
   } = req.body;
 
   if (!customer_id || !quote_date || !valid_until || !product_name || !estimated_cost) {
@@ -87,9 +89,9 @@ router.post('/', async (req: Request, res: Response) => {
     const result = await client.query(
       `INSERT INTO quotes (
         quote_number, customer_id, quote_date, valid_until, product_name, product_description,
-        estimated_cost, status, sequence_number, terms
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *;`,
-      [formattedQuoteNumber, customer_id, quote_date, valid_until, product_name, product_description, estimated_cost, status || 'Draft', sequenceNumber, terms || null]
+        estimated_cost, status, sequence_number, terms, customer_po_number, vin_number
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *;`,
+      [formattedQuoteNumber, customer_id, quote_date, valid_until, product_name, product_description, estimated_cost, status || 'Draft', sequenceNumber, terms || null, customer_po_number || null, vin_number || null]
     );
     await client.query('COMMIT');
     res.status(201).json(result.rows[0]);
@@ -113,7 +115,9 @@ router.put('/:id', async (req: Request, res: Response) => {
     product_description,
     estimated_cost,
     status,
-    terms
+    terms,
+    customer_po_number,
+    vin_number
   } = req.body;
 
   if (!customer_id || !quote_date || !valid_until || !product_name || !estimated_cost) {
@@ -146,9 +150,11 @@ router.put('/:id', async (req: Request, res: Response) => {
         estimated_cost = $6, 
         status = $7,
         terms = $8,
+        customer_po_number = $9,
+        vin_number = $10,
         updated_at = NOW()
-      WHERE quote_id = $9 RETURNING *;`,
-      [customer_id, quote_date, valid_until, product_name, product_description, estimated_cost, status, terms || null, id]
+      WHERE quote_id = $11 RETURNING *;`,
+      [customer_id, quote_date, valid_until, product_name, product_description, estimated_cost, status, terms || null, customer_po_number || null, vin_number || null, id]
     );
     
     await client.query('COMMIT');
@@ -211,11 +217,11 @@ router.post('/:id/convert-to-sales-order', async (req: Request, res: Response) =
     const salesOrderResult = await client.query(
       `INSERT INTO salesorderhistory (
         sales_order_number, customer_id, sales_date, product_name, product_description,
-        estimated_cost, status, quote_id, subtotal, total_gst_amount, total_amount, sequence_number, terms
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *`,
+        estimated_cost, status, quote_id, subtotal, total_gst_amount, total_amount, sequence_number, terms, customer_po_number, vin_number
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING *`,
       [formattedSONumber, quote.customer_id, new Date().toISOString().split('T')[0], 
        quote.product_name, quote.product_description, quote.estimated_cost, 'Open', quote.quote_id,
-       0, 0, 0, sequenceNumber, quote.terms || null]
+       0, 0, 0, sequenceNumber, quote.terms || null, quote.customer_po_number || null, quote.vin_number || null]
     );
 
     const salesOrderId = salesOrderResult.rows[0].sales_order_id;
@@ -424,22 +430,31 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
     // --- Quote Details ---
     doc.font('Helvetica-Bold').fontSize(14).fillColor('#000000').text('QUOTE', 50, y);
     y += 22;
+    // First line: Quote # and Customer PO #
     doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Quote #:', 50, y);
     doc.font('Helvetica').fontSize(11).fillColor('#000000').text(quote.quote_number, 170, y);
-    doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Quote Date:', 320, y);
+    doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Customer PO #:', 320, y);
+    doc.font('Helvetica').fontSize(11).fillColor('#000000').text(quote.customer_po_number || 'N/A', 450, y);
+    y += 16;
+    // Second line: Quote Date and Valid Until
+    doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Quote Date:', 50, y);
     doc.font('Helvetica').fontSize(11).fillColor('#000000').text(
       quote.quote_date ? new Date(quote.quote_date).toLocaleDateString() : '',
-      400, y
-    );
-    y += 16;
-    doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Valid Until:', 50, y);
-    doc.font('Helvetica').fontSize(11).fillColor('#000000').text(
-      quote.valid_until ? new Date(quote.valid_until).toLocaleDateString() : '',
       170, y
     );
-    doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Status:', 320, y);
-    doc.font('Helvetica').fontSize(11).fillColor('#000000').text(quote.status || 'Draft', 400, y);
-    y += 24;
+    doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Valid Until:', 320, y);
+    doc.font('Helvetica').fontSize(11).fillColor('#000000').text(
+      quote.valid_until ? new Date(quote.valid_until).toLocaleDateString() : '',
+      450, y
+    );
+    y += 16;
+    // Third line: VIN # (conditional rendering)
+    if (quote.vin_number && quote.vin_number.trim() !== '') {
+      doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('VIN #:', 50, y);
+      doc.font('Helvetica').fontSize(11).fillColor('#000000').text(quote.vin_number, 170, y);
+      y += 16;
+    }
+    y += 8;
     // Horizontal line
     doc.moveTo(50, y).lineTo(550, y).strokeColor('#444444').lineWidth(1).stroke();
     y += 14;
@@ -460,8 +475,7 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
     y += 14;
 
     // --- Pricing Section ---
-    doc.font('Helvetica-Bold').fontSize(12).fillColor('#000000').text('Pricing', 50, y);
-    doc.font('Helvetica-Bold').fontSize(13).fillColor('#000000').text('Estimated Price:', 400, y, { align: 'left', width: 80 });
+    doc.font('Helvetica-Bold').fontSize(12).fillColor('#000000').text('Estimated Price', 50, y);
     doc.font('Helvetica-Bold').fontSize(13).fillColor('#000000').text(parseFloat(quote.estimated_cost).toFixed(2), 480, y, { align: 'right', width: 70 });
 
     // --- Terms and Conditions ---

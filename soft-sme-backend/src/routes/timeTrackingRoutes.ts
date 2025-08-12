@@ -3,6 +3,73 @@ import { pool } from '../db';
 import PDFDocument from 'pdfkit';
 import Papa from 'papaparse';
 
+// Helper function to calculate effective duration, excluding daily break times
+function calculateEffectiveDuration(clockIn: Date, clockOut: Date, breakStartStr: string | null, breakEndStr: string | null): number {
+  let durationMs = clockOut.getTime() - clockIn.getTime();
+
+  if (breakStartStr && breakEndStr) {
+    const breakStartParts = breakStartStr.split(':').map(Number);
+    const breakEndParts = breakEndStr.split(':').map(Number);
+
+    const breakStartTime = new Date(clockIn);
+    breakStartTime.setHours(breakStartParts[0], breakStartParts[1], 0, 0);
+
+    const breakEndTime = new Date(clockIn);
+    breakEndTime.setHours(breakEndParts[0], breakEndParts[1], 0, 0);
+
+    // Handle overnight breaks (e.g., 23:00 - 01:00)
+    if (breakEndTime.getTime() < breakStartTime.getTime()) {
+      breakEndTime.setDate(breakEndTime.getDate() + 1);
+    }
+
+    // Check if shift spans multiple days
+    const isMultiDayShift = clockOut.getDate() !== clockIn.getDate() || 
+                           clockOut.getMonth() !== clockIn.getMonth() || 
+                           clockOut.getFullYear() !== clockIn.getFullYear();
+
+    if (isMultiDayShift) {
+      // Multi-day shift - handle breaks for each day
+      const clockInDay = new Date(clockIn.getFullYear(), clockIn.getMonth(), clockIn.getDate());
+      const clockOutDay = new Date(clockOut.getFullYear(), clockOut.getMonth(), clockOut.getDate());
+      const daysDiff = Math.round((clockOutDay.getTime() - clockInDay.getTime()) / (1000 * 60 * 60 * 24));
+
+      // For each day the shift spans, check for break overlap
+      for (let i = 0; i <= daysDiff; i++) {
+        const currentDayBreakStart = new Date(breakStartTime);
+        currentDayBreakStart.setDate(clockIn.getDate() + i);
+        const currentDayBreakEnd = new Date(breakEndTime);
+        currentDayBreakEnd.setDate(clockIn.getDate() + i);
+
+        // Calculate overlap with work time
+        const overlapStart = Math.max(clockIn.getTime(), currentDayBreakStart.getTime());
+        const overlapEnd = Math.min(clockOut.getTime(), currentDayBreakEnd.getTime());
+
+        if (overlapEnd > overlapStart) {
+          const breakDurationMs = overlapEnd - overlapStart;
+          durationMs -= breakDurationMs;
+          console.log(`Break deducted: ${breakDurationMs / (1000 * 60)} minutes for day ${i + 1}`);
+        }
+      }
+    } else {
+      // Single day shift
+      const overlapStart = Math.max(clockIn.getTime(), breakStartTime.getTime());
+      const overlapEnd = Math.min(clockOut.getTime(), breakEndTime.getTime());
+
+      if (overlapEnd > overlapStart) {
+        const breakDurationMs = overlapEnd - overlapStart;
+        durationMs -= breakDurationMs;
+        console.log(`Break deducted: ${breakDurationMs / (1000 * 60)} minutes`);
+      }
+    }
+  }
+
+  // Convert to hours and ensure non-negative
+  const durationHours = Math.max(0, durationMs / (1000 * 60 * 60));
+  
+  // Round to 2 decimal places for consistency
+  return Math.round(durationHours * 100) / 100;
+}
+
 const router = express.Router();
 
 // Role-based access middleware
@@ -17,8 +84,15 @@ function mobileTimeTrackerOnly(req: Request, res: Response, next: Function) {
   return res.status(403).json({ message: 'Not authorized' });
 }
 
-// Apply the middleware to all routes in this router
-router.use(mobileTimeTrackerOnly);
+// Apply the middleware to all routes except profiles, sales-orders, and time tracking endpoints
+router.use((req: Request, res: Response, next: Function) => {
+  // Allow access to profiles, sales-orders, and time tracking endpoints for all authenticated users
+  if (req.path === '/profiles' || req.path === '/sales-orders' || req.path.startsWith('/time-entries')) {
+    return next();
+  }
+  // Apply mobileTimeTrackerOnly middleware for other routes
+  return mobileTimeTrackerOnly(req, res, next);
+});
 
 // Get time entries for a given date
 router.get('/time-entries', async (req: Request, res: Response) => {
@@ -70,6 +144,16 @@ router.post('/time-entries/clock-in', async (req: Request, res: Response) => {
   }
 
   try {
+    // Check if profile is clocked in for attendance
+    const attendanceCheck = await pool.query(
+      'SELECT * FROM attendance_shifts WHERE profile_id = $1 AND clock_out IS NULL',
+      [profile_id]
+    );
+
+    if (attendanceCheck.rows.length === 0) {
+      return res.status(400).json({ error: 'You must clock in for attendance before you can clock in for a sales order.' });
+    }
+
     // Get global labour rate
     const rateRes = await pool.query("SELECT value FROM global_settings WHERE key = 'labour_rate'");
     const unit_price = rateRes.rows.length > 0 ? parseFloat(rateRes.rows[0].value) : 0;
@@ -105,12 +189,32 @@ router.post('/time-entries/:id/clock-out', async (req: Request, res: Response) =
   console.log('Clock out route hit for ID:', id);
 
   try {
+    // Get daily break times
+    const breakStartRes = await pool.query("SELECT value FROM global_settings WHERE key = 'daily_break_start'");
+    const breakEndRes = await pool.query("SELECT value FROM global_settings WHERE key = 'daily_break_end'");
+    const dailyBreakStart = breakStartRes.rows.length > 0 ? breakStartRes.rows[0].value : null;
+    const dailyBreakEnd = breakEndRes.rows.length > 0 ? breakEndRes.rows[0].value : null;
+
+    const clockOutTime = new Date();
+    const timeEntryRes = await pool.query('SELECT clock_in FROM time_entries WHERE id = $1', [id]);
+
+    if (timeEntryRes.rows.length === 0) {
+      return res.status(404).json({ error: 'Time entry not found' });
+    }
+
+    const clockInTime = new Date(timeEntryRes.rows[0].clock_in);
+    const effectiveDuration = calculateEffectiveDuration(clockInTime, clockOutTime, dailyBreakStart, dailyBreakEnd);
+
     const clockOutRes = await pool.query(
-      'UPDATE time_entries SET clock_out = NOW(), duration = EXTRACT(EPOCH FROM (NOW() - clock_in)) / 3600 WHERE id = $1 AND clock_out IS NULL RETURNING *',
-      [id]
+      'UPDATE time_entries SET clock_out = $1, duration = $2 WHERE id = $3 AND clock_out IS NULL RETURNING *',
+      [clockOutTime, effectiveDuration, id]
     );
 
     console.log('Clock out DB result:', clockOutRes.rows);
+    if (clockOutRes.rows.length > 0) {
+      console.log('Duration calculated:', clockOutRes.rows[0].duration);
+      console.log('Duration type:', typeof clockOutRes.rows[0].duration);
+    }
 
     if (clockOutRes.rows.length === 0) {
       console.log('No open time entry found for ID:', id);
@@ -129,7 +233,7 @@ router.post('/time-entries/:id/clock-out', async (req: Request, res: Response) =
       [id]
     );
 
-    // Upsert LABOUR line item for the sales order
+    // Upsert LABOUR and OVERHEAD line items for the sales order
     const salesOrderIdRes = await pool.query('SELECT sales_order_id FROM time_entries WHERE id = $1', [id]);
     if (salesOrderIdRes.rows.length > 0) {
       const soId = salesOrderIdRes.rows[0].sales_order_id;
@@ -142,7 +246,13 @@ router.post('/time-entries/:id/clock-out', async (req: Request, res: Response) =
       const totalHours = parseFloat(sumRes.rows[0].total_hours) || 0;
       const avgRate = parseFloat(sumRes.rows[0].avg_rate) || 0;
       const totalCost = parseFloat(sumRes.rows[0].total_cost) || 0;
-      // Check if LABOUR line item exists
+
+      // Get global overhead rate
+      const overheadRateRes = await pool.query("SELECT value FROM global_settings WHERE key = 'overhead_rate'");
+      const overheadRate = overheadRateRes.rows.length > 0 ? parseFloat(overheadRateRes.rows[0].value) : 0;
+      const totalOverheadCost = totalHours * overheadRate;
+
+      // Upsert LABOUR line item
       const labourRes = await pool.query(
         `SELECT sales_order_line_item_id FROM salesorderlineitems WHERE sales_order_id = $1 AND part_number = 'LABOUR'`,
         [soId]
@@ -159,6 +269,26 @@ router.post('/time-entries/:id/clock-out', async (req: Request, res: Response) =
           `INSERT INTO salesorderlineitems (sales_order_id, part_number, part_description, quantity_sold, unit, unit_price, line_amount)
            VALUES ($1, 'LABOUR', $2, $3, $4, $5, $6)` ,
           [soId, 'Labour Hours', totalHours, 'hr', avgRate, totalCost]
+        );
+      }
+
+      // Upsert OVERHEAD line item
+      const overheadRes = await pool.query(
+        `SELECT sales_order_line_item_id FROM salesorderlineitems WHERE sales_order_id = $1 AND part_number = 'OVERHEAD'`,
+        [soId]
+      );
+      if (overheadRes.rows.length > 0) {
+        // Update
+        await pool.query(
+          `UPDATE salesorderlineitems SET part_description = $1, quantity_sold = $2, unit = $3, unit_price = $4, line_amount = $5 WHERE sales_order_id = $6 AND part_number = 'OVERHEAD'`,
+          ['Overhead Hours', totalHours, 'hr', overheadRate, totalOverheadCost, soId]
+        );
+      } else {
+        // Insert
+        await pool.query(
+          `INSERT INTO salesorderlineitems (sales_order_id, part_number, part_description, quantity_sold, unit, unit_price, line_amount)
+           VALUES ($1, 'OVERHEAD', $2, $3, $4, $5, $6)` ,
+          [soId, 'Overhead Hours', totalHours, 'hr', overheadRate, totalOverheadCost]
         );
       }
     }
@@ -179,25 +309,123 @@ router.put('/time-entries/:id', async (req: Request, res: Response) => {
     if (!clock_in || clock_in === '') clock_in = null;
     if (!clock_out || clock_out === '') clock_out = null;
 
+    // Get daily break times
+    const breakStartRes = await pool.query("SELECT value FROM global_settings WHERE key = 'daily_break_start'");
+    const breakEndRes = await pool.query("SELECT value FROM global_settings WHERE key = 'daily_break_end'");
+    const dailyBreakStart = breakStartRes.rows.length > 0 ? breakStartRes.rows[0].value : null;
+    const dailyBreakEnd = breakEndRes.rows.length > 0 ? breakEndRes.rows[0].value : null;
+
+    let effectiveDuration = null;
+    if (clock_in && clock_out) {
+      const clockInTime = new Date(clock_in);
+      const clockOutTime = new Date(clock_out);
+      effectiveDuration = calculateEffectiveDuration(clockInTime, clockOutTime, dailyBreakStart, dailyBreakEnd);
+    }
+
     const result = await pool.query(
       `UPDATE time_entries
        SET clock_in = $1::timestamptz,
            clock_out = $2::timestamptz,
-           duration = CASE
-             WHEN $1 IS NOT NULL AND $2 IS NOT NULL THEN EXTRACT(EPOCH FROM ($2::timestamptz - $1::timestamptz)) / 3600
-             ELSE duration
-           END
-       WHERE id = $3
+           duration = $3
+       WHERE id = $4
        RETURNING *`,
-      [clock_in, clock_out, id]
+      [clock_in, clock_out, effectiveDuration, id]
     );
+
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Time entry not found' });
     }
+
+    // Get the sales order ID for this time entry
+    const salesOrderIdRes = await pool.query('SELECT sales_order_id FROM time_entries WHERE id = $1', [id]);
+    if (salesOrderIdRes.rows.length > 0) {
+      const soId = salesOrderIdRes.rows[0].sales_order_id;
+      
+      // Recalculate LABOUR and OVERHEAD line items for the sales order
+      // Sum all durations and costs for this sales order
+      const sumRes = await pool.query(
+        `SELECT SUM(duration) as total_hours, AVG(unit_price) as avg_rate, SUM(duration * unit_price) as total_cost
+         FROM time_entries WHERE sales_order_id = $1 AND clock_out IS NOT NULL`,
+        [soId]
+      );
+      const totalHours = parseFloat(sumRes.rows[0].total_hours) || 0;
+      const avgRate = parseFloat(sumRes.rows[0].avg_rate) || 0;
+      const totalCost = parseFloat(sumRes.rows[0].total_cost) || 0;
+
+      // Get global overhead rate
+      const overheadRateRes = await pool.query("SELECT value FROM global_settings WHERE key = 'overhead_rate'");
+      const overheadRate = overheadRateRes.rows.length > 0 ? parseFloat(overheadRateRes.rows[0].value) : 0;
+      const totalOverheadCost = totalHours * overheadRate;
+
+      // Upsert LABOUR line item
+      const labourRes = await pool.query(
+        `SELECT sales_order_line_item_id FROM salesorderlineitems WHERE sales_order_id = $1 AND part_number = 'LABOUR'`,
+        [soId]
+      );
+      if (labourRes.rows.length > 0) {
+        // Update
+        await pool.query(
+          `UPDATE salesorderlineitems SET part_description = $1, quantity_sold = $2, unit = $3, unit_price = $4, line_amount = $5 WHERE sales_order_id = $6 AND part_number = 'LABOUR'`,
+          ['Labour Hours', totalHours, 'hr', avgRate, totalCost, soId]
+        );
+      } else {
+        // Insert
+        await pool.query(
+          `INSERT INTO salesorderlineitems (sales_order_id, part_number, part_description, quantity_sold, unit, unit_price, line_amount)
+           VALUES ($1, 'LABOUR', $2, $3, $4, $5, $6)`,
+          [soId, 'Labour Hours', totalHours, 'hr', avgRate, totalCost]
+        );
+      }
+
+      // Upsert OVERHEAD line item
+      const overheadRes = await pool.query(
+        `SELECT sales_order_line_item_id FROM salesorderlineitems WHERE sales_order_id = $1 AND part_number = 'OVERHEAD'`,
+        [soId]
+      );
+      if (overheadRes.rows.length > 0) {
+        // Update
+        await pool.query(
+          `UPDATE salesorderlineitems SET part_description = $1, quantity_sold = $2, unit = $3, unit_price = $4, line_amount = $5 WHERE sales_order_id = $6 AND part_number = 'OVERHEAD'`,
+          ['Overhead Hours', totalHours, 'hr', overheadRate, totalOverheadCost, soId]
+        );
+      } else {
+        // Insert
+        await pool.query(
+          `INSERT INTO salesorderlineitems (sales_order_id, part_number, part_description, quantity_sold, unit, unit_price, line_amount)
+           VALUES ($1, 'OVERHEAD', $2, $3, $4, $5, $6)`,
+          [soId, 'Overhead Hours', totalHours, 'hr', overheadRate, totalOverheadCost]
+        );
+      }
+
+      // Recalculate sales order summary statistics
+      const lineItemsRes = await pool.query('SELECT * FROM salesorderlineitems WHERE sales_order_id = $1', [soId]);
+      const lineItems = lineItemsRes.rows;
+      let subtotal = 0;
+      
+      // Calculate subtotal from line items with proper precision
+      for (const item of lineItems) {
+        subtotal += parseFloat(item.line_amount || 0);
+      }
+      
+      // Apply proper rounding to avoid floating-point precision issues
+      subtotal = Math.round(subtotal * 100) / 100;
+      
+      // Calculate GST and total with proper rounding
+      const total_gst_amount = Math.round((subtotal * 0.05) * 100) / 100;
+      const total_amount = Math.round((subtotal + total_gst_amount) * 100) / 100;
+      
+      console.log(`📊 Sales Order ${soId} recalculation after time entry edit: subtotal=${subtotal}, gst=${total_gst_amount}, total=${total_amount}`);
+      
+      await pool.query(
+        'UPDATE salesorderhistory SET subtotal = $1, total_gst_amount = $2, total_amount = $3 WHERE sales_order_id = $4',
+        [subtotal, total_gst_amount, total_amount, soId]
+      );
+    }
+
     res.json(result.rows[0]);
   } catch (err) {
-    console.error('Error updating time entry:', err);
-    res.status(500).json({ error: 'Internal server error', details: (err as Error).message });
+    console.error('Error editing time entry:', err);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -234,9 +462,28 @@ router.post('/', async (req: Request, res: Response) => {
 
 router.get('/profiles', async (req: Request, res: Response) => {
   try {
-    const result = await pool.query(
-      'SELECT id, name, email FROM profiles ORDER BY name'
-    );
+    const userId = req.user?.id;
+    const userRole = req.user?.access_role;
+
+    let query: string;
+    let params: any[] = [];
+
+    // Admin, Time Tracking, and Mobile Time Tracker users can see all profiles in regular frontend
+    if (userRole === 'Admin' || userRole === 'Time Tracking' || userRole === 'Mobile Time Tracker') {
+      query = 'SELECT id, name, email FROM profiles ORDER BY name';
+    } else {
+      // Other users can only see profiles they have access to
+      query = `
+        SELECT DISTINCT p.id, p.name, p.email 
+        FROM profiles p
+        INNER JOIN user_profile_access upa ON p.id = upa.profile_id
+        WHERE upa.user_id = $1 AND upa.is_active = true
+        ORDER BY p.name
+      `;
+      params = [userId];
+    }
+
+    const result = await pool.query(query, params);
     res.json(result.rows);
   } catch (err) {
     console.error('Error fetching profiles:', err);
@@ -266,9 +513,22 @@ router.post('/profiles', async (req: Request, res: Response) => {
 
 router.get('/sales-orders', async (req: Request, res: Response) => {
   try {
-    const result = await pool.query(
-      "SELECT sales_order_id as id, sales_order_number as number FROM salesorderhistory WHERE status = 'Open' ORDER BY sales_order_number"
+    // First, let's check what columns exist and what data we have
+    const schemaCheck = await pool.query(
+      "SELECT column_name FROM information_schema.columns WHERE table_name = 'salesorderhistory' AND column_name = 'product_name'"
     );
+    console.log('Product name column exists:', schemaCheck.rows.length > 0);
+    
+    const result = await pool.query(
+      "SELECT sales_order_id as id, sales_order_number as number, product_name FROM salesorderhistory WHERE status = 'Open' ORDER BY sales_order_number"
+    );
+    console.log('Sales orders API response:', result.rows);
+    
+    // Let's also check a few sample records to see what's in the database
+    const sampleData = await pool.query(
+      "SELECT sales_order_id, sales_order_number, product_name, status FROM salesorderhistory LIMIT 5"
+    );
+    console.log('Sample sales order data:', sampleData.rows);
     res.json(result.rows);
   } catch (err) {
     console.error('Error fetching sales orders:', err);
@@ -337,6 +597,28 @@ router.get('/reports/time-entries', async (req: Request, res: Response) => {
     res.json(result.rows);
   } catch (error) {
     console.error('Error generating time entry report:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Test duration calculation endpoint
+router.get('/test-duration', async (req: Request, res: Response) => {
+  try {
+    const testQuery = `
+      SELECT 
+        NOW() as current_time,
+        (NOW() - INTERVAL '2 hours') as two_hours_ago,
+        EXTRACT(EPOCH FROM (NOW() - (NOW() - INTERVAL '2 hours'))) as seconds_diff,
+        EXTRACT(EPOCH FROM (NOW() - (NOW() - INTERVAL '2 hours'))) / 3600 as hours_diff,
+        ROUND((EXTRACT(EPOCH FROM (NOW() - (NOW() - INTERVAL '2 hours'))) / 3600)::numeric, 2) as rounded_hours
+    `;
+    const result = await pool.query(testQuery);
+    res.json({
+      test: result.rows[0],
+      message: 'Duration calculation test'
+    });
+  } catch (err) {
+    console.error('Error testing duration calculation:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -567,6 +849,151 @@ router.get('/reports/time-entries/export', async (req: Request, res: Response) =
     const err = error as Error;
     console.error('Error exporting time entry report:', err);
     res.status(500).json({ error: 'Internal server error during export', details: err.message, stack: err.stack });
+  }
+});
+
+// Admin endpoints for managing user profile access
+// Only Admin users can access these endpoints
+
+// Get all user profile access assignments
+router.get('/admin/user-profile-access', async (req: Request, res: Response) => {
+  // Check if user is admin
+  if (req.user?.access_role !== 'Admin') {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
+
+  try {
+    const result = await pool.query(`
+      SELECT 
+        upa.id,
+        upa.user_id,
+        u.email as user_email,
+        u.access_role as user_role,
+        upa.profile_id,
+        p.name as profile_name,
+        p.email as profile_email,
+        upa.granted_by,
+        admin.email as granted_by_email,
+        upa.granted_at,
+        upa.is_active,
+        upa.created_at,
+        upa.updated_at
+      FROM user_profile_access upa
+      JOIN users u ON upa.user_id = u.id
+      JOIN profiles p ON upa.profile_id = p.id
+      LEFT JOIN users admin ON upa.granted_by = admin.id
+      ORDER BY u.email, p.name
+    `);
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Error fetching user profile access:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Grant profile access to a user
+router.post('/admin/user-profile-access', async (req: Request, res: Response) => {
+  // Check if user is admin
+  if (req.user?.access_role !== 'Admin') {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
+
+  const { user_id, profile_id } = req.body;
+  const granted_by = req.user.id;
+
+  if (!user_id || !profile_id) {
+    return res.status(400).json({ error: 'User ID and Profile ID are required' });
+  }
+
+  try {
+    // Check if user exists and is a mobile user
+    const userCheck = await pool.query(
+      'SELECT id, access_role FROM users WHERE id = $1',
+      [user_id]
+    );
+
+    if (userCheck.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const userRole = userCheck.rows[0].access_role;
+    if (userRole !== 'Mobile Time Tracker') {
+      return res.status(400).json({ error: 'Can only grant access to Mobile Time Tracker users' });
+    }
+
+    // Check if profile exists
+    const profileCheck = await pool.query(
+      'SELECT id FROM profiles WHERE id = $1',
+      [profile_id]
+    );
+
+    if (profileCheck.rows.length === 0) {
+      return res.status(404).json({ error: 'Profile not found' });
+    }
+
+    // Insert or update the access record
+    const result = await pool.query(`
+      INSERT INTO user_profile_access (user_id, profile_id, granted_by, is_active)
+      VALUES ($1, $2, $3, true)
+      ON CONFLICT (user_id, profile_id)
+      DO UPDATE SET 
+        granted_by = $3,
+        is_active = true,
+        updated_at = CURRENT_TIMESTAMP
+      RETURNING *
+    `, [user_id, profile_id, granted_by]);
+
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    console.error('Error granting profile access:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Revoke profile access from a user
+router.delete('/admin/user-profile-access/:id', async (req: Request, res: Response) => {
+  // Check if user is admin
+  if (req.user?.access_role !== 'Admin') {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
+
+  const { id } = req.params;
+
+  try {
+    const result = await pool.query(
+      'UPDATE user_profile_access SET is_active = false, updated_at = CURRENT_TIMESTAMP WHERE id = $1 RETURNING *',
+      [id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Access record not found' });
+    }
+
+    res.json({ message: 'Profile access revoked successfully' });
+  } catch (err) {
+    console.error('Error revoking profile access:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get available users for profile access (only Mobile Time Tracker users)
+router.get('/admin/available-users', async (req: Request, res: Response) => {
+  // Check if user is admin
+  if (req.user?.access_role !== 'Admin') {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
+
+  try {
+    const result = await pool.query(`
+      SELECT id, email, access_role, created_at
+      FROM users 
+      WHERE access_role = 'Mobile Time Tracker'
+      ORDER BY email
+    `);
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Error fetching available users:', err);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

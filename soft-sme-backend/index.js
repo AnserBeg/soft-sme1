@@ -7,6 +7,9 @@ const PDFDocument = require('pdfkit'); // Import pdfkit for PDF generation
 const cors = require('cors'); // Import cors
 const { authMiddleware, adminAuth } = require('./dist/middleware/authMiddleware');
 const { spawn } = require('child_process');
+const cookieParser = require('cookie-parser');
+const { PurchaseOrderCalculationService } = require('./src/services/purchaseOrderCalculations');
+const { SalesOrderService } = require('./dist/services/SalesOrderService');
 require('dotenv').config();
 
 const app = express();
@@ -14,10 +17,27 @@ const port = process.env.PORT || 5000;
 
 // Enable CORS for all routes
 app.use(cors({
-  origin: 'http://localhost:3000', // Allow requests from your React app
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  origin: function(origin, callback) {
+    const allowedOrigins = [
+      'http://localhost:3000',
+      'file://',
+      'null',
+      'app://-',
+      'https://consequences-composition-uh-counters.trycloudflare.com'
+    ];
+    // Allow requests with no origin (like curl or some Electron requests)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    return callback(new Error('Not allowed by CORS'));
+  },
+  credentials: true,
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'x-device-id'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
 }));
+
+app.use(cookieParser());
 
 // Set up multer for file uploads
 const upload = multer({ dest: 'uploads/' }); // Temporary directory for uploads
@@ -30,6 +50,12 @@ const pool = new Pool({
   password: process.env.DB_PASSWORD || '123', // Replace with your PostgreSQL password
   port: parseInt(process.env.DB_PORT || '5432', 10), // Replace with your PostgreSQL port
 });
+
+// Initialize calculation service
+const calculationService = new PurchaseOrderCalculationService(pool);
+
+// Initialize sales order service
+const salesOrderService = new SalesOrderService(pool);
 
 
 
@@ -295,9 +321,9 @@ app.get('/api/purchase-history/:id/pdf', async (req, res) => {
 
     // Line Items Table
     const tableHeaders = ['Part Number', 'Description', 'Qty', 'Unit', 'Unit Cost', 'Line Amount'];
-    const tableRowHeight = 20;
     const tableTop = doc.y + 10;
-    const colWidths = [100, 150, 50, 50, 80, 80]; // Adjust as needed
+    const colWidths = [120, 200, 50, 50, 80, 80]; // Increased description width from 150 to 200
+    const minRowHeight = 20;
     let currentX = doc.page.margins.left;
 
     // Draw Headers
@@ -307,32 +333,83 @@ app.get('/api/purchase-history/:id/pdf', async (req, res) => {
         currentX += colWidths[i];
     });
     doc.font('Helvetica');
-    doc.moveTo(doc.page.margins.left, tableTop + tableRowHeight - 5)
-       .lineTo(doc.page.width - doc.page.margins.right, tableTop + tableRowHeight - 5)
+    doc.moveTo(doc.page.margins.left, tableTop + minRowHeight - 5)
+       .lineTo(doc.page.width - doc.page.margins.right, tableTop + minRowHeight - 5)
        .stroke();
-    doc.moveDown();
 
-    // Draw Rows
-    let y = tableTop + tableRowHeight;
+    // Draw Rows with dynamic height
+    let y = tableTop + minRowHeight;
     purchaseOrder.lineItems.forEach(item => {
         console.log('PDF Generation - Line Item Data:', item);
-        currentX = doc.page.margins.left;
-        doc.text(item.part_number, currentX, y, { width: colWidths[0], align: 'left' });
-        currentX += colWidths[0];
-        doc.text(item.part_description, currentX, y, { width: colWidths[1], align: 'left' });
-        currentX += colWidths[1];
-        doc.text(parseFloat(item.quantity).toString(), currentX, y, { width: colWidths[2], align: 'left' });
-        currentX += colWidths[2];
-        doc.text(item.unit, currentX, y, { width: colWidths[3], align: 'left' });
-        currentX += colWidths[3];
-        doc.text(parseFloat(item.unit_cost).toFixed(2), currentX, y, { width: colWidths[4], align: 'right' });
-        currentX += colWidths[4];
-        doc.text(parseFloat(item.line_amount).toFixed(2), currentX, y, { width: colWidths[5], align: 'right' });
-        y += tableRowHeight;
-        if (y + tableRowHeight > doc.page.height - doc.page.margins.bottom) {
+        
+        // Calculate required height for this row based on text content
+        const partNumberLines = doc.heightOfString(item.part_number || '', { width: colWidths[0] });
+        const descriptionLines = doc.heightOfString(item.part_description || '', { width: colWidths[1] });
+        const maxTextHeight = Math.max(partNumberLines, descriptionLines, minRowHeight);
+        const rowHeight = Math.max(maxTextHeight + 10, minRowHeight); // Add padding
+        
+        // Check if we need a new page
+        if (y + rowHeight > doc.page.height - doc.page.margins.bottom) {
             doc.addPage();
             y = doc.page.margins.top;
         }
+        
+        currentX = doc.page.margins.left;
+        
+        // Part Number (with wrapping)
+        doc.text(item.part_number || '', currentX, y, { 
+            width: colWidths[0], 
+            align: 'left',
+            height: rowHeight,
+            valign: 'top'
+        });
+        currentX += colWidths[0];
+        
+        // Description (with wrapping)
+        doc.text(item.part_description || '', currentX, y, { 
+            width: colWidths[1], 
+            align: 'left',
+            height: rowHeight,
+            valign: 'top'
+        });
+        currentX += colWidths[1];
+        
+        // Quantity
+        doc.text(parseFloat(item.quantity).toString(), currentX, y, { 
+            width: colWidths[2], 
+            align: 'left',
+            height: rowHeight,
+            valign: 'top'
+        });
+        currentX += colWidths[2];
+        
+        // Unit
+        doc.text(item.unit || '', currentX, y, { 
+            width: colWidths[3], 
+            align: 'left',
+            height: rowHeight,
+            valign: 'top'
+        });
+        currentX += colWidths[3];
+        
+        // Unit Cost
+        doc.text(parseFloat(item.unit_cost).toFixed(2), currentX, y, { 
+            width: colWidths[4], 
+            align: 'right',
+            height: rowHeight,
+            valign: 'top'
+        });
+        currentX += colWidths[4];
+        
+        // Line Amount
+        doc.text(parseFloat(item.line_amount).toFixed(2), currentX, y, { 
+            width: colWidths[5], 
+            align: 'right',
+            height: rowHeight,
+            valign: 'top'
+        });
+        
+        y += rowHeight;
     });
 
     // Totals
@@ -384,6 +461,15 @@ app.post('/api/purchase-history', async (req, res) => {
 
     console.log('Received purchase order data:', req.body);
 
+    // Trim string fields
+    const trimmedBillNumber = bill_number ? bill_number.trim() : '';
+    const trimmedLineItems = lineItems.map(item => ({
+      ...item,
+      part_number: item.part_number ? item.part_number.trim() : '',
+      part_description: item.part_description ? item.part_description.trim() : '',
+      unit: item.unit ? item.unit.trim() : ''
+    }));
+
     // Validate vendor_id
     if (!vendor_id) {
       return res.status(400).json({ error: 'Vendor ID is required' });
@@ -393,6 +479,21 @@ app.post('/api/purchase-history', async (req, res) => {
     const vendorCheck = await client.query('SELECT vendor_id FROM VendorMaster WHERE vendor_id = $1', [vendor_id]);
     if (vendorCheck.rows.length === 0) {
       return res.status(400).json({ error: 'Invalid vendor ID' });
+    }
+
+    // Check for duplicate bill number if bill number is provided
+    if (bill_number && bill_number.trim()) {
+      const duplicateCheck = await client.query(
+        'SELECT COUNT(*) as count FROM PurchaseHistory WHERE bill_number = $1',
+        [bill_number.trim()]
+      );
+      const count = parseInt(duplicateCheck.rows[0].count);
+      if (count > 0) {
+        return res.status(409).json({ 
+          error: 'Duplicate bill number',
+          message: `Bill number "${bill_number}" already exists in another purchase order.`
+        });
+      }
     }
 
     // Start a transaction
@@ -449,7 +550,7 @@ app.post('/api/purchase-history', async (req, res) => {
     // Insert into PurchaseHistory
     const purchaseHistoryResult = await client.query(
       'INSERT INTO PurchaseHistory (vendor_id, bill_number, purchase_number, subtotal, total_gst_amount, total_amount, status, global_gst_rate) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING purchase_id, purchase_number, global_gst_rate, vendor_id',
-      [vendor_id, bill_number, generatedPurchaseNumber, finalSubTotal, finalTotalGSTAmount, finalTotalAmount, 'Open', globalGstRate]
+      [vendor_id, trimmedBillNumber, generatedPurchaseNumber, finalSubTotal, finalTotalGSTAmount, finalTotalAmount, 'Open', globalGstRate]
     );
     const newPurchaseOrderId = purchaseHistoryResult.rows[0].purchase_id;
     const returnedPurchaseNumber = purchaseHistoryResult.rows[0].purchase_number;
@@ -457,17 +558,38 @@ app.post('/api/purchase-history', async (req, res) => {
     const returnedVendorId = purchaseHistoryResult.rows[0].vendor_id;
     console.log('PurchaseHistory record inserted with ID:', newPurchaseOrderId, 'and Purchase Number:', returnedPurchaseNumber);
 
-    // Insert line items
+    // Insert line items (skip zero quantities)
     for (const item of processedLineItems) {
       if (!item.part_number) {
         console.warn('Skipping line item due to missing part number:', item);
         continue;
       }
+      
+      // Skip items with zero or negative quantity
+      const quantity = parseFloat(String(item.quantity)) || 0;
+      if (quantity <= 0) {
+        console.log(`Skipping zero quantity line item: ${item.part_number}`);
+        continue;
+      }
+      
+      // Find the corresponding trimmed line item
+      const trimmedItem = trimmedLineItems.find(ti => ti.part_number === item.part_number);
+      
       await client.query(
         'INSERT INTO purchaselineitems (purchase_id, part_number, part_description, quantity, unit, unit_cost, line_amount) VALUES ($1, $2, $3, $4, $5, $6, $7)',
-        [newPurchaseOrderId, item.part_number, item.part_description, item.quantity, item.unit, item.unit_cost, item.line_amount]
+        [newPurchaseOrderId, trimmedItem.part_number, trimmedItem.part_description, item.quantity, trimmedItem.unit, item.unit_cost, item.line_amount]
       );
       console.log('Line item inserted for purchase order:', item.part_number);
+    }
+
+    // Recalculate and update purchase order totals after creation
+    console.log(`Recalculating totals for new PO ${newPurchaseOrderId}...`);
+    try {
+      const updatedTotals = await calculationService.recalculateAndUpdateTotals(newPurchaseOrderId, client);
+      console.log(`✅ Updated totals for new PO ${newPurchaseOrderId}:`, updatedTotals);
+    } catch (calcError) {
+      console.error(`❌ Error recalculating totals for new PO ${newPurchaseOrderId}:`, calcError);
+      // Don't fail the entire operation, but log the error
     }
 
     await client.query('COMMIT');
@@ -520,6 +642,15 @@ app.put('/api/purchase-history/:id', async (req, res) => {
 
     console.log('Backend received PUT request for PO ID:', id, 'with body:', req.body);
 
+    // Trim string fields
+    const trimmedBillNumber = bill_number ? bill_number.trim() : '';
+    const trimmedLineItems = lineItems.map(item => ({
+      ...item,
+      part_number: item.part_number ? item.part_number.trim() : '',
+      part_description: item.part_description ? item.part_description.trim() : '',
+      unit: item.unit ? item.unit.trim() : ''
+    }));
+
     // Fetch the current status and line items of the PO from the database
     const currentPoResult = await client.query(
       `SELECT status FROM PurchaseHistory WHERE purchase_id = $1`,
@@ -543,6 +674,21 @@ app.put('/api/purchase-history/:id', async (req, res) => {
     // Validation: If status is being set to 'Closed', bill_number is mandatory
     if (newStatus === 'Closed' && (!bill_number || bill_number.trim() === '')) {
       return res.status(400).json({ error: 'Bill number is required to close a purchase order.' });
+    }
+
+    // Check for duplicate bill number if bill number is provided (excluding current purchase order)
+    if (bill_number && bill_number.trim()) {
+      const duplicateCheck = await client.query(
+        'SELECT COUNT(*) as count FROM PurchaseHistory WHERE bill_number = $1 AND purchase_id != $2',
+        [bill_number.trim(), id]
+      );
+      const count = parseInt(duplicateCheck.rows[0].count);
+      if (count > 0) {
+        return res.status(409).json({ 
+          error: 'Duplicate bill number',
+          message: `Bill number "${bill_number}" already exists in another purchase order.`
+        });
+      }
     }
 
     await client.query('BEGIN');
@@ -673,7 +819,7 @@ app.put('/api/purchase-history/:id', async (req, res) => {
     });
     await client.query(
       'UPDATE PurchaseHistory SET vendor_id = $1, bill_number = $2, subtotal = $3, total_gst_amount = $4, total_amount = $5, status = $6 WHERE purchase_id = $7',
-      [vendor_id, bill_number, finalSubTotalUpdate, finalTotalGSTAmountUpdate, finalTotalAmountUpdate, newStatus, id]
+      [vendor_id, trimmedBillNumber, finalSubTotalUpdate, finalTotalGSTAmountUpdate, finalTotalAmountUpdate, newStatus, id]
     );
     console.log('PurchaseHistory main record updated.');
 
@@ -686,11 +832,32 @@ app.put('/api/purchase-history/:id', async (req, res) => {
         console.warn('Skipping PurchaseLineItems insert for line item due to missing part number:', item);
         continue;
       }
+      
+      // Skip items with zero or negative quantity
+      const quantity = parseFloat(String(item.quantity)) || 0;
+      if (quantity <= 0) {
+        console.log(`Skipping zero quantity line item: ${item.part_number}`);
+        continue;
+      }
+      
+      // Find the corresponding trimmed line item
+      const trimmedItem = trimmedLineItems.find(ti => ti.part_number === item.part_number);
+      
       await client.query(
         'INSERT INTO purchaselineitems (purchase_id, part_number, part_description, quantity, unit, unit_cost, line_amount) VALUES ($1, $2, $3, $4, $5, $6, $7)',
-        [id, item.part_number, item.part_description, item.quantity, item.unit, item.unit_cost, item.line_amount]
+        [id, trimmedItem.part_number, trimmedItem.part_description, item.quantity, trimmedItem.unit, item.unit_cost, item.line_amount]
       );
       console.log('PurchaseLineItem inserted:', item.part_number);
+    }
+
+    // Recalculate and update purchase order totals after update
+    console.log(`Recalculating totals for PO ${id} after update...`);
+    try {
+      const updatedTotals = await calculationService.recalculateAndUpdateTotals(parseInt(id), client);
+      console.log(`✅ Updated totals for PO ${id}:`, updatedTotals);
+    } catch (calcError) {
+      console.error(`❌ Error recalculating totals for PO ${id}:`, calcError);
+      // Don't fail the entire operation, but log the error
     }
 
     await client.query('COMMIT');
@@ -920,6 +1087,16 @@ app.post('/api/sales-order-history', async (req, res) => {
       }
     }
 
+    // Recalculate and update sales order totals after creation
+    console.log(`Recalculating totals for new sales order ${salesOrderId}...`);
+    try {
+      await salesOrderService.recalculateAndUpdateSummary(salesOrderId, client);
+      console.log(`✅ Updated totals for new sales order ${salesOrderId}`);
+    } catch (calcError) {
+      console.error(`❌ Error recalculating totals for sales order ${salesOrderId}:`, calcError);
+      // Don't fail the entire operation, but log the error
+    }
+
     await client.query('COMMIT');
     res.status(201).json({ message: 'Sales Order created successfully', sales_order_id: salesOrderId });
   } catch (error) {
@@ -990,28 +1167,13 @@ app.put('/api/sales-order-history/:id', async (req, res) => {
       }
     }
 
-    // Calculate subtotal, GST, and total if not provided
-    let calcSubtotal = 0;
-    if (lineItems && lineItems.length > 0) {
-      calcSubtotal = lineItems.reduce((sum, item) => sum + Number(item.line_amount || 0), 0);
-    }
-    const GST_RATE = 0.05; // Adjust if needed
-    const calcGST = calcSubtotal * GST_RATE;
-    const calcTotal = calcSubtotal + calcGST;
-
-    const finalSubtotal = subtotal !== undefined && subtotal !== null ? subtotal : calcSubtotal;
-    const finalGST = totalGSTAmount !== undefined && totalGSTAmount !== null ? totalGSTAmount : calcGST;
-    const finalTotal = totalAmount !== undefined && totalAmount !== null ? totalAmount : calcTotal;
-
-     
+    // Update sales order header (totals will be recalculated after line items are updated)
     const salesOrderResult = await client.query(
       `UPDATE salesorderhistory SET
-        customer_id = $1, sales_date = $2, product_name = $3, product_description = $4,
-        subtotal = $5, total_gst_amount = $6, total_amount = $7, status = $8
-      WHERE sales_order_id = $9 RETURNING *;`,
+        customer_id = $1, sales_date = $2, product_name = $3, product_description = $4, status = $5
+      WHERE sales_order_id = $6 RETURNING *;`,
       [
-        customer_id, sales_date || null, product_name, product_description,
-        finalSubtotal, finalGST, finalTotal, status, id
+        customer_id, sales_date || null, product_name, product_description, status, id
       ]
     );
 
@@ -1046,6 +1208,16 @@ app.put('/api/sales-order-history/:id', async (req, res) => {
           );
         }
       }
+    }
+
+    // Recalculate and update sales order totals after update
+    console.log(`Recalculating totals for sales order ${id} after update...`);
+    try {
+      await salesOrderService.recalculateAndUpdateSummary(parseInt(id), client);
+      console.log(`✅ Updated totals for sales order ${id}`);
+    } catch (calcError) {
+      console.error(`❌ Error recalculating totals for sales order ${id}:`, calcError);
+      // Don't fail the entire operation, but log the error
     }
 
     await client.query('COMMIT');

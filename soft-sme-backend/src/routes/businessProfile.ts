@@ -75,9 +75,17 @@ router.get('/', authMiddleware, async (req, res) => {
     profile.logo_url = normalizeLogoUrl(profile.logo_url);
     
     res.json(profile);
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error fetching business profile:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    console.error('Error details:', {
+      message: error.message,
+      stack: error.stack,
+      code: error.code
+    });
+    res.status(500).json({ 
+      error: 'Internal server error',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 });
 
@@ -138,7 +146,8 @@ router.post('/', authMiddleware, upload.single('logo'), async (req, res) => {
       postal_code,
       telephone_number,
       email,
-      business_number
+      business_number,
+      website
     } = req.body;
 
     // Check if profile exists
@@ -165,8 +174,8 @@ router.post('/', authMiddleware, upload.single('logo'), async (req, res) => {
       const result = await client.query(
         `INSERT INTO business_profile (
           business_name, street_address, city, province, country, postal_code,
-          telephone_number, email, business_number, logo_url
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
+          telephone_number, email, business_number, website, logo_url
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
         [
           business_name,
           street_address,
@@ -177,6 +186,7 @@ router.post('/', authMiddleware, upload.single('logo'), async (req, res) => {
           telephone_number,
           email,
           business_number,
+          website,
           logoUrl
         ]
       );
@@ -195,8 +205,9 @@ router.post('/', authMiddleware, upload.single('logo'), async (req, res) => {
           telephone_number = $7,
           email = $8,
           business_number = $9,
-          logo_url = $10
-        WHERE id = $11 RETURNING *`,
+          website = $10,
+          logo_url = $11
+        WHERE id = $12 RETURNING *`,
         [
           business_name,
           street_address,
@@ -207,6 +218,7 @@ router.post('/', authMiddleware, upload.single('logo'), async (req, res) => {
           telephone_number,
           email,
           business_number,
+          website,
           logoUrl,
           existingProfile.rows[0].id
         ]
@@ -214,12 +226,45 @@ router.post('/', authMiddleware, upload.single('logo'), async (req, res) => {
       await client.query('COMMIT');
       res.json(result.rows[0]);
     }
-  } catch (error) {
+  } catch (error: any) {
     await client.query('ROLLBACK');
     console.error('Error updating business profile:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    console.error('Error details:', {
+      message: error.message,
+      stack: error.stack,
+      code: error.code
+    });
+    res.status(500).json({ 
+      error: 'Internal server error',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   } finally {
     client.release();
+  }
+});
+
+// Database check endpoint for debugging
+router.get('/db-check', async (req, res) => {
+  try {
+    // Check if business_profile table exists and has postal_code column
+    const tableCheck = await pool.query(`
+      SELECT column_name, data_type 
+      FROM information_schema.columns 
+      WHERE table_name = 'business_profile' 
+      ORDER BY ordinal_position
+    `);
+    
+    res.json({
+      tableExists: tableCheck.rows.length > 0,
+      columns: tableCheck.rows,
+      hasPostalCode: tableCheck.rows.some(col => col.column_name === 'postal_code')
+    });
+  } catch (error: any) {
+    console.error('Database check error:', error);
+    res.status(500).json({ 
+      error: 'Database check failed',
+      details: error.message
+    });
   }
 });
 

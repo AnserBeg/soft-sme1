@@ -207,19 +207,17 @@ router.post('/login', async (req: Request, res: Response) => {
     const ipAddress = req.ip || req.connection.remoteAddress || 'unknown';
     const userAgent = req.headers['user-agent'] || '';
 
-    const { sessionToken, refreshToken } = await SessionManager.createSession(
+    const sessionResult = await SessionManager.createSession(
       user.id,
       deviceInfo,
       ipAddress,
       userAgent,
       locationInfo
     );
-
-    // Log session creation
-    console.log(`[SESSION] User ${user.id} logged in from device ${deviceInfo.deviceId} at ${new Date().toISOString()}`);
+    console.log('[DEBUG] SessionManager.createSession result:', sessionResult);
 
     // Set refresh token as httpOnly, secure cookie
-    res.cookie('refreshToken', refreshToken, {
+    res.cookie('refreshToken', sessionResult.refreshToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
@@ -227,8 +225,9 @@ router.post('/login', async (req: Request, res: Response) => {
       path: '/api/auth',
     });
 
-    res.json({
-      sessionToken,
+    const responsePayload = {
+      sessionToken: sessionResult.sessionToken,
+      refreshToken: sessionResult.refreshToken,
       user: {
         id: user.id,
         email: user.email,
@@ -236,7 +235,9 @@ router.post('/login', async (req: Request, res: Response) => {
         role: user.role,
         access_role: user.access_role,
       },
-    });
+    };
+    console.log('[DEBUG] /login response payload:', responsePayload);
+    res.json(responsePayload);
   } catch (error) {
     console.error('Login error:', error);
     res.status(500).json({ message: 'Server error during login' });
@@ -246,7 +247,7 @@ router.post('/login', async (req: Request, res: Response) => {
 // Refresh Session Token
 router.post('/refresh', async (req: Request, res: Response) => {
   // Try to get refreshToken from cookie first, then body
-  const refreshToken = req.cookies.refreshToken || req.body.refreshToken;
+  const refreshToken = req.cookies?.refreshToken || req.body.refreshToken;
 
   if (!refreshToken) {
     return res.status(400).json({ message: 'Refresh token is required' });

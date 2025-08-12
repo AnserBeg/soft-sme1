@@ -28,7 +28,7 @@ router.get('/', async (req: Request, res: Response) => {
   console.log('inventoryRoutes: Received GET request for inventory items');
   try {
     const { partType } = req.query;
-    let query = 'SELECT * FROM inventory';
+    let query = 'SELECT part_number, part_description, unit, last_unit_cost, quantity_on_hand, reorder_point, part_type, created_at, updated_at FROM inventory';
     let params: any[] = [];
 
     // Add part_type filter if provided
@@ -41,12 +41,86 @@ router.get('/', async (req: Request, res: Response) => {
     
     const result = await pool.query(query, params);
     console.log(`inventoryRoutes: Successfully fetched ${result.rows.length} inventory items`);
+    
+    // Debug: Log a few sample items to check data types
+    if (result.rows.length > 0) {
+      console.log('Sample inventory item:', {
+        part_number: result.rows[0].part_number,
+        last_unit_cost: result.rows[0].last_unit_cost,
+        last_unit_cost_type: typeof result.rows[0].last_unit_cost,
+        quantity_on_hand: result.rows[0].quantity_on_hand,
+        quantity_on_hand_type: typeof result.rows[0].quantity_on_hand
+      });
+    }
+    
     res.json(result.rows);
   } catch (err) {
     console.error('inventoryRoutes: Error fetching inventory:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+
+// Get a single inventory item by part number
+router.get('/:partNumber', async (req: Request, res: Response) => {
+  const { partNumber } = req.params;
+  const decodedPartNumber = decodeURIComponent(partNumber);
+  console.log('inventoryRoutes: Received GET request for part:', decodedPartNumber);
+  
+  try {
+    const result = await pool.query(
+      'SELECT * FROM inventory WHERE part_number = $1',
+      [decodedPartNumber]
+    );
+    
+    if (result.rows.length === 0) {
+      console.log('inventoryRoutes: Part not found:', decodedPartNumber);
+      return res.status(404).json({ error: 'Inventory item not found' });
+    }
+    
+    console.log('inventoryRoutes: Successfully fetched inventory item:', result.rows[0]);
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('inventoryRoutes: Error fetching inventory item:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+function normalizePartNumberForDuplicateCheck(partNumber: string): string {
+  return partNumber.replace(/[\s-]/g, '').toUpperCase();
+}
+
+function isSlashInsideParentheses(input: string): boolean {
+  if (!input.includes('/')) return true;
+  const slashIndices: number[] = [];
+  for (let i = 0; i < input.length; i++) if (input[i] === '/') slashIndices.push(i);
+  if (slashIndices.length === 0) return true;
+  const prevOpen: number[] = new Array(input.length).fill(-1);
+  let lastOpen = -1;
+  for (let i = 0; i < input.length; i++) {
+    if (input[i] === '(') lastOpen = i;
+    prevOpen[i] = lastOpen;
+  }
+  const nextClose: number[] = new Array(input.length).fill(-1);
+  let next = -1;
+  for (let i = input.length - 1; i >= 0; i--) {
+    if (input[i] === ')') next = i;
+    nextClose[i] = next;
+  }
+  return slashIndices.every(idx => prevOpen[idx] !== -1 && nextClose[idx] !== -1 && prevOpen[idx] < idx && idx < nextClose[idx]);
+}
+
+function cleanPartNumberRaw(input: string): { cleaned: string, hadIllegal: boolean } {
+  // Remove spaces, keep only A-Z, 0-9, '-', '/', '(', ')'
+  const upper = input.toUpperCase();
+  const noSpaces = upper.replace(/\s+/g, '');
+  const cleaned = noSpaces.replace(/[^A-Z0-9\-\/()]/g, '');
+  const hadIllegal = cleaned.length !== noSpaces.length;
+  return { cleaned, hadIllegal };
+}
+
+function isAllowedCharactersOnly(input: string): boolean {
+  return /^[A-Z0-9()\/-]+$/.test(input);
+}
 
 // Add a new inventory item
 router.post('/', async (req: Request, res: Response) => {
@@ -71,27 +145,47 @@ router.post('/', async (req: Request, res: Response) => {
     return res.status(400).json({ error: 'Part type must be either "stock" or "supply"' });
   }
 
-  // Convert part_number to uppercase for consistency
-  const normalizedPartNumber = part_number.toString().trim().toUpperCase();
+  // Validate: no spaces in part_number
+  if (/\s/.test(part_number)) {
+    return res.status(400).json({ error: 'Part number cannot contain spaces' });
+  }
+
+  // Validate: any '/' must be inside parentheses
+  if (!isSlashInsideParentheses(String(part_number))) {
+    return res.status(400).json({ error: "Fractions must be enclosed in parentheses, e.g., '(1/2)'" });
+  }
+
+  // Validate: only allowed characters A-Z, 0-9, '-', '/', '(', ')'
+  const upperPn = String(part_number).toUpperCase();
+  if (!isAllowedCharactersOnly(upperPn.replace(/\s+/g, ''))) {
+    return res.status(400).json({ error: 'Only letters/numbers and - / ( ) are allowed in part number' });
+  }
+
+  // Trim all string fields and convert part_number to uppercase
+  const trimmedPartNumber = part_number.toString().trim().toUpperCase();
+  const trimmedPartDescription = part_description.toString().trim();
+  const trimmedUnit = unit.toString().trim();
+  const trimmedPartType = part_type.toString().trim();
 
   try {
-    // Check if part number already exists
+    // Duplicate check with normalization: ignore dashes and spaces
+    const normalized = normalizePartNumberForDuplicateCheck(trimmedPartNumber);
     const existingResult = await pool.query(
-      'SELECT part_number FROM inventory WHERE part_number = $1',
-      [normalizedPartNumber]
+      `SELECT part_number FROM inventory WHERE REPLACE(REPLACE(UPPER(part_number), '-', ''), ' ', '') = $1`,
+      [normalized]
     );
-    
     if (existingResult.rows.length > 0) {
-      console.log('inventoryRoutes: Duplicate part number detected:', normalizedPartNumber);
+      const existingPn = existingResult.rows[0].part_number;
+      console.log('inventoryRoutes: Duplicate part number detected (normalized match):', trimmedPartNumber, 'matches', existingPn);
       return res.status(409).json({ 
         error: 'Part number already exists',
-        details: `A part with number "${normalizedPartNumber}" already exists in the inventory.`
+        details: `A part with number "${existingPn}" already exists (normalized match for "${trimmedPartNumber}").`
       });
     }
 
     const result = await pool.query(
       'INSERT INTO inventory (part_number, part_description, unit, last_unit_cost, quantity_on_hand, reorder_point, part_type) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
-      [normalizedPartNumber, part_description, unit, last_unit_cost, quantity_on_hand, reorder_point, part_type]
+      [trimmedPartNumber, trimmedPartDescription, trimmedUnit, last_unit_cost, quantity_on_hand, reorder_point, trimmedPartType]
     );
     const newItem = result.rows[0];
     console.log('inventoryRoutes: Successfully added new item:', newItem);
@@ -131,7 +225,12 @@ router.delete('/:id', async (req: Request, res: Response) => {
 router.put('/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
   const decodedPartNumber = decodeURIComponent(id);
-  const { quantity_on_hand, reorder_point, last_unit_cost, part_description } = req.body;
+  const { quantity_on_hand, reorder_point, last_unit_cost, part_description, unit, part_type } = req.body;
+
+  // Trim string fields if provided
+  const trimmedPartDescription = part_description ? part_description.toString().trim() : undefined;
+  const trimmedUnit = unit ? unit.toString().trim() : undefined;
+  const trimmedPartType = part_type ? part_type.toString().trim() : undefined;
   try {
     // Check if the item exists
     const existing = await pool.query('SELECT * FROM inventory WHERE part_number = $1', [decodedPartNumber]);
@@ -156,9 +255,17 @@ router.put('/:id', async (req: Request, res: Response) => {
       fields.push(`last_unit_cost = $${idx++}`);
       values.push(last_unit_cost);
     }
-    if (part_description !== undefined) {
+    if (trimmedPartDescription !== undefined) {
       fields.push(`part_description = $${idx++}`);
-      values.push(part_description);
+      values.push(trimmedPartDescription);
+    }
+    if (trimmedUnit !== undefined) {
+      fields.push(`unit = $${idx++}`);
+      values.push(trimmedUnit);
+    }
+    if (trimmedPartType !== undefined) {
+      fields.push(`part_type = $${idx++}`);
+      values.push(trimmedPartType);
     }
 
     if (fields.length === 0) {
@@ -186,7 +293,8 @@ router.post('/upload-csv', upload.single('csvFile'), async (req: Request, res: R
   }
 
   const results: any[] = [];
-  const processedItems: { [key: string]: any } = {};
+  // Keyed by normalized part number (uppercase, no spaces or dashes)
+  const processedItems: { [normalizedKey: string]: any } = {};
   const errors: string[] = [];
   const warnings: string[] = [];
   let rowNumber = 0; // Track actual row number from CSV file
@@ -221,6 +329,23 @@ router.post('/upload-csv', upload.single('csvFile'), async (req: Request, res: R
 
           // Clean and validate data
           const partNumber = data.part_number.toString().trim().toUpperCase();
+          // Validate: no spaces
+          if (/\s/.test(partNumber)) {
+            errors.push(`Row ${rowNumber}: Part number cannot contain spaces (received: "${data.part_number}")`);
+            return;
+          }
+          // Validate: '/' must be inside parentheses
+          if (!isSlashInsideParentheses(partNumber)) {
+            errors.push(`Row ${rowNumber}: Fractions must be enclosed in parentheses, e.g., (1/2) (received: "${data.part_number}")`);
+            return;
+          }
+          // Validate allowed characters
+          const noSpacePn = partNumber.replace(/\s+/g, '');
+          if (!isAllowedCharactersOnly(noSpacePn)) {
+            errors.push(`Row ${rowNumber}: Only letters/numbers and - / ( ) are allowed in part number (received: "${data.part_number}")`);
+            return;
+          }
+          const normalizedKey = normalizePartNumberForDuplicateCheck(partNumber);
           const partDescription = data.part_description.toString().trim();
           const unit = data.unit ? data.unit.toString().trim() : 'Each';
           const quantity = parseFloat(data.quantity) || 0;
@@ -250,13 +375,13 @@ router.post('/upload-csv', upload.single('csvFile'), async (req: Request, res: R
             return;
           }
 
-          // Check for duplicates within the CSV
-          if (processedItems[partNumber]) {
-            const existing = processedItems[partNumber];
+          // Check for duplicates within the CSV (normalized)
+          if (processedItems[normalizedKey]) {
+            const existing = processedItems[normalizedKey];
             
             // Check if units are different
             if (existing.unit !== unit) {
-              errors.push(`Row ${rowNumber}: Duplicate part_number "${partNumber}" with different units: "${existing.unit}" vs "${unit}"`);
+              errors.push(`Row ${rowNumber}: Duplicate part_number "${partNumber}" (normalized match) with different units: "${existing.unit}" vs "${unit}"`);
               return;
             }
 
@@ -265,13 +390,14 @@ router.post('/upload-csv', upload.single('csvFile'), async (req: Request, res: R
             existing.lastUnitCost = Math.max(existing.lastUnitCost, lastUnitCost);
             existing.reorderPoint = Math.max(existing.reorderPoint, reorderPoint);
             
-            warnings.push(`Row ${rowNumber}: Merged duplicate part_number "${partNumber}" - quantities combined, higher unit cost retained`);
+            warnings.push(`Row ${rowNumber}: Merged duplicate part_number "${partNumber}" (normalized match) - quantities combined, higher unit cost retained`);
             return;
           }
 
           // Store processed item
-          processedItems[partNumber] = {
-            partNumber,
+          processedItems[normalizedKey] = {
+            visualPartNumber: partNumber, // keep for insert if new
+            normalizedKey,
             partDescription,
             unit,
             quantity,
@@ -282,7 +408,7 @@ router.post('/upload-csv', upload.single('csvFile'), async (req: Request, res: R
           };
 
           results.push({
-            partNumber,
+            partNumber: partNumber,
             partDescription,
             unit,
             quantity,
@@ -317,8 +443,8 @@ router.post('/upload-csv', upload.single('csvFile'), async (req: Request, res: R
       try {
         // Check if item exists in database
         const existingResult = await pool.query(
-          'SELECT * FROM inventory WHERE part_number = $1',
-          [item.partNumber]
+          `SELECT * FROM inventory WHERE REPLACE(REPLACE(UPPER(part_number), '-', ''), ' ', '') = $1`,
+          [item.normalizedKey]
         );
 
         if (existingResult.rows.length > 0) {
@@ -326,7 +452,7 @@ router.post('/upload-csv', upload.single('csvFile'), async (req: Request, res: R
           
           // Check if units are different
           if (existing.unit !== item.unit) {
-            errors.push(`Part "${item.partNumber}": Unit mismatch - database has "${existing.unit}", CSV has "${item.unit}"`);
+            errors.push(`Part "${item.visualPartNumber}": Unit mismatch - database has "${existing.unit}", CSV has "${item.unit}"`);
             continue;
           }
 
@@ -343,25 +469,25 @@ router.post('/upload-csv', upload.single('csvFile'), async (req: Request, res: R
                  part_description = $4,
                  updated_at = CURRENT_TIMESTAMP
              WHERE part_number = $5`,
-            [newQuantity, newUnitCost, newReorderPoint, item.partDescription, item.partNumber]
+            [newQuantity, newUnitCost, newReorderPoint, item.partDescription, existing.part_number]
           );
 
           updatedCount++;
-          warnings.push(`Updated existing part "${item.partNumber}" - quantities combined, higher unit cost retained`);
+          warnings.push(`Updated existing part "${existing.part_number}" (normalized match for "${item.visualPartNumber}") - quantities combined, higher unit cost retained`);
         } else {
           // Insert new item
           await pool.query(
             `INSERT INTO inventory 
              (part_number, part_description, unit, last_unit_cost, quantity_on_hand, reorder_point, part_type) 
              VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-            [item.partNumber, item.partDescription, item.unit, item.lastUnitCost, item.quantity, item.reorderPoint, item.partType]
+            [item.visualPartNumber, item.partDescription, item.unit, item.lastUnitCost, item.quantity, item.reorderPoint, item.partType]
           );
 
           processedCount++;
         }
       } catch (dbError) {
         console.error(`Error processing item ${item.partNumber}:`, dbError);
-        errors.push(`Error processing part "${item.partNumber}": ${dbError instanceof Error ? dbError.message : 'Unknown error'}`);
+        errors.push(`Error processing part "${item.visualPartNumber}": ${dbError instanceof Error ? dbError.message : 'Unknown error'}`);
       }
     }
 
@@ -491,12 +617,233 @@ router.get('/export/pdf', async (req: Request, res: Response) => {
 router.get('/csv-template', (req: Request, res: Response) => {
   const csvTemplate = `part_number,part_description,unit,quantity,last_unit_cost,reorder_point,part_type
 ABC123,Sample Part Description,Each,10,25.50,5,stock
-XYZ789,Another Part,cm,5,15.75,2,supply
-LIQ001,Liquid Product,L,20,12.00,5,stock`;
+E-11,Hyphen allowed visually,pcs,5,15.75,2,stock
+(1/2)HOSE,Use parentheses for fractions,ft,20,12.00,5,stock`;
 
   res.setHeader('Content-Type', 'text/csv');
   res.setHeader('Content-Disposition', 'attachment; filename="inventory_template.csv"');
   res.send(csvTemplate);
+});
+
+// Cleanup inventory spaces endpoint
+router.post('/cleanup-spaces', async (req: Request, res: Response) => {
+  console.log('inventoryRoutes: Received POST request to cleanup inventory spaces');
+  
+  const client = await pool.connect();
+  
+  try {
+    console.log('Starting inventory space cleanup...');
+    
+    // Get all inventory items
+    const result = await client.query('SELECT * FROM inventory');
+    const items = result.rows;
+    
+    console.log(`Found ${items.length} inventory items to process`);
+    
+    let updatedCount = 0;
+    let errorCount = 0;
+    
+    for (const item of items) {
+      try {
+        // Check if any fields need trimming
+        const needsUpdate = 
+          item.part_number !== item.part_number.trim() ||
+          item.part_description !== item.part_description.trim() ||
+          item.unit !== item.unit.trim() ||
+          item.part_type !== item.part_type.trim();
+        
+        if (needsUpdate) {
+          // Update with trimmed values
+          await client.query(`
+            UPDATE inventory 
+            SET 
+              part_number = $1,
+              part_description = $2,
+              unit = $3,
+              part_type = $4,
+              updated_at = CURRENT_TIMESTAMP
+            WHERE part_number = $5
+          `, [
+            item.part_number.trim().toUpperCase(),
+            item.part_description.trim(),
+            item.unit.trim(),
+            item.part_type.trim(),
+            item.part_number // Use original for WHERE clause
+          ]);
+          
+          updatedCount++;
+          console.log(`Updated item: ${item.part_number} -> "${item.part_number.trim().toUpperCase()}"`);
+        }
+      } catch (error) {
+        errorCount++;
+        console.error(`Error updating item ${item.part_number}:`, error);
+      }
+    }
+    
+    console.log(`Cleanup completed: ${updatedCount} items updated, ${errorCount} errors`);
+    
+    res.json({
+      success: true,
+      message: 'Inventory cleanup completed successfully',
+      summary: {
+        totalProcessed: items.length,
+        itemsUpdated: updatedCount,
+        errors: errorCount
+      }
+    });
+    
+  } catch (error) {
+    console.error('Error during inventory cleanup:', error);
+    res.status(500).json({ 
+      error: 'Internal server error during cleanup',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  } finally {
+    client.release();
+  }
+});
+
+// Enforce rules and detect duplicates (preview/apply)
+router.post('/cleanup-enforce', async (req: Request, res: Response) => {
+  const { partType, apply = false, merges = [] } = req.body || {};
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    // Load items
+    const baseQuery = partType && (partType === 'stock' || partType === 'supply')
+      ? 'SELECT * FROM inventory WHERE part_type = $1'
+      : 'SELECT * FROM inventory';
+    const params = partType && (partType === 'stock' || partType === 'supply') ? [partType] : [];
+    const itemsResult = await client.query(baseQuery, params);
+    const items = itemsResult.rows;
+
+    type Fix = { part_number: string; cleaned_part_number: string; actions: string[]; slash_violation: boolean };
+    const fixes: Fix[] = [];
+    const slashViolations: string[] = [];
+
+    // Build duplicates map by normalized key
+    const dupMap: Record<string, { normalized: string; candidates: any[] }> = {};
+
+    for (const item of items) {
+      const original = String(item.part_number || '').toUpperCase();
+      const { cleaned, hadIllegal } = cleanPartNumberRaw(original);
+      const slashOk = isSlashInsideParentheses(cleaned);
+      const allowedOnly = isAllowedCharactersOnly(cleaned);
+      const actions: string[] = [];
+      if (original !== original.trim()) actions.push('trimmed');
+      if (hadIllegal) actions.push('removed_illegal_chars');
+      if (/\s/.test(original)) actions.push('removed_spaces');
+      if (original !== cleaned) actions.push('uppercased_and_filtered');
+
+      if (!slashOk) {
+        // Cannot auto-fix; require manual formatting
+        slashViolations.push(original);
+      }
+
+      if (original !== cleaned || hadIllegal || !allowedOnly || !slashOk) {
+        fixes.push({ part_number: original, cleaned_part_number: cleaned, actions, slash_violation: !slashOk });
+      }
+
+      const normKey = normalizePartNumberForDuplicateCheck(cleaned);
+      if (!dupMap[normKey]) dupMap[normKey] = { normalized: normKey, candidates: [] };
+      dupMap[normKey].candidates.push(item);
+    }
+
+    const duplicateGroups = Object.values(dupMap)
+      .filter(group => group.candidates.length > 1)
+      .map(group => {
+        // Prefer a candidate that contains '-' in part_number as keep, else first
+        const withDash = group.candidates.find((c: any) => String(c.part_number).includes('-')) || group.candidates[0];
+        const units = new Set(group.candidates.map((c: any) => c.unit));
+        const unitMismatch = units.size > 1;
+        return {
+          normalizedKey: group.normalized,
+          candidates: group.candidates.map((c: any) => ({ part_number: c.part_number, unit: c.unit })),
+          proposedKeep: withDash.part_number,
+          unitMismatch,
+        };
+      });
+
+    if (!apply) {
+      await client.query('ROLLBACK');
+      return res.json({
+        success: true,
+        preview: {
+          totalItems: items.length,
+          fixes,
+          duplicateGroups,
+        }
+      });
+    }
+
+    // Apply: 1) standardize allowed characters and remove spaces (excluding slash violations)
+    let fixesApplied = 0;
+    let fixesSkipped = 0;
+    for (const fx of fixes) {
+      if (fx.slash_violation) { fixesSkipped++; continue; }
+      if (fx.part_number === fx.cleaned_part_number) continue;
+      // If target already exists, skip here; merging will handle duplicates
+      const existingTarget = await client.query('SELECT part_number FROM inventory WHERE part_number = $1', [fx.cleaned_part_number]);
+      if (existingTarget.rows.length > 0) { fixesSkipped++; continue; }
+      // Update primary key
+      await client.query(
+        'UPDATE inventory SET part_number = $1, updated_at = CURRENT_TIMESTAMP WHERE part_number = $2',
+        [fx.cleaned_part_number, fx.part_number]
+      );
+      fixesApplied++;
+    }
+
+    // Apply: 2) perform merges if provided
+    let mergedGroups = 0;
+    let mergedItems = 0;
+    for (const merge of merges as Array<{ keepPartNumber: string; mergePartNumbers: string[] }>) {
+      const keepPn = String(merge.keepPartNumber).toUpperCase();
+      const keepRes = await client.query('SELECT * FROM inventory WHERE part_number = $1', [keepPn]);
+      if (keepRes.rows.length === 0) continue;
+      let keep = keepRes.rows[0];
+      for (const mp of merge.mergePartNumbers || []) {
+        const mPn = String(mp).toUpperCase();
+        if (mPn === keepPn) continue;
+        const mRes = await client.query('SELECT * FROM inventory WHERE part_number = $1', [mPn]);
+        if (mRes.rows.length === 0) continue;
+        const dup = mRes.rows[0];
+        // If unit mismatch, skip this merge
+        if (dup.unit !== keep.unit) continue;
+        // Sum quantities (treat 'NA' as 0), max costs and reorder points
+        const keepQty = parseFloat(keep.quantity_on_hand || 0) || 0;
+        const dupQty = parseFloat(dup.quantity_on_hand || 0) || 0;
+        const newQty = keepQty + dupQty;
+        const newCost = Math.max(parseFloat(keep.last_unit_cost || 0) || 0, parseFloat(dup.last_unit_cost || 0) || 0);
+        const newReorder = Math.max(parseFloat(keep.reorder_point || 0) || 0, parseFloat(dup.reorder_point || 0) || 0);
+        await client.query(
+          `UPDATE inventory SET quantity_on_hand = $1, last_unit_cost = $2, reorder_point = $3, updated_at = CURRENT_TIMESTAMP WHERE part_number = $4`,
+          [newQty, newCost, newReorder, keep.part_number]
+        );
+        await client.query('DELETE FROM inventory WHERE part_number = $1', [dup.part_number]);
+        mergedItems++;
+      }
+      mergedGroups++;
+    }
+
+    await client.query('COMMIT');
+    return res.json({
+      success: true,
+      applied: {
+        fixesApplied,
+        fixesSkipped,
+        mergedGroups,
+        mergedItems,
+      }
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('inventoryRoutes: Error during cleanup-enforce:', error);
+    res.status(500).json({ error: 'Internal server error during cleanup-enforce' });
+  } finally {
+    client.release();
+  }
 });
 
 export default router; 

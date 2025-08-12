@@ -6,6 +6,7 @@ import path from 'path';
 import archiver from 'archiver';
 // @ts-ignore
 import unzipper from 'unzipper';
+import multer from 'multer';
 
 const router = express.Router();
 
@@ -42,10 +43,26 @@ function isValidDate(d: any): d is Date {
   return d instanceof Date && !isNaN(d.getTime());
 }
 
+// Helper function to get backup directory
+function getBackupDir(): string {
+  const settingsPath = path.join(__dirname, '../../backup-settings.json');
+  if (fs.existsSync(settingsPath)) {
+    try {
+      const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+      if (settings.customBackupDir && fs.existsSync(settings.customBackupDir)) {
+        return settings.customBackupDir;
+      }
+    } catch (error) {
+      console.error('Error reading backup settings:', error);
+    }
+  }
+  return path.join(__dirname, '../../backups');
+}
+
 // Get list of available backups
 router.get('/list', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const backupDir = path.join(__dirname, '../../backups');
+    const backupDir = getBackupDir();
     
     if (!fs.existsSync(backupDir)) {
       return res.json({ backups: [] });
@@ -76,7 +93,7 @@ router.get('/list', authMiddleware, async (req: Request, res: Response) => {
 // Create a new backup
 router.post('/create', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const backupDir = path.join(__dirname, '../../backups');
+    const backupDir = getBackupDir();
     if (!fs.existsSync(backupDir)) {
       fs.mkdirSync(backupDir, { recursive: true });
     }
@@ -227,7 +244,7 @@ router.post('/create', authMiddleware, async (req: Request, res: Response) => {
 router.get('/download/:filename', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { filename } = req.params;
-    const backupDir = path.join(__dirname, '../../backups');
+    const backupDir = getBackupDir();
     const filePath = path.join(backupDir, filename);
 
     if (!fs.existsSync(filePath)) {
@@ -245,7 +262,7 @@ router.get('/download/:filename', authMiddleware, async (req: Request, res: Resp
 router.delete('/delete/:manifest', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { manifest } = req.params;
-    const backupDir = path.join(__dirname, '../../backups');
+    const backupDir = getBackupDir();
     const manifestPath = path.join(backupDir, manifest);
 
     if (!fs.existsSync(manifestPath)) {
@@ -282,7 +299,7 @@ router.delete('/delete/:manifest', authMiddleware, async (req: Request, res: Res
 router.post('/restore/:manifest', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { manifest } = req.params;
-    const backupDir = path.join(__dirname, '../../backups');
+    const backupDir = getBackupDir();
     const manifestPath = path.join(backupDir, manifest);
 
     if (!fs.existsSync(manifestPath)) {
@@ -414,7 +431,7 @@ router.post('/restore/:manifest', authMiddleware, async (req: Request, res: Resp
 // Get backup statistics
 router.get('/stats', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const backupDir = path.join(__dirname, '../../backups');
+    const backupDir = getBackupDir();
     
     if (!fs.existsSync(backupDir)) {
       return res.json({
@@ -491,6 +508,110 @@ router.post('/schedule', authMiddleware, async (req: Request, res: Response) => 
   } catch (error) {
     console.error('Error scheduling backup:', error);
     res.status(500).json({ error: 'Failed to schedule backup' });
+  }
+});
+
+// Get backup settings
+router.get('/settings', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const settingsPath = path.join(__dirname, '../../backup-settings.json');
+    let settings = {
+      customBackupDir: '',
+      customRestoreDir: ''
+    };
+
+    if (fs.existsSync(settingsPath)) {
+      settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    }
+
+    res.json(settings);
+  } catch (error) {
+    console.error('Error fetching backup settings:', error);
+    res.status(500).json({ error: 'Failed to fetch backup settings' });
+  }
+});
+
+// Save backup settings
+router.post('/settings', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { customBackupDir, customRestoreDir } = req.body;
+    const settingsPath = path.join(__dirname, '../../backup-settings.json');
+    
+    const settings = {
+      customBackupDir: customBackupDir || '',
+      customRestoreDir: customRestoreDir || ''
+    };
+
+    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+    res.json({ success: true, message: 'Settings saved successfully' });
+  } catch (error) {
+    console.error('Error saving backup settings:', error);
+    res.status(500).json({ error: 'Failed to save backup settings' });
+  }
+});
+
+// Browse directory (for desktop app)
+router.post('/browse-dir', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { type } = req.body;
+    const title = type === 'backup' ? 'Select Backup Directory' : 'Select Restore Directory';
+    
+    // This would work in an Electron app
+    // For now, we'll return a mock response
+    res.json({ 
+      directory: '',
+      message: 'Directory browser not available in web version. Please enter path manually.'
+    });
+  } catch (error) {
+    console.error('Error browsing directory:', error);
+    res.status(500).json({ error: 'Failed to browse directory' });
+  }
+});
+
+// Upload backup file
+const upload = multer({ 
+  dest: path.join(__dirname, '../../temp-uploads/'),
+  limits: {
+    fileSize: 100 * 1024 * 1024 // 100MB limit
+  }
+});
+
+router.post('/upload', authMiddleware, upload.single('backup'), async (req: Request, res: Response) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No backup file provided' });
+    }
+
+    const uploadedFile = req.file;
+    const backupDir = getBackupDir();
+    
+    if (!fs.existsSync(backupDir)) {
+      fs.mkdirSync(backupDir, { recursive: true });
+    }
+
+    // Move uploaded file to backup directory
+    const fileName = `uploaded_backup_${Date.now()}_${uploadedFile.originalname}`;
+    const destinationPath = path.join(backupDir, fileName);
+    
+    fs.renameSync(uploadedFile.path, destinationPath);
+
+    // If it's a manifest file, we can list it as a backup
+    if (fileName.includes('manifest')) {
+      res.json({ 
+        success: true, 
+        message: 'Backup uploaded successfully',
+        fileName 
+      });
+    } else {
+      res.json({ 
+        success: true, 
+        message: 'Backup file uploaded. You can now restore from it.',
+        fileName 
+      });
+    }
+  } catch (error) {
+    console.error('Error uploading backup:', error);
+    res.status(500).json({ error: 'Failed to upload backup file' });
   }
 });
 

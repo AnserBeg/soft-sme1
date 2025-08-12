@@ -1,8 +1,12 @@
+import dotenv from 'dotenv';
 import express from 'express';
 import cors from 'cors';
 import bodyParser from 'body-parser';
 import { pool } from './db';
 import { authMiddleware } from './middleware/authMiddleware';
+
+// Load environment variables
+dotenv.config();
 
 // Import routes
 import authRoutes from './routes/authRoutes';
@@ -21,6 +25,27 @@ import timeTrackingRoutes from './routes/timeTrackingRoutes';
 import globalSettingsRouter from './routes/globalSettingsRoutes';
 import backupRoutes from './routes/backupRoutes';
 import attendanceRouter from './routes/attendanceRoutes';
+import qboAuthRoutes from './routes/qboAuthRoutes';
+import qboAccountRoutes from './routes/qboAccountRoutes';
+import qboExportRoutes from './routes/qboExportRoutes';
+import overheadRoutes from './routes/overheadRoutes';
+import aiAssistantRoutes from './routes/aiAssistantRoutes';
+import emailRoutes from './routes/emailRoutes';
+import aiAssistantService from './services/aiAssistantService';
+
+// Add error handling around chatRouter import
+let chatRouter: any;
+try {
+  console.log('[Index] Attempting to import chatRouter...');
+  const chatModule = require('./routes/chatRoutes');
+  chatRouter = chatModule.default;
+  console.log('[Index] chatRouter imported successfully');
+} catch (error) {
+  console.error('[Index] Error importing chatRouter:', error);
+  throw error;
+}
+
+// Subagent analytics removed - simplified AI implementation
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -98,6 +123,37 @@ console.log('Registered global settings routes');
 app.use('/api/backup', authMiddleware, backupRoutes);
 console.log('Registered backup routes');
 
+app.use('/api/qbo', qboAuthRoutes);
+console.log('Registered QBO auth routes');
+
+app.use('/api/qbo-accounts', authMiddleware, qboAccountRoutes);
+console.log('Registered QBO account routes');
+
+app.use('/api/qbo-export', authMiddleware, qboExportRoutes);
+console.log('Registered QBO export routes');
+
+app.use('/api/overhead', authMiddleware, overheadRoutes);
+console.log('Registered overhead routes');
+
+// AI Assistant routes
+app.use('/api/ai-assistant', aiAssistantRoutes);
+console.log('Registered AI assistant routes');
+
+// Email routes
+app.use('/api/email', authMiddleware, emailRoutes);
+console.log('Registered email routes');
+
+// Chat routes with error handling
+try {
+  console.log('Attempting to register chat routes...');
+  app.use('/api/chat', authMiddleware, chatRouter);
+  console.log('Registered chat routes');
+} catch (error) {
+  console.error('Error registering chat routes:', error);
+}
+
+// Subagent analytics routes removed - simplified AI implementation
+
 // Database check endpoint
 app.get('/api/db-check', async (req, res) => {
   try {
@@ -133,6 +189,35 @@ pool.query('SELECT NOW()', (err, res) => {
 
 app.get('/ping', (req, res) => res.send('pong'));
 
-app.listen(Number(PORT), '0.0.0.0', () => {
+const server = app.listen(Number(PORT), '0.0.0.0', async () => {
   console.log(`Server is running on port ${PORT}`);
+  
+  // Start AI agent automatically
+  try {
+    console.log('Starting AI Assistant...');
+    await aiAssistantService.startAIAgent();
+    console.log('AI Assistant started successfully');
+  } catch (error) {
+    console.error('Failed to start AI Assistant:', error);
+    console.log('Server will continue without AI Assistant');
+  }
+});
+
+// Graceful shutdown
+process.on('SIGTERM', async () => {
+  console.log('SIGTERM received, shutting down gracefully...');
+  await aiAssistantService.stopAIAgent();
+  server.close(() => {
+    console.log('Server closed');
+    process.exit(0);
+  });
+});
+
+process.on('SIGINT', async () => {
+  console.log('SIGINT received, shutting down gracefully...');
+  await aiAssistantService.stopAIAgent();
+  server.close(() => {
+    console.log('Server closed');
+    process.exit(0);
+  });
 }); 
