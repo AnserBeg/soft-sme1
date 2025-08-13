@@ -410,6 +410,29 @@ router.get('/:id', async (req: Request, res: Response) => {
       'SELECT *, CAST(quantity_sold AS TEXT) as quantity FROM salesorderlineitems WHERE sales_order_id = $1 ORDER BY sales_order_line_item_id ASC',
       [id]
     );
+
+    // Compute actual LABOUR/OVERHEAD from time entries to ensure quantities are accurate in the response
+    let actualTotalHours = 0;
+    let actualAvgRate = 0;
+    let actualTotalCost = 0;
+    let overheadRate = 0;
+    let actualTotalOverheadCost = 0;
+    try {
+      const te = await pool.query(
+        `SELECT SUM(duration) as total_hours, AVG(unit_price) as avg_rate, SUM(duration * unit_price) as total_cost
+         FROM time_entries WHERE sales_order_id = $1 AND clock_out IS NOT NULL`,
+        [id]
+      );
+      actualTotalHours = parseFloat(te.rows[0]?.total_hours) || 0;
+      actualAvgRate = parseFloat(te.rows[0]?.avg_rate) || 0;
+      actualTotalCost = parseFloat(te.rows[0]?.total_cost) || 0;
+
+      const ohRes = await pool.query("SELECT value FROM global_settings WHERE key = 'overhead_rate'");
+      overheadRate = ohRes.rows.length > 0 ? parseFloat(ohRes.rows[0].value) : 0;
+      actualTotalOverheadCost = actualTotalHours * overheadRate;
+    } catch (calcErr) {
+      console.warn('Could not compute labour/overhead from time entries:', calcErr);
+    }
     
     // Fetch parts to order for this sales order
     const partsToOrderResult = await pool.query(
@@ -423,12 +446,49 @@ router.get('/:id', async (req: Request, res: Response) => {
       partsToOrderMap.set(row.part_number, row.quantity_needed);
     });
     
-    // Merge quantity_to_order data with line items
-    const mergedLineItems = lineItemsResult.rows.map(item => ({
+    // Merge quantity_to_order data with line items and overlay LABOUR/OVERHEAD actuals if available
+    const mergedLineItemsRaw = lineItemsResult.rows.map(item => ({
       ...item,
       quantity_sold: item.part_number === 'SUPPLY' ? 'N/A' : item.quantity_sold,
       quantity_to_order: partsToOrderMap.get(item.part_number) || 0
     }));
+
+    const mergedLineItems = [...mergedLineItemsRaw];
+    if (actualTotalHours > 0) {
+      // Adjust or add LABOUR
+      const labourIdx = mergedLineItems.findIndex((it: any) => it.part_number === 'LABOUR');
+      const labourPayload: any = {
+        part_number: 'LABOUR',
+        part_description: 'Labour Hours',
+        quantity_sold: actualTotalHours,
+        quantity: String(actualTotalHours),
+        unit: 'hr',
+        unit_price: actualAvgRate,
+        line_amount: actualTotalCost
+      };
+      if (labourIdx >= 0) {
+        mergedLineItems[labourIdx] = { ...mergedLineItems[labourIdx], ...labourPayload };
+      } else {
+        mergedLineItems.push(labourPayload);
+      }
+
+      // Adjust or add OVERHEAD
+      const overheadIdx = mergedLineItems.findIndex((it: any) => it.part_number === 'OVERHEAD');
+      const overheadPayload: any = {
+        part_number: 'OVERHEAD',
+        part_description: 'Overhead Hours',
+        quantity_sold: actualTotalHours,
+        quantity: String(actualTotalHours),
+        unit: 'hr',
+        unit_price: overheadRate,
+        line_amount: actualTotalOverheadCost
+      };
+      if (overheadIdx >= 0) {
+        mergedLineItems[overheadIdx] = { ...mergedLineItems[overheadIdx], ...overheadPayload };
+      } else if (overheadRate > 0) {
+        mergedLineItems.push(overheadPayload);
+      }
+    }
     
     res.json({ 
       salesOrder, 

@@ -33,6 +33,7 @@ import overheadRoutes from './routes/overheadRoutes';
 import aiAssistantRoutes from './routes/aiAssistantRoutes';
 import emailRoutes from './routes/emailRoutes';
 import aiAssistantService from './services/aiAssistantService';
+import partFinderRoutes from './routes/partFinderRoutes';
 
 // Add error handling around chatRouter import
 let chatRouter: any;
@@ -143,6 +144,10 @@ console.log('Registered overhead routes');
 // AI Assistant routes
 app.use('/api/ai-assistant', aiAssistantRoutes);
 console.log('Registered AI assistant routes');
+
+// Part Finder (SO-specific stats)
+app.use('/api/part-finder', authMiddleware, partFinderRoutes);
+console.log('Registered part finder routes');
 
 // Email routes
 app.use('/api/email', authMiddleware, emailRoutes);

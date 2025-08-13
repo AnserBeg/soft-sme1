@@ -69,6 +69,7 @@ const UnifiedPartDialog: React.FC<UnifiedPartDialogProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const partNumberRef = useRef<HTMLInputElement>(null);
   
+  
 
   // Reset form when dialog opens/closes
   useEffect(() => {

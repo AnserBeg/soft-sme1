@@ -30,6 +30,7 @@ import OpenSalesOrdersPage from './pages/OpenSalesOrdersPage';
 import OpenSalesOrderDetailPage from './pages/OpenSalesOrderDetailPage';
 import OpenPurchaseOrdersPage from './pages/OpenPurchaseOrdersPage';
 import OpenPurchaseOrderDetailPage from './pages/OpenPurchaseOrderDetailPage';
+import WokerSalesOrderPage from './pages/WokerSalesOrderPage';
 import TimeTrackingPage from './pages/TimeTrackingPage';
 import TimeTrackingReportsPage from './pages/TimeTrackingReportsPage';
 import ProductsPage from './pages/ProductsPage';
@@ -51,13 +52,20 @@ const PrivateRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => 
   const { isAuthenticated, user } = useAuth();
   const location = useLocation();
   const path = location.pathname;
+  
   if (!isAuthenticated) return <Navigate to="/login" replace />; // Redirect to login if not authenticated
+  
   if (user?.access_role === 'Time Tracking') {
-    // Only allow /, /time-tracking, and /attendance
-    if (path !== '/' && path !== '/time-tracking' && path !== '/attendance') {
-      return <Navigate to="/" replace />;
+    // Redirect time tracking users to attendance if they try to access the landing page
+    if (path === '/' || path === '/dashboard') {
+      return <Navigate to="/attendance" replace />;
+    }
+    // Only allow /time-tracking, /attendance, /open-sales-orders, and /woker-sales-orders
+    if (path !== '/time-tracking' && path !== '/attendance' && !path.startsWith('/open-sales-orders') && !path.startsWith('/woker-sales-orders')) {
+      return <Navigate to="/attendance" replace />;
     }
   }
+  
   if (user?.access_role === 'Sales and Purchase') {
     const allowed = [
       '/',
@@ -140,6 +148,8 @@ const AppRoutes: React.FC = () => {
         {/* <Route path="sales-order/:id" element={<SalesOrderDetailPage />} /> */}
         <Route path="open-sales-orders" element={<OpenSalesOrdersPage />} />
         <Route path="open-sales-orders/:id" element={<OpenSalesOrderDetailPage />} />
+        <Route path="woker-sales-orders" element={<WokerSalesOrderPage />} />
+        <Route path="woker-sales-orders/:id" element={<WokerSalesOrderPage />} />
         
          {/* Quotes */}
          <Route path="quotes" element={<QuotePage />} />

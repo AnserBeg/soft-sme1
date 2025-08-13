@@ -997,4 +997,66 @@ router.get('/admin/available-users', async (req: Request, res: Response) => {
   }
 });
 
+// Delete a profile (Admin only)
+router.delete('/profiles/:id', async (req: Request, res: Response) => {
+  if (req.user?.access_role !== 'Admin') {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
+  
+  const { id } = req.params;
+  console.log('timeTrackingRoutes: Received DELETE request for profile ID:', id);
+  
+  try {
+    // Check if profile exists
+    const profileResult = await pool.query('SELECT id, name FROM profiles WHERE id = $1', [id]);
+    if (profileResult.rows.length === 0) {
+      console.log('timeTrackingRoutes: Profile not found for deletion:', id);
+      return res.status(404).json({ error: 'Profile not found' });
+    }
+    
+    const profileName = profileResult.rows[0].name;
+    
+    // Check if profile is in use by any time entries
+    const usageResult = await pool.query(
+      'SELECT COUNT(*) as count FROM time_entries WHERE profile_id = $1',
+      [id]
+    );
+    
+    const entryCount = parseInt(usageResult.rows[0].count);
+    if (entryCount > 0) {
+      console.log('timeTrackingRoutes: Cannot delete profile in use:', profileName, 'entries:', entryCount);
+      return res.status(400).json({ 
+        error: 'Cannot delete profile',
+        details: `Profile "${profileName}" is currently used by ${entryCount} time entries. Please delete these entries first.`,
+        entryCount
+      });
+    }
+    
+    // Check if profile is in use by any user access records
+    const accessResult = await pool.query(
+      'SELECT COUNT(*) as count FROM user_profile_access WHERE profile_id = $1 AND is_active = true',
+      [id]
+    );
+    
+    const accessCount = parseInt(accessResult.rows[0].count);
+    if (accessCount > 0) {
+      console.log('timeTrackingRoutes: Cannot delete profile with active access:', profileName, 'access records:', accessCount);
+      return res.status(400).json({ 
+        error: 'Cannot delete profile',
+        details: `Profile "${profileName}" has ${accessCount} active user access records. Please revoke access first.`,
+        accessCount
+      });
+    }
+    
+    // Delete the profile
+    await pool.query('DELETE FROM profiles WHERE id = $1', [id]);
+    
+    console.log('timeTrackingRoutes: Successfully deleted profile:', profileName);
+    res.json({ message: 'Profile deleted successfully' });
+  } catch (err) {
+    console.error('timeTrackingRoutes: Error deleting profile:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 export default router; 

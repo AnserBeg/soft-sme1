@@ -43,6 +43,7 @@ export const updateCategory = async (id: number, category: UpdateCategoryRequest
 };
 
 // Delete a category
-export const deleteCategory = async (id: number): Promise<void> => {
-  await api.delete(`/api/categories/${id}`);
+export const deleteCategory = async (id: number, reassign?: boolean): Promise<void> => {
+  const params = reassign ? { reassign: 'true' } : {};
+  await api.delete(`/api/categories/${id}`, { params });
 };

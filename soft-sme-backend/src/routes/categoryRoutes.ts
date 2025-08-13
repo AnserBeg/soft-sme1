@@ -139,7 +139,8 @@ router.put('/:id', async (req: Request, res: Response) => {
 // Delete a category
 router.delete('/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
-  console.log('categoryRoutes: Received DELETE request for category ID:', id);
+  const { reassign = false } = req.query; // New query parameter
+  console.log('categoryRoutes: Received DELETE request for category ID:', id, 'reassign:', reassign);
 
   try {
     // Check if category exists
@@ -155,20 +156,6 @@ router.delete('/:id', async (req: Request, res: Response) => {
 
     const categoryName = existingResult.rows[0].category_name;
 
-    // Check if category is in use by any inventory items
-    const usageResult = await pool.query(
-      'SELECT COUNT(*) as count FROM inventory WHERE category = $1',
-      [categoryName]
-    );
-    
-    if (parseInt(usageResult.rows[0].count) > 0) {
-      console.log('categoryRoutes: Cannot delete category in use:', categoryName);
-      return res.status(400).json({ 
-        error: 'Cannot delete category',
-        details: `Category "${categoryName}" is currently used by ${usageResult.rows[0].count} inventory items. Please reassign these items to another category first.`
-      });
-    }
-
     // Check if it's the default "Uncategorized" category
     if (categoryName.toLowerCase() === 'uncategorized') {
       console.log('categoryRoutes: Cannot delete default Uncategorized category');
@@ -178,10 +165,58 @@ router.delete('/:id', async (req: Request, res: Response) => {
       });
     }
 
-    await pool.query('DELETE FROM part_categories WHERE category_id = $1', [id]);
+    // Check if category is in use by any inventory items
+    const usageResult = await pool.query(
+      'SELECT COUNT(*) as count FROM inventory WHERE category = $1',
+      [categoryName]
+    );
     
-    console.log('categoryRoutes: Successfully deleted category:', categoryName);
-    res.json({ message: 'Category deleted successfully' });
+    const itemCount = parseInt(usageResult.rows[0].count);
+    if (itemCount > 0) {
+      if (reassign === 'true') {
+        // Reassign all items to "Uncategorized" and then delete the category
+        const client = await pool.connect();
+        try {
+          await client.query('BEGIN');
+          
+          // Update all inventory items to use "Uncategorized"
+          await client.query(
+            'UPDATE inventory SET category = $1 WHERE category = $2',
+            ['Uncategorized', categoryName]
+          );
+          
+          // Delete the category
+          await client.query('DELETE FROM part_categories WHERE category_id = $1', [id]);
+          
+          await client.query('COMMIT');
+          
+          console.log('categoryRoutes: Successfully deleted category and reassigned', itemCount, 'items to Uncategorized:', categoryName);
+          res.json({ 
+            message: 'Category deleted successfully', 
+            details: `${itemCount} inventory items were reassigned to "Uncategorized"`
+          });
+        } catch (err) {
+          await client.query('ROLLBACK');
+          throw err;
+        } finally {
+          client.release();
+        }
+      } else {
+        console.log('categoryRoutes: Cannot delete category in use:', categoryName);
+        return res.status(400).json({ 
+          error: 'Cannot delete category',
+          details: `Category "${categoryName}" is currently used by ${itemCount} inventory items.`,
+          suggestion: 'Use ?reassign=true to reassign these items to "Uncategorized" and delete the category.',
+          itemCount
+        });
+      }
+    } else {
+      // No items using this category, safe to delete
+      await pool.query('DELETE FROM part_categories WHERE category_id = $1', [id]);
+      
+      console.log('categoryRoutes: Successfully deleted category:', categoryName);
+      res.json({ message: 'Category deleted successfully' });
+    }
   } catch (err) {
     console.error('categoryRoutes: Error deleting category:', err);
     res.status(500).json({ error: 'Internal server error' });
@@ -242,7 +277,7 @@ router.delete('/purge', async (req: Request, res: Response) => {
         `DELETE FROM part_categories WHERE category_name IN (${placeholders})`,
         names
       );
-      deletedCount = delRes.rowCount;
+      deletedCount = delRes.rowCount || 0;
     }
 
     await client.query('COMMIT');

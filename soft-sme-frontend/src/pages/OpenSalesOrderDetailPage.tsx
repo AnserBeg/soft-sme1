@@ -17,6 +17,7 @@ import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
 import { toast } from 'react-toastify';
 import api from '../api/axios';
+import { useAuth } from '../contexts/AuthContext';
 import UnifiedProductDialog, { ProductFormValues } from '../components/UnifiedProductDialog';
 import UnifiedPartDialog, { PartFormValues } from '../components/UnifiedPartDialog';
 import UnifiedCustomerDialog, { CustomerFormValues } from '../components/UnifiedCustomerDialog';
@@ -102,6 +103,8 @@ const SalesOrderDetailPage: React.FC = () => {
   const isNumericId = !!id && /^\d+$/.test(id);
   console.log('[OpenSalesOrderDetailPage] id:', id, 'isCreationMode:', isCreationMode, 'isNumericId:', isNumericId);
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const isSalesPurchaseUser = user?.access_role === 'Sales and Purchase';
 
   // Shared state
   const [customers, setCustomers] = useState<CustomerOption[]>([]);
@@ -133,8 +136,7 @@ const SalesOrderDetailPage: React.FC = () => {
   const [estimatedCost, setEstimatedCost] = useState<number | null>(null);
 
   const [lineItems, setLineItems] = useState<SalesOrderLineItem[]>([]);
-  const [liveLineItems, setLiveLineItems] = useState<SalesOrderLineItem[]>([]);
-  const debouncedLineItems = useDebounce(liveLineItems, 300);
+  const debouncedLineItems = useDebounce(lineItems, 300);
 
   const robust: RobustLineItem[] = useMemo(() => (
     debouncedLineItems.map(li => ({
@@ -163,6 +165,9 @@ const SalesOrderDetailPage: React.FC = () => {
   const [negativeAvailabilityItems, setNegativeAvailabilityItems] = useState<Array<{
     lineItemIndex: number; partNumber: string; partDescription: string; excessQuantity: number; unit: string;
   }>>([]);
+  const [transferDialogItem, setTransferDialogItem] = useState<{
+    lineItemIndex: number; partNumber: string; partDescription: string; excessQuantity: number; unit: string;
+  } | null>(null);
   // Part combobox UX (similar to PO page)
   const [partOpenIndex, setPartOpenIndex] = useState<number | null>(null);
   const [partTypingTimer, setPartTypingTimer] = useState<number | null>(null);
@@ -177,6 +182,8 @@ const SalesOrderDetailPage: React.FC = () => {
   const [openPartDialogForPTO, setOpenPartDialogForPTO] = useState(false);
   const [ptoPartToAddIndex, setPtoPartToAddIndex] = useState<number | null>(null);
   const [ptoPartNumberForModal, setPtoPartNumberForModal] = useState('');
+  const alertHeightPx = 64; // approximate banner height
+  const activeAlertOffset = negativeAvailabilityItems.length > 0 ? (8 + alertHeightPx * negativeAvailabilityItems.length) : 0;
 
   // Handle Ctrl+Enter and Enter/Tab on part input similar to PO page
   const handleLinePartKeyDown = (idx: number, event: React.KeyboardEvent) => {
@@ -375,18 +382,29 @@ const SalesOrderDetailPage: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, isCreationMode, isNumericId]);
 
-  // Keep liveLineItems in sync with lineItems for debounced totals
-  useEffect(() => setLiveLineItems(lineItems), [lineItems]);
+  // debouncedLineItems derives from lineItems directly
 
   // Auto-update LABOUR/OVERHEAD rates when global changes
   useEffect(() => {
     if (globalLabourRate !== null) {
-      setLineItems(prev => prev.map(i => i.part_number === 'LABOUR' ? { ...i, unit_price: globalLabourRate } : i));
+      setLineItems(prev => prev.map(i => {
+        if (i.part_number !== 'LABOUR') return i;
+        const q = parseNumericInput(i.quantity);
+        const unit_price = globalLabourRate;
+        const line_amount = calculateLineAmount(q, unit_price);
+        return { ...i, unit_price, line_amount };
+      }));
     }
   }, [globalLabourRate]);
   useEffect(() => {
     if (globalOverheadRate !== null) {
-      setLineItems(prev => prev.map(i => i.part_number === 'OVERHEAD' ? { ...i, unit_price: globalOverheadRate } : i));
+      setLineItems(prev => prev.map(i => {
+        if (i.part_number !== 'OVERHEAD') return i;
+        const q = parseNumericInput(i.quantity);
+        const unit_price = globalOverheadRate;
+        const line_amount = calculateLineAmount(q, unit_price);
+        return { ...i, unit_price, line_amount };
+      }));
     }
   }, [globalOverheadRate]);
 
@@ -414,7 +432,7 @@ const SalesOrderDetailPage: React.FC = () => {
       }
       return prev;
     });
-  }, [globalSupplyRate, lineItems.some(i => i.part_number === 'LABOUR')]); // eslint-disable-line
+  }, [globalSupplyRate, lineItems]);
 
   // Recompute SUPPLY amount from LABOUR amount
   useEffect(() => {
@@ -423,7 +441,8 @@ const SalesOrderDetailPage: React.FC = () => {
         const labour = prev.find(i => i.part_number === 'LABOUR');
         const supply = prev.find(i => i.part_number === 'SUPPLY');
         if (labour && supply) {
-          const labourAmt = parseFloat(String(labour.line_amount || 0));
+          const q = parseNumericInput(labour.quantity);
+          const labourAmt = calculateLineAmount(q, labour.unit_price);
           const newSupplyAmt = labourAmt * (globalSupplyRate / 100);
           if (newSupplyAmt !== supply.line_amount) {
             return prev.map(i => i.part_number === 'SUPPLY' ? { ...i, line_amount: newSupplyAmt } : i);
@@ -432,7 +451,7 @@ const SalesOrderDetailPage: React.FC = () => {
         return prev;
       });
     }
-  }, [globalSupplyRate, lineItems.find(i => i.part_number === 'LABOUR')?.line_amount]); // eslint-disable-line
+  }, [globalSupplyRate, lineItems]);
 
   // ---------- Helpers ----------
   const findMarginFactor = (cost: number) => {
@@ -450,7 +469,7 @@ const SalesOrderDetailPage: React.FC = () => {
     inventoryItems.find((p: any) => p.part_number === partNumber);
 
   const handlePartNumberChange = (idx: number, newValue: string | null) => {
-    setLiveLineItems(prev => {
+    setLineItems(prev => {
       const updated = [...prev];
       if (!newValue || newValue.trim() === '') {
         updated[idx] = { ...updated[idx], part_number: '', part_description: '', quantity: '', unit: UNIT_OPTIONS[0], unit_price: 0, line_amount: 0 };
@@ -478,18 +497,24 @@ const SalesOrderDetailPage: React.FC = () => {
   };
 
   const handleLineItemChange = (idx: number, field: keyof SalesOrderLineItem, value: any) => {
-    setLiveLineItems(prev => {
+    setLineItems(prev => {
       const updated = [...prev];
       const it = { ...updated[idx], [field]: value };
 
       // auto-remove when qty <= 0 (except special rows)
-      if (field === 'quantity' && parseFloat(value) <= 0 && it.part_number !== 'LABOUR' && it.part_number !== 'OVERHEAD' && it.part_number !== 'SUPPLY') {
+      if (field === 'quantity' && parseFloat(value) <= 0 && it.part_number !== 'SUPPLY') {
         return updated.filter((_, i) => i !== idx);
       }
 
       const q = parseNumericInput(it.quantity);
-      const up = parseNumericInput(it.unit_price);
-      it.line_amount = calculateLineAmount(q, up);
+      const unitPrice = it.part_number === 'LABOUR'
+        ? (globalLabourRate ?? parseNumericInput(it.unit_price))
+        : it.part_number === 'OVERHEAD'
+        ? (globalOverheadRate ?? parseNumericInput(it.unit_price))
+        : parseNumericInput(it.unit_price);
+
+      it.unit_price = unitPrice;
+      it.line_amount = calculateLineAmount(q, unitPrice);
       updated[idx] = it;
       return updated;
     });
@@ -517,19 +542,47 @@ const SalesOrderDetailPage: React.FC = () => {
     if (!inv || inv.part_type === 'supply') return null;
 
     const onHand = parseFloat(inv.quantity_on_hand) || 0;
-    const newQty = parseFloat(item.quantity) || 0;
-
+    
     if (isCreationMode) {
-      const available = onHand - newQty;
-      return { available: available < 0 ? Math.floor(available) : Math.round(available), isNegative: available < 0, currentStock: onHand, changeInQuantity: newQty };
+      // Calculate total quantity for this part across ALL line items (including this one)
+      const totalQuantityForPart = lineItems
+        .filter(li => li.part_number.toLowerCase() === item.part_number.toLowerCase())
+        .reduce((sum, li) => sum + (parseFloat(li.quantity) || 0), 0);
+      
+      const available = onHand - totalQuantityForPart;
+      return { 
+        available: available < 0 ? Math.floor(available) : Math.round(available), 
+        isNegative: available < 0, 
+        currentStock: onHand, 
+        changeInQuantity: totalQuantityForPart,
+        totalQuantityForPart,
+        totalOriginalQuantityForPart: 0
+      };
     }
 
-    const orig = originalLineItems.find(o => o.part_number === item.part_number);
-    const currentSold = orig ? parseFloat(orig.quantity) || 0 : 0;
-    const delta = newQty - currentSold;
+    // Calculate total quantity for this part across ALL line items (including this one)
+    const totalQuantityForPart = lineItems
+      .filter(li => li.part_number.toLowerCase() === item.part_number.toLowerCase())
+      .reduce((sum, li) => sum + (parseFloat(li.quantity) || 0), 0);
+
+    // Calculate total quantity from original line items for this part
+    const totalOriginalQuantityForPart = originalLineItems
+      .filter(li => li.part_number.toLowerCase() === item.part_number.toLowerCase())
+      .reduce((sum, li) => sum + (parseFloat(li.quantity) || 0), 0);
+
+    // Calculate the delta: how much more/less we're using now vs originally
+    const delta = totalQuantityForPart - totalOriginalQuantityForPart;
     const available = onHand - delta;
     const rounded = available < 0 ? Math.floor(available) : Math.round(available);
-    return { available: rounded, isNegative: rounded < 0, currentStock: onHand, changeInQuantity: delta };
+    
+    return { 
+      available: rounded, 
+      isNegative: rounded < 0, 
+      currentStock: onHand, 
+      changeInQuantity: delta,
+      totalQuantityForPart,
+      totalOriginalQuantityForPart
+    };
   };
 
   // Check negatives (edit mode banners)
@@ -561,14 +614,7 @@ const SalesOrderDetailPage: React.FC = () => {
       return false;
     }
 
-    // disallow duplicates (excluding special)
-    const normals = lineItems.filter(i => !['LABOUR','OVERHEAD','SUPPLY'].includes(i.part_number)).map(i => i.part_number.trim().toLowerCase());
-    const dups = normals.filter((p, idx) => normals.indexOf(p) !== idx);
-    if (dups.length > 0) {
-      toast.error(`Duplicate part numbers not allowed: ${[...new Set(dups)].join(', ')}`);
-      return false;
-    }
-
+    // Allow duplicate part numbers - they will be merged on save
     // quantity 0 items (excluding special)
     const zeros = lineItems.filter(i => !['LABOUR','OVERHEAD','SUPPLY'].includes(i.part_number) && (parseFloat(String(i.quantity)) || 0) === 0);
     if (zeros.length > 0) {
@@ -603,17 +649,40 @@ const SalesOrderDetailPage: React.FC = () => {
   };
 
   // ---------- Save / Update ----------
-  const buildPayloadLineItems = (items: SalesOrderLineItem[]) =>
-    items.map(i => ({
-      part_number: i.part_number.trim(),
-      part_description: i.part_description.trim(),
-      unit: i.unit.trim(),
-      unit_price: i.unit_price != null ? Number(i.unit_price) : 0,
-      line_amount: i.line_amount != null ? Number(i.line_amount) : 0,
-      quantity_sold: i.part_number === 'SUPPLY'
-        ? 1
-        : (i.quantity !== undefined && i.quantity !== null && i.quantity !== '' ? Math.round(Number(i.quantity)) : 0),
-    }));
+  const buildPayloadLineItems = (items: SalesOrderLineItem[]) => {
+    // Group by part number and merge quantities
+    const grouped = items.reduce((acc, item) => {
+      const partNumber = item.part_number.trim().toLowerCase();
+      if (!acc[partNumber]) {
+        acc[partNumber] = {
+          part_number: item.part_number.trim(),
+          part_description: item.part_description.trim(),
+          unit: item.unit.trim(),
+          unit_price: item.unit_price != null ? Number(item.unit_price) : 0,
+          line_amount: 0,
+          quantity_sold: 0,
+        };
+      }
+      
+      // Add quantities and line amounts
+      if (item.part_number.toUpperCase() === 'SUPPLY') {
+        // Always include SUPPLY with quantity 1 and use its computed line_amount from UI
+        acc[partNumber].quantity_sold = 1;
+        acc[partNumber].unit = 'Each';
+        acc[partNumber].unit_price = 0;
+        acc[partNumber].line_amount += Number(item.line_amount || 0);
+      } else {
+        const quantity = parseFloat(item.quantity) || 0;
+        acc[partNumber].quantity_sold += Math.round(quantity);
+        acc[partNumber].line_amount += (parseFloat(item.quantity) || 0) * (item.unit_price || 0);
+      }
+      
+      return acc;
+    }, {} as Record<string, any>);
+    
+    // Convert back to array
+    return Object.values(grouped);
+  };
 
   const handleSave = async () => {
     if (!customer || !salesDate || !product) {
@@ -658,8 +727,26 @@ const SalesOrderDetailPage: React.FC = () => {
           }));
         await api.put(`/api/sales-orders/${id}`, { ...payload, partsToOrder });
         setSuccess('Sales Order updated successfully!');
-        // refresh inventory quietly
-        try { const inv = await api.get('/api/inventory'); setInventoryItems(inv.data); } catch {}
+        // Refresh SO and inventory so availability deltas use latest baseline
+        try {
+          const [soRes, inv] = await Promise.all([
+            api.get(`/api/sales-orders/${id}`),
+            api.get('/api/inventory')
+          ]);
+          const data = soRes.data;
+          const li = (data.lineItems || data.salesOrder?.line_items || []).map((item: any) => ({
+            part_number: item.part_number,
+            part_description: item.part_description,
+            unit: item.unit,
+            unit_price: item.unit_price,
+            line_amount: item.line_amount,
+            quantity: item.part_number === 'SUPPLY' ? '1' : String(item.quantity_sold ?? item.quantity ?? 0),
+            gst: DEFAULT_GST_RATE,
+          })) as SalesOrderLineItem[];
+          setLineItems(li);
+          setOriginalLineItems(li);
+          setInventoryItems(inv.data);
+        } catch {}
       }
     } catch (err: any) {
       const message = err?.response?.data?.error || err?.response?.data?.details || err?.response?.data?.message || 'Failed to save sales order.';
@@ -1003,8 +1090,8 @@ const SalesOrderDetailPage: React.FC = () => {
           </Alert>
         )}
 
-        {/* Top form card */}
-        <Paper sx={{ p: 3, mb: 3 }} elevation={3}>
+        {/* Top form card - shift up when alerts are visible */}
+        <Paper sx={{ p: 3, mb: 3, transform: activeAlertOffset ? `translateY(-${activeAlertOffset}px)` : 'none', transition:'transform 200ms ease' }} elevation={3}>
           <Grid container spacing={3}>
             <Grid item xs={12} sm={4}>
               <Autocomplete<CustomerOption, false, false, true>
@@ -1084,17 +1171,19 @@ const SalesOrderDetailPage: React.FC = () => {
             <Grid item xs={12} sm={4}>
               <TextField label="Customer PO #" value={customerPoNumber} onChange={e => setCustomerPoNumber(e.target.value)} fullWidth placeholder="Optional" />
             </Grid>
-            <Grid item xs={12} sm={4}>
-              <TextField
-                label="Estimated Price"
-                type="number"
-                value={estimatedCost ?? ''}
-                onChange={e => setEstimatedCost(e.target.value ? parseFloat(e.target.value) : null)}
-                fullWidth
-                InputProps={{ startAdornment: <InputAdornment position="start">$</InputAdornment> }}
-                inputProps={{ onWheel: (e) => (e.currentTarget as HTMLInputElement).blur() }}
-              />
-            </Grid>
+              {!isSalesPurchaseUser && (
+                <Grid item xs={12} sm={4}>
+                  <TextField
+                    label="Quoted Price"
+                    type="number"
+                    value={estimatedCost ?? ''}
+                    onChange={e => setEstimatedCost(e.target.value ? parseFloat(e.target.value) : null)}
+                    fullWidth
+                    InputProps={{ startAdornment: <InputAdornment position="start">$</InputAdornment> }}
+                    inputProps={{ onWheel: (e) => (e.currentTarget as HTMLInputElement).blur() }}
+                  />
+                </Grid>
+              )}
 
             <Grid item xs={12} sm={4}>
               <Autocomplete<ProductOption>
@@ -1185,39 +1274,26 @@ const SalesOrderDetailPage: React.FC = () => {
           </Grid>
         </Paper>
 
-        <Typography variant="h6" gutterBottom sx={{ mt: 2 }}>Line Items</Typography>
-        {/* Negative availability banners (edit mode) */}
+        <Box sx={{ position:'relative', zIndex: 1000, transform: activeAlertOffset ? `translateY(-${activeAlertOffset}px)` : 'none', transition: 'transform 200ms ease' }}>
+          <Typography variant="h6" gutterBottom sx={{ mt: 2 }}>Line Items</Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Each part number can only appear once. Edit existing line items to change quantities.
+          </Typography>
+        </Box>
+        {/* Negative availability banners (edit mode) - render just above the line item box without shifting layout */}
+        <Box sx={{ position:'relative', mb:3 }}>
         {!isCreationMode && negativeAvailabilityItems.length > 0 && (
-          <Box sx={{ mb:2 }}>
+          <Box sx={{ position:'absolute', bottom: 'calc(100% + 8px)', left:0, right:0, zIndex:500, display:'flex', flexDirection:'column', gap:1, pointerEvents:'none' }}>
             {negativeAvailabilityItems.map((item, i) => (
-              <Alert key={`${item.lineItemIndex}-${i}`} severity="warning" sx={{ mb:1 }}>
-                <Box display="flex" justifyContent="space-between" alignItems="center">
+              <Alert key={`${item.lineItemIndex}-${i}`} severity="warning" sx={{ width: '100%', boxShadow:2, pointerEvents:'auto', '& .MuiAlert-message': { width: '100%', padding: 0 } }}>
+                <Box display="flex" justifyContent="space-between" alignItems="center" sx={{ width: '100%' }}>
                   <Box>
                     <Typography variant="body2" fontWeight="medium">Insufficient stock for {item.partNumber}</Typography>
                     <Typography variant="body2" color="text.secondary">Excess quantity: {item.excessQuantity} {item.unit}</Typography>
                   </Box>
                   <Button
-                    variant="contained" size="small"
-                    onClick={() => {
-                      // transfer to parts to order
-                      const li = lineItems[item.lineItemIndex];
-                      const excess = item.excessQuantity;
-                      const inv = inventoryItems.find((x:any) => x.part_number.toLowerCase() === li.part_number.toLowerCase());
-                      const newItem: PartsToOrderItem = {
-                        sales_order_id: salesOrder?.sales_order_id || 0,
-                        part_number: li.part_number,
-                        part_description: li.part_description,
-                        quantity_to_order: String(excess),
-                        unit: li.unit,
-                        unit_price: inv?.last_unit_cost || 0,
-                        line_amount: (inv?.last_unit_cost || 0) * excess
-                      };
-                      setQuantityToOrderItems(prev => [...prev, newItem]);
-                      const newQty = Math.max(0, (parseFloat(li.quantity) || 0) - excess);
-                      setLineItems(prev => prev.map((x, idx) => idx === item.lineItemIndex ? { ...x, quantity: String(newQty) } : x));
-                      setNegativeAvailabilityItems(prev => prev.filter(n => n.lineItemIndex !== item.lineItemIndex));
-                      toast.success(`Transferred ${excess} ${li.unit} of ${li.part_number} to parts to order`);
-                    }}
+                    variant="contained" size="small" sx={{ whiteSpace:'nowrap' }}
+                    onClick={() => setTransferDialogItem(item)}
                   >
                     Transfer {item.excessQuantity} to Parts to Order
                   </Button>
@@ -1227,6 +1303,46 @@ const SalesOrderDetailPage: React.FC = () => {
           </Box>
         )}
 
+        <Dialog open={!!transferDialogItem} onClose={() => setTransferDialogItem(null)} maxWidth="xs" fullWidth>
+          <DialogTitle>Transfer to Parts to Order</DialogTitle>
+          <DialogContent>
+            {transferDialogItem && (
+              <Typography variant="body2">
+                Transfer {transferDialogItem.excessQuantity} {transferDialogItem.unit} of {transferDialogItem.partNumber} to Parts to Order?
+              </Typography>
+            )}
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setTransferDialogItem(null)}>Cancel</Button>
+            <Button
+              variant="contained"
+              onClick={() => {
+                if (!transferDialogItem) return;
+                const item = transferDialogItem;
+                const li = lineItems[item.lineItemIndex];
+                const excess = item.excessQuantity;
+                const inv = inventoryItems.find((x:any) => x.part_number.toLowerCase() === li.part_number.toLowerCase());
+                const newItem: PartsToOrderItem = {
+                  sales_order_id: salesOrder?.sales_order_id || 0,
+                  part_number: li.part_number,
+                  part_description: li.part_description,
+                  quantity_to_order: String(excess),
+                  unit: li.unit,
+                  unit_price: inv?.last_unit_cost || 0,
+                  line_amount: (inv?.last_unit_cost || 0) * excess
+                };
+                setQuantityToOrderItems(prev => [...prev, newItem]);
+                const newQty = Math.max(0, (parseFloat(li.quantity) || 0) - excess);
+                setLineItems(prev => prev.map((x, idx) => idx === item.lineItemIndex ? { ...x, quantity: String(newQty) } : x));
+                setNegativeAvailabilityItems(prev => prev.filter(n => n.lineItemIndex !== item.lineItemIndex));
+                setTransferDialogItem(null);
+                toast.success(`Transferred ${excess} ${li.unit} of ${li.part_number} to parts to order`);
+              }}
+            >
+              Confirm
+            </Button>
+          </DialogActions>
+        </Dialog>
         <Paper sx={{ p:3, mb:3 }} elevation={3}>
           <Grid container spacing={2}>
             {lineItems
@@ -1240,7 +1356,7 @@ const SalesOrderDetailPage: React.FC = () => {
               })
               .map(({ item, originalIndex }) => (
               <React.Fragment key={originalIndex}>
-                <Grid item xs={12} sm={6} md={2}>
+                <Grid item xs={12} sm={6} md={2.5}>
                   <Autocomplete<PartOption, false, false, true>
                     open={partOpenIndex === originalIndex}
                     onOpen={() => setPartOpenIndex(originalIndex)}
@@ -1249,6 +1365,22 @@ const SalesOrderDetailPage: React.FC = () => {
                     value={item.part_number}
                     onChange={(_, newValue) => {
                       if (typeof newValue === 'string') {
+                        // Check if this part number already exists in another line item
+                        const existingIndex = lineItems.findIndex((item, idx) => 
+                          idx !== originalIndex && 
+                          item.part_number.trim().toLowerCase() === newValue.trim().toLowerCase()
+                        );
+                        
+                        if (existingIndex !== -1) {
+                          toast.error(`Part "${newValue}" already exists as line item ${existingIndex + 1}. Edit that line item instead.`);
+                          // Clear the part number field immediately
+                          setLineItems(prev => prev.map((item, idx) => 
+                            idx === originalIndex ? { ...item, part_number: '', part_description: '' } : item
+                          ));
+                          setPartOpenIndex(null);
+                          return;
+                        }
+                        
                         handlePartNumberChange(originalIndex, newValue);
                         setPartOpenIndex(null);
                       } else if (newValue && typeof newValue === 'object' && 'isNew' in newValue) {
@@ -1322,7 +1454,8 @@ const SalesOrderDetailPage: React.FC = () => {
                       <TextField {...params} label="Part Number" required fullWidth onKeyDown={(e) => handleLinePartKeyDown(originalIndex, e)} onBlur={() => setPartOpenIndex(null)} />
                     )}
                     onBlur={() => {
-                      const inputValue = (lineItems[originalIndex]?.part_number || '').trim().toUpperCase();
+                      // Get the current input value from the lineItems state
+                      const inputValue = lineItems[originalIndex]?.part_number?.trim().toUpperCase();
                       if (!inputValue) return;
                       const inv = inventoryItems.find((x:any) => x.part_number === inputValue);
                       if (!inv) {
@@ -1330,11 +1463,14 @@ const SalesOrderDetailPage: React.FC = () => {
                         setLinePartNumberForModal(inputValue);
                         setOpenPartDialogForLine(true);
                         setPartOpenIndex(null);
+                      } else {
+                        // Part exists, populate the description and other fields
+                        handlePartNumberChange(originalIndex, inputValue);
                       }
                     }}
                   />
                 </Grid>
-                <Grid item xs={12} sm={6} md={2}>
+                <Grid item xs={12} sm={6} md={2.5}>
                   <TextField label="Part Description" value={item.part_description} fullWidth required InputProps={{ readOnly: true }} sx={{ backgroundColor:'#ffffff' }} />
                 </Grid>
                 <Grid item xs={6} sm={3} md={1}>
@@ -1399,6 +1535,7 @@ const SalesOrderDetailPage: React.FC = () => {
             <Button variant="outlined" color="primary" onClick={handleAddLineItem}>Add Line Item</Button>
           </Box>
         </Paper>
+        </Box>
 
         <Paper sx={{ p:3, mb:3 }} elevation={3}>
           <Grid container spacing={2}>
@@ -1611,21 +1748,19 @@ const SalesOrderDetailPage: React.FC = () => {
           isEditMode={false}
         />
 
-        {/* QBO export + success snackbar (edit only) */}
+        {/* QBO export + success snackbar (edit only, closed SOs only) */}
         {!isCreationMode && (
           <>
             {exportError && <Alert severity="error" sx={{ mb:2 }} onClose={() => setExportError(null)}>{exportError}</Alert>}
             <Snackbar open={!!success} autoHideDuration={6000} onClose={() => setSuccess(null)} anchorOrigin={{ vertical:'top', horizontal:'center' }}>
               <Alert onClose={() => setSuccess(null)} severity="success" sx={{ width:'100%' }}>{success}</Alert>
             </Snackbar>
-            {!salesOrder?.exported_to_qbo && (
+            {!salesOrder?.exported_to_qbo && salesOrder?.status?.toLowerCase() === 'closed' && (
               <Box display="flex" justifyContent="flex-end" gap={2} mb={2}>
                 <Button variant="contained" color="success" startIcon={<CloudUploadIcon />} disabled={exportLoading} onClick={handleExportToQBO}>
                   {exportLoading ? 'Exporting...' : 'Export to QuickBooks'}
                 </Button>
-                {salesOrder && salesOrder.status?.toLowerCase() === 'closed' && (
-                  <Button variant="outlined" onClick={handleReopenSO}>Reopen SO</Button>
-                )}
+                <Button variant="outlined" onClick={handleReopenSO}>Reopen SO</Button>
               </Box>
             )}
           </>

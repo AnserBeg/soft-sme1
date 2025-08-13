@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Dialog, DialogActions, DialogContent, DialogTitle, Button, MenuItem, Stack, TextField } from '@mui/material';
+import { Dialog, DialogActions, DialogContent, DialogTitle, Button, MenuItem, Stack, TextField, IconButton } from '@mui/material';
+import DeleteIcon from '@mui/icons-material/Delete';
 import { toast } from 'react-toastify';
 import { createCategory, getCategories, deleteCategory as apiDeleteCategory, type Category } from '../services/categoryService';
 import { useAuth } from '../contexts/AuthContext';
@@ -15,7 +16,7 @@ interface CategorySelectProps {
 }
 
 const ADD_NEW_VALUE = '__ADD_NEW_CATEGORY__';
-const DELETE_CURRENT_VALUE = '__DELETE_CURRENT_CATEGORY__';
+// Removed legacy delete sentinel. We now render a per-item trash icon.
 
 const CategorySelect: React.FC<CategorySelectProps> = ({
   value,
@@ -68,17 +69,13 @@ const CategorySelect: React.FC<CategorySelectProps> = ({
       setAddOpen(true);
       return;
     }
-    if (selected === DELETE_CURRENT_VALUE) {
-      handleDeleteSelected();
-      return;
-    }
     onChange(selected);
   };
 
-  const handleDeleteSelected = async () => {
-    const selectedName = value?.trim();
-    if (!selectedName) return;
-    if (selectedName.toLowerCase() === 'uncategorized') {
+  const handleDeleteCategory = async (target: Category, e?: React.MouseEvent) => {
+    e?.preventDefault();
+    e?.stopPropagation();
+    if (target.category_name.toLowerCase() === 'uncategorized') {
       toast.warn('Cannot delete the default "Uncategorized" category');
       return;
     }
@@ -86,24 +83,41 @@ const CategorySelect: React.FC<CategorySelectProps> = ({
       toast.error('Only Admin users can delete categories');
       return;
     }
-    const target = categories.find(c => c.category_name.toLowerCase() === selectedName.toLowerCase());
-    if (!target) {
-      toast.error('Category not found');
-      return;
-    }
+    
     const ok = window.confirm(`Delete category "${target.category_name}"? This cannot be undone.`);
     if (!ok) return;
+    
     try {
       await apiDeleteCategory(target.category_id);
       setCategories(prev => prev.filter(c => c.category_id !== target.category_id));
-      // If current value was this category, reset to Uncategorized
       if (value && value.toLowerCase() === target.category_name.toLowerCase()) {
         onChange('Uncategorized');
       }
       toast.success('Category deleted');
     } catch (err: any) {
-      const msg = err?.response?.data?.error || 'Failed to delete category';
-      toast.error(msg);
+      const response = err?.response?.data;
+      if (response?.error === 'Cannot delete category' && response?.suggestion) {
+        // Category is in use, offer to reassign items
+        const reassignOk = window.confirm(
+          `${response.details}\n\n${response.suggestion}\n\nWould you like to reassign all items to "Uncategorized" and delete the category?`
+        );
+        if (reassignOk) {
+          try {
+            await apiDeleteCategory(target.category_id, true); // Pass reassign=true
+            setCategories(prev => prev.filter(c => c.category_id !== target.category_id));
+            if (value && value.toLowerCase() === target.category_name.toLowerCase()) {
+              onChange('Uncategorized');
+            }
+            toast.success(response.details ? `Category deleted. ${response.details}` : 'Category deleted');
+          } catch (reassignErr: any) {
+            const reassignMsg = reassignErr?.response?.data?.error || 'Failed to delete category';
+            toast.error(reassignMsg);
+          }
+        }
+      } else {
+        const msg = response?.error || 'Failed to delete category';
+        toast.error(msg);
+      }
     }
   };
 
@@ -148,19 +162,28 @@ const CategorySelect: React.FC<CategorySelectProps> = ({
         helperText={errorMessage}
         disabled={disabled || loading}
       >
-        {categoryNames.map(name => (
-          <MenuItem key={name} value={name}>
-            {name}
-          </MenuItem>
-        ))}
+        {categories
+          .slice()
+          .sort((a, b) => a.category_name.localeCompare(b.category_name))
+          .map(cat => (
+            <MenuItem key={cat.category_id} value={cat.category_name} sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span>{cat.category_name}</span>
+              {user?.access_role === 'Admin' && cat.category_name.toLowerCase() !== 'uncategorized' && (
+                <IconButton
+                  aria-label={`Delete ${cat.category_name}`}
+                  size="small"
+                  edge="end"
+                  onClick={(e) => handleDeleteCategory(cat, e)}
+                  sx={{ ml: 2, color: 'error.main' }}
+                >
+                  <DeleteIcon fontSize="small" />
+                </IconButton>
+              )}
+            </MenuItem>
+          ))}
         <MenuItem key={ADD_NEW_VALUE} value={ADD_NEW_VALUE}>
           + Add new category…
         </MenuItem>
-        {user?.access_role === 'Admin' && value && value.toLowerCase() !== 'uncategorized' && (
-          <MenuItem key={DELETE_CURRENT_VALUE} value={DELETE_CURRENT_VALUE} sx={{ color: 'error.main' }}>
-            Delete "{value}"…
-          </MenuItem>
-        )}
       </TextField>
 
       <Dialog open={addOpen} onClose={() => setAddOpen(false)} maxWidth="xs" fullWidth>

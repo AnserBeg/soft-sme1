@@ -10,6 +10,7 @@ import {
 import Papa from 'papaparse';
 import { useNavigate } from 'react-router-dom';
 import api from '../api/axios';
+import { useAuth } from '../contexts/AuthContext';
 import DeleteIcon from '@mui/icons-material/Delete';
 import CloseIcon from '@mui/icons-material/Close';
 import AddIcon from '@mui/icons-material/Add';
@@ -33,6 +34,7 @@ const OpenSalesOrdersPage: React.FC = () => {
   const [status, setStatus] = useState<'all' | 'open' | 'closed'>('open');
   const [workInProcessTotal, setWorkInProcessTotal] = useState<number>(0);
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [openDialog, setOpenDialog] = useState(false);
   const [exportLoading, setExportLoading] = useState<number | null>(null); // Track which SO is being exported
   const [exportError, setExportError] = useState<string | null>(null);
@@ -349,8 +351,117 @@ const OpenSalesOrdersPage: React.FC = () => {
   };
 
   const handleRowClick = (params: GridRowParams) => {
-    navigate(`/open-sales-orders/${params.row.sales_order_id}`);
+    console.log('OpenSalesOrdersPage: Row clicked:', params.row);
+    console.log('OpenSalesOrdersPage: User role:', user?.access_role);
+    console.log('OpenSalesOrdersPage: Sales order ID:', params.row.sales_order_id);
+    
+    if (user?.access_role === 'Time Tracking') {
+      // Redirect time tracking users to the worker sales order page
+      const targetPath = `/woker-sales-orders/${params.row.sales_order_id}`;
+      console.log('OpenSalesOrdersPage: Navigating time tracking user to:', targetPath);
+      navigate(targetPath);
+    } else {
+      // Regular users go to the normal sales order detail page
+      const targetPath = `/open-sales-orders/${params.row.sales_order_id}`;
+      console.log('OpenSalesOrdersPage: Navigating regular user to:', targetPath);
+      navigate(targetPath);
+    }
   };
+
+  if (user?.access_role === 'Time Tracking') {
+    // For time tracking users, only show open sales orders and hide delete functionality
+    const openOrdersOnly = filteredRows.filter(row => row.status === 'Open');
+    
+    return (
+      <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
+        <Box sx={{ mb: 4 }}>
+          <Typography variant="h4" component="h1" gutterBottom>
+            Sales Orders (Open Only)
+          </Typography>
+          <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2 }}>
+            {/* No buttons for time tracking users */}
+          </Box>
+        </Box>
+        <Paper sx={{ width: '100%', overflow: 'hidden', mb: 3 }}>
+          <Box sx={{ p: 2 }}>
+            <Stack direction="row" spacing={3} sx={{ mb: 2 }}>
+              <TextField
+                label="Search"
+                variant="outlined"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                InputProps={{
+                  startAdornment: (
+                    <InputAdornment position="start">
+                      <SearchIcon sx={{ fontSize: 22 }} />
+                    </InputAdornment>
+                  ),
+                }}
+                sx={{ minWidth: 340, maxWidth: 400, '& .MuiInputBase-input': { fontSize: 22, py: 2 }, '& .MuiInputLabel-root': { fontSize: 20 } }}
+                size="small"
+              />
+              <Chip
+                label="Open"
+                color="primary"
+                sx={{ fontSize: 18, px: 3, py: 1.5, minWidth: 80, height: 44 }}
+              />
+            </Stack>
+            <DataGrid
+              rows={openOrdersOnly}
+              columns={columns.filter(col => col.field !== 'actions')} // Hide actions column for time tracking users
+              loading={false}
+              paginationModel={paginationModel}
+              onPaginationModelChange={setPaginationModel}
+              pageSizeOptions={[10, 25, 50]}
+              getRowId={(row) => row.id}
+              onRowClick={handleRowClick}
+              disableRowSelectionOnClick
+              initialState={{
+                sorting: {
+                  sortModel: [{ field: 'sales_order_number', sort: 'desc' }],
+                },
+              }}
+              sx={{
+                '& .MuiDataGrid-cell, & .MuiDataGrid-columnHeader, & .MuiDataGrid-columnHeaderTitle': {
+                  fontSize: '1.1rem',
+                },
+                '& .MuiDataGrid-cell': {
+                  borderBottom: '1px solid rgba(224, 224, 224, 1)',
+                },
+                '& .MuiDataGrid-columnHeaders': {
+                  backgroundColor: 'background.paper',
+                  borderBottom: '2px solid rgba(224, 224, 224, 1)',
+                },
+                '& .MuiDataGrid-row': {
+                  minHeight: '52px !important',
+                  maxHeight: '52px !important',
+                },
+                '& .MuiDataGrid-columnHeadersInner': {
+                  minHeight: '60px !important',
+                  maxHeight: '60px !important',
+                },
+                '& .MuiDataGrid-row:hover': {
+                  backgroundColor: 'action.hover',
+                },
+              }}
+            />
+          </Box>
+        </Paper>
+
+        {/* Export Status Alerts */}
+        {exportError && (
+          <Alert severity="error" sx={{ mt: 2 }} onClose={() => setExportError(null)}>
+            {exportError}
+          </Alert>
+        )}
+        {exportSuccess && (
+          <Alert severity="success" sx={{ mt: 2 }} onClose={() => setExportSuccess(null)}>
+            {exportSuccess}
+          </Alert>
+        )}
+      </Container>
+    );
+  }
 
   return (
     <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
@@ -370,13 +481,15 @@ const OpenSalesOrdersPage: React.FC = () => {
         )}
         <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2 }}>
           <Stack direction="row" spacing={2}>
-            <Button
-              variant="contained"
-              startIcon={<AddIcon />}
-              onClick={() => navigate('/open-sales-orders/new')}
-            >
-              New SO
-            </Button>
+            {user?.access_role !== 'Time Tracking' && (
+              <Button
+                variant="contained"
+                startIcon={<AddIcon />}
+                onClick={() => navigate('/open-sales-orders/new')}
+              >
+                New SO
+              </Button>
+            )}
             <Button
               variant="outlined"
               startIcon={<DownloadIcon />}

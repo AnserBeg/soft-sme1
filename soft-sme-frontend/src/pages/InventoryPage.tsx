@@ -475,10 +475,75 @@ const InventoryPage: React.FC = () => {
 
   // New: Enforce rules and show potential duplicates, allow merging
   const handleCleanup = async () => {
+    // Client-side preview per requested rules
     setCleaning(true);
     try {
-      const preview = await previewCleanupEnforce('stock');
-      setCleanupPreview(preview?.preview || preview);
+      const fixes: any[] = [];
+      const flags: any[] = [];
+
+      const normalize = (raw: string) => {
+        const actions: string[] = [];
+        const warnings: string[] = [];
+        let pn = String(raw || '');
+        const original = pn;
+        // 1. Remove Spaces
+        const noSpaces = pn.replace(/\s+/g, '');
+        if (noSpaces !== pn) actions.push('Removed spaces');
+        pn = noSpaces;
+        // 2. Uppercase
+        const upper = pn.toUpperCase();
+        if (upper !== pn) actions.push('Converted to uppercase');
+        pn = upper;
+        // 3. Remove punctuation excluding ( ) /
+        const onlyAllowed = pn.replace(/[^A-Z0-9\/()]/g, '');
+        if (onlyAllowed !== pn) actions.push('Removed punctuation excluding ( ) /');
+        pn = onlyAllowed;
+        // 4. Wrap bare fractions with parentheses using a single pass
+        const before = pn;
+        pn = pn.replace(/(\d)\/(1\d|\d)/g, (match: string, left: string, right: string, offset: number, str: string) => {
+          const prev = str[offset - 1] || '';
+          const next = str[offset + match.length] || '';
+          // If already wrapped as (x/y), leave as is
+          if (prev === '(' && next === ')') return match;
+          return `(${left}/${right})`;
+        });
+        if (pn !== before) actions.push('Wrapped fractions with parentheses');
+        // 5. Description with fraction (3+ letters at start/end)
+        if (pn.includes('/')) {
+          if (/^[A-Z]{3,}/.test(pn) || /[A-Z]{3,}$/.test(pn)) warnings.push('Description text detected with fraction');
+        }
+        // 6. Decimal detection
+        if (/\d\.|\.\d/.test(pn)) warnings.push('Decimal detected; consider fraction');
+        return { cleaned: pn, actions, warnings, original };
+      };
+
+      const previewRows = rows.map((r) => {
+        const n = normalize(r.part_number);
+        if (n.cleaned !== r.part_number || n.actions.length > 0) {
+          fixes.push({ part_number: r.part_number, cleaned_part_number: n.cleaned, actions: n.actions });
+        }
+        if (n.warnings.length > 0) {
+          flags.push({ part_number: r.part_number, warnings: n.warnings });
+        }
+        return { ...r, _clean: n.cleaned };
+      });
+
+      // Duplicate groups by cleaned number
+      const groupsMap: Record<string, any[]> = {};
+      previewRows.forEach((r) => {
+        if (!groupsMap[r._clean]) groupsMap[r._clean] = [];
+        groupsMap[r._clean].push(r);
+      });
+      const duplicateGroups = Object.entries(groupsMap)
+        .filter(([, arr]) => (arr as any[]).length > 1)
+        .map(([, arr]) => {
+          const candidates = (arr as any[]).map((rr) => ({ part_number: rr.part_number, unit: rr.unit }));
+          const proposedKeep = (arr as any[])[0].part_number;
+          const unitMismatch = new Set((arr as any[]).map((rr) => rr.unit)).size > 1;
+          return { proposedKeep, candidates, unitMismatch };
+        });
+
+      setCleanupPreview({ fixes, flags, duplicateGroups });
       setShowCleanupPreview(true);
     } catch (error) {
       console.error('Error during cleanup preview:', error);
@@ -626,11 +691,47 @@ const InventoryPage: React.FC = () => {
               <Typography variant="h6">Fixes</Typography>
               <List dense>
                 {(cleanupPreview.fixes || []).slice(0, 200).map((f: any, idx: number) => (
-                  <ListItem key={idx}>
+                  <ListItem key={idx} button onClick={() => {
+                    const row = rows.find(r => r.part_number === f.part_number);
+                    if (row) { setEditingPart({
+                      part_number: row.part_number,
+                      part_description: row.part_description || '',
+                      unit: row.unit || 'Each',
+                      last_unit_cost: row.last_unit_cost || '',
+                      quantity_on_hand: row.quantity_on_hand || '',
+                      reorder_point: row.reorder_point || '',
+                      part_type: row.part_type || 'stock',
+                      category: row.category || 'Uncategorized'
+                    }); setOpenPartDialog(true); }
+                  }}>
                     <ListItemText primary={`${f.part_number} -> ${f.cleaned_part_number}`} secondary={(f.actions || []).join(', ')} />
                   </ListItem>
                 ))}
               </List>
+              {cleanupPreview.flags && cleanupPreview.flags.length > 0 && (
+                <>
+                  <Typography variant="h6" sx={{ mt: 2 }}>Flags</Typography>
+                  <List dense>
+                    {(cleanupPreview.flags || []).map((g: any, idx: number) => (
+                      <ListItem key={idx} button onClick={() => {
+                        const row = rows.find(r => r.part_number === g.part_number);
+                        if (row) { setEditingPart({
+                          part_number: row.part_number,
+                          part_description: row.part_description || '',
+                          unit: row.unit || 'Each',
+                          last_unit_cost: row.last_unit_cost || '',
+                          quantity_on_hand: row.quantity_on_hand || '',
+                          reorder_point: row.reorder_point || '',
+                          part_type: row.part_type || 'stock',
+                          category: row.category || 'Uncategorized'
+                        }); setOpenPartDialog(true); }
+                      }}>
+                        <ListItemText primary={`${g.part_number}`} secondary={(g.warnings || []).join(', ')} />
+                      </ListItem>
+                    ))}
+                  </List>
+                </>
+              )}
               <Typography variant="h6" sx={{ mt: 2 }}>Potential Duplicates</Typography>
               <List dense>
                 {(cleanupPreview.duplicateGroups || []).map((g: any, idx: number) => (

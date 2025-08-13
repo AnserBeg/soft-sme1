@@ -1596,9 +1596,10 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
                     <TextField
                       label="Unit"
                       value={item.unit}
-                      onChange={(e) => handleLineItemChange(idx, 'unit', e.target.value)}
                       select
                       fullWidth
+                      disabled
+                      InputProps={{ readOnly: true }}
                     >
                       {UNIT_OPTIONS.map((option) => (
                         <MenuItem key={option} value={option}>

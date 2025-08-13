@@ -22,7 +22,8 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
-  TextField
+  TextField,
+  IconButton
 } from '@mui/material';
 import { Add as AddIcon, GetApp as GetAppIcon, PictureAsPdf as PictureAsPdfIcon } from '@mui/icons-material';
 import { getProfiles, createProfile, Profile } from '../services/timeTrackingService';
@@ -207,36 +208,41 @@ const AttendancePage: React.FC = () => {
                 label="Select Profile"
                 onChange={(e) => setSelectedProfile(e.target.value as number)}
                 sx={{ '& .MuiSelect-select': { fontSize: '1.1rem' } }}
+                renderValue={(val) => {
+                  const p = profiles.find(pr => pr.id === val);
+                  return p ? p.name : '';
+                }}
               >
                 {profiles.map((profile) => (
-                  <MenuItem key={profile.id} value={profile.id} sx={{ fontSize: '1.1rem' }}>
-                    {profile.name}
+                  <MenuItem key={profile.id} value={profile.id} sx={{ fontSize: '1.1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span>{profile.name}</span>
+                    {user?.access_role === 'Admin' && (
+                      <IconButton
+                        aria-label={`Delete ${profile.name}`}
+                        size="small"
+                        edge="end"
+                        onClick={async (e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          const ok = window.confirm(`Delete profile "${profile.name}"? This cannot be undone.`);
+                          if (!ok) return;
+                          try {
+                            await api.delete(`/api/time-tracking/profiles/${profile.id}`);
+                            setProfiles(prev => prev.filter(pr => pr.id !== profile.id));
+                            if (selectedProfile === profile.id) setSelectedProfile('');
+                            toast.success('Profile deleted');
+                          } catch (err: any) {
+                            const msg = err?.response?.data?.error || 'Failed to delete profile';
+                            toast.error(msg);
+                          }
+                        }}
+                        sx={{ ml: 2, color: 'error.main' }}
+                      >
+                        <DeleteIcon fontSize="small" />
+                      </IconButton>
+                    )}
                   </MenuItem>
                 ))}
-                {user?.access_role === 'Admin' && selectedProfile && (
-                  <MenuItem
-                    value={-999999}
-                    onClick={async (e) => {
-                      e.preventDefault();
-                      const p = profiles.find(pr => pr.id === selectedProfile);
-                      if (!p) return;
-                      const ok = window.confirm(`Delete profile "${p.name}"? This cannot be undone.`);
-                      if (!ok) return;
-                      try {
-                        await api.delete(`/api/time-tracking/profiles/${p.id}`);
-                        setProfiles(prev => prev.filter(pr => pr.id !== p.id));
-                        setSelectedProfile('');
-                        toast.success('Profile deleted');
-                      } catch (err: any) {
-                        const msg = err?.response?.data?.error || 'Failed to delete profile';
-                        toast.error(msg);
-                      }
-                    }}
-                    sx={{ color: 'error.main' }}
-                  >
-                    Delete "{profiles.find(pr => pr.id === selectedProfile)?.name}"…
-                  </MenuItem>
-                )}
               </Select>
             </FormControl>
           </Paper>
