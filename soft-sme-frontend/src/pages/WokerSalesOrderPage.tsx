@@ -393,12 +393,7 @@ const WokerSalesOrderPage: React.FC = () => {
       toast.error('Line items with blank part numbers are not allowed.');
       return false;
     }
-    // quantity 0 items
-    const zeros = lineItems.filter(i => (parseFloat(String(i.quantity)) || 0) === 0);
-    if (zeros.length > 0) {
-      toast.error(`Line items with 0 quantity: ${zeros.map(i => i.part_number).join(', ')}`);
-      return false;
-    }
+    // allow 0 quantity items on save in worker page (no close action here)
     // invalid/supply items
     const invalids = lineItems.filter(i => {
       const inv = inventoryItems.find((x:any) => x.part_number.toLowerCase() === i.part_number.trim().toLowerCase());

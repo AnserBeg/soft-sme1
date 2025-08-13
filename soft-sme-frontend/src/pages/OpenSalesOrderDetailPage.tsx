@@ -615,12 +615,7 @@ const SalesOrderDetailPage: React.FC = () => {
     }
 
     // Allow duplicate part numbers - they will be merged on save
-    // quantity 0 items (excluding special)
-    const zeros = lineItems.filter(i => !['LABOUR','OVERHEAD','SUPPLY'].includes(i.part_number) && (parseFloat(String(i.quantity)) || 0) === 0);
-    if (zeros.length > 0) {
-      toast.error(`Line items with 0 quantity: ${zeros.map(i => i.part_number).join(', ')}`);
-      return false;
-    }
+    // allow 0 quantity items on save in open detail page; enforce on close instead
 
     // invalid/supply items
     const invalids = lineItems.filter(i => {
@@ -757,6 +752,12 @@ const SalesOrderDetailPage: React.FC = () => {
   // ---------- Close / Reopen / PDF / QBO (edit only) ----------
   const handleCloseSO = async () => {
     if (isCreationMode || !salesOrder) return;
+    // Disallow close if any non-special line has 0 quantity
+    const zeros = lineItems.filter(i => !['LABOUR','OVERHEAD','SUPPLY'].includes(i.part_number) && (parseFloat(String(i.quantity)) || 0) === 0);
+    if (zeros.length > 0) {
+      toast.error(`Cannot close: line items with 0 quantity: ${zeros.map(i => i.part_number).join(', ')}`);
+      return;
+    }
     if (quantityToOrderItems.some(i => parseFloat(String(i.quantity_to_order)) > 0)) {
       const parts = quantityToOrderItems.filter(i => parseFloat(String(i.quantity_to_order)) > 0)
         .map(i => `${i.part_number} (${i.quantity_to_order})`).join(', ');

@@ -108,42 +108,50 @@ export default function PartFinderDialog(props: PartFinderDialogProps) {
     });
   }, [inventoryItems, prefix, selectedTokens, query]);
 
-  // Dynamic description tokens derived from current candidate set (top 24 tokens, len>=3)
+  // Dynamic description/dimension tokens derived from candidates
   const dynamicTokens = useMemo(() => {
     const counts: Record<string, number> = {};
     const selectedSet = new Set(selectedTokens.map(t => t.toUpperCase()));
     const favoriteSet = new Set(favorites);
     const recentSet = new Set(recents);
+    const synonymMap: Record<string, string> = { SS:'STAINLESS', STAIN:'STAINLESS', STAINLESS:'STAINLESS', AL:'ALUMINUM', ALUM:'ALUMINUM', GALV:'GALVANIZED', GALVANIZED:'GALVANIZED', SQ:'SQUARE', RECT:'RECTANGULAR', TUBE:'TUBING' };
+    const shapeSet = new Set(['TUBING','PIPE','ANGLE','BAR','FLAT','BEAM','CHANNEL','SHEET','PLATE','ROUND','SQUARE','RECTANGULAR']);
+
+    const normalizeToken = (w: string) => synonymMap[w] || w;
+    const add = (t: string, w: number) => { const tok = t.trim(); if (!tok || selectedSet.has(tok)) return; counts[tok] = (counts[tok] || 0) + w; };
+    const makeDecimal = (f: string) => { const [a,b] = f.split('/').map(Number); if(!a||!b) return null; return (a/b).toFixed(4).replace(/0+$/,'').replace(/\.$/,''); };
+    const parseDims = (pn: string) => { const out: string[] = []; if(!pn) return out; let s = pn.toUpperCase().replace(/[\s-]+/g,'').replace(/×/g,'X').replace(/[()]/g,''); const fr = s.match(/\d+\/\d+/g)||[]; if(s.includes('X')){ const seg=s.split('X'); if(seg.length>=2&&seg.length<=4){ out.push(seg.slice(0,2).join('X')); out.push(seg.join('X')); } } fr.forEach(f=>{ out.push(f); const dec=makeDecimal(f); if(dec) out.push(dec); }); (s.match(/(\d+)GA/g)||[]).forEach(g=>out.push(g)); (s.match(/SCH\s*\d+/g)||[]).forEach(m=>out.push(m.replace(/\s+/g,''))); (s.match(/OD\d+(?:\.\d+)?/g)||[]).forEach(v=>out.push(v)); (s.match(/ID\d+(?:\.\d+)?/g)||[]).forEach(v=>out.push(v)); (s.match(/\d+(?:\.\d+)?/g)||[]).slice(0,3).forEach(d=>out.push(d)); return Array.from(new Set(out)); };
+
     for (const it of candidateItems) {
-      const words = String(it.part_description || '')
-        .toUpperCase()
-        .split(/[^A-Z0-9]+/)
-        .filter(w => w.length >= 3 && !selectedSet.has(w));
-      // Weight based on likelihood of selection
+      const wordsRaw = String(it.part_description || '').toUpperCase().split(/[^A-Z0-9]+/).filter(w=>w.length>=2 && !selectedSet.has(w));
+      const words = wordsRaw.map(normalizeToken);
       const usageSo = soUsage[it.part_number]?.count || 0;
       const usageGlobal = globalUsage[it.part_number]?.count || 0;
       const lastSo = soUsage[it.part_number]?.last || 0;
       const now = Date.now();
-      const days = lastSo ? (now - lastSo) / (1000 * 60 * 60 * 24) : 365;
-      const recencyBoost = days <= 7 ? 1 : days <= 30 ? 0.5 : 0;
-      let wBase = 1 + usageSo * 0.5 + usageGlobal * 0.25 + recencyBoost;
-      if (favoriteSet.has(it.part_number)) wBase += 3;
-      if (recentSet.has(it.part_number)) wBase += 1;
+      const days = lastSo ? (now-lastSo)/(1000*60*60*24) : 365;
+      const recencyBoost = days<=7?1:days<=30?0.5:0;
+      let base = 1 + usageSo*0.5 + usageGlobal*0.25 + recencyBoost;
+      if (favoriteSet.has(it.part_number)) base += 3;
+      if (recentSet.has(it.part_number)) base += 1;
       const q = query.trim().toUpperCase();
-      const num = (it.part_number || '').toUpperCase();
-      const desc = (it.part_description || '').toUpperCase();
-      // Boost items that strongly match the query
-      const itemQueryBoost = q && (num.startsWith(q) || desc.includes(q)) ? 0.5 : 0;
-      for (const w of new Set(words)) {
-        const tokenQueryBoost = q && w.includes(q) ? 0.5 : 0;
-        const weight = wBase * (1 + itemQueryBoost + tokenQueryBoost);
-        counts[w] = (counts[w] || 0) + weight;
-      }
+      const num = (it.part_number||'').toUpperCase();
+      const desc = (it.part_description||'').toUpperCase();
+      const itemBoost = q && (num.startsWith(q) || desc.includes(q)) ? 0.5 : 0;
+
+      // Material/shape tokens
+      const ms: string[] = [];
+      words.forEach(w=>{ if(shapeSet.has(w)) ms.push(w); add(w, base*(1+itemBoost+(q&&w.includes(q)?0.5:0))); });
+      // Bigrams (shape+material combos)
+      const uniq = Array.from(new Set(words));
+      uniq.forEach(a=>uniq.forEach(b=>{ if(a!==b && (shapeSet.has(a)||shapeSet.has(b))) add(`${a} ${b}`, base*1.2); }));
+      // Dimension tokens from part number
+      const dims = parseDims(num);
+      dims.forEach(d=>add(d, base*1.3));
+      // Cross tokens
+      if (dims[0]) ms.slice(0,2).forEach(m=>add(`${m} ${dims[0]}`, base*1.5));
     }
-    return Object.entries(counts)
-      .sort((a,b) => b[1]-a[1])
-      .slice(0, 24)
-      .map(([w]) => w);
+    return Object.entries(counts).sort((a,b)=>b[1]-a[1]).slice(0,24).map(([w])=>w);
   }, [candidateItems, selectedTokens, favorites, recents, soUsage, globalUsage, query]);
 
   // Apply filters
