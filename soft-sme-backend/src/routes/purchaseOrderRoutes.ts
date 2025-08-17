@@ -7,6 +7,66 @@ import path from 'path';
 import axios from 'axios'; // Added for QBO API integration
 import { PurchaseOrderCalculationService } from '../services/PurchaseOrderCalculationService';
 
+// Utility function to create vendor mappings for parts in a purchase order
+async function createVendorMappingsForPO(client: any, lineItems: any[], vendorId: number) {
+  console.log(`Creating vendor mappings for vendor ${vendorId}...`);
+  
+  for (const item of lineItems) {
+    const { part_number, part_description } = item;
+    if (!part_number) continue;
+
+    const normalizedPartNumber = part_number.toString().trim().toUpperCase();
+    
+    // Check if this part exists in inventory
+    const existingPartResult = await client.query(
+      `SELECT part_number FROM "inventory" 
+       WHERE REPLACE(REPLACE(UPPER(part_number), '-', ''), ' ', '') = REPLACE(REPLACE(UPPER($1), '-', ''), ' ', '')`,
+      [normalizedPartNumber]
+    );
+
+    if (existingPartResult.rows.length > 0) {
+      const canonicalPartNumber = existingPartResult.rows[0].part_number;
+      
+      // Check if vendor mapping already exists for this part and vendor
+      const existingMappingResult = await client.query(
+        `SELECT id FROM inventory_vendors 
+         WHERE part_number = $1 AND vendor_id = $2`,
+        [canonicalPartNumber, vendorId]
+      );
+
+      if (existingMappingResult.rows.length === 0) {
+        // Create new vendor mapping
+        console.log(`Creating vendor mapping for part ${canonicalPartNumber} to vendor ${vendorId}`);
+        await client.query(
+          `INSERT INTO inventory_vendors (part_number, vendor_id, vendor_part_number, vendor_part_description, usage_count, last_used_at)
+           VALUES ($1, $2, $3, $4, 1, NOW())`,
+          [
+            canonicalPartNumber,
+            vendorId,
+            normalizedPartNumber, // Use the part number from PO as vendor part number
+            part_description || null
+          ]
+        );
+      } else {
+        // Update existing mapping - increment usage count and update last used
+        console.log(`Updating existing vendor mapping for part ${canonicalPartNumber} to vendor ${vendorId}`);
+        await client.query(
+          `UPDATE inventory_vendors 
+           SET usage_count = usage_count + 1, 
+               last_used_at = NOW(),
+               vendor_part_description = COALESCE($1, vendor_part_description)
+           WHERE part_number = $2 AND vendor_id = $3`,
+          [part_description || null, canonicalPartNumber, vendorId]
+        );
+      }
+    } else {
+      console.log(`Skipping vendor mapping for part ${normalizedPartNumber} - not found in inventory`);
+    }
+  }
+  
+  console.log(`✅ Vendor mapping completed for vendor ${vendorId}`);
+}
+
 const router = express.Router();
 const calculationService = new PurchaseOrderCalculationService(pool);
 
@@ -131,8 +191,15 @@ router.post('/auto-create-from-parts-to-order', async (req: Request, res: Respon
           country: lastVendorResult.rows[0].country || ''
         };
       } else {
-        // If no vendor found, return an error for this part
-        return res.status(400).json({ error: `No previous vendor found for part ${part.part_number}. Please manually create a purchase order for this part.` });
+        // If no vendor found, use null vendor (will be grouped separately)
+        vendorId = null;
+        vendorName = 'No Vendor Assigned';
+        vendorAddress = {
+          street_address: '',
+          city: '',
+          province: '',
+          country: ''
+        };
       }
 
       // If no vendor found, create a default group
@@ -191,7 +258,7 @@ router.post('/auto-create-from-parts-to-order', async (req: Request, res: Respon
         RETURNING purchase_id
       `, [
         purchaseNumber,
-        group.vendor_id,
+        group.vendor_id || null, // Handle null vendor_id
         new Date(),
         subtotal,
         totalGSTAmount,
@@ -1179,173 +1246,249 @@ router.put('/:id', async (req, res) => {
     }
     
     // If PO is being closed, update inventory and trigger allocation
-if (status === 'Closed' && oldStatus !== 'Closed') {
-  console.log(`PO ${id} transitioning to Closed. Starting inventory and allocation process...`);
+    if (status === 'Closed' && oldStatus !== 'Closed') {
+      console.log(`PO ${id} transitioning to Closed. Starting inventory and allocation process...`);
+      
+      // Step 1: Prepare a map to track total allocated quantities for each part
+      const allocatedQuantities: { [key: string]: number } = {};
 
-  // Step 1: Prepare a map to track total allocated quantities for each part
-  const allocatedQuantities: { [key: string]: number } = {};
+      // Step 2: Perform allocation first to determine what is used immediately
+      console.log(`PO ${id} closed. Triggering automatic allocation process...`);
+      try {
+        for (const poItem of lineItems) {
+          const partNumber = poItem.part_number.toString().trim().toUpperCase();
+          const poQuantity = parseFloat(poItem.quantity) || 0;
+          if (poQuantity <= 0) continue;
 
-  // Step 2: Perform allocation first to determine what is used immediately
-  console.log(`PO ${id} closed. Triggering automatic allocation process...`);
-  try {
-    for (const poItem of lineItems) {
-      const partNumber = poItem.part_number.toString().trim().toUpperCase();
-      const poQuantity = parseFloat(poItem.quantity) || 0;
-      if (poQuantity <= 0) continue;
+          console.log(`Processing allocation for part ${partNumber} (available quantity: ${poQuantity})`);
 
-      console.log(`Processing allocation for part ${partNumber} (available quantity: ${poQuantity})`);
+          // Get sales orders that need this part from parts to order
+          const salesOrdersNeedingPart = await client.query(
+            `SELECT sopt.sales_order_id, sopt.quantity_needed, sopt.part_description, sopt.unit, sopt.unit_price
+             FROM sales_order_parts_to_order sopt
+             JOIN salesorderhistory soh ON sopt.sales_order_id = soh.sales_order_id
+             WHERE REPLACE(REPLACE(UPPER(sopt.part_number), '-', ''), ' ', '') = REPLACE(REPLACE(UPPER($1), '-', ''), ' ', '')
+               AND soh.status = 'Open'
+             ORDER BY soh.sales_date ASC`,
+            [partNumber]
+          );
 
-      const salesOrdersNeedingPart = await client.query(
-        `SELECT sopt.sales_order_id, sopt.quantity_needed, sopt.part_description, sopt.unit, sopt.unit_price
-         FROM sales_order_parts_to_order sopt
-         JOIN salesorderhistory soh ON sopt.sales_order_id = soh.sales_order_id
-         WHERE REPLACE(REPLACE(UPPER(sopt.part_number), '-', ''), ' ', '') = REPLACE(REPLACE(UPPER($1), '-', ''), ' ', '')
-           AND soh.status = 'Open'
-         ORDER BY soh.sales_date ASC`,
-        [partNumber]
-      );
+          // Get manually allocated sales orders for this part
+          const manuallyAllocatedSalesOrders = await client.query(
+            `SELECT poa.sales_order_id, poa.allocate_qty as quantity_needed, poa.part_description, 
+                    COALESCE(soli.unit, 'Each') as unit, COALESCE(soli.unit_price, 0) as unit_price
+             FROM purchase_order_allocations poa
+             JOIN salesorderhistory soh ON poa.sales_order_id = soh.sales_order_id
+             LEFT JOIN salesorderlineitems soli ON soh.sales_order_id = soli.sales_order_id AND soli.part_number = poa.part_number
+             WHERE REPLACE(REPLACE(UPPER(poa.part_number), '-', ''), ' ', '') = REPLACE(REPLACE(UPPER($1), '-', ''), ' ', '')
+               AND soh.status = 'Open'
+               AND poa.purchase_id = $2
+             ORDER BY soh.sales_date ASC`,
+            [partNumber, id]
+          );
 
-      let remainingPoQuantity = poQuantity;
+          // Combine both sources and remove duplicates
+          const allSalesOrdersNeedingPart = [...salesOrdersNeedingPart.rows];
+          const existingSalesOrderIds = new Set(salesOrdersNeedingPart.rows.map(row => row.sales_order_id));
+          
+          for (const manualAllocation of manuallyAllocatedSalesOrders.rows) {
+            if (!existingSalesOrderIds.has(manualAllocation.sales_order_id)) {
+              allSalesOrdersNeedingPart.push(manualAllocation);
+            }
+          }
 
-      for (const salesOrder of salesOrdersNeedingPart.rows) {
-        if (remainingPoQuantity <= 0) break;
+          let remainingPoQuantity = poQuantity;
 
-        const neededQuantity = parseFloat(salesOrder.quantity_needed) || 0;
-        if (neededQuantity <= 0) continue;
+          for (const salesOrder of allSalesOrdersNeedingPart) {
+            if (remainingPoQuantity <= 0) break;
 
-        const allocateQuantity = Math.min(remainingPoQuantity, neededQuantity);
-        console.log(`Allocating ${allocateQuantity} of part ${partNumber} to sales order ${salesOrder.sales_order_id}`);
+            const neededQuantity = parseFloat(salesOrder.quantity_needed) || 0;
+            if (neededQuantity <= 0) continue;
 
-        // Update or create sales order line item
-        const existingLineItemResult = await client.query(
-          'SELECT * FROM salesorderlineitems WHERE sales_order_id = $1 AND part_number = $2',
-          [salesOrder.sales_order_id, partNumber]
+            const allocateQuantity = Math.min(remainingPoQuantity, neededQuantity);
+            console.log(`Allocating ${allocateQuantity} of part ${partNumber} to sales order ${salesOrder.sales_order_id}`);
+
+            // Update or create sales order line item
+            const existingLineItemResult = await client.query(
+              'SELECT * FROM salesorderlineitems WHERE sales_order_id = $1 AND part_number = $2',
+              [salesOrder.sales_order_id, partNumber]
+            );
+
+            if (existingLineItemResult.rows.length > 0) {
+              const currentLineItem = existingLineItemResult.rows[0];
+              const currentQuantitySold = parseFloat(currentLineItem.quantity_sold) || 0;
+              const newQuantitySold = currentQuantitySold + allocateQuantity;
+              await client.query(
+                'UPDATE salesorderlineitems SET quantity_sold = $1, updated_at = CURRENT_TIMESTAMP WHERE sales_order_id = $2 AND part_number = $3',
+                [newQuantitySold, salesOrder.sales_order_id, partNumber]
+              );
+              console.log(`✅ Updated line item for sales order ${salesOrder.sales_order_id}, part ${partNumber}: quantity_sold increased from ${currentQuantitySold} to ${newQuantitySold}`);
+            } else {
+              const unitPrice = parseFloat(salesOrder.unit_price) || 0;
+              const lineAmount = allocateQuantity * unitPrice;
+              await client.query(
+                `INSERT INTO salesorderlineitems (sales_order_id, part_number, part_description, quantity_sold, unit, unit_price, line_amount)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+                [salesOrder.sales_order_id, partNumber, salesOrder.part_description, allocateQuantity, salesOrder.unit, unitPrice, lineAmount]
+              );
+              console.log(`✅ Created new line item for sales order ${salesOrder.sales_order_id}, part ${partNumber}: quantity_sold=${allocateQuantity}`);
+            }
+
+            // Update sales_order_parts_to_order only if this sales order was from parts to order
+            const isFromPartsToOrder = salesOrdersNeedingPart.rows.some(row => row.sales_order_id === salesOrder.sales_order_id);
+            if (isFromPartsToOrder) {
+              const newQuantityNeeded = Math.max(0, neededQuantity - allocateQuantity);
+              if (newQuantityNeeded > 0) {
+                await client.query(
+                  'UPDATE sales_order_parts_to_order SET quantity_needed = $1 WHERE sales_order_id = $2 AND part_number = $3',
+                  [newQuantityNeeded, salesOrder.sales_order_id, partNumber]
+                );
+              } else {
+                await client.query(
+                  'DELETE FROM sales_order_parts_to_order WHERE sales_order_id = $1 AND part_number = $2',
+                  [salesOrder.sales_order_id, partNumber]
+                );
+              }
+            }
+
+            remainingPoQuantity -= allocateQuantity;
+            
+            // Track the total allocated quantity for this part number
+            if (!allocatedQuantities[partNumber]) {
+              allocatedQuantities[partNumber] = 0;
+            }
+            allocatedQuantities[partNumber] += allocateQuantity;
+          }
+        }
+        console.log(`✅ Automatic allocation process completed for PO ${id}`);
+      } catch (allocationError) {
+        console.error('Error during automatic allocation:', allocationError);
+        // Decide if you want to rollback or just log
+      }
+
+      // Step 3: Update inventory with the remaining (unallocated) quantity
+      console.log(`Updating inventory based on received and allocated quantities...`);
+      for (const item of lineItems) {
+        const { part_number, quantity, unit_cost } = item;
+        if (!part_number) continue;
+
+        const normalizedPartNumber = part_number.toString().trim().toUpperCase();
+        const numericQuantity = parseFloat(quantity) || 0;
+        const numericUnitCost = parseFloat(unit_cost) || 0;
+
+        // Calculate the quantity to add to inventory (received minus allocated)
+        const allocated = allocatedQuantities[normalizedPartNumber] || 0;
+        const quantityToAddToInventory = numericQuantity - allocated;
+
+        console.log(`Part: ${normalizedPartNumber}, Received: ${numericQuantity}, Allocated: ${allocated}, To Inventory: ${quantityToAddToInventory}`);
+
+        if (quantityToAddToInventory < 0) {
+          console.warn(`Warning: Allocated quantity (${allocated}) for part ${normalizedPartNumber} exceeds received quantity (${numericQuantity}). Inventory will not be decreased.`);
+          // Optionally, handle this case more robustly
+          continue;
+        }
+
+        const existingPartResult = await client.query(
+          `SELECT part_number, part_type FROM "inventory" 
+           WHERE REPLACE(REPLACE(UPPER(part_number), '-', ''), ' ', '') = REPLACE(REPLACE(UPPER($1), '-', ''), ' ', '')`,
+          [normalizedPartNumber]
         );
 
-        if (existingLineItemResult.rows.length > 0) {
-          const currentLineItem = existingLineItemResult.rows[0];
-          const currentQuantitySold = parseFloat(currentLineItem.quantity_sold) || 0;
-          const newQuantitySold = currentQuantitySold + allocateQuantity;
-          await client.query(
-            'UPDATE salesorderlineitems SET quantity_sold = $1, updated_at = CURRENT_TIMESTAMP WHERE sales_order_id = $2 AND part_number = $3',
-            [newQuantitySold, salesOrder.sales_order_id, partNumber]
-          );
-          console.log(`✅ Updated line item for sales order ${salesOrder.sales_order_id}, part ${partNumber}: quantity_sold increased from ${currentQuantitySold} to ${newQuantitySold}`);
+        if (existingPartResult.rows.length === 0) {
+          // New part - insert as stock by default, only if there's a quantity to add
+          if (quantityToAddToInventory > 0) {
+            console.log(`Adding new part to inventory: '${normalizedPartNumber}' (quantity: ${quantityToAddToInventory}, unit_cost: ${numericUnitCost})`);
+            await client.query(
+              `INSERT INTO "inventory" (part_number, quantity_on_hand, last_unit_cost, part_description, unit, part_type)
+               VALUES ($1, $2, $3, $4, $5, 'stock')`,
+              [normalizedPartNumber, quantityToAddToInventory, numericUnitCost, item.part_description, item.unit]
+            );
+          } else {
+            console.log(`Skipping new part insert for '${normalizedPartNumber}' as the entire quantity was allocated.`);
+          }
         } else {
-          const unitPrice = parseFloat(salesOrder.unit_price) || 0;
-          const lineAmount = allocateQuantity * unitPrice;
-          await client.query(
-            `INSERT INTO salesorderlineitems (sales_order_id, part_number, part_description, quantity_sold, unit, unit_price, line_amount)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-            [salesOrder.sales_order_id, partNumber, salesOrder.part_description, allocateQuantity, salesOrder.unit, unitPrice, lineAmount]
-          );
-          console.log(`✅ Created new line item for sales order ${salesOrder.sales_order_id}, part ${partNumber}: quantity_sold=${allocateQuantity}`);
+          const partType = existingPartResult.rows[0].part_type;
+          const existingPartNumber: string = existingPartResult.rows[0].part_number;
+          if (partType === 'stock') {
+            // Update quantity_on_hand for stock items, only if there's a quantity to add
+            if (quantityToAddToInventory > 0) {
+              console.log(`Updating inventory for stock part: '${normalizedPartNumber}' (adding quantity: ${quantityToAddToInventory}, unit_cost: ${numericUnitCost})`);
+              await client.query(
+                `UPDATE "inventory" SET
+                 quantity_on_hand = COALESCE(NULLIF(quantity_on_hand, 'NA')::NUMERIC, 0) + CAST($1 AS NUMERIC),
+                 last_unit_cost = $2,
+                 updated_at = NOW()
+                 WHERE part_number = $3`,
+                [quantityToAddToInventory, numericUnitCost, existingPartNumber]
+              );
+            } else {
+              console.log(`Skipping inventory update for '${normalizedPartNumber}' as the entire quantity was allocated.`);
+              // Still update the unit cost even if no quantity is added
+              await client.query(
+                `UPDATE "inventory" SET last_unit_cost = $1, updated_at = NOW() WHERE part_number = $2`,
+                [numericUnitCost, existingPartNumber]
+              );
+            }
+          } else {
+            // For supply items, only update last_unit_cost, not quantity_on_hand
+            console.log(`Updating last_unit_cost for supply part: '${normalizedPartNumber}' (unit_cost: ${numericUnitCost})`);
+            await client.query(
+              `UPDATE "inventory" SET last_unit_cost = $1, updated_at = NOW() WHERE part_number = $2`,
+              [numericUnitCost, normalizedPartNumber]
+            );
+          }
         }
+      }
 
-        // Update sales_order_parts_to_order
-        const newQuantityNeeded = Math.max(0, neededQuantity - allocateQuantity);
-        if (newQuantityNeeded > 0) {
-          await client.query(
-            'UPDATE sales_order_parts_to_order SET quantity_needed = $1 WHERE sales_order_id = $2 AND part_number = $3',
-            [newQuantityNeeded, salesOrder.sales_order_id, partNumber]
-          );
-        } else {
-          await client.query(
-            'DELETE FROM sales_order_parts_to_order WHERE sales_order_id = $1 AND part_number = $2',
-            [salesOrder.sales_order_id, partNumber]
-          );
-        }
-
-        remainingPoQuantity -= allocateQuantity;
-        
-        // Track the total allocated quantity for this part number
-        if (!allocatedQuantities[partNumber]) {
-          allocatedQuantities[partNumber] = 0;
-        }
-        allocatedQuantities[partNumber] += allocateQuantity;
+      // Step 4: Create automatic vendor mappings for all parts in this purchase order
+      console.log(`Creating automatic vendor mappings for PO ${id}...`);
+      try {
+        await createVendorMappingsForPO(client, lineItems, vendor_id);
+        console.log(`✅ Automatic vendor mapping completed for PO ${id}`);
+      } catch (vendorMappingError) {
+        console.error('Error during automatic vendor mapping:', vendorMappingError);
+        // Don't fail the entire operation, but log the error
       }
     }
-    console.log(`✅ Automatic allocation process completed for PO ${id}`);
-  } catch (allocationError) {
-    console.error('Error during automatic allocation:', allocationError);
-    // Decide if you want to rollback or just log
-  }
-
-  // Step 3: Update inventory with the remaining (unallocated) quantity
-  console.log(`Updating inventory based on received and allocated quantities...`);
-  for (const item of lineItems) {
-    const { part_number, quantity, unit_cost } = item;
-    if (!part_number) continue;
-
-    const normalizedPartNumber = part_number.toString().trim().toUpperCase();
-    const numericQuantity = parseFloat(quantity) || 0;
-    const numericUnitCost = parseFloat(unit_cost) || 0;
-
-    // Calculate the quantity to add to inventory (received minus allocated)
-    const allocated = allocatedQuantities[normalizedPartNumber] || 0;
-    const quantityToAddToInventory = numericQuantity - allocated;
-
-    console.log(`Part: ${normalizedPartNumber}, Received: ${numericQuantity}, Allocated: ${allocated}, To Inventory: ${quantityToAddToInventory}`);
-
-    if (quantityToAddToInventory < 0) {
-      console.warn(`Warning: Allocated quantity (${allocated}) for part ${normalizedPartNumber} exceeds received quantity (${numericQuantity}). Inventory will not be decreased.`);
-      // Optionally, handle this case more robustly
-      continue;
-    }
-
-    const existingPartResult = await client.query(
-      `SELECT part_number, part_type FROM "inventory" 
-       WHERE REPLACE(REPLACE(UPPER(part_number), '-', ''), ' ', '') = REPLACE(REPLACE(UPPER($1), '-', ''), ' ', '')`,
-      [normalizedPartNumber]
-    );
-
-    if (existingPartResult.rows.length === 0) {
-      // New part - insert as stock by default, only if there's a quantity to add
-      if (quantityToAddToInventory > 0) {
-        console.log(`Adding new part to inventory: '${normalizedPartNumber}' (quantity: ${quantityToAddToInventory}, unit_cost: ${numericUnitCost})`);
-        await client.query(
-          `INSERT INTO "inventory" (part_number, quantity_on_hand, last_unit_cost, part_description, unit, part_type)
-           VALUES ($1, $2, $3, $4, $5, 'stock')`,
-          [normalizedPartNumber, quantityToAddToInventory, numericUnitCost, item.part_description, item.unit]
-        );
-      } else {
-        console.log(`Skipping new part insert for '${normalizedPartNumber}' as the entire quantity was allocated.`);
-      }
-    } else {
-      const partType = existingPartResult.rows[0].part_type;
-      const existingPartNumber: string = existingPartResult.rows[0].part_number;
-      if (partType === 'stock') {
-        // Update quantity_on_hand for stock items, only if there's a quantity to add
-        if (quantityToAddToInventory > 0) {
-          console.log(`Updating inventory for stock part: '${normalizedPartNumber}' (adding quantity: ${quantityToAddToInventory}, unit_cost: ${numericUnitCost})`);
-          await client.query(
-            `UPDATE "inventory" SET
-             quantity_on_hand = COALESCE(NULLIF(quantity_on_hand, 'NA')::NUMERIC, 0) + CAST($1 AS NUMERIC),
-             last_unit_cost = $2,
-             updated_at = NOW()
-             WHERE part_number = $3`,
-            [quantityToAddToInventory, numericUnitCost, existingPartNumber]
+    
+    // If PO is being reopened, check inventory constraints first
+    if (status === 'Open' && oldStatus === 'Closed') {
+      console.log(`PO ${id} transitioning to Open. Checking inventory constraints...`);
+      
+      // Check if reopening would cause negative quantities
+      for (const item of lineItems) {
+        if (item.part_number) {
+          const normalizedPartNumber = item.part_number.toString().trim().toUpperCase();
+          const poQuantity = parseFloat(item.quantity) || 0;
+          
+          // Check current inventory for this part
+          const existingPartResult = await client.query(
+            `SELECT part_number, part_type, quantity_on_hand FROM "inventory" 
+             WHERE REPLACE(REPLACE(UPPER(part_number), '-', ''), ' ', '') = REPLACE(REPLACE(UPPER($1), '-', ''), ' ', '')`,
+            [normalizedPartNumber]
           );
-        } else {
-          console.log(`Skipping inventory update for '${normalizedPartNumber}' as the entire quantity was allocated.`);
-          // Still update the unit cost even if no quantity is added
-          await client.query(
-            `UPDATE "inventory" SET last_unit_cost = $1, updated_at = NOW() WHERE part_number = $2`,
-            [numericUnitCost, existingPartNumber]
-          );
+          
+          if (existingPartResult.rows.length > 0) {
+            const part = existingPartResult.rows[0];
+            if (part.part_type === 'stock') {
+              const currentQuantity = parseFloat(part.quantity_on_hand) || 0;
+              const resultingQuantity = currentQuantity - poQuantity;
+              
+              if (resultingQuantity < 0) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({ 
+                  error: 'Insufficient inventory',
+                  message: `Cannot reopen purchase order. Part ${normalizedPartNumber} would have negative quantity: Current: ${currentQuantity}, PO Quantity: ${poQuantity}, Would result in: ${resultingQuantity}`
+                });
+              }
+            }
+          }
         }
-      } else {
-        // For supply items, only update last_unit_cost, not quantity_on_hand
-        console.log(`Updating last_unit_cost for supply part: '${normalizedPartNumber}' (unit_cost: ${numericUnitCost})`);
-        await client.query(
-          `UPDATE "inventory" SET last_unit_cost = $1, updated_at = NOW() WHERE part_number = $2`,
-          [numericUnitCost, normalizedPartNumber]
-        );
       }
+      
+      console.log(`✅ Inventory validation passed for reopening PO ${id}`);
     }
-  }
-}
-  
+
     // If PO is being reopened, revert inventory quantity (only for stock items)
     if (status === 'Open' && oldStatus === 'Closed') {
        console.log(`PO ${id} transitioning to Open. Reverting inventory quantities...`);
@@ -1363,11 +1506,11 @@ if (status === 'Closed' && oldStatus !== 'Closed') {
         [normalizedPartNumber]
       );
            
-      if (existingPartResult.rows.length > 0 && existingPartResult.rows[0].part_type === 'stock') {
+                 if (existingPartResult.rows.length > 0 && existingPartResult.rows[0].part_type === 'stock') {
         const existingPartNumber: string = existingPartResult.rows[0].part_number;
              console.log(`Reverting inventory for stock part: '${normalizedPartNumber}' (quantity: ${numericQuantity})`);
              await client.query(
-              'UPDATE "inventory" SET quantity_on_hand = quantity_on_hand - $1 WHERE part_number = $2',
+              'UPDATE "inventory" SET quantity_on_hand = (COALESCE(NULLIF(quantity_on_hand, \'\')::NUMERIC, 0) - $1::NUMERIC)::TEXT WHERE part_number = $2',
          [numericQuantity, existingPartNumber]
              );
            } else {
@@ -1404,7 +1547,7 @@ if (status === 'Closed' && oldStatus !== 'Closed') {
           
           console.log(`Processing allocation for part ${partNumber} (quantity: ${poQuantity})`);
           
-          // Find sales orders that need this part
+          // Get sales orders that need this part from parts to order
           const salesOrdersNeedingPart = await client.query(`
             SELECT sopt.sales_order_id, sopt.quantity_needed, sopt.part_description, sopt.unit, sopt.unit_price
             FROM sales_order_parts_to_order sopt
@@ -1413,10 +1556,33 @@ if (status === 'Closed' && oldStatus !== 'Closed') {
               AND soh.status = 'Open'
             ORDER BY soh.sales_date ASC
           `, [partNumber]);
+
+          // Get manually allocated sales orders for this part
+          const manuallyAllocatedSalesOrders = await client.query(`
+            SELECT poa.sales_order_id, poa.allocate_qty as quantity_needed, poa.part_description, 
+                    COALESCE(soli.unit, 'Each') as unit, COALESCE(soli.unit_price, 0) as unit_price
+             FROM purchase_order_allocations poa
+             JOIN salesorderhistory soh ON poa.sales_order_id = soh.sales_order_id
+             LEFT JOIN salesorderlineitems soli ON soh.sales_order_id = soli.sales_order_id AND soli.part_number = poa.part_number
+             WHERE REPLACE(REPLACE(UPPER(poa.part_number), '-', ''), ' ', '') = REPLACE(REPLACE(UPPER($1), '-', ''), ' ', '')
+               AND soh.status = 'Open'
+               AND poa.purchase_id = $2
+             ORDER BY soh.sales_date ASC
+          `, [partNumber, id]);
+
+          // Combine both sources and remove duplicates
+          const allSalesOrdersNeedingPart = [...salesOrdersNeedingPart.rows];
+          const existingSalesOrderIds = new Set(salesOrdersNeedingPart.rows.map(row => row.sales_order_id));
+          
+          for (const manualAllocation of manuallyAllocatedSalesOrders.rows) {
+            if (!existingSalesOrderIds.has(manualAllocation.sales_order_id)) {
+              allSalesOrdersNeedingPart.push(manualAllocation);
+            }
+          }
           
           let remainingQuantity = poQuantity;
           
-          for (const salesOrder of salesOrdersNeedingPart.rows) {
+          for (const salesOrder of allSalesOrdersNeedingPart) {
             if (remainingQuantity <= 0) break;
             
             const neededQuantity = parseFloat(salesOrder.quantity_needed) || 0;
@@ -1459,21 +1625,26 @@ if (status === 'Closed' && oldStatus !== 'Closed') {
               console.log(`✅ Created new line item for sales order ${salesOrder.sales_order_id}, part ${partNumber}: quantity_sold=${allocateQuantity}, unit_price=${unitPrice}, line_amount=${lineAmount}`);
             }
             
-            // Update sales_order_parts_to_order
-            const newQuantityNeeded = Math.max(0, neededQuantity - allocateQuantity);
-            
-            if (newQuantityNeeded > 0) {
-              await client.query(
-                'UPDATE sales_order_parts_to_order SET quantity_needed = $1 WHERE sales_order_id = $2 AND part_number = $3',
-                [newQuantityNeeded, salesOrder.sales_order_id, partNumber]
-              );
-              console.log(`📝 Updated parts to order for sales order ${salesOrder.sales_order_id}, part ${partNumber}: quantity_needed reduced from ${neededQuantity} to ${newQuantityNeeded}`);
+            // Update sales_order_parts_to_order only if this sales order was from parts to order
+            const isFromPartsToOrder = salesOrdersNeedingPart.rows.some(row => row.sales_order_id === salesOrder.sales_order_id);
+            if (isFromPartsToOrder) {
+              const newQuantityNeeded = Math.max(0, neededQuantity - allocateQuantity);
+              
+              if (newQuantityNeeded > 0) {
+                await client.query(
+                  'UPDATE sales_order_parts_to_order SET quantity_needed = $1 WHERE sales_order_id = $2 AND part_number = $3',
+                  [newQuantityNeeded, salesOrder.sales_order_id, partNumber]
+                );
+                console.log(`📝 Updated parts to order for sales order ${salesOrder.sales_order_id}, part ${partNumber}: quantity_needed reduced from ${neededQuantity} to ${newQuantityNeeded}`);
+              } else {
+                await client.query(
+                  'DELETE FROM sales_order_parts_to_order WHERE sales_order_id = $1 AND part_number = $2',
+                  [salesOrder.sales_order_id, partNumber]
+                );
+                console.log(`🗑️ Removed parts to order entry for sales order ${salesOrder.sales_order_id}, part ${partNumber} (no more quantity needed)`);
+              }
             } else {
-              await client.query(
-                'DELETE FROM sales_order_parts_to_order WHERE sales_order_id = $1 AND part_number = $2',
-                [salesOrder.sales_order_id, partNumber]
-              );
-              console.log(`🗑️ Removed parts to order entry for sales order ${salesOrder.sales_order_id}, part ${partNumber} (no more quantity needed)`);
+              console.log(`📝 Manual allocation processed for sales order ${salesOrder.sales_order_id}, part ${partNumber}: allocated ${allocateQuantity}`);
             }
             
             remainingQuantity -= allocateQuantity;
@@ -1535,6 +1706,53 @@ if (status === 'Closed' && oldStatus !== 'Closed') {
         console.error('Error during automatic allocation:', allocationError);
         // Don't fail the entire transaction, just log the error
       }
+    }
+
+    // If PO is being closed, validate inventory availability first
+    if (status === 'Closed' && oldStatus !== 'Closed') {
+      console.log(`PO ${id} transitioning to Closed. Validating inventory availability...`);
+      
+      // Check if there are sufficient quantities available for allocation
+      for (const item of lineItems) {
+        if (item.part_number) {
+          const normalizedPartNumber = item.part_number.toString().trim().toUpperCase();
+          const poQuantity = parseFloat(item.quantity) || 0;
+          
+          // Check current inventory for this part
+          const existingPartResult = await client.query(
+            `SELECT part_number, part_type, quantity_on_hand FROM "inventory" 
+             WHERE REPLACE(REPLACE(UPPER(part_number), '-', ''), ' ', '') = REPLACE(REPLACE(UPPER($1), '-', ''), ' ', '')`,
+            [normalizedPartNumber]
+          );
+          
+          if (existingPartResult.rows.length > 0) {
+            const part = existingPartResult.rows[0];
+            if (part.part_type === 'stock') {
+              const currentQuantity = parseFloat(part.quantity_on_hand) || 0;
+              
+              // Check if there are open sales orders that need this part
+              const salesOrdersNeedingPart = await client.query(
+                `SELECT COUNT(*) as count FROM sales_order_parts_to_order sopt
+                 JOIN salesorderhistory soh ON sopt.sales_order_id = soh.sales_order_id
+                 WHERE REPLACE(REPLACE(UPPER(sopt.part_number), '-', ''), ' ', '') = REPLACE(REPLACE(UPPER($1), '-', ''), ' ', '')`,
+                [normalizedPartNumber]
+              );
+              
+              const hasOpenDemand = parseInt(salesOrdersNeedingPart.rows[0].count) > 0;
+              
+              if (hasOpenDemand && currentQuantity < poQuantity) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({ 
+                  error: 'Insufficient inventory for allocation',
+                  message: `Cannot close purchase order. Part ${normalizedPartNumber} has insufficient quantity: Available: ${currentQuantity}, Required: ${poQuantity}`
+                });
+              }
+            }
+          }
+        }
+      }
+      
+      console.log(`✅ Inventory validation passed for closing PO ${id}`);
     }
 
     await client.query('COMMIT');

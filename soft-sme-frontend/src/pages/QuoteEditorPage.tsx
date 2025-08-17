@@ -28,6 +28,7 @@ import { AxiosError } from 'axios';
 import EmailModal from '../components/EmailModal';
 import UnifiedCustomerDialog, { CustomerFormValues } from '../components/UnifiedCustomerDialog';
 import UnifiedProductDialog, { ProductFormValues } from '../components/UnifiedProductDialog';
+import UnsavedChangesGuard from '../components/UnsavedChangesGuard';
 
 interface CustomerOption {
   label: string;
@@ -150,6 +151,48 @@ const QuoteEditorPage: React.FC = () => {
 
   // email modal
   const [isEmailModalOpen, setIsEmailModalOpen] = useState(false);
+
+  // Unsaved changes guard: track initial signature once data is loaded
+  const [initialSignature, setInitialSignature] = useState<string>('');
+  useEffect(() => {
+    if (isEditMode && quote) {
+      setInitialSignature(JSON.stringify({
+        customerId: quote.customer_id,
+        product: quote.product_name,
+        quoteDate: quote.quote_date,
+        validUntil: quote.valid_until,
+        estimatedCost: quote.estimated_cost,
+        productDescription: quote.product_description,
+        terms: quote.terms,
+        customerPoNumber: quote.customer_po_number,
+        vinNumber: quote.vin_number,
+      }));
+    } else if (!isEditMode) {
+      setInitialSignature(JSON.stringify({
+        customer: selectedCustomer?.id || null,
+        product: selectedProduct?.label || '',
+        quoteDate: quoteDate?.toISOString?.() || null,
+        validUntil: validUntil?.toISOString?.() || null,
+        estimatedCost,
+        productDescription,
+        terms,
+        customerPoNumber,
+        vinNumber,
+      }));
+    }
+  }, [isEditMode, quote]);
+  const currentSignature = JSON.stringify({
+    customer: selectedCustomer?.id || quote?.customer_id || null,
+    product: selectedProduct?.label || quote?.product_name || '',
+    quoteDate: quoteDate?.toISOString?.() || quote?.quote_date || null,
+    validUntil: validUntil?.toISOString?.() || quote?.valid_until || null,
+    estimatedCost: estimatedCost ?? quote?.estimated_cost ?? null,
+    productDescription,
+    terms,
+    customerPoNumber,
+    vinNumber,
+  });
+  const isDirty = Boolean(initialSignature) && currentSignature !== initialSignature;
 
   // load lists
   useEffect(() => {
@@ -300,6 +343,7 @@ const QuoteEditorPage: React.FC = () => {
           setQuote(newQuote);
           // jump to edit URL for the new quote
           navigate(`/quotes/${newId}`, { replace: true });
+          setInitialSignature(currentSignature);
           return;
         }
       }
@@ -341,6 +385,43 @@ const QuoteEditorPage: React.FC = () => {
       return;
     }
     setIsEmailModalOpen(true);
+  };
+
+  const handleConvertToSalesOrder = async () => {
+    if (!quote?.quote_id) {
+      setError('Please save the quote before converting.');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const response = await api.post(`/api/quotes/${quote.quote_id}/convert-to-sales-order`);
+      setSuccess('Quote converted to sales order successfully!');
+      
+      // Navigate to the specific sales order detail page
+      const salesOrderId = response.data.salesOrder?.sales_order_id;
+      if (salesOrderId) {
+        setTimeout(() => {
+          navigate(`/open-sales-orders/${salesOrderId}`);
+        }, 1500);
+      } else {
+        // Fallback to sales orders list if ID is not available
+        setTimeout(() => {
+          navigate('/open-sales-orders');
+        }, 1500);
+      }
+    } catch (e) {
+      const axiosError = e as AxiosError;
+      const msg =
+        axiosError.response?.data &&
+        typeof axiosError.response.data === 'object' &&
+        'message' in (axiosError.response.data as any)
+          ? ((axiosError.response.data as any).message as string)
+          : 'Failed to convert quote to sales order';
+      setError(msg);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleCustomerKeyDown = (event: React.KeyboardEvent) => {
@@ -397,6 +478,7 @@ const QuoteEditorPage: React.FC = () => {
 
   return (
     <LocalizationProvider dateAdapter={AdapterDayjs}>
+      <UnsavedChangesGuard when={isDirty} onSave={handleSaveQuote} />
       <Container maxWidth="lg" sx={{ mt: 4, mb: 4, px: { xs: 2, sm: 3 } }}>
         <Box
           sx={{
@@ -418,7 +500,7 @@ const QuoteEditorPage: React.FC = () => {
             </Button>
             {isEditMode && quote && (
               <>
-                <Button variant="contained" color="primary" startIcon={<DoneAllIcon />}>
+                <Button variant="contained" color="primary" startIcon={<DoneAllIcon />} onClick={handleConvertToSalesOrder} disabled={loading}>
                   CONVERT TO SO
                 </Button>
                 <Button variant="contained" color="primary" startIcon={<DownloadIcon />} onClick={handleDownloadPdf}>
@@ -489,8 +571,9 @@ const QuoteEditorPage: React.FC = () => {
                   isOptionEqualToValue={(option, value) => option.id === value?.id}
                   renderOption={(props, option) => {
                     const isNew = (option as CustomerOption).isNew;
+                    const { key, ...otherProps } = props;
                     return (
-                      <li {...props} style={{ display: 'flex', alignItems: 'center', opacity: isNew ? 0.9 : 1 }}>
+                      <li key={key} {...otherProps} style={{ display: 'flex', alignItems: 'center', opacity: isNew ? 0.9 : 1 }}>
                         {isNew && <AddCircleOutlineIcon fontSize="small" style={{ marginRight: 8, color: '#666' }} />}
                         <span>{(option as CustomerOption).label}</span>
                       </li>

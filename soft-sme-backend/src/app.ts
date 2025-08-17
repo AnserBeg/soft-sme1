@@ -25,8 +25,8 @@ import emailRouter from './routes/emailRoutes';
 
 import chatRouter from './routes/chatRoutes';
 
-// Load environment variables
-dotenv.config();
+// Load environment variables from backend-local .env
+dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
 const app = express();
 

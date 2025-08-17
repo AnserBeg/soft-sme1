@@ -274,7 +274,7 @@ router.put('/:id', async (req: Request, res: Response) => {
           console.log(`purchaseHistoryRoutes: Reverting inventory for stock part: '${existingPartNumber}' (quantity: ${quantity})`);
           await client.query(
             `UPDATE inventory 
-             SET quantity_on_hand = quantity_on_hand - $1
+             SET quantity_on_hand = (COALESCE(NULLIF(quantity_on_hand, '')::NUMERIC, 0) - $1::NUMERIC)::TEXT
              WHERE part_number = $2`,
             [quantity, existingPartNumber]
           );

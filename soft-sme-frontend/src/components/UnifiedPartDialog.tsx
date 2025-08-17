@@ -11,10 +11,13 @@ import {
   Grid,
   Typography,
   Alert,
+  Box,
 } from '@mui/material';
 import { toast } from 'react-toastify';
 import api from '../api/axios';
+import { getPartVendors, createPartVendor, updatePartVendor, deletePartVendor, InventoryVendorLink } from '../services/inventoryService';
 import CategorySelect from './CategorySelect';
+import { useAuth } from '../contexts/AuthContext';
 
 export interface PartFormValues {
   part_number: string;
@@ -53,6 +56,7 @@ const UnifiedPartDialog: React.FC<UnifiedPartDialogProps> = ({
   isEditMode = false,
   title,
 }) => {
+  const { user } = useAuth();
   const [formData, setFormData] = useState<PartFormValues>({
     part_number: '',
     part_description: '',
@@ -274,6 +278,75 @@ const UnifiedPartDialog: React.FC<UnifiedPartDialogProps> = ({
   };
 
   const dialogTitle = title || (isEditMode ? 'Edit Part' : 'Add New Part');
+  // Vendors management (edit-only or when part_number is present)
+  const [vendorLinks, setVendorLinks] = useState<InventoryVendorLink[]>([]);
+  const [vendorsList, setVendorsList] = useState<Array<{ vendor_id: number; vendor_name: string }>>([]);
+  const [newVendorId, setNewVendorId] = useState<number | ''>('');
+  const [newVendorPN, setNewVendorPN] = useState<string>('');
+  const [newVendorDesc, setNewVendorDesc] = useState<string>('');
+  const [newPreferred, setNewPreferred] = useState<boolean>(false);
+
+  const canManageVendors = !!(formData.part_number && String(formData.part_number).trim().length > 0);
+
+  useEffect(() => {
+    if (!open) return;
+    // Load vendors for dropdown
+    (async () => {
+      try {
+        const res = await api.get('/api/vendors');
+        setVendorsList(res.data || []);
+      } catch {}
+    })();
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const pn = String(formData.part_number || '').trim().toUpperCase();
+    if (!pn) { setVendorLinks([]); return; }
+    (async () => {
+      try {
+        const links = await getPartVendors(pn);
+        setVendorLinks(links || []);
+      } catch {}
+    })();
+  }, [open, formData.part_number]);
+
+  const handleAddVendorLink = async () => {
+    const pn = String(formData.part_number || '').trim().toUpperCase();
+    if (!pn) return;
+    if (!newVendorId || !newVendorPN.trim()) { toast.error('Select a vendor and enter vendor part number'); return; }
+    try {
+      await createPartVendor(pn, {
+        vendor_id: Number(newVendorId),
+        vendor_part_number: newVendorPN.trim().toUpperCase(),
+        vendor_part_description: newVendorDesc || undefined,
+        preferred: newPreferred,
+      });
+      const links = await getPartVendors(pn);
+      setVendorLinks(links || []);
+      setNewVendorId(''); setNewVendorPN(''); setNewVendorDesc(''); setNewPreferred(false);
+      toast.success('Vendor mapping added');
+    } catch (e:any) {
+      toast.error(e?.response?.data?.error || 'Failed to add vendor mapping');
+    }
+  };
+
+  const handleTogglePreferred = async (link: InventoryVendorLink) => {
+    try {
+      await updatePartVendor(formData.part_number.toUpperCase(), link.id!, { preferred: !link.preferred });
+      const links = await getPartVendors(formData.part_number.toUpperCase());
+      setVendorLinks(links || []);
+    } catch { toast.error('Failed to update preferred'); }
+  };
+
+  const handleDeleteLink = async (link: InventoryVendorLink) => {
+    if (!window.confirm('Remove this vendor mapping?')) return;
+    try {
+      await deletePartVendor(formData.part_number.toUpperCase(), link.id!);
+      const links = await getPartVendors(formData.part_number.toUpperCase());
+      setVendorLinks(links || []);
+    } catch { toast.error('Failed to delete mapping'); }
+  };
 
   return (
     <Dialog open={open} onClose={handleClose} maxWidth="md" fullWidth>
@@ -291,7 +364,6 @@ const UnifiedPartDialog: React.FC<UnifiedPartDialogProps> = ({
                 error={!!errors.part_number}
                 helperText={errors.part_number}
                 inputRef={partNumberRef}
-                disabled={isEditMode} // Part number cannot be changed in edit mode
               />
             </Grid>
             <Grid item xs={12} sm={6}>
@@ -364,20 +436,21 @@ const UnifiedPartDialog: React.FC<UnifiedPartDialogProps> = ({
                 inputProps={{ step: "0.01", min: "0" }}
               />
             </Grid>
-            {formData.part_type !== 'supply' && (
-              <Grid item xs={12} sm={4}>
-                <TextField
-                  label="Quantity on Hand"
-                  value={formData.quantity_on_hand}
-                  onChange={(e) => handleFieldChange('quantity_on_hand', e.target.value)}
-                  type="number"
-                  fullWidth
-                  error={!!errors.quantity_on_hand}
-                  helperText={errors.quantity_on_hand}
-                  inputProps={{ step: "1", min: "0" }}
-                />
-              </Grid>
-            )}
+                         {formData.part_type !== 'supply' && (
+               <Grid item xs={12} sm={4}>
+                 <TextField
+                   label="Quantity on Hand"
+                   value={formData.quantity_on_hand}
+                   onChange={(e) => handleFieldChange('quantity_on_hand', e.target.value)}
+                   type="number"
+                   fullWidth
+                   error={!!errors.quantity_on_hand}
+                   helperText={errors.quantity_on_hand}
+                   inputProps={{ step: "1", min: "0" }}
+                   disabled={user?.access_role === 'Sales and Purchase'}
+                 />
+               </Grid>
+             )}
             <Grid item xs={12} sm={6}>
               <TextField
                 label="Reorder Point"
@@ -399,6 +472,77 @@ const UnifiedPartDialog: React.FC<UnifiedPartDialogProps> = ({
               </Typography>
             </Alert>
           )}
+          {/* Vendors section */}
+          <Box>
+            <Typography variant="h6" sx={{ mb: 1 }}>Vendors</Typography>
+            {!canManageVendors && (
+              <Typography variant="body2" color="text.secondary">Save the part first to manage vendor mappings.</Typography>
+            )}
+            {canManageVendors && (
+              <>
+                <Grid container spacing={1} sx={{ mb: 1 }}>
+                  <Grid item xs={12} sm={3}>
+                    <TextField
+                      label="Vendor"
+                      select
+                      value={newVendorId}
+                      onChange={(e) => setNewVendorId(e.target.value === '' ? '' : Number(e.target.value))}
+                      fullWidth
+                      SelectProps={{ native: true }}
+                    >
+                      <option value=""></option>
+                      {vendorsList.map(v => (
+                        <option key={v.vendor_id} value={v.vendor_id}>{v.vendor_name}</option>
+                      ))}
+                    </TextField>
+                  </Grid>
+                  <Grid item xs={12} sm={3}>
+                    <TextField label="Vendor Part #" value={newVendorPN} onChange={e => setNewVendorPN(e.target.value)} fullWidth />
+                  </Grid>
+                  <Grid item xs={12} sm={4}>
+                    <TextField label="Vendor Part Description" value={newVendorDesc} onChange={e => setNewVendorDesc(e.target.value)} fullWidth />
+                  </Grid>
+                  <Grid item xs={12} sm={2}>
+                    <Button variant="outlined" onClick={() => setNewPreferred(p => !p)} fullWidth>{newPreferred ? 'Preferred ✓' : 'Preferred'}</Button>
+                  </Grid>
+                  <Grid item xs={12}>
+                    <Button variant="contained" onClick={handleAddVendorLink}>Add Vendor Mapping</Button>
+                  </Grid>
+                </Grid>
+                {vendorLinks.length === 0 ? (
+                  <Typography variant="body2" color="text.secondary">No vendor mappings yet.</Typography>
+                ) : (
+                  <Grid container spacing={1}>
+                    <Grid item xs={12}>
+                      <Grid container spacing={1} sx={{ fontWeight: 600 }}>
+                        <Grid item xs={3}>Vendor</Grid>
+                        <Grid item xs={3}>Vendor Part #</Grid>
+                        <Grid item xs={3}>Description</Grid>
+                        <Grid item xs={1}>Pref</Grid>
+                        <Grid item xs={2}>Actions</Grid>
+                      </Grid>
+                    </Grid>
+                    {vendorLinks.map(link => (
+                      <Grid item xs={12} key={link.id}>
+                        <Grid container spacing={1} alignItems="center">
+                          <Grid item xs={3}>{link.vendor_name || link.vendor_id}</Grid>
+                          <Grid item xs={3}>{link.vendor_part_number}</Grid>
+                          <Grid item xs={3}>{link.vendor_part_description || ''}</Grid>
+                          <Grid item xs={1}>{link.preferred ? '✓' : ''}</Grid>
+                          <Grid item xs={2}>
+                            <Stack direction="row" spacing={1}>
+                              <Button size="small" variant="outlined" onClick={() => handleTogglePreferred(link)}>{link.preferred ? 'Unset' : 'Set Preferred'}</Button>
+                              <Button size="small" color="error" variant="outlined" onClick={() => handleDeleteLink(link)}>Remove</Button>
+                            </Stack>
+                          </Grid>
+                        </Grid>
+                      </Grid>
+                    ))}
+                  </Grid>
+                )}
+              </>
+            )}
+          </Box>
         </Stack>
       </DialogContent>
       <DialogActions>

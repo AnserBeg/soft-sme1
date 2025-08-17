@@ -1,12 +1,14 @@
 import dotenv from 'dotenv';
+import path from 'path';
 import express from 'express';
 import cors from 'cors';
 import bodyParser from 'body-parser';
+import expressWs from 'express-ws';
 import { pool } from './db';
 import { authMiddleware } from './middleware/authMiddleware';
 
-// Load environment variables
-dotenv.config();
+// Load environment variables from backend-local .env
+dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
 // Import routes
 import authRoutes from './routes/authRoutes';
@@ -32,8 +34,13 @@ import qboExportRoutes from './routes/qboExportRoutes';
 import overheadRoutes from './routes/overheadRoutes';
 import aiAssistantRoutes from './routes/aiAssistantRoutes';
 import emailRoutes from './routes/emailRoutes';
+import agentV2Routes from './routes/agentV2Routes';
+import voiceRoutes from './routes/voiceRoutes';
+import voiceStreamRoutes from './routes/voiceStreamRoutes';
+import voiceSearchRoutes from './routes/voiceSearchRoutes';
 import aiAssistantService from './services/aiAssistantService';
 import partFinderRoutes from './routes/partFinderRoutes';
+import inventoryVendorRoutes from './routes/inventoryVendorRoutes';
 
 // Add error handling around chatRouter import
 let chatRouter: any;
@@ -51,6 +58,9 @@ try {
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+
+// Initialize express-ws for WebSocket support
+const wsInstance = expressWs(app);
 
 const allowedOrigins = [
   'http://localhost:3000', // local dev
@@ -72,7 +82,8 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'x-device-id'],
 }));
-app.use(bodyParser.json());
+app.use(bodyParser.json({ limit: '10mb' }));
+app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
 app.use('/uploads', express.static('uploads'));
 
 // Public routes
@@ -149,9 +160,193 @@ console.log('Registered AI assistant routes');
 app.use('/api/part-finder', authMiddleware, partFinderRoutes);
 console.log('Registered part finder routes');
 
+// Inventory vendor mappings
+app.use('/api/inventory', authMiddleware, inventoryVendorRoutes);
+console.log('Registered inventory vendor routes');
+
 // Email routes
 app.use('/api/email', authMiddleware, emailRoutes);
 console.log('Registered email routes');
+
+// Agent V2 routes (feature-flagged)
+if (process.env.AI_ASSISTANT_V2 !== 'false') {
+  app.use('/api/agent/v2', authMiddleware, agentV2Routes);
+  console.log('Registered Agent V2 routes');
+}
+
+// Voice/calling routes (feature flag optional)
+if (process.env.ENABLE_VENDOR_CALLING !== 'false') {
+  // LiveKit/Telnyx: protect routes; no Twilio webhooks here anymore
+  app.use('/api/voice', authMiddleware, voiceRoutes);
+  // Register WebSocket routes with express-ws instance
+  if (wsInstance) {
+    app.use('/api/voice', voiceStreamRoutes);
+
+// Voice search routes (always available)
+app.use('/api/voice-search', authMiddleware, voiceSearchRoutes);
+console.log('Registered voice search routes');
+    
+    // Add WebSocket endpoint directly to the main app
+    (app as any).ws('/api/voice/stream', (ws: any, req: any) => {
+      const url = new URL(req.url!, `http://${req.headers.host}`);
+      const sessionId = url.searchParams.get('session_id');
+      
+      if (!sessionId) {
+        ws.close(1008, 'Missing session_id');
+        return;
+      }
+      
+      const clientIp = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress;
+      console.log(`WebSocket stream connected for session: ${sessionId} from ${clientIp}`);
+      
+      // Import GeminiLiveBridge dynamically to avoid circular dependencies
+      import('./services/voice/GeminiLiveBridge').then(({ GeminiLiveBridge }) => {
+        // Create Gemini Live bridge for this session
+        const geminiBridge = new GeminiLiveBridge(sessionId);
+        
+        ws.on('message', async (data: any) => {
+          try {
+            // Handle incoming audio from Twilio
+            const audioData = JSON.parse(data.toString());
+            if (audioData && audioData.event) {
+              if (audioData.event === 'start') {
+                console.log(`WS start for session ${sessionId}, streamSid=${audioData.start?.streamSid || audioData.streamSid}`);
+              } else if (audioData.event === 'media') {
+                // Light log to confirm media flow without dumping payload
+                if (audioData.media?.track) {
+                  console.log(`WS media for session ${sessionId}, track=${audioData.media.track}`);
+                }
+              } else if (audioData.event === 'stop') {
+                console.log(`WS stop for session ${sessionId}`);
+              }
+            }
+            
+            if (audioData.event === 'media' && audioData.media?.payload) {
+              // Forward audio to Gemini Live
+              const response = await geminiBridge.processAudio(audioData.media.payload);
+              
+              if (response.functionCall) {
+                // Handle function calls from Gemini
+                await handleGeminiFunctionCall(sessionId, response.functionCall);
+              }
+            } else if (audioData.event === 'start' || audioData.event === 'stop') {
+              // Acknowledge lifecycle events silently
+            }
+          } catch (error) {
+            console.error('WebSocket message error:', error);
+          }
+        });
+        
+        ws.on('close', (code: number, reason: any) => {
+          const reasonStr = typeof reason === 'string' ? reason : (reason?.toString?.() || '');
+          console.log(`WebSocket stream disconnected for session: ${sessionId} code=${code} reason=${reasonStr}`);
+          geminiBridge.cleanup();
+        });
+        
+        ws.on('error', (error: any) => {
+          console.error(`WebSocket stream error for session ${sessionId}:`, error);
+        });
+      }).catch(error => {
+        console.error('Failed to load GeminiLiveBridge:', error);
+        ws.close(1011, 'Service unavailable');
+      });
+    });
+    
+    // Helper function to handle Gemini function calls
+    async function handleGeminiFunctionCall(sessionId: string, functionCall: any) {
+      try {
+        const { name, args } = functionCall;
+
+        switch (name) {
+          case 'set_pickup_time':
+            await updateCallSession(sessionId, {
+              pickup_time: args.pickup_time,
+              pickup_location: args.pickup_location,
+              pickup_contact_person: args.pickup_contact_person,
+              pickup_phone: args.pickup_phone,
+              pickup_instructions: args.pickup_instructions
+            });
+            // Also update the purchase order with pickup details
+            await updatePurchaseOrderPickupDetails(sessionId, args);
+            break;
+          case 'set_vendor_email':
+            await updateCallSession(sessionId, { captured_email: args.email });
+            break;
+          case 'order_part':
+            await updateCallSession(sessionId, {
+              parts_ordered: args.parts,
+              order_details: args.details
+            });
+            break;
+          case 'send_po_pdf':
+            await updateCallSession(sessionId, { po_email_sent: true });
+            break;
+          default:
+            console.log(`Unknown function call: ${name}`);
+        }
+      } catch (error) {
+        console.error('Error handling Gemini function call:', error);
+      }
+    }
+
+    async function updateCallSession(sessionId: string, updates: any) {
+      try {
+        await pool.query(
+          'UPDATE vendor_call_sessions SET updated_at = NOW() WHERE id = $1',
+          [sessionId]
+        );
+        console.log(`Updated call session ${sessionId}`);
+      } catch (error) {
+        console.error('Error updating call session:', error);
+      }
+    }
+
+    async function updatePurchaseOrderPickupDetails(sessionId: string, pickupDetails: any) {
+      try {
+        // Get the purchase_id from the call session
+        const sessionResult = await pool.query(
+          'SELECT purchase_id FROM vendor_call_sessions WHERE id = $1',
+          [sessionId]
+        );
+
+        if (sessionResult.rows.length === 0) {
+          console.error('Call session not found for pickup details update');
+          return;
+        }
+
+        const purchaseId = sessionResult.rows[0].purchase_id;
+
+        // Update the purchase order with pickup details
+        await pool.query(`
+          UPDATE purchasehistory
+          SET
+            pickup_time = $1,
+            pickup_location = $2,
+            pickup_contact_person = $3,
+            pickup_phone = $4,
+            pickup_instructions = $5,
+            updated_at = NOW()
+          WHERE purchase_id = $6
+        `, [
+          pickupDetails.pickup_time || null,
+          pickupDetails.pickup_location || null,
+          pickupDetails.pickup_contact_person || null,
+          pickupDetails.pickup_phone || null,
+          pickupDetails.pickup_instructions || null,
+          purchaseId
+        ]);
+
+        console.log(`Updated purchase order ${purchaseId} with pickup details`);
+      } catch (error) {
+        console.error('Error updating purchase order pickup details:', error);
+      }
+    }
+    console.log('Registered voice WebSocket routes');
+  } else {
+    console.log('Warning: express-ws not initialized, WebSocket routes not available');
+  }
+  console.log('Registered voice routes');
+}
 
 // Chat routes with error handling
 try {
@@ -199,6 +394,17 @@ pool.query('SELECT NOW()', (err, res) => {
 
 app.get('/ping', (req, res) => res.send('pong'));
 
+// Initialize WebSocket server for voice streaming
+let httpServer: any = null;
+if (process.env.ENABLE_VENDOR_CALLING !== 'false') {
+  try {
+    console.log('WebSocket support enabled via express-ws');
+  } catch (error) {
+    console.error('Failed to initialize WebSocket support:', error);
+  }
+}
+
+// Use the regular app for all functionality
 const server = app.listen(Number(PORT), '0.0.0.0', async () => {
   console.log(`Server is running on port ${PORT}`);
   

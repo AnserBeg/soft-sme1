@@ -17,12 +17,12 @@ import DownloadIcon from '@mui/icons-material/Download';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ErrorIcon from '@mui/icons-material/Error';
 import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty';
-import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import { toast } from 'react-toastify';
 import { AxiosError } from 'axios';
 import dayjs from 'dayjs';
 import Papa from 'papaparse';
 import { getPurchaseOrders, PurchaseOrder } from '../services/purchaseOrderService';
+import { useAuth } from '../contexts/AuthContext';
 
 const OpenPurchaseOrdersPage: React.FC = () => {
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
@@ -33,11 +33,10 @@ const OpenPurchaseOrdersPage: React.FC = () => {
     page: 0,
     pageSize: 10,
   });
-  const [exportLoading, setExportLoading] = useState<number | null>(null); // Track which PO is being exported
-  const [exportError, setExportError] = useState<string | null>(null);
-  const [exportSuccess, setExportSuccess] = useState<string | null>(null);
+
   const navigate = useNavigate();
   const location = useLocation();
+  const { user } = useAuth();
 
   const fetchPurchaseOrders = async () => {
     setLoading(true);
@@ -92,24 +91,7 @@ const OpenPurchaseOrdersPage: React.FC = () => {
     }
   };
 
-  const handleExportToQBO = async (purchaseOrderId: number) => {
-    setExportLoading(purchaseOrderId);
-    setExportError(null);
-    setExportSuccess(null);
-    try {
-      const response = await api.post(`/api/purchase-orders/${purchaseOrderId}/export-to-qbo`);
-      toast.success('Exported to QuickBooks successfully!');
-      setExportSuccess(`Purchase Order exported to QuickBooks successfully! Bill ID: ${response.data.qboBillId}`);
-      // Refetch purchase orders to update export status
-      fetchPurchaseOrders();
-    } catch (error: any) {
-      const errorMessage = error?.response?.data?.error || 'Failed to export to QuickBooks.';
-      setExportError(errorMessage);
-      toast.error(errorMessage);
-    } finally {
-      setExportLoading(null);
-    }
-  };
+
 
   const handleExportCSV = () => {
     // Filter orders based on current status selection
@@ -174,27 +156,10 @@ const OpenPurchaseOrdersPage: React.FC = () => {
     {
       field: 'actions',
       headerName: 'Actions',
-      width: 150,
+      width: 100,
       sortable: false,
       renderCell: (params: GridRenderCellParams<PurchaseOrder, any, any, GridTreeNodeWithRender>) => (
         <Box sx={{ display: 'flex', gap: 0.5 }}>
-          {params.row.status === 'Closed' && !params.row.exported_to_qbo && (
-            <IconButton 
-              size="small" 
-              color="success" 
-              onClick={(e) => {
-                e.stopPropagation();
-                handleExportToQBO(params.row.purchase_id);
-              }}
-              disabled={exportLoading === params.row.purchase_id}
-            >
-              {exportLoading === params.row.purchase_id ? (
-                <CircularProgress size={16} />
-              ) : (
-                <CloudUploadIcon />
-              )}
-            </IconButton>
-          )}
           {params.row.status !== 'Closed' && (
             <IconButton
               size="small"
@@ -216,13 +181,18 @@ const OpenPurchaseOrdersPage: React.FC = () => {
     <Container maxWidth="xl" sx={{ mt: 4 }}>
       <Box sx={{ mb: 4 }}>
         <Typography variant="h4" component="h1" gutterBottom>
-          {selectedStatus === 'open' ? 'Open Purchase Orders' : selectedStatus === 'closed' ? 'Purchase Order History' : 'All Purchase Orders'}
+          {selectedStatus === 'open' 
+            ? 'Open Purchase Orders' 
+            : selectedStatus === 'closed' 
+              ? 'Purchase Order History' 
+              : 'All Purchase Orders'
+            }
         </Typography>
         <Stack direction="row" spacing={2} sx={{ mb: 2, justifyContent: 'flex-end' }}>
           <Button
             variant="contained"
             startIcon={<AddIcon />}
-                          onClick={() => navigate('/open-purchase-orders/new')}
+            onClick={() => navigate('/open-purchase-orders/new')}
           >
             New PO
           </Button>
@@ -287,6 +257,8 @@ const OpenPurchaseOrdersPage: React.FC = () => {
                 },
               }}
               onRowClick={(params) => {
+                // For purchase and sales users, always route to the main detail page
+                // For other users, route closed orders to read-only view
                 const status = params.row.status?.toLowerCase();
                 if (status === 'closed') {
                   navigate(`/purchase-order/${params.row.purchase_id}`);
@@ -323,17 +295,7 @@ const OpenPurchaseOrdersPage: React.FC = () => {
         </Paper>
       </Box>
 
-      {/* Export Status Alerts */}
-      {exportError && (
-        <Alert severity="error" sx={{ mt: 2 }} onClose={() => setExportError(null)}>
-          {exportError}
-        </Alert>
-      )}
-      {exportSuccess && (
-        <Alert severity="success" sx={{ mt: 2 }} onClose={() => setExportSuccess(null)}>
-          {exportSuccess}
-        </Alert>
-      )}
+
     </Container>
   );
 };

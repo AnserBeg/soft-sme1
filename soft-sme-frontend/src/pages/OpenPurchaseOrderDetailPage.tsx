@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Typography, Box, TextField, Button, MenuItem, Stack, Autocomplete, Grid,
-  Dialog, DialogTitle, DialogContent, DialogActions, Container, Paper, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, CircularProgress, Alert, Card, CardContent, DialogContentText, Snackbar
+  Dialog, DialogTitle, DialogContent, DialogActions, Container, Paper, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, CircularProgress, Alert, Card, CardContent, DialogContentText, Snackbar, Chip
 } from '@mui/material';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
@@ -16,10 +16,15 @@ import DoneAllIcon from '@mui/icons-material/DoneAll';
 import DownloadIcon from '@mui/icons-material/Download';
 import DeleteIcon from '@mui/icons-material/Delete';
 import EmailIcon from '@mui/icons-material/Email';
+import CallIcon from '@mui/icons-material/Call';
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
+import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import { createFilterOptions } from '@mui/material/Autocomplete';
 import { InputAdornment } from '@mui/material';
 import { getLabourLineItems, LabourLineItem } from '../services/timeTrackingService';
+import { getPartVendors, recordVendorUsage, InventoryVendorLink } from '../services/inventoryService';
+import UnsavedChangesGuard from '../components/UnsavedChangesGuard';
+import { VoiceService } from '../services/voiceService';
 import { toast } from 'react-toastify';
 import { getApiConfig } from '../config/api';
 import { formatCurrency, getLogoUrl } from '../utils/formatters';
@@ -69,6 +74,33 @@ interface PurchaseOrderData {
   status: string;
   lineItems: PurchaseOrderLineItem[];
   global_gst_rate: number;
+  pickup_time?: string;
+  pickup_location?: string;
+  pickup_contact_person?: string;
+  pickup_phone?: string;
+  pickup_instructions?: string;
+  pickup_notes?: string;
+  // Order placement tracking fields
+  order_placed?: boolean;
+  order_placed_at?: string;
+  order_placed_by?: number;
+  order_placed_method?: string;
+  vendor_confirmation_status?: string;
+  vendor_confirmation_notes?: string;
+  vendor_confirmation_date?: string;
+  pricing_updated?: boolean;
+  pricing_updated_at?: string;
+  pricing_updated_by?: number;
+  pricing_updated_method?: string;
+  quantity_adjusted?: boolean;
+  quantity_adjusted_at?: string;
+  quantity_adjusted_by?: number;
+  quantity_adjusted_method?: string;
+  original_quantities?: any;
+  adjusted_quantities?: any;
+  vendor_pricing_notes?: string;
+  exported_to_qbo?: boolean;
+  qbo_export_status?: string;
 }
 
 interface VendorOption {
@@ -116,6 +148,8 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
   const [highlightedVendor, setHighlightedVendor] = useState<VendorOption | null>(null);
   const [vendorEnterPressed, setVendorEnterPressed] = useState(false);
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
+  const [vendorPartMap, setVendorPartMap] = useState<Record<string, InventoryVendorLink[]>>({});
+  const [callSessionId, setCallSessionId] = useState<number | null>(null);
 
   // Add loading state to prevent onInputChange during initial load
   const [isInitialLoad, setIsInitialLoad] = useState(true);
@@ -368,8 +402,8 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
       setIsInitialLoad(false);
     } catch (error) {
       console.error('Error fetching data:', error);
-      if (error instanceof AxiosError) {
-        setError(error.response?.data?.message || 'Failed to fetch data');
+      if (error instanceof AxiosError && error.response?.data?.message) {
+        setError(error.response.data.message);
       } else {
         setError('An unexpected error occurred');
       }
@@ -421,6 +455,75 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
   const subTotal = memoizedTotals.subtotal;
   const totalGSTAmount = memoizedTotals.total_gst_amount;
   const totalAmount = memoizedTotals.total_amount;
+
+  // Unsaved changes guard
+  const [initialSignature, setInitialSignature] = useState<string>('');
+  useEffect(() => {
+    if (purchaseOrder) {
+      setInitialSignature(JSON.stringify({ 
+        vendor, 
+        billNumber, 
+        date, 
+        lineItems,
+        pickup_time: purchaseOrder.pickup_time,
+        pickup_location: purchaseOrder.pickup_location,
+        pickup_contact_person: purchaseOrder.pickup_contact_person,
+        pickup_phone: purchaseOrder.pickup_phone,
+        pickup_instructions: purchaseOrder.pickup_instructions,
+        pickup_notes: purchaseOrder.pickup_notes,
+        // Order placement tracking fields
+        order_placed: purchaseOrder.order_placed,
+        order_placed_at: purchaseOrder.order_placed_at,
+        order_placed_by: purchaseOrder.order_placed_by,
+        order_placed_method: purchaseOrder.order_placed_method,
+        vendor_confirmation_status: purchaseOrder.vendor_confirmation_status,
+        vendor_confirmation_notes: purchaseOrder.vendor_confirmation_notes,
+        vendor_confirmation_date: purchaseOrder.vendor_confirmation_date,
+        pricing_updated: purchaseOrder.pricing_updated,
+        pricing_updated_at: purchaseOrder.pricing_updated_at,
+        pricing_updated_by: purchaseOrder.pricing_updated_by,
+        pricing_updated_method: purchaseOrder.pricing_updated_method,
+        quantity_adjusted: purchaseOrder.quantity_adjusted,
+        quantity_adjusted_at: purchaseOrder.quantity_adjusted_at,
+        quantity_adjusted_by: purchaseOrder.quantity_adjusted_by,
+        quantity_adjusted_method: purchaseOrder.quantity_adjusted_method,
+        original_quantities: purchaseOrder.original_quantities,
+        adjusted_quantities: purchaseOrder.adjusted_quantities,
+        vendor_pricing_notes: purchaseOrder.vendor_pricing_notes
+      }));
+    }
+  }, [purchaseOrder]);
+  const isDirty = Boolean(initialSignature) && initialSignature !== JSON.stringify({ 
+    vendor, 
+    billNumber, 
+    date, 
+    lineItems,
+    pickup_time: purchaseOrder?.pickup_time,
+    pickup_location: purchaseOrder?.pickup_location,
+    pickup_contact_person: purchaseOrder?.pickup_contact_person,
+    pickup_phone: purchaseOrder?.pickup_phone,
+    pickup_instructions: purchaseOrder?.pickup_instructions,
+    pickup_notes: purchaseOrder?.pickup_notes,
+    // Order placement tracking fields
+    order_placed: purchaseOrder?.order_placed,
+    order_placed_at: purchaseOrder?.order_placed_at,
+    order_placed_by: purchaseOrder?.order_placed_by,
+    order_placed_method: purchaseOrder?.order_placed_method,
+    vendor_confirmation_status: purchaseOrder?.vendor_confirmation_status,
+    vendor_confirmation_notes: purchaseOrder?.vendor_confirmation_notes,
+    vendor_confirmation_date: purchaseOrder?.vendor_confirmation_date,
+    pricing_updated: purchaseOrder?.pricing_updated,
+    pricing_updated_at: purchaseOrder?.pricing_updated_at,
+    pricing_updated_by: purchaseOrder?.pricing_updated_by,
+    pricing_updated_method: purchaseOrder?.pricing_updated_method,
+    quantity_adjusted: purchaseOrder?.quantity_adjusted,
+    quantity_adjusted_at: purchaseOrder?.quantity_adjusted_at,
+    quantity_adjusted_by: purchaseOrder?.quantity_adjusted_by,
+    quantity_adjusted_method: purchaseOrder?.quantity_adjusted_method,
+    original_quantities: purchaseOrder?.original_quantities,
+    adjusted_quantities: purchaseOrder?.adjusted_quantities,
+    vendor_pricing_notes: purchaseOrder?.vendor_pricing_notes
+  });
 
   // Update line items with aggregate quantities when they change
   useEffect(() => {
@@ -481,6 +584,46 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
       quantity_to_order: 0,
     }]));
   };
+
+  // Load vendor mappings for canonical PN if not cached
+  const ensureVendorMappings = async (pn: string) => {
+    const key = pn.toUpperCase();
+    if (vendorPartMap[key]) return;
+    try {
+      const links = await getPartVendors(key);
+      setVendorPartMap(prev => ({ ...prev, [key]: links }));
+    } catch {}
+  };
+
+  const chooseVendorPN = (canonicalPN: string, vendorId?: number | null): string => {
+    const links = vendorPartMap[canonicalPN.toUpperCase()] || [];
+    if (links.length === 0) return canonicalPN;
+    if (vendorId) {
+      const forVendor = links.filter(l => l.vendor_id === vendorId);
+      if (forVendor.length > 0) {
+        const preferred = forVendor.find(l => l.preferred);
+        if (preferred) return preferred.vendor_part_number;
+        const mostUsed = [...forVendor].sort((a,b) => (b.usage_count||0)-(a.usage_count||0))[0];
+        if (mostUsed) return mostUsed.vendor_part_number;
+      }
+    }
+    const preferredAny = links.find(l => l.preferred);
+    if (preferredAny) return preferredAny.vendor_part_number;
+    const mostUsedAny = [...links].sort((a,b) => (b.usage_count||0)-(a.usage_count||0))[0];
+    return mostUsedAny ? mostUsedAny.vendor_part_number : canonicalPN;
+  };
+
+  // When vendor selected/changed, update PNs accordingly
+  useEffect(() => {
+    if (!vendor) return;
+    setLineItems(prev => prev.map(li => {
+      const canonicalPN = (li.part_number || '').toUpperCase();
+      const links = vendorPartMap[canonicalPN];
+      if (!links || links.length === 0) return li;
+      const chosen = chooseVendorPN(canonicalPN, vendor?.id || null);
+      return { ...li, part_number: chosen };
+    }));
+  }, [vendor, vendorPartMap]);
 
   const handleRemoveLineItem = (idx: number) => {
     setLineItems((prev) => prev.filter((_, i) => i !== idx));
@@ -676,7 +819,33 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
           total_amount: totalAmount,
           global_gst_rate: globalGstRate,
           company_id: user?.company_id,
-          created_by: user?.id
+          created_by: user?.id,
+          // Include pickup fields
+          pickup_time: purchaseOrder?.pickup_time || null,
+          pickup_location: purchaseOrder?.pickup_location || null,
+          pickup_contact_person: purchaseOrder?.pickup_contact_person || null,
+          pickup_phone: purchaseOrder?.pickup_phone || null,
+          pickup_instructions: purchaseOrder?.pickup_instructions || null,
+          pickup_notes: purchaseOrder?.pickup_notes || null,
+          // Include order placement tracking fields
+          order_placed: purchaseOrder?.order_placed || false,
+          order_placed_at: purchaseOrder?.order_placed_at || null,
+          order_placed_by: purchaseOrder?.order_placed_by || null,
+          order_placed_method: purchaseOrder?.order_placed_method || null,
+          vendor_confirmation_status: purchaseOrder?.vendor_confirmation_status || 'pending',
+          vendor_confirmation_notes: purchaseOrder?.vendor_confirmation_notes || null,
+          vendor_confirmation_date: purchaseOrder?.vendor_confirmation_date || null,
+          pricing_updated: purchaseOrder?.pricing_updated || false,
+          pricing_updated_at: purchaseOrder?.pricing_updated_at || null,
+          pricing_updated_by: purchaseOrder?.pricing_updated_by || null,
+          pricing_updated_method: purchaseOrder?.pricing_updated_method || null,
+          quantity_adjusted: purchaseOrder?.quantity_adjusted || false,
+          quantity_adjusted_at: purchaseOrder?.quantity_adjusted_at || null,
+          quantity_adjusted_by: purchaseOrder?.quantity_adjusted_by || null,
+          quantity_adjusted_method: purchaseOrder?.quantity_adjusted_method || null,
+          original_quantities: purchaseOrder?.original_quantities || null,
+          adjusted_quantities: purchaseOrder?.adjusted_quantities || null,
+          vendor_pricing_notes: purchaseOrder?.vendor_pricing_notes || null
         };
 
         console.log('Creating new purchase order:', newPurchaseOrder);
@@ -708,12 +877,69 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
           total_gst_amount: totalGSTAmount,
           total_amount: totalAmount,
           global_gst_rate: globalGstRate,
-          gst_rate: globalGstRate
+          gst_rate: globalGstRate,
+          // Include pickup fields
+          pickup_time: purchaseOrder?.pickup_time || null,
+          pickup_location: purchaseOrder?.pickup_location || null,
+          pickup_contact_person: purchaseOrder?.pickup_contact_person || null,
+          pickup_phone: purchaseOrder?.pickup_phone || null,
+          pickup_instructions: purchaseOrder?.pickup_instructions || null,
+          pickup_notes: purchaseOrder?.pickup_notes || null,
+          // Include order placement tracking fields
+          order_placed: purchaseOrder?.order_placed || false,
+          order_placed_at: purchaseOrder?.order_placed_at || null,
+          order_placed_by: purchaseOrder?.order_placed_by || null,
+          order_placed_method: purchaseOrder?.order_placed_method || null,
+          vendor_confirmation_status: purchaseOrder?.vendor_confirmation_status || 'pending',
+          vendor_confirmation_notes: purchaseOrder?.vendor_confirmation_notes || null,
+          vendor_confirmation_date: purchaseOrder?.vendor_confirmation_date || null,
+          pricing_updated: purchaseOrder?.pricing_updated || false,
+          pricing_updated_at: purchaseOrder?.pricing_updated_at || null,
+          pricing_updated_by: purchaseOrder?.pricing_updated_by || null,
+          pricing_updated_method: purchaseOrder?.pricing_updated_method || null,
+          quantity_adjusted: purchaseOrder?.quantity_adjusted || false,
+          quantity_adjusted_at: purchaseOrder?.quantity_adjusted_at || null,
+          quantity_adjusted_by: purchaseOrder?.quantity_adjusted_by || null,
+          quantity_adjusted_method: purchaseOrder?.quantity_adjusted_method || null,
+          original_quantities: purchaseOrder?.original_quantities || null,
+          adjusted_quantities: purchaseOrder?.adjusted_quantities || null,
+          vendor_pricing_notes: purchaseOrder?.vendor_pricing_notes || null
         };
 
         console.log('Sending to backend (handleSave):', updatedPurchaseOrder);
         const response = await api.put(`/api/purchase-orders/${id}`, updatedPurchaseOrder);
         setSuccess('Purchase Order updated successfully!');
+        setInitialSignature(JSON.stringify({ 
+          vendor, 
+          billNumber, 
+          date, 
+          lineItems,
+          pickup_time: purchaseOrder?.pickup_time,
+          pickup_location: purchaseOrder?.pickup_location,
+          pickup_contact_person: purchaseOrder?.pickup_contact_person,
+          pickup_phone: purchaseOrder?.pickup_phone,
+          pickup_instructions: purchaseOrder?.pickup_instructions,
+          pickup_notes: purchaseOrder?.pickup_notes,
+          // Order placement tracking fields
+          order_placed: purchaseOrder?.order_placed,
+          order_placed_at: purchaseOrder?.order_placed_at,
+          order_placed_by: purchaseOrder?.order_placed_by,
+          order_placed_method: purchaseOrder?.order_placed_method,
+          vendor_confirmation_status: purchaseOrder?.vendor_confirmation_status,
+          vendor_confirmation_notes: purchaseOrder?.vendor_confirmation_notes,
+          vendor_confirmation_date: purchaseOrder?.vendor_confirmation_date,
+          pricing_updated: purchaseOrder?.pricing_updated,
+          pricing_updated_at: purchaseOrder?.pricing_updated_at,
+          pricing_updated_by: purchaseOrder?.pricing_updated_by,
+          pricing_updated_method: purchaseOrder?.pricing_updated_method,
+          quantity_adjusted: purchaseOrder?.quantity_adjusted,
+          quantity_adjusted_at: purchaseOrder?.quantity_adjusted_at,
+          quantity_adjusted_by: purchaseOrder?.quantity_adjusted_by,
+          quantity_adjusted_method: purchaseOrder?.quantity_adjusted_method,
+          original_quantities: purchaseOrder?.original_quantities,
+          adjusted_quantities: purchaseOrder?.adjusted_quantities,
+          vendor_pricing_notes: purchaseOrder?.vendor_pricing_notes
+        }));
       }
     } catch (error) {
       console.error('Error saving Purchase Order:', error);
@@ -721,6 +947,117 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
         toast.error(`Error saving Purchase Order: ${error.response.data.error}`);
       } else {
         toast.error('Error saving Purchase Order. Please try again.');
+      }
+    }
+  };
+
+  const handleExportToQBO = async () => {
+    if (!purchaseOrder?.purchase_id) {
+      toast.error('Purchase order not loaded. Cannot export.');
+      return;
+    }
+
+    if (purchaseOrder.status !== 'Closed') {
+      toast.error('Only closed purchase orders can be exported to QuickBooks.');
+      return;
+    }
+
+    if (purchaseOrder.exported_to_qbo) {
+      toast.error('Purchase order has already been exported to QuickBooks.');
+      return;
+    }
+
+    setExportLoading(true);
+    try {
+      const response = await api.post(`/api/purchase-orders/${purchaseOrder.purchase_id}/export-to-qbo`);
+      toast.success('Exported to QuickBooks successfully!');
+      setPurchaseOrder(prev => prev ? { ...prev, exported_to_qbo: true } : prev);
+    } catch (error: any) {
+      const errorMessage = error?.response?.data?.error || 'Failed to export to QuickBooks.';
+      toast.error(errorMessage);
+    } finally {
+      setExportLoading(false);
+    }
+  };
+
+  const handleReopenPO = async () => {
+    if (!purchaseOrder?.purchase_id) {
+      toast.error('Purchase order not loaded. Cannot reopen.');
+      return;
+    }
+
+    if (window.confirm('Are you sure you want to reopen this purchase order?')) {
+      try {
+        const updatedPurchaseOrder = {
+          ...purchaseOrder,
+          vendor_id: vendor?.id,
+          purchase_date: date?.toISOString(),
+          bill_number: billNumber.trim(),
+          lineItems: lineItems.map(item => ({
+            ...item,
+            part_number: item.part_number.trim(),
+            part_description: item.part_description.trim(),
+            unit: item.unit.trim(),
+            quantity: parseFloat(String(item.quantity)),
+            unit_cost: parseFloat(String(item.unit_cost)),
+            line_amount: parseFloat(String(item.line_amount))
+          })),
+          status: 'Open',
+          subtotal: subTotal,
+          total_gst_amount: totalGSTAmount,
+          total_amount: totalAmount,
+          global_gst_rate: globalGstRate,
+          gst_rate: globalGstRate,
+          // Include pickup fields
+          pickup_time: purchaseOrder?.pickup_time || null,
+          pickup_location: purchaseOrder?.pickup_location || null,
+          pickup_contact_person: purchaseOrder?.pickup_contact_person || null,
+          pickup_phone: purchaseOrder?.pickup_phone || null,
+          pickup_instructions: purchaseOrder?.pickup_instructions || null,
+          pickup_notes: purchaseOrder?.pickup_notes || null,
+          // Include order placement tracking fields
+          order_placed: purchaseOrder?.order_placed || false,
+          order_placed_at: purchaseOrder?.order_placed_at || null,
+          order_placed_by: purchaseOrder?.order_placed_by || null,
+          order_placed_method: purchaseOrder?.order_placed_method || null,
+          vendor_confirmation_status: purchaseOrder?.vendor_confirmation_status || 'pending',
+          vendor_confirmation_notes: purchaseOrder?.vendor_confirmation_notes || null,
+          vendor_confirmation_date: purchaseOrder?.vendor_confirmation_date || null,
+          pricing_updated: purchaseOrder?.pricing_updated || false,
+          pricing_updated_at: purchaseOrder?.pricing_updated_at || null,
+          pricing_updated_by: purchaseOrder?.pricing_updated_by || null,
+          pricing_updated_method: purchaseOrder?.pricing_updated_method || null,
+          quantity_adjusted: purchaseOrder?.quantity_adjusted || false,
+          quantity_adjusted_at: purchaseOrder?.quantity_adjusted_at || null,
+          quantity_adjusted_by: purchaseOrder?.quantity_adjusted_by || null,
+          quantity_adjusted_method: purchaseOrder?.quantity_adjusted_method || null,
+          original_quantities: purchaseOrder?.original_quantities || null,
+          adjusted_quantities: purchaseOrder?.adjusted_quantities || null,
+          vendor_pricing_notes: purchaseOrder?.vendor_pricing_notes || null
+        };
+
+        await api.put(`/api/purchase-orders/${purchaseOrder.purchase_id}`, updatedPurchaseOrder);
+        
+        toast.success('Purchase Order reopened successfully!');
+        // Update local state to reflect the open status
+        setPurchaseOrder(prev => prev ? { ...prev, status: 'Open' } : prev);
+        setStatus('Open');
+        navigate(`/open-purchase-orders/${purchaseOrder.purchase_id}`);
+      } catch (error) {
+        console.error('Error reopening purchase order:', error);
+        if (error instanceof AxiosError && error.response?.data?.error) {
+          // Handle backend validation errors
+          const errorMessage = error.response.data.error;
+          if (errorMessage.toLowerCase().includes('negative quantity') || 
+              errorMessage.toLowerCase().includes('insufficient inventory') ||
+              errorMessage.toLowerCase().includes('inventory constraint')) {
+            toast.error(`Cannot reopen: ${errorMessage}`);
+          } else {
+            toast.error(`Error reopening PO: ${errorMessage}`);
+          }
+        } else {
+          toast.error('Failed to reopen purchase order. Please try again.');
+        }
       }
     }
   };
@@ -779,7 +1116,33 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
         total_gst_amount: totalGSTAmount,
         total_amount: totalAmount,
         global_gst_rate: globalGstRate,
-        gst_rate: globalGstRate
+        gst_rate: globalGstRate,
+        // Include pickup fields
+        pickup_time: purchaseOrder?.pickup_time || null,
+        pickup_location: purchaseOrder?.pickup_location || null,
+        pickup_contact_person: purchaseOrder?.pickup_contact_person || null,
+        pickup_phone: purchaseOrder?.pickup_phone || null,
+        pickup_instructions: purchaseOrder?.pickup_instructions || null,
+        pickup_notes: purchaseOrder?.pickup_notes || null,
+        // Include order placement tracking fields
+        order_placed: purchaseOrder?.order_placed || false,
+        order_placed_at: purchaseOrder?.order_placed_at || null,
+        order_placed_by: purchaseOrder?.order_placed_by || null,
+        order_placed_method: purchaseOrder?.order_placed_method || null,
+        vendor_confirmation_status: purchaseOrder?.vendor_confirmation_status || 'pending',
+        vendor_confirmation_notes: purchaseOrder?.vendor_confirmation_notes || null,
+        vendor_confirmation_date: purchaseOrder?.vendor_confirmation_date || null,
+        pricing_updated: purchaseOrder?.pricing_updated || false,
+        pricing_updated_at: purchaseOrder?.pricing_updated_at || null,
+        pricing_updated_by: purchaseOrder?.pricing_updated_by || null,
+        pricing_updated_method: purchaseOrder?.pricing_updated_method || null,
+        quantity_adjusted: purchaseOrder?.quantity_adjusted || false,
+        quantity_adjusted_at: purchaseOrder?.quantity_adjusted_at || null,
+        quantity_adjusted_by: purchaseOrder?.quantity_adjusted_by || null,
+        quantity_adjusted_method: purchaseOrder?.quantity_adjusted_method || null,
+        original_quantities: purchaseOrder?.original_quantities || null,
+        adjusted_quantities: purchaseOrder?.adjusted_quantities || null,
+        vendor_pricing_notes: purchaseOrder?.vendor_pricing_notes || null
       };
 
       const response = await api.put(`/api/purchase-orders/${purchaseOrder.purchase_id}`, updatedPOData);
@@ -787,24 +1150,35 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
       if (response.status === 200) {
         console.log('Purchase Order closed:', response.data);
         toast.success('Purchase Order closed successfully!');
+        // Update local state to reflect the closed status
+        setPurchaseOrder(prev => prev ? { ...prev, status: 'Closed' } : prev);
+        setStatus('Closed');
         // Navigate to the detail view of the closed purchase order
-        navigate(`/purchase-order/${purchaseOrder.purchase_id}`);
+        navigate(`/open-purchase-orders/${purchaseOrder.purchase_id}`);
       } else {
         toast.error('Failed to close purchase order');
       }
     } catch (error) {
       console.error('Error closing purchase order:', error);
       if (error instanceof AxiosError && error.response?.data?.error) {
-        toast.error(`Error closing PO: ${error.response.data.error}`);
+        // Handle backend validation errors
+        const errorMessage = error.response.data.error;
+        if (errorMessage.toLowerCase().includes('negative quantity') || 
+            errorMessage.toLowerCase().includes('insufficient inventory') ||
+            errorMessage.toLowerCase().includes('inventory constraint')) {
+          toast.error(`Cannot close: ${errorMessage}`);
+        } else {
+          toast.error(`Error closing PO: ${errorMessage}`);
+        }
       } else {
-        toast.error('An unexpected error occurred while closing the PO.');
+        toast.error('Failed to close purchase order. Please try again.');
       }
     }
   };
 
   const handleAllocationSuccess = () => {
     // Navigate to the detail view of the closed purchase order
-    navigate(`/purchase-order/${purchaseOrder?.purchase_id}`);
+    navigate(`/open-purchase-orders/${purchaseOrder?.purchase_id}`);
   };
 
   const handleAllocationSaved = () => {
@@ -840,7 +1214,33 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
         total_gst_amount: totalGSTAmount,
         total_amount: totalAmount,
         global_gst_rate: globalGstRate,
-        gst_rate: globalGstRate
+        gst_rate: globalGstRate,
+        // Include pickup fields
+        pickup_time: purchaseOrder?.pickup_time || null,
+        pickup_location: purchaseOrder?.pickup_location || null,
+        pickup_contact_person: purchaseOrder?.pickup_contact_person || null,
+        pickup_phone: purchaseOrder?.pickup_phone || null,
+        pickup_instructions: purchaseOrder?.pickup_instructions || null,
+        pickup_notes: purchaseOrder?.pickup_notes || null,
+        // Include order placement tracking fields
+        order_placed: purchaseOrder?.order_placed || false,
+        order_placed_at: purchaseOrder?.order_placed_at || null,
+        order_placed_by: purchaseOrder?.order_placed_by || null,
+        order_placed_method: purchaseOrder?.order_placed_method || null,
+        vendor_confirmation_status: purchaseOrder?.vendor_confirmation_status || 'pending',
+        vendor_confirmation_notes: purchaseOrder?.vendor_confirmation_notes || null,
+        vendor_confirmation_date: purchaseOrder?.vendor_confirmation_date || null,
+        pricing_updated: purchaseOrder?.pricing_updated || false,
+        pricing_updated_at: purchaseOrder?.pricing_updated_at || null,
+        pricing_updated_by: purchaseOrder?.pricing_updated_by || null,
+        pricing_updated_method: purchaseOrder?.pricing_updated_method || null,
+        quantity_adjusted: purchaseOrder?.quantity_adjusted || false,
+        quantity_adjusted_at: purchaseOrder?.quantity_adjusted_at || null,
+        quantity_adjusted_by: purchaseOrder?.quantity_adjusted_by || null,
+        quantity_adjusted_method: purchaseOrder?.quantity_adjusted_method || null,
+        original_quantities: purchaseOrder?.original_quantities || null,
+        adjusted_quantities: purchaseOrder?.adjusted_quantities || null,
+        vendor_pricing_notes: purchaseOrder?.vendor_pricing_notes || null
       };
 
       await api.put(`/api/purchase-orders/${purchaseOrder.purchase_id}`, updatedPurchaseOrder);
@@ -901,6 +1301,69 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
     await handleDownloadPdf();
   };
 
+  const handleCallVendor = async () => {
+    try {
+      if (!purchaseOrder?.purchase_id) { toast.error('Save PO first'); return; }
+      const res = await VoiceService.startVendorCall(purchaseOrder.purchase_id);
+      setCallSessionId(res.session_id);
+      if (res.provider === 'twilio') {
+        toast.success(`Calling ${vendor?.label || 'vendor'} at ${res.vendor_phone || ''}`);
+      } else {
+        const reason = res.reason ? ` (${res.reason})` : '';
+        const baseUrl = res.debug?.baseUrl ? ` BASE_URL=${res.debug.baseUrl}` : '';
+        toast.info(`Simulated call session created${reason}. Telephony not configured or failed.${baseUrl}`);
+        console.log('Voice call debug:', res.debug);
+      }
+    } catch (e: any) {
+      toast.error(e?.response?.data?.error || 'Failed to start vendor call');
+    }
+  };
+
+  const handleQuantityAdjustment = () => {
+    if (!purchaseOrder) return;
+    
+    // Store original quantities before adjustment
+    const originalQty = lineItems.map(item => item.quantity);
+    
+    // Show dialog to adjust quantities based on vendor confirmation
+    const newQuantities = prompt(
+      'Enter adjusted quantities (comma-separated, e.g., 50,100,25):\n' +
+      'Current quantities: ' + originalQty.join(', ') + '\n' +
+      'Note: Adjust based on vendor minimum orders (e.g., sold by 10ft packs)'
+    );
+    
+    if (newQuantities) {
+      try {
+        const adjustedQty = newQuantities.split(',').map(q => parseFloat(q.trim()));
+        
+        if (adjustedQty.length !== lineItems.length) {
+          toast.error('Number of quantities must match number of line items');
+          return;
+        }
+        
+        // Update line items with adjusted quantities
+        setLineItems(prev => prev.map((item, idx) => ({
+          ...item,
+          quantity: adjustedQty[idx]
+        })));
+        
+        // Update purchase order with adjustment tracking
+        setPurchaseOrder(prev => prev ? {
+          ...prev,
+          quantity_adjusted: true,
+          quantity_adjusted_at: new Date().toISOString(),
+          quantity_adjusted_by: Number(user?.id),
+          quantity_adjusted_method: 'manual',
+          original_quantities: originalQty,
+          adjusted_quantities: adjustedQty
+        } : prev);
+        
+        toast.success('Quantities adjusted based on vendor confirmation');
+      } catch (error) {
+        toast.error('Invalid quantity format. Please use numbers separated by commas.');
+      }
+    }
+  };
 
   // Add state for allocation modal
   const [isAllocationModalOpen, setIsAllocationModalOpen] = useState(false);
@@ -908,6 +1371,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
   // Add state for email modal
   const [isEmailModalOpen, setIsEmailModalOpen] = useState(false);
   const [vendorEmail, setVendorEmail] = useState<string>('');
+  const [exportLoading, setExportLoading] = useState(false);
 
   // Add state for new vendor modal fields
   const [isAddVendorModalOpen, setIsAddVendorModalOpen] = useState(false);
@@ -1139,7 +1603,33 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
           total_amount: totalAmount,
           global_gst_rate: globalGstRate,
           company_id: user?.company_id,
-          created_by: user?.id
+          created_by: user?.id,
+          // Include pickup fields
+          pickup_time: purchaseOrder?.pickup_time || null,
+          pickup_location: purchaseOrder?.pickup_location || null,
+          pickup_contact_person: purchaseOrder?.pickup_contact_person || null,
+          pickup_phone: purchaseOrder?.pickup_phone || null,
+          pickup_instructions: purchaseOrder?.pickup_instructions || null,
+          pickup_notes: purchaseOrder?.pickup_notes || null,
+          // Include order placement tracking fields
+          order_placed: purchaseOrder?.order_placed || false,
+          order_placed_at: purchaseOrder?.order_placed_at || null,
+          order_placed_by: purchaseOrder?.order_placed_by || null,
+          order_placed_method: purchaseOrder?.order_placed_method || null,
+          vendor_confirmation_status: purchaseOrder?.vendor_confirmation_status || 'pending',
+          vendor_confirmation_notes: purchaseOrder?.vendor_confirmation_notes || null,
+          vendor_confirmation_date: purchaseOrder?.vendor_confirmation_date || null,
+          pricing_updated: purchaseOrder?.pricing_updated || false,
+          pricing_updated_at: purchaseOrder?.pricing_updated_at || null,
+          pricing_updated_by: purchaseOrder?.pricing_updated_by || null,
+          pricing_updated_method: purchaseOrder?.pricing_updated_method || null,
+          quantity_adjusted: purchaseOrder?.quantity_adjusted || false,
+          quantity_adjusted_at: purchaseOrder?.quantity_adjusted_at || null,
+          quantity_adjusted_by: purchaseOrder?.quantity_adjusted_by || null,
+          quantity_adjusted_method: purchaseOrder?.quantity_adjusted_method || null,
+          original_quantities: purchaseOrder?.original_quantities || null,
+          adjusted_quantities: purchaseOrder?.adjusted_quantities || null,
+          vendor_pricing_notes: purchaseOrder?.vendor_pricing_notes || null
         };
 
         console.log('Creating new purchase order for email:', newPurchaseOrder);
@@ -1200,7 +1690,79 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
     }
   }, [vendor, vendors]);
 
+  // ---------- Closed read-only view ----------
+  const renderReadOnly = () => {
+    if (!purchaseOrder) return null;
+    const all = lineItems || [];
+    let sub = all.reduce((s, i) => s + (Number(i.line_amount) || 0), 0);
+    let gst = sub * (purchaseOrder.global_gst_rate || 5) / 100, tot = sub + gst;
+    if (isNaN(sub)) sub = 0; if (isNaN(gst)) gst = 0; if (isNaN(tot)) tot = 0;
+    
+    return (
+      <Box p={{ xs:2, md:4 }} maxWidth={1000} mx="auto">
+        <Typography variant="h4" gutterBottom>
+          Purchase Order Details
+        </Typography>
+        <Card variant="outlined" sx={{ mb:3 }}>
+          <CardContent>
+            <Grid container spacing={{ xs:2, md:3 }}>
+              <Grid item xs={12} sm={6}><b>Purchase Order #:</b> {purchaseOrder.purchase_number}</Grid>
+              <Grid item xs={12} sm={6}><b>Vendor:</b> {purchaseOrder.vendor_name || 'N/A'}</Grid>
+              <Grid item xs={12} sm={6}><b>Purchase Date:</b> {purchaseOrder.purchase_date ? new Date(purchaseOrder.purchase_date).toLocaleDateString() : ''}</Grid>
+              <Grid item xs={12} sm={6}><b>Status:</b> {purchaseOrder.status?.toUpperCase() || 'N/A'}</Grid>
+              <Grid item xs={12} sm={6}><b>Bill Number:</b> {purchaseOrder.bill_number || 'N/A'}</Grid>
+              <Grid item xs={12} sm={6}><b>GST Rate:</b> {(purchaseOrder.global_gst_rate || 5).toFixed(2)}%</Grid>
+              <Grid item xs={12} sm={6}><b>QuickBooks Export:</b> {purchaseOrder.exported_to_qbo ? 'Exported' : purchaseOrder.qbo_export_status ? `Error: ${purchaseOrder.qbo_export_status}` : 'Not Exported'}</Grid>
+            </Grid>
+          </CardContent>
+        </Card>
 
+        <Typography variant="h5" gutterBottom>Items</Typography>
+        <Card variant="outlined">
+          <CardContent>
+            {all.map((it, idx) => (
+              <Grid container spacing={2} key={idx}>
+                <Grid item xs={6} sm={3} md={2}>{it.part_number}</Grid>
+                <Grid item xs={6} sm={5} md={4}>{it.part_description}</Grid>
+                <Grid item xs={4} sm={2} md={1.5}>{it.quantity}</Grid>
+                <Grid item xs={4} sm={2} md={1.5}>{it.unit}</Grid>
+                <Grid item xs={4} sm={2} md={1.5}>{formatCurrency(Number(it.unit_cost) || 0)}</Grid>
+                <Grid item xs={4} sm={2} md={1}>{formatCurrency(Number(it.line_amount) || 0)}</Grid>
+              </Grid>
+            ))}
+          </CardContent>
+        </Card>
+
+        <Box mt={4} display="flex" flexDirection="column" alignItems="flex-end">
+          <Typography variant="h6">Subtotal: {formatCurrency(sub)}</Typography>
+          <Typography variant="h6">Total GST: {formatCurrency(gst)}</Typography>
+          <Typography variant="h6">Total Amount: {formatCurrency(tot)}</Typography>
+        </Box>
+
+        <Box mt={4} display="flex" justifyContent={{ xs:'center', sm:'flex-end' }} gap={2}>
+          <Button variant="contained" color="primary" startIcon={<DownloadIcon />} onClick={handleSaveAndDownloadPdf}>Download PDF</Button>
+          
+          {/* QuickBooks Export Button - Admin users get full functionality */}
+          {!purchaseOrder?.exported_to_qbo && user?.access_role === 'Admin' && (
+            <Button 
+              variant="contained" 
+              color="success" 
+              startIcon={<CloudUploadIcon />} 
+              onClick={handleExportToQBO}
+              disabled={exportLoading}
+            >
+              {exportLoading ? 'Exporting...' : 'Export to QuickBooks'}
+            </Button>
+          )}
+          
+          {/* Reopen PO button - for admin and purchase/sales users */}
+          {(user?.access_role === 'Admin' || user?.access_role === 'Sales and Purchase') && (
+            <Button variant="contained" color="primary" onClick={handleReopenPO}>Reopen PO</Button>
+          )}
+        </Box>
+      </Box>
+    );
+  };
 
   // Show loading state only if we're not in creation mode and purchaseOrder is null
   if (!isCreationMode && !purchaseOrder) {
@@ -1220,14 +1782,58 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
     );
   }
 
+  // Show read-only view for closed purchase orders (all users)
+  if (!isCreationMode && status === 'Closed') {
+    return renderReadOnly();
+  }
+
   return (
     <>
-      <LocalizationProvider dateAdapter={AdapterDayjs}>
+    <LocalizationProvider dateAdapter={AdapterDayjs}>
+      <UnsavedChangesGuard when={isDirty} onSave={handleSave} />
         <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
           <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-            <Typography variant="h4" component="h1" gutterBottom>
-              {isCreationMode ? 'Create New Purchase Order' : `Edit Purchase Order: ${purchaseOrder?.purchase_number}`}
-            </Typography>
+            <Box>
+              <Typography variant="h4" component="h1" gutterBottom>
+                {isCreationMode ? 'Create New Purchase Order' : `Edit Purchase Order: ${purchaseOrder?.purchase_number}`}
+              </Typography>
+              {!isCreationMode && purchaseOrder && (
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mt: 1 }}>
+                  <Chip
+                    label={purchaseOrder.order_placed ? 'Order Placed' : 'Order Not Placed'}
+                    color={purchaseOrder.order_placed ? 'success' : 'warning'}
+                    variant="outlined"
+                    size="small"
+                  />
+                  <Chip
+                    label={`Vendor: ${purchaseOrder.vendor_confirmation_status || 'pending'}`}
+                    color={
+                      purchaseOrder.vendor_confirmation_status === 'confirmed' ? 'success' :
+                      purchaseOrder.vendor_confirmation_status === 'partial' ? 'warning' :
+                      purchaseOrder.vendor_confirmation_status === 'unavailable' ? 'error' : 'default'
+                    }
+                    variant="outlined"
+                    size="small"
+                  />
+                  {purchaseOrder.pricing_updated && (
+                    <Chip
+                      label="Pricing Updated"
+                      color="info"
+                      variant="outlined"
+                      size="small"
+                    />
+                  )}
+                  {purchaseOrder.quantity_adjusted && (
+                    <Chip
+                      label="Quantities Adjusted"
+                      color="secondary"
+                      variant="outlined"
+                      size="small"
+                    />
+                  )}
+                </Box>
+              )}
+            </Box>
             <Stack direction="row" spacing={1}>
               <Button variant="contained" color="primary" onClick={handleSave} startIcon={<SaveIcon />}>
                 {isCreationMode ? 'Create Purchase Order' : 'Save Changes'}
@@ -1237,6 +1843,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
                   <Button variant="contained" color="primary" onClick={handleClosePurchaseOrder} startIcon={<DoneAllIcon />}>Close PO</Button>
                   <Button variant="contained" color="primary" onClick={handleSaveAndDownloadPdf} startIcon={<DownloadIcon />}>Download PDF</Button>
                   <Button variant="contained" onClick={handleEmailClick} startIcon={<EmailIcon />} sx={{ backgroundColor: '#ff9800', '&:hover': { backgroundColor: '#f57c00' } }}>Email Vendor</Button>
+                  <Button variant="contained" color="secondary" onClick={handleCallVendor} startIcon={<CallIcon />}>Call Vendor</Button>
                 </>
               )}
             </Stack>
@@ -1429,7 +2036,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
                         if (typeof newValue === 'string') {
                           const selected = newValue;
                           // Update both UI state and calc state immediately
-                          const inv = inventoryItems.find(inv => inv.part_number === selected);
+                      const inv = inventoryItems.find(inv => inv.part_number === selected);
                           const quantityToOrder = aggregateQuantities[selected] || 
                                                   aggregateQuantities[selected?.toUpperCase?.() || ''] || 
                                                   aggregateQuantities[selected?.toLowerCase?.() || ''] || 0;
@@ -1437,20 +2044,40 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
                           setLineItems(prev => {
                             const updated = [...prev];
                             const current = updated[idx];
-                            if (inv) {
+                             if (inv) {
                               const currentUnitCost = (current as any).unit_cost;
                               const shouldUseInventoryCost = !currentUnitCost || currentUnitCost === '' || currentUnitCost === '0';
                               const unitCost = shouldUseInventoryCost ? String(inv.last_unit_cost) : String(currentUnitCost);
                               const item = {
                                 ...current,
-                                part_number: selected,
+                                 part_number: selected,
                                 part_description: inv.part_description,
                                 unit: inv.unit,
                                 unit_cost: unitCost,
                                 quantity_to_order: numericQto,
                               } as any;
                               item.line_amount = calculateLineItemAmount(item);
-                              updated[idx] = item;
+                               updated[idx] = item;
+                               // Ensure vendor mappings loaded and swap PN if vendor selected
+                               ensureVendorMappings(inv.part_number);
+                               if (vendor?.id) {
+                                 const chosen = (() => {
+                                   const links = (vendorPartMap[inv.part_number.toUpperCase()] || []);
+                                   if (links.length === 0) return null;
+                                   const forVendor = links.filter(l => l.vendor_id === vendor.id);
+                                   if (forVendor.length > 0) {
+                                     const pref = forVendor.find(l => l.preferred);
+                                     if (pref) return pref.vendor_part_number;
+                                     const mu = [...forVendor].sort((a,b) => (b.usage_count||0)-(a.usage_count||0))[0];
+                                     if (mu) return mu.vendor_part_number;
+                                   }
+                                   const prefAny = links.find(l => l.preferred);
+                                   if (prefAny) return prefAny.vendor_part_number;
+                                   const muAny = [...links].sort((a,b) => (b.usage_count||0)-(a.usage_count||0))[0];
+                                   return muAny ? muAny.vendor_part_number : null;
+                                 })();
+                                 if (chosen) updated[idx].part_number = chosen;
+                               }
                             } else {
                               updated[idx] = { ...current, part_number: selected } as any;
                             }
@@ -1693,6 +2320,341 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
               <Grid item xs={12} sm={4}>
                 <Typography variant="h6">Total Amount: ${totalAmount != null && !isNaN(Number(totalAmount)) ? Number(totalAmount).toFixed(2) : '0.00'}</Typography>
               </Grid>
+            </Grid>
+          </Paper>
+
+          {/* Pickup Details Section */}
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 3, mb: 2 }}>
+            <Typography variant="h6">Pickup Details for Drivers</Typography>
+          </Box>
+          <Paper sx={{ p: 3, mb: 3 }} elevation={3}>
+            <Grid container spacing={3}>
+              <Grid item xs={12} sm={6}>
+                <TextField
+                  label="Pickup Time"
+                  placeholder="e.g., tomorrow at 2 PM, Friday morning"
+                  value={purchaseOrder?.pickup_time || ''}
+                  onChange={(e) => {
+                    if (purchaseOrder) {
+                      setPurchaseOrder({
+                        ...purchaseOrder,
+                        pickup_time: e.target.value
+                      });
+                    }
+                  }}
+                  fullWidth
+                  helperText="When to pick up the order"
+                />
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <TextField
+                  label="Pickup Location"
+                  placeholder="e.g., 123 Main St, Building A, Loading Dock"
+                  value={purchaseOrder?.pickup_location || ''}
+                  onChange={(e) => {
+                    if (purchaseOrder) {
+                      setPurchaseOrder({
+                        ...purchaseOrder,
+                        pickup_location: e.target.value
+                      });
+                    }
+                  }}
+                  fullWidth
+                  helperText="Where to pick up the order"
+                />
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <TextField
+                  label="Contact Person"
+                  placeholder="e.g., John Smith, Warehouse Manager"
+                  value={purchaseOrder?.pickup_contact_person || ''}
+                  onChange={(e) => {
+                    if (purchaseOrder) {
+                      setPurchaseOrder({
+                        ...purchaseOrder,
+                        pickup_contact_person: e.target.value
+                      });
+                    }
+                  }}
+                  fullWidth
+                  helperText="Name of person to contact at pickup location"
+                />
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <TextField
+                  label="Contact Phone"
+                  placeholder="e.g., (555) 123-4567"
+                  value={purchaseOrder?.pickup_phone || ''}
+                  onChange={(e) => {
+                    if (purchaseOrder) {
+                      setPurchaseOrder({
+                        ...purchaseOrder,
+                        pickup_phone: e.target.value
+                      });
+                    }
+                  }}
+                  fullWidth
+                  helperText="Phone number for pickup contact person"
+                />
+              </Grid>
+              <Grid item xs={12}>
+                <TextField
+                  label="Pickup Instructions"
+                  placeholder="e.g., Use loading dock on east side, call 15 minutes before arrival, parking available in lot B"
+                  value={purchaseOrder?.pickup_instructions || ''}
+                  onChange={(e) => {
+                    if (purchaseOrder) {
+                      setPurchaseOrder({
+                        ...purchaseOrder,
+                        pickup_instructions: e.target.value
+                      });
+                    }
+                  }}
+                  fullWidth
+                  multiline
+                  rows={3}
+                  helperText="Special instructions for pickup (parking, loading dock, etc.)"
+                />
+              </Grid>
+              <Grid item xs={12}>
+                <TextField
+                  label="Pickup Notes"
+                  placeholder="e.g., After-hours pickup available, bring ID, parts are in warehouse section C"
+                  value={purchaseOrder?.pickup_notes || ''}
+                  onChange={(e) => {
+                    if (purchaseOrder) {
+                      setPurchaseOrder({
+                        ...purchaseOrder,
+                        pickup_notes: e.target.value
+                      });
+                    }
+                  }}
+                  fullWidth
+                  multiline
+                  rows={2}
+                  helperText="General notes about pickup for drivers"
+                />
+              </Grid>
+            </Grid>
+          </Paper>
+
+          {/* Order Placement Tracking Section */}
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 3, mb: 2 }}>
+            <Typography variant="h6">Order Placement Tracking</Typography>
+          </Box>
+          <Paper sx={{ p: 3, mb: 3 }} elevation={3}>
+            <Grid container spacing={3}>
+              {/* Order Placed Status */}
+              <Grid item xs={12} sm={6}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                  <input
+                    type="checkbox"
+                    checked={purchaseOrder?.order_placed || false}
+                    onChange={(e) => {
+                      if (purchaseOrder) {
+                        setPurchaseOrder({
+                          ...purchaseOrder,
+                          order_placed: e.target.checked,
+                          order_placed_at: e.target.checked ? new Date().toISOString() : undefined,
+                          order_placed_by: e.target.checked ? Number(user?.id) : undefined,
+                          order_placed_method: e.target.checked ? 'manual' : undefined
+                        });
+                      }
+                    }}
+                    style={{ transform: 'scale(1.5)' }}
+                  />
+                  <Box>
+                    <Typography variant="subtitle1" sx={{ fontWeight: 'bold' }}>
+                      Order Placed with Vendor
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      {purchaseOrder?.order_placed ? 
+                        `Placed on ${new Date(purchaseOrder.order_placed_at || '').toLocaleDateString()}` : 
+                        'Order not yet placed'
+                      }
+                    </Typography>
+                  </Box>
+                </Box>
+              </Grid>
+              
+              {/* Vendor Confirmation Status */}
+              <Grid item xs={12} sm={6}>
+                <TextField
+                  select
+                  label="Vendor Confirmation Status"
+                  value={purchaseOrder?.vendor_confirmation_status || 'pending'}
+                  onChange={(e) => {
+                    if (purchaseOrder) {
+                      setPurchaseOrder({
+                        ...purchaseOrder,
+                        vendor_confirmation_status: e.target.value,
+                        vendor_confirmation_date: e.target.value !== 'pending' ? new Date().toISOString() : undefined
+                      });
+                    }
+                  }}
+                  fullWidth
+                  helperText="Current vendor confirmation status"
+                >
+                  <MenuItem value="pending">Pending</MenuItem>
+                  <MenuItem value="confirmed">Confirmed</MenuItem>
+                  <MenuItem value="partial">Partially Available</MenuItem>
+                  <MenuItem value="unavailable">Unavailable</MenuItem>
+                </TextField>
+              </Grid>
+
+              {/* Vendor Confirmation Notes */}
+              <Grid item xs={12}>
+                <TextField
+                  label="Vendor Confirmation Notes"
+                  placeholder="e.g., Parts available, pricing confirmed, minimum order 10ft packs"
+                  value={purchaseOrder?.vendor_confirmation_notes || ''}
+                  onChange={(e) => {
+                    if (purchaseOrder) {
+                      setPurchaseOrder({
+                        ...purchaseOrder,
+                        vendor_confirmation_notes: e.target.value
+                      });
+                    }
+                  }}
+                  fullWidth
+                  multiline
+                  rows={2}
+                  helperText="Notes from vendor about order confirmation, availability, and pricing"
+                />
+              </Grid>
+
+              {/* Pricing and Quantity Updates */}
+              <Grid item xs={12} sm={6}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                  <input
+                    type="checkbox"
+                    checked={purchaseOrder?.pricing_updated || false}
+                    onChange={(e) => {
+                      if (purchaseOrder) {
+                        setPurchaseOrder({
+                          ...purchaseOrder,
+                          pricing_updated: e.target.checked,
+                          pricing_updated_at: e.target.checked ? new Date().toISOString() : undefined,
+                          pricing_updated_by: e.target.checked ? Number(user?.id) : undefined,
+                          pricing_updated_method: e.target.checked ? 'manual' : undefined
+                        });
+                      }
+                    }}
+                    style={{ transform: 'scale(1.5)' }}
+                  />
+                  <Box>
+                    <Typography variant="subtitle1" sx={{ fontWeight: 'bold' }}>
+                      Pricing Updated
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      {purchaseOrder?.pricing_updated ? 
+                        `Updated on ${new Date(purchaseOrder.pricing_updated_at || '').toLocaleDateString()}` : 
+                        'Pricing not yet updated'
+                      }
+                    </Typography>
+                  </Box>
+                </Box>
+              </Grid>
+
+              <Grid item xs={12} sm={6}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                  <input
+                    type="checkbox"
+                    checked={purchaseOrder?.quantity_adjusted || false}
+                    onChange={(e) => {
+                      if (purchaseOrder) {
+                        setPurchaseOrder({
+                          ...purchaseOrder,
+                          quantity_adjusted: e.target.checked,
+                          quantity_adjusted_at: e.target.checked ? new Date().toISOString() : undefined,
+                          quantity_adjusted_by: e.target.checked ? Number(user?.id) : undefined,
+                          quantity_adjusted_method: e.target.checked ? 'manual' : undefined
+                        });
+                      }
+                    }}
+                    style={{ transform: 'scale(1.5)' }}
+                  />
+                  <Box>
+                    <Typography variant="subtitle1" sx={{ fontWeight: 'bold' }}>
+                      Quantities Adjusted
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      {purchaseOrder?.quantity_adjusted ? 
+                        `Adjusted on ${new Date(purchaseOrder.quantity_adjusted_at || '').toLocaleDateString()}` : 
+                        'Quantities not yet adjusted'
+                      }
+                    </Typography>
+                  </Box>
+                </Box>
+              </Grid>
+
+              {/* Vendor Pricing Notes */}
+              <Grid item xs={12}>
+                <TextField
+                  label="Vendor Pricing Structure Notes"
+                  placeholder="e.g., Sold by 10ft packs, minimum order 50ft, bulk pricing available over 100ft"
+                  value={purchaseOrder?.vendor_pricing_notes || ''}
+                  onChange={(e) => {
+                    if (purchaseOrder) {
+                      setPurchaseOrder({
+                        ...purchaseOrder,
+                        vendor_pricing_notes: e.target.value
+                      });
+                    }
+                  }}
+                  fullWidth
+                  multiline
+                  rows={2}
+                  helperText="Notes about vendor pricing structure, minimum orders, and packaging units"
+                />
+              </Grid>
+
+              {/* Quantity Adjustment Button */}
+              <Grid item xs={12}>
+                <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2 }}>
+                  <Button
+                    variant="outlined"
+                    color="primary"
+                    onClick={handleQuantityAdjustment}
+                    disabled={!purchaseOrder || lineItems.length === 0}
+                    sx={{ minWidth: '200px' }}
+                  >
+                    Adjust Quantities (Vendor Confirmation)
+                  </Button>
+                </Box>
+                <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mt: 1 }}>
+                  Use this when vendor confirms different quantities (e.g., sold by 10ft packs)
+                </Typography>
+              </Grid>
+
+              {/* Original vs Adjusted Quantities Display */}
+              {(purchaseOrder?.original_quantities || purchaseOrder?.adjusted_quantities) && (
+                <Grid item xs={12}>
+                  <Typography variant="subtitle1" sx={{ fontWeight: 'bold', mb: 2 }}>
+                    Quantity Adjustments
+                  </Typography>
+                  <Grid container spacing={2}>
+                    {lineItems.map((item, idx) => {
+                      const originalQty = purchaseOrder?.original_quantities?.[idx] || item.quantity;
+                      const adjustedQty = purchaseOrder?.adjusted_quantities?.[idx] || item.quantity;
+                      const hasAdjustment = originalQty !== adjustedQty;
+                      
+                      return hasAdjustment ? (
+                        <Grid item xs={12} sm={6} key={idx}>
+                          <Paper sx={{ p: 2, backgroundColor: '#f5f5f5' }} elevation={1}>
+                            <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
+                              {item.part_number}
+                            </Typography>
+                            <Typography variant="body2" color="text.secondary">
+                              Original: {originalQty} → Adjusted: {adjustedQty}
+                            </Typography>
+                          </Paper>
+                        </Grid>
+                      ) : null;
+                    })}
+                  </Grid>
+                </Grid>
+              )}
             </Grid>
           </Paper>
 

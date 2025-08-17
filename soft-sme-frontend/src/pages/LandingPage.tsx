@@ -108,6 +108,19 @@ const LandingPage: React.FC = () => {
           { title: 'Parts to Order', description: 'View parts that need to be ordered', icon: <InventoryIcon sx={{ fontSize: 40, color: 'primary.main' }} />, path: '/parts-to-order' },
         ],
       },
+      {
+        title: 'Inventory',
+        items: [
+          { title: 'Stock', description: 'Manage your product inventory and stock levels', icon: <InventoryIcon sx={{ fontSize: 40, color: 'primary.main' }} />, path: '/inventory' },
+          { title: 'Supply', description: 'Manage supply and materials', icon: <InventoryIcon sx={{ fontSize: 40, color: 'primary.main' }} />, path: '/supply' },
+        ],
+      },
+      {
+        title: 'Settings',
+        items: [
+          { title: 'Email Settings', description: 'Configure your email settings', icon: <EmailIcon sx={{ fontSize: 40, color: 'primary.main' }} />, path: '/email-settings' },
+        ],
+      },
     ];
   }
 

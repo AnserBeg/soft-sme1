@@ -12,6 +12,7 @@ import { toast } from 'react-toastify';
 import api from '../api/axios';
 import UnifiedPartDialog, { PartFormValues } from '../components/UnifiedPartDialog';
 import PartFinderDialog from '../components/PartFinderDialog';
+import UnsavedChangesGuard from '../components/UnsavedChangesGuard';
 import { calculateLineAmount, parseNumericInput, SalesOrderLineItem as RobustLineItem } from '../utils/salesOrderCalculations';
 import { formatCurrency } from '../utils/formatters';
 
@@ -194,6 +195,14 @@ const WokerSalesOrderPage: React.FC = () => {
   );
   const totalGSTAmount = useMemo(() => subtotal * (DEFAULT_GST_RATE / 100), [subtotal]);
   const totalAmount = useMemo(() => subtotal + totalGSTAmount, [subtotal, totalGSTAmount]);
+  // Unsaved changes guard setup
+  const [initialSignature, setInitialSignature] = useState<string>('');
+  useEffect(() => {
+    if (salesOrder) {
+      setInitialSignature(JSON.stringify({ lineItems, partsToOrder }));
+    }
+  }, [salesOrder]);
+  const isDirty = Boolean(initialSignature) && initialSignature !== JSON.stringify({ lineItems, partsToOrder });
 
   // ---------- fetches ----------
   useEffect(() => {
@@ -468,6 +477,7 @@ const WokerSalesOrderPage: React.FC = () => {
       };
       await api.put(`/api/sales-orders/${salesOrder.sales_order_id}`, payload);
       setSuccess('Sales Order updated successfully!');
+      setInitialSignature(JSON.stringify({ lineItems, partsToOrder }));
       // refresh inventory quietly
       try { const inv = await api.get('/api/inventory'); setInventoryItems(inv.data); } catch {}
     } catch (err: any) {
@@ -567,6 +577,7 @@ const WokerSalesOrderPage: React.FC = () => {
 
   return (
     <LocalizationProvider dateAdapter={AdapterDayjs}>
+      <UnsavedChangesGuard when={isDirty} onSave={handleSave} />
       <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
         <Box sx={{ position: 'relative', zIndex: 1 }}>
           <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>

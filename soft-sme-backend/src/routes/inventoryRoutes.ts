@@ -60,6 +60,18 @@ router.get('/', async (req: Request, res: Response) => {
   }
 });
 
+// Get CSV template endpoint (must come before /:partNumber route)
+router.get('/csv-template', (req: Request, res: Response) => {
+  const csvTemplate = `part_number,part_description,unit,quantity,last_unit_cost,reorder_point,part_type,category,vendor_name
+ABC123,Sample Part Description,Each,10,25.50,5,stock,Fasteners,ABC Supply Co
+E-11,Hyphen allowed visually,pcs,5,15.75,2,stock,Electrical,XYZ Electronics
+(1/2)HOSE,Use parentheses for fractions,ft,20,12.00,5,stock,Plumbing,Plumbing Plus`;
+
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', 'attachment; filename="inventory_template.csv"');
+  res.send(csvTemplate);
+});
+
 // Get a single inventory item by part number
 router.get('/:partNumber', async (req: Request, res: Response) => {
   const { partNumber } = req.params;
@@ -115,7 +127,80 @@ function cleanPartNumberRaw(input: string): { cleaned: string, hadIllegal: boole
   const noSpaces = upper.replace(/\s+/g, '');
   const cleaned = noSpaces.replace(/[^A-Z0-9\-\/()]/g, '');
   const hadIllegal = cleaned.length !== noSpaces.length;
+  console.log(`cleanPartNumberRaw: "${input}" -> "${cleaned}" (hadIllegal: ${hadIllegal})`);
   return { cleaned, hadIllegal };
+}
+
+// Enhanced cleaning function that handles fraction formatting
+function cleanPartNumberAdvanced(input: string): { cleaned: string, hadIllegal: boolean } {
+  console.log(`cleanPartNumberAdvanced: Starting with "${input}"`);
+  
+  // Step 1: Basic cleaning (uppercase, remove spaces, filter characters)
+  const upper = input.toUpperCase();
+  const noSpaces = upper.replace(/\s+/g, '');
+  const basicCleaned = noSpaces.replace(/[^A-Z0-9\-\/()]/g, '');
+  const hadIllegal = basicCleaned.length !== noSpaces.length;
+  
+  console.log(`cleanPartNumberAdvanced: Basic cleaning "${input}" -> "${basicCleaned}"`);
+  
+  // Step 2: Fix double parentheses first (before fraction formatting)
+  let result = basicCleaned;
+  
+  // Fix double parentheses by removing the outer set
+  if (result.includes('((') || result.includes('))')) {
+    console.log(`Found double parentheses in: "${result}"`);
+    
+    // Replace (( with ( and )) with )
+    result = result.replace(/\(\(/g, '(');
+    result = result.replace(/\)\)/g, ')');
+    
+    // Also handle cases like ((1/4)) -> (1/4)
+    result = result.replace(/\(\(([^)]+)\)\)/g, '($1)');
+    
+    console.log(`Fixed double parentheses: "${basicCleaned}" -> "${result}"`);
+  }
+  
+  // Step 3: Handle fraction formatting (only if not already formatted)
+  
+  // First, handle complex fractions like 1-1/4 -> 1(1/4) (but only if not already formatted)
+  const complexFractionPattern = /(\d+)-(\d+)\/(\d+)/g;
+  result = result.replace(complexFractionPattern, (match, p1, p2, p3) => {
+    // Check if this specific fraction is already properly formatted
+    const expectedFormatted = `${p1}(${p2}/${p3})`;
+    // Look for the formatted version in the original string
+    if (input.includes(expectedFormatted)) {
+      console.log(`Complex fraction already formatted: "${match}" -> keeping as is`);
+      return match; // Already formatted, don't change
+    }
+    console.log(`Formatting complex fraction: "${match}" -> "${expectedFormatted}"`);
+    return expectedFormatted;
+  });
+  
+  console.log(`cleanPartNumberAdvanced: After complex fraction formatting -> "${result}"`);
+  
+  // Then handle simple fractions like 1/4 -> (1/4) (but only if not already formatted)
+  const fractionPattern = /(\d+)\/(\d+)/g;
+  result = result.replace(fractionPattern, (match, p1, p2) => {
+    // Check if this specific fraction is already properly formatted with parentheses
+    const expectedFormatted = `(${p1}/${p2})`;
+    // Look for the formatted version in the original string
+    if (input.includes(expectedFormatted)) {
+      console.log(`Simple fraction already formatted: "${match}" -> keeping as is`);
+      return match; // Already formatted, don't change
+    }
+    console.log(`Formatting simple fraction: "${match}" -> "${expectedFormatted}"`);
+    return expectedFormatted;
+  });
+  
+  console.log(`cleanPartNumberAdvanced: After fraction formatting -> "${result}"`);
+  
+  // Step 4: Handle remaining hyphens (remove them if they're not part of fractions)
+  // But keep them if they're part of valid patterns like E-11
+  result = result.replace(/(?<!\d)-(?!\d)/g, ''); // Remove hyphens not between digits
+  
+  console.log(`cleanPartNumberAdvanced: Final result "${input}" -> "${result}" (hadIllegal: ${hadIllegal})`);
+  
+  return { cleaned: result, hadIllegal };
 }
 
 function isAllowedCharactersOnly(input: string): boolean {
@@ -333,25 +418,27 @@ router.post('/upload-csv', upload.single('csvFile'), async (req: Request, res: R
             return;
           }
 
-          // Clean and validate data
-          const partNumber = data.part_number.toString().trim().toUpperCase();
-          // Validate: no spaces
-          if (/\s/.test(partNumber)) {
-            errors.push(`Row ${rowNumber}: Part number cannot contain spaces (received: "${data.part_number}")`);
-            return;
-          }
-          // Validate: '/' must be inside parentheses
-          if (!isSlashInsideParentheses(partNumber)) {
-            errors.push(`Row ${rowNumber}: Fractions must be enclosed in parentheses, e.g., (1/2) (received: "${data.part_number}")`);
-            return;
-          }
-          // Validate allowed characters
-          const noSpacePn = partNumber.replace(/\s+/g, '');
-          if (!isAllowedCharactersOnly(noSpacePn)) {
-            errors.push(`Row ${rowNumber}: Only letters/numbers and - / ( ) are allowed in part number (received: "${data.part_number}")`);
-            return;
-          }
-          const normalizedKey = normalizePartNumberForDuplicateCheck(partNumber);
+                                           // Clean and validate data - apply same cleaning rules as cleanup function
+            const originalPartNumber = data.part_number.toString();
+            const { cleaned: cleanedPartNumber, hadIllegal } = cleanPartNumberAdvanced(originalPartNumber);
+            const slashOk = isSlashInsideParentheses(cleanedPartNumber);
+            const allowedOnly = isAllowedCharactersOnly(cleanedPartNumber);
+           
+           // Check for slash violations (cannot auto-fix)
+           if (!slashOk) {
+             errors.push(`Row ${rowNumber}: Fractions must be enclosed in parentheses, e.g., (1/2) (received: "${originalPartNumber}")`);
+             return;
+           }
+           
+           // Check for illegal characters (cannot auto-fix)
+           if (!allowedOnly) {
+             errors.push(`Row ${rowNumber}: Only letters/numbers and - / ( ) are allowed in part number (received: "${originalPartNumber}")`);
+             return;
+           }
+           
+           // Use cleaned part number for processing
+           const partNumber = cleanedPartNumber;
+           const normalizedKey = normalizePartNumberForDuplicateCheck(partNumber);
           const partDescription = data.part_description.toString().trim();
           const unit = data.unit ? data.unit.toString().trim() : 'Each';
           const quantity = parseFloat(data.quantity) || 0;
@@ -359,6 +446,7 @@ router.post('/upload-csv', upload.single('csvFile'), async (req: Request, res: R
           const reorderPoint = parseFloat(data.reorder_point) || 0;
           const partType = data.part_type ? data.part_type.toString().trim().toLowerCase() : 'stock';
           const category = data.category ? data.category.toString().trim() : 'Uncategorized';
+          const vendorName = data.vendor_name ? data.vendor_name.toString().trim() : null;
 
           // Validate part type
           if (partType && !['stock', 'supply'].includes(partType)) {
@@ -382,24 +470,29 @@ router.post('/upload-csv', upload.single('csvFile'), async (req: Request, res: R
             return;
           }
 
-          // Check for duplicates within the CSV (normalized)
-          if (processedItems[normalizedKey]) {
-            const existing = processedItems[normalizedKey];
-            
-            // Check if units are different
-            if (existing.unit !== unit) {
-              errors.push(`Row ${rowNumber}: Duplicate part_number "${partNumber}" (normalized match) with different units: "${existing.unit}" vs "${unit}"`);
-              return;
-            }
+                     // Check for duplicates within the CSV (normalized)
+           if (processedItems[normalizedKey]) {
+             const existing = processedItems[normalizedKey];
+             
+             // Check if units are different
+             if (existing.unit !== unit) {
+               errors.push(`Row ${rowNumber}: Duplicate part_number "${partNumber}" (normalized match) with different units: "${existing.unit}" vs "${unit}"`);
+               return;
+             }
 
-            // Merge quantities and take higher unit cost
-            existing.quantity += quantity;
-            existing.lastUnitCost = Math.max(existing.lastUnitCost, lastUnitCost);
-            existing.reorderPoint = Math.max(existing.reorderPoint, reorderPoint);
-            
-            warnings.push(`Row ${rowNumber}: Merged duplicate part_number "${partNumber}" (normalized match) - quantities combined, higher unit cost retained`);
-            return;
-          }
+             // Merge quantities and take higher unit cost
+             existing.quantity += quantity;
+             existing.lastUnitCost = Math.max(existing.lastUnitCost, lastUnitCost);
+             existing.reorderPoint = Math.max(existing.reorderPoint, reorderPoint);
+             
+             warnings.push(`Row ${rowNumber}: Merged duplicate part_number "${partNumber}" (normalized match) - quantities combined, higher unit cost retained`);
+             return;
+           }
+           
+           // Add warning if part number was cleaned
+           if (originalPartNumber !== partNumber) {
+             warnings.push(`Row ${rowNumber}: Part number "${originalPartNumber}" was cleaned to "${partNumber}"`);
+           }
 
           // Store processed item
           processedItems[normalizedKey] = {
@@ -412,6 +505,7 @@ router.post('/upload-csv', upload.single('csvFile'), async (req: Request, res: R
             reorderPoint,
             partType,
             category,
+            vendorName,
             rowNumber: rowNumber // Store the actual row number
           };
 
@@ -423,7 +517,8 @@ router.post('/upload-csv', upload.single('csvFile'), async (req: Request, res: R
             lastUnitCost,
             reorderPoint,
             partType,
-            category
+            category,
+            vendorName
           });
         })
         .on('end', resolve)
@@ -456,48 +551,123 @@ router.post('/upload-csv', upload.single('csvFile'), async (req: Request, res: R
           [item.normalizedKey]
         );
 
-        if (existingResult.rows.length > 0) {
-          const existing = existingResult.rows[0];
-          
-          // Check if units are different
-          if (existing.unit !== item.unit) {
-            errors.push(`Part "${item.visualPartNumber}": Unit mismatch - database has "${existing.unit}", CSV has "${item.unit}"`);
-            continue;
-          }
+                 if (existingResult.rows.length > 0) {
+           const existing = existingResult.rows[0];
+           
+           // Check if units are different
+           if (existing.unit !== item.unit) {
+             errors.push(`Part "${item.visualPartNumber}": Unit mismatch - database has "${existing.unit}", CSV has "${item.unit}"`);
+             continue;
+           }
 
-          // Update existing item
-          const newQuantity = parseFloat(existing.quantity_on_hand || 0) + item.quantity;
-          const newUnitCost = item.lastUnitCost > 0 ? item.lastUnitCost : parseFloat(existing.last_unit_cost || 0);
-          const newReorderPoint = Math.max(parseFloat(existing.reorder_point || 0), item.reorderPoint);
+           // Update existing item
+           const newQuantity = parseFloat(existing.quantity_on_hand || 0) + item.quantity;
+           const newUnitCost = item.lastUnitCost > 0 ? item.lastUnitCost : parseFloat(existing.last_unit_cost || 0);
+           const newReorderPoint = Math.max(parseFloat(existing.reorder_point || 0), item.reorderPoint);
 
-          await pool.query(
-            `UPDATE inventory 
-             SET quantity_on_hand = $1, 
-                 last_unit_cost = $2, 
-                 reorder_point = $3,
-                 part_description = $4,
-                 category = $5,
-                 updated_at = CURRENT_TIMESTAMP
-             WHERE part_number = $6`,
-            [newQuantity, newUnitCost, newReorderPoint, item.partDescription, item.category, existing.part_number]
-          );
+           await pool.query(
+             `UPDATE inventory 
+              SET quantity_on_hand = $1, 
+                  last_unit_cost = $2, 
+                  reorder_point = $3,
+                  part_description = $4,
+                  category = $5,
+                  updated_at = CURRENT_TIMESTAMP
+              WHERE part_number = $6`,
+             [newQuantity, newUnitCost, newReorderPoint, item.partDescription, item.category, existing.part_number]
+           );
 
-          updatedCount++;
-          warnings.push(`Updated existing part "${existing.part_number}" (normalized match for "${item.visualPartNumber}") - quantities combined, higher unit cost retained`);
-        } else {
-          // Insert new item
-          await pool.query(
-            `INSERT INTO inventory 
-             (part_number, part_description, unit, last_unit_cost, quantity_on_hand, reorder_point, part_type, category) 
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-            [item.visualPartNumber, item.partDescription, item.unit, item.lastUnitCost, item.quantity, item.reorderPoint, item.partType, item.category]
-          );
+           updatedCount++;
+           warnings.push(`Updated existing part "${existing.part_number}" (normalized match for "${item.visualPartNumber}") - quantities combined, higher unit cost retained`);
+         } else {
+           // Insert new item using cleaned part number
+           await pool.query(
+             `INSERT INTO inventory 
+              (part_number, part_description, unit, last_unit_cost, quantity_on_hand, reorder_point, part_type, category) 
+              VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+             [item.visualPartNumber, item.partDescription, item.unit, item.lastUnitCost, item.quantity, item.reorderPoint, item.partType, item.category]
+           );
 
-          processedCount++;
-        }
+           processedCount++;
+         }
       } catch (dbError) {
         console.error(`Error processing item ${item.partNumber}:`, dbError);
         errors.push(`Error processing part "${item.visualPartNumber}": ${dbError instanceof Error ? dbError.message : 'Unknown error'}`);
+      }
+    }
+
+    // Process vendor mappings for items with vendor names
+    console.log('Processing vendor mappings...');
+    let vendorMappingCount = 0;
+    for (const item of Object.values(processedItems)) {
+      if (item.vendorName) {
+        try {
+          // Find or create vendor
+          let vendorResult = await pool.query(
+            'SELECT vendor_id FROM vendormaster WHERE vendor_name = $1',
+            [item.vendorName]
+          );
+
+          let vendorId: number;
+          if (vendorResult.rows.length === 0) {
+            // Create new vendor
+            const newVendorResult = await pool.query(
+              'INSERT INTO vendormaster (vendor_name) VALUES ($1) RETURNING vendor_id',
+              [item.vendorName]
+            );
+            vendorId = newVendorResult.rows[0].vendor_id;
+            console.log(`Created new vendor: ${item.vendorName} (ID: ${vendorId})`);
+          } else {
+            vendorId = vendorResult.rows[0].vendor_id;
+          }
+
+          // Get the canonical part number from inventory
+          const partResult = await pool.query(
+            `SELECT part_number FROM inventory WHERE REPLACE(REPLACE(UPPER(part_number), '-', ''), ' ', '') = $1`,
+            [item.normalizedKey]
+          );
+
+          if (partResult.rows.length > 0) {
+            const canonicalPartNumber = partResult.rows[0].part_number;
+            
+            // Check if vendor mapping already exists
+            const existingMappingResult = await pool.query(
+              'SELECT id FROM inventory_vendors WHERE part_number = $1 AND vendor_id = $2',
+              [canonicalPartNumber, vendorId]
+            );
+
+            if (existingMappingResult.rows.length === 0) {
+              // Create new vendor mapping
+              await pool.query(
+                `INSERT INTO inventory_vendors (part_number, vendor_id, vendor_part_number, vendor_part_description, usage_count, last_used_at)
+                 VALUES ($1, $2, $3, $4, 1, NOW())`,
+                [
+                  canonicalPartNumber,
+                  vendorId,
+                  item.visualPartNumber, // Use the part number from CSV as vendor part number
+                  item.partDescription || null
+                ]
+              );
+              vendorMappingCount++;
+              console.log(`Created vendor mapping for part ${canonicalPartNumber} to vendor ${item.vendorName}`);
+            } else {
+              // Update existing mapping
+              await pool.query(
+                `UPDATE inventory_vendors 
+                 SET usage_count = usage_count + 1, 
+                     last_used_at = NOW(),
+                     vendor_part_description = COALESCE($1, vendor_part_description)
+                 WHERE part_number = $2 AND vendor_id = $3`,
+                [item.partDescription || null, canonicalPartNumber, vendorId]
+              );
+              vendorMappingCount++;
+              console.log(`Updated vendor mapping for part ${canonicalPartNumber} to vendor ${item.vendorName}`);
+            }
+          }
+        } catch (vendorError) {
+          console.error(`Error processing vendor mapping for part ${item.visualPartNumber}:`, vendorError);
+          warnings.push(`Failed to create vendor mapping for part "${item.visualPartNumber}" with vendor "${item.vendorName}": ${vendorError instanceof Error ? vendorError.message : 'Unknown error'}`);
+        }
       }
     }
 
@@ -513,6 +683,7 @@ router.post('/upload-csv', upload.single('csvFile'), async (req: Request, res: R
         totalProcessed: Object.keys(processedItems).length,
         newItems: processedCount,
         updatedItems: updatedCount,
+        vendorMappings: vendorMappingCount,
         errors: errors.length,
         warnings: warnings.length
       },
@@ -623,17 +794,7 @@ router.get('/export/pdf', async (req: Request, res: Response) => {
   }
 });
 
-// Get CSV template endpoint
-router.get('/csv-template', (req: Request, res: Response) => {
-  const csvTemplate = `part_number,part_description,unit,quantity,last_unit_cost,reorder_point,part_type,category
-ABC123,Sample Part Description,Each,10,25.50,5,stock,Fasteners
-E-11,Hyphen allowed visually,pcs,5,15.75,2,stock,Electrical
-(1/2)HOSE,Use parentheses for fractions,ft,20,12.00,5,stock,Plumbing`;
 
-  res.setHeader('Content-Type', 'text/csv');
-  res.setHeader('Content-Disposition', 'attachment; filename="inventory_template.csv"');
-  res.send(csvTemplate);
-});
 
 // Cleanup inventory spaces endpoint
 router.post('/cleanup-spaces', async (req: Request, res: Response) => {
@@ -654,39 +815,59 @@ router.post('/cleanup-spaces', async (req: Request, res: Response) => {
     let errorCount = 0;
     
     for (const item of items) {
-      try {
-        // Check if any fields need trimming
-        const needsUpdate = 
-          item.part_number !== item.part_number.trim() ||
-          item.part_description !== item.part_description.trim() ||
-          item.unit !== item.unit.trim() ||
-          item.part_type !== item.part_type.trim() ||
-          (item.category && item.category !== item.category.trim());
-        
-        if (needsUpdate) {
-          // Update with trimmed values
-          await client.query(`
-            UPDATE inventory 
-            SET 
-              part_number = $1,
-              part_description = $2,
-              unit = $3,
-              part_type = $4,
-              category = $5,
-              updated_at = CURRENT_TIMESTAMP
-            WHERE part_number = $6
-          `, [
-            item.part_number.trim().toUpperCase(),
-            item.part_description.trim(),
-            item.unit.trim(),
-            item.part_type.trim(),
-            item.category ? item.category.trim() : 'Uncategorized',
-            item.part_number // Use original for WHERE clause
-          ]);
-          
-          updatedCount++;
-          console.log(`Updated item: ${item.part_number} -> "${item.part_number.trim().toUpperCase()}"`);
-        }
+                           try {
+          // Apply full cleaning rules to part number
+          const originalPartNumber = String(item.part_number || '');
+          const { cleaned: cleanedPartNumber, hadIllegal } = cleanPartNumberAdvanced(originalPartNumber);
+          const slashOk = isSlashInsideParentheses(cleanedPartNumber);
+         
+                   console.log(`cleanup-spaces processing: "${originalPartNumber}" -> cleaned: "${cleanedPartNumber}", slashOk: ${slashOk}, hadIllegal: ${hadIllegal}`);
+         
+                   // Check if any fields need trimming or cleaning
+          const needsUpdate = 
+            item.part_description !== item.part_description.trim() ||
+            item.unit !== item.unit.trim() ||
+            item.part_type !== item.part_type.trim() ||
+            (item.category && item.category !== item.category.trim()) ||
+            originalPartNumber !== cleanedPartNumber ||
+            hadIllegal ||
+            /\s/.test(originalPartNumber);
+         
+                   if (needsUpdate) {
+            // Skip part numbers with slash violations (require manual fixing)
+            const finalPartNumber = slashOk ? cleanedPartNumber : originalPartNumber;
+            
+            console.log(`Updating item: "${item.part_number}" -> "${finalPartNumber}" (needsUpdate: ${needsUpdate})`);
+           
+           // Update with cleaned values
+           await client.query(`
+             UPDATE inventory 
+             SET 
+               part_number = $1,
+               part_description = $2,
+               unit = $3,
+               part_type = $4,
+               category = $5,
+               updated_at = CURRENT_TIMESTAMP
+             WHERE part_number = $6
+           `, [
+             finalPartNumber,
+             item.part_description.trim(),
+             item.unit.trim(),
+             item.part_type.trim(),
+             item.category ? item.category.trim() : 'Uncategorized',
+             item.part_number // Use original for WHERE clause
+           ]);
+           
+           updatedCount++;
+           if (originalPartNumber !== finalPartNumber) {
+             console.log(`Cleaned part number: "${originalPartNumber}" -> "${finalPartNumber}"`);
+           } else {
+             console.log(`Trimmed fields for: "${item.part_number}"`);
+           }
+         } else {
+           console.log(`No update needed for: "${item.part_number}"`);
+         }
       } catch (error) {
         errorCount++;
         console.error(`Error updating item ${item.part_number}:`, error);
@@ -739,30 +920,34 @@ router.post('/cleanup-enforce', async (req: Request, res: Response) => {
     // Build duplicates map by normalized key
     const dupMap: Record<string, { normalized: string; candidates: any[] }> = {};
 
-    for (const item of items) {
-      const original = String(item.part_number || '').toUpperCase();
-      const { cleaned, hadIllegal } = cleanPartNumberRaw(original);
-      const slashOk = isSlashInsideParentheses(cleaned);
-      const allowedOnly = isAllowedCharactersOnly(cleaned);
-      const actions: string[] = [];
-      if (original !== original.trim()) actions.push('trimmed');
-      if (hadIllegal) actions.push('removed_illegal_chars');
-      if (/\s/.test(original)) actions.push('removed_spaces');
-      if (original !== cleaned) actions.push('uppercased_and_filtered');
+                   for (const item of items) {
+        const original = String(item.part_number || '');
+        const { cleaned, hadIllegal } = cleanPartNumberAdvanced(original);
+        const slashOk = isSlashInsideParentheses(cleaned);
+        const allowedOnly = isAllowedCharactersOnly(cleaned);
+        const actions: string[] = [];
+        if (original !== original.trim()) actions.push('trimmed');
+        if (hadIllegal) actions.push('removed_illegal_chars');
+        if (/\s/.test(original)) actions.push('removed_spaces');
+        if (original !== cleaned) actions.push('uppercased_and_filtered');
+        if (original !== cleaned) actions.push('fraction_formatting');
 
-      if (!slashOk) {
-        // Cannot auto-fix; require manual formatting
-        slashViolations.push(original);
+        console.log(`cleanup-enforce processing: "${original}" -> cleaned: "${cleaned}", slashOk: ${slashOk}, allowedOnly: ${allowedOnly}`);
+
+        if (!slashOk) {
+          // Cannot auto-fix; require manual formatting
+          slashViolations.push(original);
+        }
+
+        if (original !== cleaned || hadIllegal || !allowedOnly || !slashOk) {
+          fixes.push({ part_number: original, cleaned_part_number: cleaned, actions, slash_violation: !slashOk });
+          console.log(`Added fix: "${original}" -> "${cleaned}" (actions: ${actions.join(', ')})`);
+        }
+
+        const normKey = normalizePartNumberForDuplicateCheck(cleaned);
+        if (!dupMap[normKey]) dupMap[normKey] = { normalized: normKey, candidates: [] };
+        dupMap[normKey].candidates.push(item);
       }
-
-      if (original !== cleaned || hadIllegal || !allowedOnly || !slashOk) {
-        fixes.push({ part_number: original, cleaned_part_number: cleaned, actions, slash_violation: !slashOk });
-      }
-
-      const normKey = normalizePartNumberForDuplicateCheck(cleaned);
-      if (!dupMap[normKey]) dupMap[normKey] = { normalized: normKey, candidates: [] };
-      dupMap[normKey].candidates.push(item);
-    }
 
     const duplicateGroups = Object.values(dupMap)
       .filter(group => group.candidates.length > 1)
@@ -795,17 +980,29 @@ router.post('/cleanup-enforce', async (req: Request, res: Response) => {
     let fixesApplied = 0;
     let fixesSkipped = 0;
     for (const fx of fixes) {
-      if (fx.slash_violation) { fixesSkipped++; continue; }
+      // Skip slash violations as they require manual fixing
+      if (fx.slash_violation) { 
+        fixesSkipped++; 
+        continue; 
+      }
+      
+      // Skip if no change needed
       if (fx.part_number === fx.cleaned_part_number) continue;
-      // If target already exists, skip here; merging will handle duplicates
+      
+      // Check if target already exists (this will be handled by merging later)
       const existingTarget = await client.query('SELECT part_number FROM inventory WHERE part_number = $1', [fx.cleaned_part_number]);
-      if (existingTarget.rows.length > 0) { fixesSkipped++; continue; }
-      // Update primary key
+      if (existingTarget.rows.length > 0) { 
+        fixesSkipped++; 
+        continue; 
+      }
+      
+      // Apply the fix by updating the part number
       await client.query(
         'UPDATE inventory SET part_number = $1, updated_at = CURRENT_TIMESTAMP WHERE part_number = $2',
         [fx.cleaned_part_number, fx.part_number]
       );
       fixesApplied++;
+      console.log(`Applied fix: "${fx.part_number}" -> "${fx.cleaned_part_number}" (actions: ${fx.actions.join(', ')})`);
     }
 
     // Apply: 2) perform merges if provided
@@ -854,6 +1051,240 @@ router.post('/cleanup-enforce', async (req: Request, res: Response) => {
     await client.query('ROLLBACK');
     console.error('inventoryRoutes: Error during cleanup-enforce:', error);
     res.status(500).json({ error: 'Internal server error during cleanup-enforce' });
+  } finally {
+    client.release();
+  }
+});
+
+// Auto-cleanup endpoint that applies all possible fixes automatically
+router.post('/cleanup-auto', async (req: Request, res: Response) => {
+  const { partType } = req.body || {};
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    // Load items
+    const baseQuery = partType && (partType === 'stock' || partType === 'supply')
+      ? 'SELECT * FROM inventory WHERE part_type = $1'
+      : 'SELECT * FROM inventory';
+    const params = partType && (partType === 'stock' || partType === 'supply') ? [partType] : [];
+    const itemsResult = await client.query(baseQuery, params);
+    const items = itemsResult.rows;
+
+    console.log(`Starting auto-cleanup for ${items.length} items...`);
+
+    // Step 1: Apply all possible fixes (excluding slash violations)
+    let fixesApplied = 0;
+    let fixesSkipped = 0;
+    const slashViolations: string[] = [];
+
+         for (const item of items) {
+       const original = String(item.part_number || '');
+       const { cleaned, hadIllegal } = cleanPartNumberAdvanced(original);
+       const slashOk = isSlashInsideParentheses(cleaned);
+       
+       console.log(`Processing item: "${original}" -> cleaned: "${cleaned}", slashOk: ${slashOk}, hadIllegal: ${hadIllegal}`);
+       
+       if (!slashOk) {
+         slashViolations.push(original);
+         console.log(`Skipping slash violation: "${original}"`);
+         continue;
+       }
+
+       // Check if any cleaning is needed (including case changes, spaces, illegal chars, fraction formatting)
+       const needsCleaning = original !== cleaned || hadIllegal || /\s/.test(original);
+       
+       console.log(`Needs cleaning: ${needsCleaning} (original !== cleaned: ${original !== cleaned}, hadIllegal: ${hadIllegal}, hasSpaces: ${/\s/.test(original)})`);
+       
+       if (needsCleaning) {
+         // Check if target already exists
+         const existingTarget = await client.query('SELECT part_number FROM inventory WHERE part_number = $1', [cleaned]);
+         if (existingTarget.rows.length > 0) {
+           fixesSkipped++;
+           console.log(`Skipping fix for "${original}" -> "${cleaned}" because target already exists`);
+           continue;
+         }
+
+         // Apply the fix
+         await client.query(
+           'UPDATE inventory SET part_number = $1, updated_at = CURRENT_TIMESTAMP WHERE part_number = $2',
+           [cleaned, original]
+         );
+         fixesApplied++;
+         console.log(`Auto-fixed: "${original}" -> "${cleaned}"`);
+       } else {
+         console.log(`No fix needed for: "${original}"`);
+       }
+     }
+
+    // Step 2: Handle duplicates automatically
+    const dupMap: Record<string, any[]> = {};
+    
+    // Re-query items after fixes to get updated data
+    const updatedItemsResult = await client.query(baseQuery, params);
+    const updatedItems = updatedItemsResult.rows;
+
+    for (const item of updatedItems) {
+      const normKey = normalizePartNumberForDuplicateCheck(item.part_number);
+      if (!dupMap[normKey]) dupMap[normKey] = [];
+      dupMap[normKey].push(item);
+    }
+
+    let mergedGroups = 0;
+    let mergedItems = 0;
+
+    for (const [normKey, candidates] of Object.entries(dupMap)) {
+      if (candidates.length > 1) {
+        // Prefer candidate with dash, else first
+        const keep = candidates.find(c => String(c.part_number).includes('-')) || candidates[0];
+        const others = candidates.filter(c => c.part_number !== keep.part_number);
+        
+        // Check for unit mismatches
+        const units = new Set(candidates.map(c => c.unit));
+        if (units.size > 1) {
+          console.log(`Skipping merge for ${normKey} due to unit mismatch: ${Array.from(units).join(', ')}`);
+          continue;
+        }
+
+        // Merge quantities and take max costs/reorder points
+        let totalQty = parseFloat(keep.quantity_on_hand || 0) || 0;
+        let maxCost = parseFloat(keep.last_unit_cost || 0) || 0;
+        let maxReorder = parseFloat(keep.reorder_point || 0) || 0;
+
+        for (const other of others) {
+          totalQty += parseFloat(other.quantity_on_hand || 0) || 0;
+          maxCost = Math.max(maxCost, parseFloat(other.last_unit_cost || 0) || 0);
+          maxReorder = Math.max(maxReorder, parseFloat(other.reorder_point || 0) || 0);
+        }
+
+        // Update keep item
+        await client.query(
+          `UPDATE inventory SET quantity_on_hand = $1, last_unit_cost = $2, reorder_point = $3, updated_at = CURRENT_TIMESTAMP WHERE part_number = $4`,
+          [totalQty, maxCost, maxReorder, keep.part_number]
+        );
+
+        // Delete other items
+        for (const other of others) {
+          await client.query('DELETE FROM inventory WHERE part_number = $1', [other.part_number]);
+          mergedItems++;
+        }
+
+        mergedGroups++;
+        console.log(`Auto-merged ${candidates.length} items into "${keep.part_number}"`);
+      }
+    }
+
+    await client.query('COMMIT');
+
+    res.json({
+      success: true,
+      message: 'Auto-cleanup completed successfully',
+      summary: {
+        totalProcessed: items.length,
+        fixesApplied,
+        fixesSkipped,
+        mergedGroups,
+        mergedItems,
+        slashViolations: slashViolations.length
+      },
+      slashViolations: slashViolations.length > 0 ? slashViolations : undefined
+    });
+
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Error during auto-cleanup:', error);
+    res.status(500).json({ 
+      error: 'Internal server error during auto-cleanup',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  } finally {
+    client.release();
+  }
+});
+
+// Fix double parentheses endpoint
+router.post('/fix-double-parentheses', async (req: Request, res: Response) => {
+  const { partType } = req.body || {};
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    // Load items
+    const baseQuery = partType && (partType === 'stock' || partType === 'supply')
+      ? 'SELECT * FROM inventory WHERE part_type = $1'
+      : 'SELECT * FROM inventory';
+    const params = partType && (partType === 'stock' || partType === 'supply') ? [partType] : [];
+    const itemsResult = await client.query(baseQuery, params);
+    const items = itemsResult.rows;
+
+    console.log(`Starting double parentheses fix for ${items.length} items...`);
+
+    let fixedCount = 0;
+    let skippedCount = 0;
+    const fixedItems: string[] = [];
+
+    for (const item of items) {
+      const original = String(item.part_number || '');
+      
+      // Check if the part number contains double parentheses patterns
+      if (original.includes('((') || original.includes('))')) {
+        console.log(`Found double parentheses in: "${original}"`);
+        
+        // Fix double parentheses by removing the outer set
+        let fixed = original;
+        
+        // Replace (( with ( and )) with )
+        fixed = fixed.replace(/\(\(/g, '(');
+        fixed = fixed.replace(/\)\)/g, ')');
+        
+        // Also handle cases like ((1/4)) -> (1/4)
+        fixed = fixed.replace(/\(\(([^)]+)\)\)/g, '($1)');
+        
+        console.log(`Fixed: "${original}" -> "${fixed}"`);
+        
+        // Check if target already exists
+        const existingTarget = await client.query('SELECT part_number FROM inventory WHERE part_number = $1', [fixed]);
+        if (existingTarget.rows.length > 0) {
+          skippedCount++;
+          console.log(`Skipping fix for "${original}" -> "${fixed}" because target already exists`);
+          continue;
+        }
+
+        // Apply the fix
+        await client.query(
+          'UPDATE inventory SET part_number = $1, updated_at = CURRENT_TIMESTAMP WHERE part_number = $2',
+          [fixed, original]
+        );
+        fixedCount++;
+        fixedItems.push(`${original} -> ${fixed}`);
+        console.log(`Fixed double parentheses: "${original}" -> "${fixed}"`);
+      } else {
+        console.log(`No double parentheses found in: "${original}"`);
+      }
+    }
+
+    await client.query('COMMIT');
+
+    res.json({
+      success: true,
+      message: 'Double parentheses fix completed successfully',
+      summary: {
+        totalProcessed: items.length,
+        fixedCount,
+        skippedCount
+      },
+      fixedItems: fixedItems.length > 0 ? fixedItems : undefined
+    });
+
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Error during double parentheses fix:', error);
+    res.status(500).json({ 
+      error: 'Internal server error during double parentheses fix',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
   } finally {
     client.release();
   }

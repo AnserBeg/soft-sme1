@@ -29,6 +29,7 @@ import {
 } from '../utils/salesOrderCalculations';
 import { formatCurrency } from '../utils/formatters';
 import { useDebounce } from '../hooks/useDebounce';
+import UnsavedChangesGuard from '../components/UnsavedChangesGuard';
 
 const UNIT_OPTIONS = ['Each', 'cm', 'ft', 'kg', 'pcs', 'hr', 'L'];
 type PartOption = string | { label: string; isNew?: true; inputValue?: string };
@@ -158,9 +159,26 @@ const SalesOrderDetailPage: React.FC = () => {
   const [loading, setLoading] = useState<boolean>(!isCreationMode);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
-  const isClosed = !!salesOrder && salesOrder.status?.toLowerCase() === 'closed';
-
   const [quantityToOrderItems, setQuantityToOrderItems] = useState<PartsToOrderItem[]>([]);
+  // Unsaved changes guard
+  const [initialSignature, setInitialSignature] = useState<string>('');
+  useEffect(() => {
+    if (!isCreationMode && salesOrder) {
+      setInitialSignature(JSON.stringify({
+        header: { customer, product, salesDate, terms, customerPoNumber, vinNumber, estimatedCost },
+        lineItems,
+        quantityToOrderItems,
+      }));
+    } else if (isCreationMode) {
+      setInitialSignature(JSON.stringify({ header: { customer, product, salesDate, terms }, lineItems }));
+    }
+  }, [isCreationMode, salesOrder]);
+  const isDirty = Boolean(initialSignature) && initialSignature !== JSON.stringify({
+    header: { customer, product, salesDate, terms, customerPoNumber, vinNumber, estimatedCost },
+    lineItems,
+    quantityToOrderItems,
+  });
+  const isClosed = !!salesOrder && salesOrder.status?.toLowerCase() === 'closed';
   const [originalLineItems, setOriginalLineItems] = useState<SalesOrderLineItem[]>([]);
   const [negativeAvailabilityItems, setNegativeAvailabilityItems] = useState<Array<{
     lineItemIndex: number; partNumber: string; partDescription: string; excessQuantity: number; unit: string;
@@ -722,6 +740,11 @@ const SalesOrderDetailPage: React.FC = () => {
           }));
         await api.put(`/api/sales-orders/${id}`, { ...payload, partsToOrder });
         setSuccess('Sales Order updated successfully!');
+        setInitialSignature(JSON.stringify({
+          header: { customer, product, salesDate, terms, customerPoNumber, vinNumber, estimatedCost },
+          lineItems,
+          quantityToOrderItems,
+        }));
         // Refresh SO and inventory so availability deltas use latest baseline
         try {
           const [soRes, inv] = await Promise.all([
@@ -993,7 +1016,9 @@ const SalesOrderDetailPage: React.FC = () => {
               {exportLoading ? 'Exporting...' : 'Export to QuickBooks'}
             </Button>
           )}
-          <Button variant="contained" onClick={handleReopenSO}>Reopen SO</Button>
+          {user?.access_role !== 'Sales and Purchase' && (
+            <Button variant="contained" color="primary" onClick={handleReopenSO}>Reopen SO</Button>
+          )}
         </Box>
       </Box>
     );
@@ -1017,11 +1042,24 @@ const SalesOrderDetailPage: React.FC = () => {
       </Container>
     );
   }
+  // Prevent Sales and Purchase users from accessing closed sales orders
+  if (!isCreationMode && isClosed && user?.access_role === 'Sales and Purchase') {
+    return (
+      <Container component="main" maxWidth="md" sx={{ mt: 8, textAlign: 'center' }}>
+        <Alert severity="error" sx={{ mb: 2 }}>
+          Access Denied: Sales and Purchase users cannot view closed sales orders.
+        </Alert>
+        <Button variant="outlined" onClick={() => navigate('/open-sales-orders')}>Back to Sales Orders</Button>
+      </Container>
+    );
+  }
+  
   if (!isCreationMode && isClosed) return renderReadOnly();
 
   // ---------- Main form (Create + Edit Open) ----------
   return (
     <LocalizationProvider dateAdapter={AdapterDayjs}>
+      <UnsavedChangesGuard when={isDirty} onSave={handleSave} />
       <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
         <Box sx={{ display:'flex', justifyContent:'space-between', alignItems:'center', mb:3 }}>
           <Typography variant="h4" component="h1">
@@ -1045,7 +1083,9 @@ const SalesOrderDetailPage: React.FC = () => {
             </Button>
             {!isCreationMode && (
               <>
-                <Button variant="contained" startIcon={<DoneAllIcon />} onClick={handleCloseSO}>Close SO</Button>
+                {user?.access_role !== 'Sales and Purchase' && (
+                  <Button variant="contained" startIcon={<DoneAllIcon />} onClick={handleCloseSO}>Close SO</Button>
+                )}
                 <Button variant="contained" startIcon={<DownloadIcon />} onClick={handleDownloadPDF}>Download PDF</Button>
               </>
             )}
@@ -1761,7 +1801,9 @@ const SalesOrderDetailPage: React.FC = () => {
                 <Button variant="contained" color="success" startIcon={<CloudUploadIcon />} disabled={exportLoading} onClick={handleExportToQBO}>
                   {exportLoading ? 'Exporting...' : 'Export to QuickBooks'}
                 </Button>
-                <Button variant="outlined" onClick={handleReopenSO}>Reopen SO</Button>
+                {user?.access_role !== 'Sales and Purchase' && (
+                  <Button variant="outlined" onClick={handleReopenSO}>Reopen SO</Button>
+                )}
               </Box>
             )}
           </>

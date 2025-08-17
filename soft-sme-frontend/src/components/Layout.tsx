@@ -87,7 +87,6 @@ const Layout: React.FC = () => {
     { type: 'header', text: 'Sales' },
     { text: 'Quotes', icon: <ListAltIcon />, path: '/quotes' },
     { text: 'Sales Orders', icon: <ReceiptIcon />, path: '/open-sales-orders' },
-    { text: 'Worker Sales Orders', icon: <ReceiptIcon />, path: '/woker-sales-orders' },
     { text: 'Customers', icon: <PeopleIcon />, path: '/customers' },
 
     { type: 'header', text: 'Products & Inventory' },
@@ -129,9 +128,13 @@ const Layout: React.FC = () => {
         ...dashboardSection,
         { type: 'header', text: 'Sales & Purchase' },
         { text: 'Sales Orders', icon: <ReceiptIcon />, path: '/open-sales-orders' },
-        { text: 'Worker Sales Orders', icon: <ReceiptIcon />, path: '/woker-sales-orders' },
         { text: 'Purchase Orders', icon: <AssignmentIcon />, path: '/open-purchase-orders' },
         { text: 'Parts to Order', icon: <InventoryIcon />, path: '/parts-to-order' },
+        { type: 'header', text: 'Inventory' },
+        { text: 'Stock', icon: <InventoryIcon />, path: '/inventory' },
+        { text: 'Supply', icon: <InventoryIcon />, path: '/supply' },
+        { type: 'header', text: 'Settings' },
+        { text: 'Email Settings', icon: <EmailIcon />, path: '/email-settings' },
       ];
     }
     return menuItems;

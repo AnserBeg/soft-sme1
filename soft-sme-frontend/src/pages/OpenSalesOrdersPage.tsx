@@ -24,7 +24,6 @@ import ReplayIcon from '@mui/icons-material/Replay';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ErrorIcon from '@mui/icons-material/Error';
 import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty';
-import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import { InputAdornment } from '@mui/material';
 import { parseNumericInput } from '../utils/salesOrderCalculations';
 
@@ -36,9 +35,6 @@ const OpenSalesOrdersPage: React.FC = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
   const [openDialog, setOpenDialog] = useState(false);
-  const [exportLoading, setExportLoading] = useState<number | null>(null); // Track which SO is being exported
-  const [exportError, setExportError] = useState<string | null>(null);
-  const [exportSuccess, setExportSuccess] = useState<string | null>(null);
 
 
   const [paginationModel, setPaginationModel] = useState<GridPaginationModel>({
@@ -48,7 +44,10 @@ const OpenSalesOrdersPage: React.FC = () => {
 
   const fetchSalesOrders = async (statusFilter = status) => {
     try {
-      const response = await api.get('/api/sales-orders', { params: { status: statusFilter } });
+      // For Sales and Purchase users, only fetch open sales orders
+      const effectiveStatusFilter = user?.access_role === 'Sales and Purchase' ? 'open' : statusFilter;
+      
+      const response = await api.get('/api/sales-orders', { params: { status: effectiveStatusFilter } });
       
       // Sort by sequence number (extracted from sales_order_number) with latest on top
       const sortedOrders = response.data.sort((a: any, b: any) => {
@@ -92,7 +91,7 @@ const OpenSalesOrdersPage: React.FC = () => {
 
   useEffect(() => {
     fetchSalesOrders(status);
-  }, [status]);
+  }, [status, user?.access_role]);
 
   const handleCloseOrder = async (salesOrderId: number) => {
     if (window.confirm(`Are you sure you want to close this Sales Order?`)) {
@@ -201,24 +200,7 @@ const OpenSalesOrdersPage: React.FC = () => {
     }
   };
 
-  const handleExportToQBO = async (salesOrderId: number) => {
-    setExportLoading(salesOrderId);
-    setExportError(null);
-    setExportSuccess(null);
-    try {
-      const response = await api.post(`/api/sales-orders/${salesOrderId}/export-to-qbo`);
-      toast.success('Exported to QuickBooks successfully!');
-      setExportSuccess(`Sales Order exported to QuickBooks successfully! Invoice ID: ${response.data.qboInvoiceId}`);
-      // Refetch sales orders to update export status
-      fetchSalesOrders(status);
-    } catch (error: any) {
-      const errorMessage = error?.response?.data?.error || 'Failed to export to QuickBooks.';
-      setExportError(errorMessage);
-      toast.error(errorMessage);
-    } finally {
-      setExportLoading(null);
-    }
-  };
+
 
 
   const filteredRows = rows.filter((row) =>
@@ -266,27 +248,10 @@ const OpenSalesOrdersPage: React.FC = () => {
     {
       field: 'actions',
       headerName: 'Actions',
-      width: 150,
+      width: 100,
       sortable: false,
       renderCell: (params) => (
         <Box sx={{ display: 'flex', gap: 0.5 }}>
-          {params.row.status === 'Closed' && !params.row.exported_to_qbo && (
-            <IconButton 
-              size="small" 
-              color="success" 
-              onClick={(e) => {
-                e.stopPropagation();
-                handleExportToQBO(params.row.sales_order_id);
-              }}
-              disabled={exportLoading === params.row.sales_order_id}
-            >
-              {exportLoading === params.row.sales_order_id ? (
-                <CircularProgress size={16} />
-              ) : (
-                <CloudUploadIcon />
-              )}
-            </IconButton>
-          )}
           {params.row.status !== 'Closed' && (
             <IconButton size="small" color="error" onClick={(e) => {
               e.stopPropagation();
@@ -369,14 +334,12 @@ const OpenSalesOrdersPage: React.FC = () => {
   };
 
   if (user?.access_role === 'Time Tracking') {
-    // For time tracking users, only show open sales orders and hide delete functionality
-    const openOrdersOnly = filteredRows.filter(row => row.status === 'Open');
-    
+    // For time tracking users, show all orders but hide delete functionality
     return (
       <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
         <Box sx={{ mb: 4 }}>
           <Typography variant="h4" component="h1" gutterBottom>
-            Sales Orders (Open Only)
+            Sales Orders
           </Typography>
           <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2 }}>
             {/* No buttons for time tracking users */}
@@ -400,14 +363,9 @@ const OpenSalesOrdersPage: React.FC = () => {
                 sx={{ minWidth: 340, maxWidth: 400, '& .MuiInputBase-input': { fontSize: 22, py: 2 }, '& .MuiInputLabel-root': { fontSize: 20 } }}
                 size="small"
               />
-              <Chip
-                label="Open"
-                color="primary"
-                sx={{ fontSize: 18, px: 3, py: 1.5, minWidth: 80, height: 44 }}
-              />
             </Stack>
             <DataGrid
-              rows={openOrdersOnly}
+              rows={filteredRows}
               columns={columns.filter(col => col.field !== 'actions')} // Hide actions column for time tracking users
               loading={false}
               paginationModel={paginationModel}
@@ -447,18 +405,6 @@ const OpenSalesOrdersPage: React.FC = () => {
             />
           </Box>
         </Paper>
-
-        {/* Export Status Alerts */}
-        {exportError && (
-          <Alert severity="error" sx={{ mt: 2 }} onClose={() => setExportError(null)}>
-            {exportError}
-          </Alert>
-        )}
-        {exportSuccess && (
-          <Alert severity="success" sx={{ mt: 2 }} onClose={() => setExportSuccess(null)}>
-            {exportSuccess}
-          </Alert>
-        )}
       </Container>
     );
   }
@@ -467,7 +413,7 @@ const OpenSalesOrdersPage: React.FC = () => {
     <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
       <Box sx={{ mb: 4 }}>
         <Typography variant="h4" component="h1" gutterBottom>
-          Sales Orders
+          {user?.access_role === 'Sales and Purchase' ? 'Sales Orders (Open Only)' : 'Sales Orders'}
         </Typography>
         {(status === 'open' || status === 'all') && (
           <Box sx={{ mb: 2, p: 2, bgcolor: 'background.paper', borderRadius: 1, border: '1px solid', borderColor: 'divider' }}>
@@ -519,24 +465,28 @@ const OpenSalesOrdersPage: React.FC = () => {
               sx={{ minWidth: 340, maxWidth: 400, '& .MuiInputBase-input': { fontSize: 22, py: 2 }, '& .MuiInputLabel-root': { fontSize: 20 } }}
               size="small"
             />
-            <Chip
-              label="All"
-              onClick={() => setStatus('all')}
-              color={status === 'all' ? 'primary' : 'default'}
-              sx={{ fontSize: 18, px: 3, py: 1.5, minWidth: 80, height: 44 }}
-            />
+            {user?.access_role !== 'Sales and Purchase' && (
+              <Chip
+                label="All"
+                onClick={() => setStatus('all')}
+                color={status === 'all' ? 'primary' : 'default'}
+                sx={{ fontSize: 18, px: 3, py: 1.5, minWidth: 80, height: 44 }}
+              />
+            )}
             <Chip
               label="Open"
               onClick={() => setStatus('open')}
               color={status === 'open' ? 'primary' : 'default'}
               sx={{ fontSize: 18, px: 3, py: 1.5, minWidth: 80, height: 44 }}
             />
-            <Chip
-              label="Closed"
-              onClick={() => setStatus('closed')}
-              color={status === 'closed' ? 'primary' : 'default'}
-              sx={{ fontSize: 18, px: 3, py: 1.5, minWidth: 80, height: 44 }}
-            />
+            {user?.access_role !== 'Sales and Purchase' && (
+              <Chip
+                label="Closed"
+                onClick={() => setStatus('closed')}
+                color={status === 'closed' ? 'primary' : 'default'}
+                sx={{ fontSize: 18, px: 3, py: 1.5, minWidth: 80, height: 44 }}
+              />
+            )}
           </Stack>
           <DataGrid
             rows={filteredRows}
@@ -580,17 +530,7 @@ const OpenSalesOrdersPage: React.FC = () => {
         </Box>
       </Paper>
 
-      {/* Export Status Alerts */}
-      {exportError && (
-        <Alert severity="error" sx={{ mt: 2 }} onClose={() => setExportError(null)}>
-          {exportError}
-        </Alert>
-      )}
-      {exportSuccess && (
-        <Alert severity="success" sx={{ mt: 2 }} onClose={() => setExportSuccess(null)}>
-          {exportSuccess}
-        </Alert>
-      )}
+
     </Container>
   );
 };

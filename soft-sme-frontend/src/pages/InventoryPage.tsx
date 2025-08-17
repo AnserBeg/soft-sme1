@@ -105,10 +105,10 @@ const InventoryPage: React.FC = () => {
 
   // Fix: filter(Boolean) returns (GridColDef | null)[], so cast to GridColDef[]
   const columns = ([
-    { field: 'part_number', headerName: 'Part #', flex: 1, headerAlign: 'left' },
+    { field: 'part_number', headerName: 'Part #', flex: 1, headerAlign: 'left', editable: true },
     { field: 'part_description', headerName: 'Part Description', flex: 2, headerAlign: 'left' },
     { field: 'category', headerName: 'Category', flex: 1, headerAlign: 'left' },
-    { field: 'quantity_on_hand', headerName: 'Quantity on Hand', flex: 1, type: 'number', editable: true, align: 'center', headerAlign: 'left' },
+    { field: 'quantity_on_hand', headerName: 'Quantity on Hand', flex: 1, type: 'number', editable: user?.access_role !== 'Sales and Purchase', align: 'center', headerAlign: 'left' },
     { field: 'unit', headerName: 'UOM', flex: 0.5, headerAlign: 'left' },
     { 
       field: 'last_unit_cost', 
@@ -142,10 +142,10 @@ const InventoryPage: React.FC = () => {
         const v = Number(params.value) || 0;
         return `$${v.toFixed(2)}`;
       },
-      headerAlign: 'left',
+      headerAlign: 'center',
       align: 'center',
     },
-    user?.access_role !== 'Sales and Purchase' ? {
+    {
       field: 'actions',
       headerName: 'Actions',
       width: 100,
@@ -159,7 +159,7 @@ const InventoryPage: React.FC = () => {
           <DeleteIcon fontSize="medium" sx={{ fontSize: 28 }} />
         </IconButton>
       ),
-    } : null,
+    },
   ].filter(Boolean) as GridColDef[]);
 
   // Handle Delete Action
@@ -182,12 +182,29 @@ const InventoryPage: React.FC = () => {
     }
   };
 
-  // Handle cell edit commit (for quantity_on_hand and reorder_point)
+  // Handle cell edit commit (for quantity_on_hand, reorder_point, and part_number)
   const processRowUpdate = async (newRow: any, oldRow: any) => {
     console.log('Attempting to update row:', newRow);
 
     const updatedFields: any = {};
+    
+    // Handle part number changes
+    if (newRow.part_number !== oldRow.part_number) {
+      const newPartNumber = String(newRow.part_number).trim().toUpperCase();
+      if (!newPartNumber) {
+        alert('Part number cannot be empty.');
+        return Promise.reject('Invalid part number');
+      }
+      updatedFields.part_number = newPartNumber;
+    }
+    
     if (newRow.quantity_on_hand !== oldRow.quantity_on_hand) {
+      // Prevent Sales and Purchase users from updating quantity on hand
+      if (user?.access_role === 'Sales and Purchase') {
+        alert('Sales and Purchase users cannot modify quantity on hand for existing parts.');
+        return Promise.reject('Access denied');
+      }
+      
       const newQuantity = parseFloat(String(newRow.quantity_on_hand));
       if (isNaN(newQuantity)) {
          alert('Invalid quantity value. Please enter a valid number.');
@@ -224,28 +241,26 @@ const InventoryPage: React.FC = () => {
         return newRow;
     }
 
-    const partNumber = newRow.part_number;
+    // Use the old part number for the API call URL, but include the new part number in the request body if it changed
+    const apiPartNumber = updatedFields.part_number ? oldRow.part_number : newRow.part_number;
 
     try {
-      // This PUT request now sends either quantity_on_hand, reorder_point, or both
-      const response = await api.put(`/api/inventory/${encodeURIComponent(partNumber)}`, updatedFields); // Use api instead of axios
+      // This PUT request now sends the updated fields including part_number if it changed
+      const response = await api.put(`/api/inventory/${encodeURIComponent(apiPartNumber)}`, updatedFields);
 
-      console.log(`Inventory updated for part ${partNumber}:`, response.data);
-      alert(`Part ${partNumber} updated successfully!`);
+      console.log(`Inventory updated for part ${apiPartNumber}:`, response.data);
+      alert(`Part ${apiPartNumber} updated successfully!`);
 
-      // Assuming backend returns the updated item in response.data.updatedItem
-      const updatedRows = rows.map((row) =>
-        row.id === response.data.updatedItem.part_number ? { ...row, ...response.data.updatedItem } : row
-      );
-      setRows(updatedRows);
+      // Refresh the entire inventory list to handle part number changes properly
+      await fetchInventory();
 
-      return response.data.updatedItem;
+      return response.data.updatedItem || newRow;
     } catch (error) {
-      console.error(`Error updating inventory for part ${partNumber}:`, error);
+      console.error(`Error updating inventory for part ${apiPartNumber}:`, error);
       if (error instanceof AxiosError && error.response && error.response.data && (error.response.data as any).error) {
           alert(`Error updating inventory: ${(error.response.data as any).error}`);
       } else {
-          alert(`Error updating inventory for part ${partNumber}. Please check the console.`);
+          alert(`Error updating inventory for part ${apiPartNumber}. Please check the console.`);
       }
       return Promise.reject(error);
     }
@@ -316,44 +331,20 @@ const InventoryPage: React.FC = () => {
 
 
 
-  const [editDialogOpen, setEditDialogOpen] = useState(false);
-  const [editPart, setEditPart] = useState<any | null>(null);
+
 
   const handleRowClick = (params: any) => {
-    setEditPart({ ...params.row });
-    setEditDialogOpen(true);
-  };
-
-  const handleEditField = (field: string, value: any) => {
-    setEditPart((prev: any) => ({ ...prev, [field]: value }));
-  };
-
-  const handleSaveEdit = async () => {
-    if (!editPart) return;
-    try {
-      const { part_number, ...fields } = editPart;
-      
-      // Trim string fields before sending to backend
-      const trimmedFields = {
-        ...fields,
-        part_description: fields.part_description ? fields.part_description.trim() : '',
-        unit: fields.unit ? fields.unit.trim() : '',
-        part_type: fields.part_type ? fields.part_type.trim() : '',
-        category: fields.category ? fields.category.trim() : 'Uncategorized'
-      };
-      
-      await api.put(`/api/inventory/${encodeURIComponent(part_number.toUpperCase())}`, trimmedFields);
-      setEditDialogOpen(false);
-      setEditPart(null);
-      fetchInventory();
-    } catch (error) {
-      alert('Failed to update part.');
-    }
-  };
-
-  const handleCloseEditDialog = () => {
-    setEditDialogOpen(false);
-    setEditPart(null);
+    setEditingPart({
+      part_number: params.row.part_number,
+      part_description: params.row.part_description || '',
+      unit: params.row.unit || 'Each',
+      last_unit_cost: params.row.last_unit_cost || '',
+      quantity_on_hand: params.row.quantity_on_hand || '',
+      reorder_point: params.row.reorder_point || '',
+      part_type: params.row.part_type || 'stock',
+      category: params.row.category || 'Uncategorized'
+    });
+    setOpenPartDialog(true);
   };
 
   // CSV Upload functions
@@ -653,7 +644,18 @@ const InventoryPage: React.FC = () => {
               pageSizeOptions={[10, 20, 50]}
               processRowUpdate={processRowUpdate}
               getRowId={(row) => row.id}
-              onRowClick={user?.access_role === 'Sales and Purchase' ? undefined : handleRowClick}
+              onRowClick={(params, event) => {
+                // Only open dialog if clicking on non-editable cells or if not in editing mode
+                const target = event.target as HTMLElement;
+                const isEditableCell = target.closest('.MuiDataGrid-cell[data-field="part_number"]') ||
+                                      target.closest('.MuiDataGrid-cell[data-field="quantity_on_hand"]') ||
+                                      target.closest('.MuiDataGrid-cell[data-field="last_unit_cost"]') ||
+                                      target.closest('.MuiDataGrid-cell[data-field="reorder_point"]');
+                
+                if (!isEditableCell) {
+                  handleRowClick(params);
+                }
+              }}
               sx={{
                 cursor: 'pointer',
                 '& .MuiDataGrid-cell, & .MuiDataGrid-columnHeader, & .MuiDataGrid-columnHeaderTitle': {
@@ -761,43 +763,7 @@ const InventoryPage: React.FC = () => {
         isEditMode={!!editingPart}
         title={editingPart ? 'Edit Inventory Part' : 'Add New Inventory Part'}
       />
-      <Dialog open={editDialogOpen} onClose={handleCloseEditDialog} maxWidth="md" fullWidth>
-        <DialogTitle>Edit Inventory Part</DialogTitle>
-        <DialogContent>
-          {editPart && (
-            <Grid container spacing={2} sx={{ mt: 1 }}>
-              <Grid item xs={12} sm={6}>
-                <TextField label="Part Number" value={editPart.part_number || ''} fullWidth disabled />
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <TextField label="Part Description" value={editPart.part_description || ''} onChange={e => handleEditField('part_description', e.target.value)} fullWidth />
-              </Grid>
-              <Grid item xs={12} sm={4}>
-                <TextField label="Unit" value={editPart.unit || ''} onChange={e => handleEditField('unit', e.target.value)} fullWidth />
-              </Grid>
-              <Grid item xs={12} sm={4}>
-                <TextField label="Last Unit Cost" type="number" value={editPart.last_unit_cost || ''} onChange={e => handleEditField('last_unit_cost', e.target.value)} fullWidth />
-              </Grid>
-              <Grid item xs={12} sm={4}>
-                <TextField label="Quantity on Hand" type="number" value={editPart.quantity_on_hand || ''} onChange={e => handleEditField('quantity_on_hand', e.target.value)} fullWidth />
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <TextField label="Reorder Point" type="number" value={editPart.reorder_point || ''} onChange={e => handleEditField('reorder_point', e.target.value)} fullWidth />
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <TextField label="Part Type" value={editPart.part_type || ''} onChange={e => handleEditField('part_type', e.target.value)} fullWidth />
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <CategorySelect value={editPart.category || ''} onChange={(val) => handleEditField('category', val)} />
-              </Grid>
-            </Grid>
-          )}
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={handleCloseEditDialog}>Cancel</Button>
-          <Button onClick={handleSaveEdit} variant="contained">Save</Button>
-        </DialogActions>
-      </Dialog>
+
 
       {/* CSV Upload Result Dialog */}
       <Dialog open={showUploadResult} onClose={closeUploadResult} maxWidth="md" fullWidth>
@@ -821,17 +787,23 @@ const InventoryPage: React.FC = () => {
                 <Box sx={{ mb: 3 }}>
                   <Typography variant="h6" gutterBottom>Summary</Typography>
                   <Grid container spacing={2}>
-                    <Grid item xs={6} sm={3}>
+                    <Grid item xs={6} sm={2}>
                       <Chip label={`Total: ${uploadResult.summary.totalProcessed}`} color="primary" />
                     </Grid>
-                    <Grid item xs={6} sm={3}>
+                    <Grid item xs={6} sm={2}>
                       <Chip label={`New: ${uploadResult.summary.newItems}`} color="success" />
                     </Grid>
-                    <Grid item xs={6} sm={3}>
+                    <Grid item xs={6} sm={2}>
                       <Chip label={`Updated: ${uploadResult.summary.updatedItems}`} color="info" />
                     </Grid>
-                    <Grid item xs={6} sm={3}>
+                    <Grid item xs={6} sm={2}>
+                      <Chip label={`Vendor Mappings: ${uploadResult.summary.vendorMappings || 0}`} color="secondary" />
+                    </Grid>
+                    <Grid item xs={6} sm={2}>
                       <Chip label={`Errors: ${uploadResult.summary.errors}`} color="error" />
+                    </Grid>
+                    <Grid item xs={6} sm={2}>
+                      <Chip label={`Warnings: ${uploadResult.summary.warnings}`} color="warning" />
                     </Grid>
                   </Grid>
                 </Box>

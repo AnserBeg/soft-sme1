@@ -18,6 +18,7 @@ import {
 import SearchIcon from '@mui/icons-material/Search';
 import StarBorderIcon from '@mui/icons-material/StarBorder';
 import StarIcon from '@mui/icons-material/Star';
+import VoiceSearchButton from './VoiceSearchButton';
 
 export interface PartLite {
   part_number: string;
@@ -82,6 +83,8 @@ export default function PartFinderDialog(props: PartFinderDialogProps) {
   const [recents, setRecents] = useState<string[]>([]);
   const [soUsage, setSoUsage] = useState<UsageMap>({});
   const [globalUsage, setGlobalUsage] = useState<UsageMap>({});
+  const [voiceSearchTerms, setVoiceSearchTerms] = useState<string[]>([]);
+  const [voiceSearchStrategy, setVoiceSearchStrategy] = useState<{searchInPartNumbers: boolean, searchInDescriptions: boolean} | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -91,10 +94,11 @@ export default function PartFinderDialog(props: PartFinderDialogProps) {
     setGlobalUsage(readUsageGlobal());
   }, [open, salesOrderId, context]);
 
-  // Items that match current selections (prefix + selected tokens)
+  // Items that match current selections (prefix + selected tokens + voice search terms)
   const candidateItems = useMemo(() => {
     const p = prefix.toUpperCase();
     const tokens = new Set(selectedTokens.map(t => t.toUpperCase()));
+    const voiceTokens = new Set(voiceSearchTerms.map(t => t.toUpperCase()));
     const q = query.trim().toUpperCase();
     return inventoryItems.filter(it => {
       const num = (it.part_number || '').toUpperCase();
@@ -104,9 +108,24 @@ export default function PartFinderDialog(props: PartFinderDialogProps) {
       for (const t of tokens) {
         if (!(num.includes(t) || desc.includes(t))) return false;
       }
+      // Apply voice search terms with strategy
+      if (voiceSearchTerms.length > 0 && voiceSearchStrategy) {
+        let voiceMatch = false;
+        for (const t of voiceTokens) {
+          if (voiceSearchStrategy.searchInPartNumbers && num.includes(t)) {
+            voiceMatch = true;
+            break;
+          }
+          if (voiceSearchStrategy.searchInDescriptions && desc.includes(t)) {
+            voiceMatch = true;
+            break;
+          }
+        }
+        if (!voiceMatch) return false;
+      }
       return true;
     });
-  }, [inventoryItems, prefix, selectedTokens, query]);
+  }, [inventoryItems, prefix, selectedTokens, query, voiceSearchTerms, voiceSearchStrategy]);
 
   // Dynamic description/dimension tokens derived from candidates
   const dynamicTokens = useMemo(() => {
@@ -163,7 +182,12 @@ export default function PartFinderDialog(props: PartFinderDialogProps) {
     setSelectedTokens(prev => prev.includes(t) ? prev.filter(x => x !== t) : [...prev, t]);
   };
 
-  const clearAll = () => { setPrefix(''); setSelectedTokens([]); };
+  const clearAll = () => { 
+    setPrefix(''); 
+    setSelectedTokens([]); 
+    setVoiceSearchTerms([]);
+    setVoiceSearchStrategy(null);
+  };
 
   const isFav = (partNumber: string) => favorites.includes(partNumber);
   const toggleFavorite = (partNumber: string) => {
@@ -220,15 +244,24 @@ export default function PartFinderDialog(props: PartFinderDialogProps) {
       <DialogTitle id="part-finder-title">Find Part</DialogTitle>
       <DialogContent dividers>
         <Box mb={2}>
-          <TextField
-            fullWidth
-            placeholder="Search by part # or description"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            InputProps={{ startAdornment: (
-              <InputAdornment position="start"><SearchIcon /></InputAdornment>
-            ) }}
-          />
+          <Box sx={{ display: 'flex', gap: 2, alignItems: 'flex-start' }}>
+            <TextField
+              fullWidth
+              placeholder="Search by part # or description"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              InputProps={{ startAdornment: (
+                <InputAdornment position="start"><SearchIcon /></InputAdornment>
+              ) }}
+            />
+            <VoiceSearchButton
+              onSearchTerms={(terms, strategy) => {
+                setVoiceSearchTerms(terms);
+                setVoiceSearchStrategy(strategy);
+              }}
+              disabled={false}
+            />
+          </Box>
         </Box>
         {/** Larger, touch-friendly chip style */}
         {/* eslint-disable-next-line @typescript-eslint/no-unused-vars */}
@@ -251,7 +284,24 @@ export default function PartFinderDialog(props: PartFinderDialogProps) {
               sx={{ height: 38, borderRadius: 2, '& .MuiChip-label': { px: 2, py: 1, fontSize: 15, fontWeight: 600 } }}
             />
           ))}
-          {(!!prefix || selectedTokens.length > 0) && (
+                     {voiceSearchTerms.length > 0 && (
+             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+               <Typography variant="caption" color="text.secondary">Voice:</Typography>
+               {voiceSearchTerms.map(t => (
+                 <Chip key={t} label={t} color="success" variant="outlined" size="small"
+                   sx={{ height: 32, '& .MuiChip-label': { px: 1.5, py: 0.5, fontSize: 12 } }}
+                 />
+               ))}
+               {voiceSearchStrategy && (
+                 <Typography variant="caption" color="text.secondary" sx={{ ml: 1 }}>
+                   ({voiceSearchStrategy.searchInPartNumbers ? 'Part#' : ''}
+                   {voiceSearchStrategy.searchInPartNumbers && voiceSearchStrategy.searchInDescriptions ? ' + ' : ''}
+                   {voiceSearchStrategy.searchInDescriptions ? 'Desc' : ''})
+                 </Typography>
+               )}
+             </Box>
+           )}
+          {(!!prefix || selectedTokens.length > 0 || voiceSearchTerms.length > 0) && (
             <Button onClick={clearAll}>Clear All</Button>
           )}
         </Box>

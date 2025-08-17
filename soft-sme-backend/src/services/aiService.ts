@@ -1,7 +1,8 @@
 // Direct Gemini AI Service for Soft SME
 import dotenv from 'dotenv';
+import path from 'path';
 
-dotenv.config();
+dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
 // AI Configuration
 const AI_CONFIG = {
