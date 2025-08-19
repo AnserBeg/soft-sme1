@@ -1547,7 +1547,7 @@ router.put('/:id', async (req, res) => {
         const existingPartId: number = existingPartResult.rows[0].part_id;
              console.log(`Reverting inventory for stock part: '${normalizedPartNumber}' (quantity: ${numericQuantity})`);
              await client.query(
-                'UPDATE "inventory" SET quantity_on_hand = (COALESCE(NULLIF(quantity_on_hand, '')::NUMERIC, 0) - $1::NUMERIC)::TEXT WHERE part_id = $2',
+                `UPDATE "inventory" SET quantity_on_hand = (COALESCE(NULLIF(quantity_on_hand, '')::NUMERIC, 0) - $1::NUMERIC)::TEXT WHERE part_id = $2`,
          [numericQuantity, existingPartId]
              );
            } else {
