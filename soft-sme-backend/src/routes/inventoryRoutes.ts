@@ -349,11 +349,13 @@ router.put('/:id', async (req: Request, res: Response) => {
       // Update part number in inventory
       await client.query('UPDATE inventory SET part_number = $1 WHERE part_id = $2', [trimmedPartNumber, partId]);
 
-      // Update part_number in related tables
+      // Update part_number in related tables (only those that have part_number column)
       await client.query('UPDATE inventory_vendors SET part_number = $1 WHERE part_id = $2', [trimmedPartNumber, partId]);
-      await client.query('UPDATE inventory_audit_log SET part_number = $1 WHERE part_id = $2', [trimmedPartNumber, partId]);
       await client.query('UPDATE salesorderlineitems SET part_number = $1 WHERE part_number = $2', [trimmedPartNumber, decodedPartNumber]);
-      await client.query('UPDATE purchasehistory SET part_number = $1 WHERE part_number = $2', [trimmedPartNumber, decodedPartNumber]);
+      await client.query('UPDATE purchaselineitems SET part_number = $1 WHERE part_number = $2', [trimmedPartNumber, decodedPartNumber]);
+      await client.query('UPDATE purchase_order_allocations SET part_number = $1 WHERE part_number = $2', [trimmedPartNumber, decodedPartNumber]);
+      
+      // Note: inventory_audit_log uses part_id, so no need to update part_number there
 
       console.log(`✅ Successfully updated part number from ${decodedPartNumber} to ${trimmedPartNumber}`);
     } else {
