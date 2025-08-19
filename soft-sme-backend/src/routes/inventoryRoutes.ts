@@ -305,21 +305,53 @@ router.delete('/:id', async (req: Request, res: Response) => {
 router.put('/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
   const decodedPartNumber = decodeURIComponent(id);
-  const { quantity_on_hand, reorder_point, last_unit_cost, part_description, unit, part_type, category } = req.body;
+  const { quantity_on_hand, reorder_point, last_unit_cost, part_description, unit, part_type, category, part_number } = req.body;
 
   // Trim string fields if provided
   const trimmedPartDescription = part_description ? part_description.toString().trim() : undefined;
   const trimmedUnit = unit ? unit.toString().trim() : undefined;
   const trimmedPartType = part_type ? part_type.toString().trim() : undefined;
   const trimmedCategory = category ? category.toString().trim() : undefined;
+  const trimmedPartNumber = part_number ? part_number.toString().trim().toUpperCase() : undefined;
+
+  const client = await pool.connect();
   try {
+    await client.query('BEGIN');
+
     // Check if the item exists
-    const existing = await pool.query('SELECT * FROM inventory WHERE part_number = $1', [decodedPartNumber]);
+    const existing = await client.query('SELECT * FROM inventory WHERE part_number = $1', [decodedPartNumber]);
     if (existing.rows.length === 0) {
+      await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Inventory item not found' });
     }
 
-    // Build update fields dynamically
+    const existingItem = existing.rows[0];
+    const partId = existingItem.part_id;
+
+    // Handle part number change if provided
+    if (trimmedPartNumber && trimmedPartNumber !== decodedPartNumber) {
+      console.log(`Part number change detected: ${decodedPartNumber} -> ${trimmedPartNumber}`);
+
+      // Check if new part number already exists
+      const duplicateCheck = await client.query('SELECT part_number FROM inventory WHERE part_number = $1 AND part_id != $2', [trimmedPartNumber, partId]);
+      if (duplicateCheck.rows.length > 0) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ error: 'Part number already exists' });
+      }
+
+      // Update part number in inventory
+      await client.query('UPDATE inventory SET part_number = $1 WHERE part_id = $2', [trimmedPartNumber, partId]);
+
+      // Update part_number in related tables
+      await client.query('UPDATE inventory_vendors SET part_number = $1 WHERE part_id = $2', [trimmedPartNumber, partId]);
+      await client.query('UPDATE inventory_audit_log SET part_number = $1 WHERE part_id = $2', [trimmedPartNumber, partId]);
+      await client.query('UPDATE salesorderlineitems SET part_number = $1 WHERE part_number = $2', [trimmedPartNumber, decodedPartNumber]);
+      await client.query('UPDATE purchasehistory SET part_number = $1 WHERE part_number = $2', [trimmedPartNumber, decodedPartNumber]);
+
+      console.log(`Successfully updated part number from ${decodedPartNumber} to ${trimmedPartNumber}`);
+    }
+
+    // Build update fields dynamically (excluding part_number as it's handled above)
     const fields = [];
     const values = [];
     let idx = 1;
@@ -353,19 +385,24 @@ router.put('/:id', async (req: Request, res: Response) => {
       values.push(trimmedCategory);
     }
 
-    if (fields.length === 0) {
-      return res.status(400).json({ error: 'No valid fields to update' });
+    if (fields.length > 0) {
+      values.push(partId);
+      const updateQuery = `UPDATE inventory SET ${fields.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE part_id = $${idx} RETURNING *`;
+      const result = await client.query(updateQuery, values);
+      await client.query('COMMIT');
+      res.json({ message: 'Inventory item updated successfully', updatedItem: result.rows[0] });
+    } else {
+      // Just get the updated item if no other fields changed
+      const result = await client.query('SELECT * FROM inventory WHERE part_id = $1', [partId]);
+      await client.query('COMMIT');
+      res.json({ message: 'Inventory item updated successfully', updatedItem: result.rows[0] });
     }
-
-    values.push(decodedPartNumber);
-
-    const updateQuery = `UPDATE inventory SET ${fields.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE part_number = $${idx} RETURNING *`;
-    const result = await pool.query(updateQuery, values);
-
-    res.json({ message: 'Inventory item updated successfully', updatedItem: result.rows[0] });
   } catch (err) {
+    await client.query('ROLLBACK');
     console.error('inventoryRoutes: Error updating inventory item:', err);
     res.status(500).json({ error: 'Internal server error' });
+  } finally {
+    client.release();
   }
 });
 

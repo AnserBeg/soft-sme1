@@ -314,8 +314,12 @@ const InventoryPage: React.FC = () => {
     
     try {
       if (editingPart) {
-        const { part_number, ...updateData } = trimmedPartData;
-        await api.put(`/api/inventory/${encodeURIComponent(part_number)}`, updateData);
+        // Include part_number in update data so backend can handle part number changes
+        const updateData = {
+          ...trimmedPartData,
+          part_number: trimmedPartData.part_number // Include the new part number
+        };
+        await api.put(`/api/inventory/${encodeURIComponent(editingPart.part_number)}`, updateData);
       } else {
         await api.post('/api/inventory', trimmedPartData);
       }
