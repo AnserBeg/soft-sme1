@@ -324,6 +324,7 @@ const SupplyPage: React.FC = () => {
 
   const handleRowClick = (params: any) => {
     setEditingPart({
+      part_id: params.row.part_id,
       part_number: params.row.part_number,
       part_description: params.row.part_description || '',
       unit: params.row.unit || 'Each',

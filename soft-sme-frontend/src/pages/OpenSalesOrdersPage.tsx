@@ -211,7 +211,7 @@ const OpenSalesOrdersPage: React.FC = () => {
   );
 
   const columns: GridColDef[] = [
-    { field: 'sales_order_number', headerName: 'Sales Order #', flex: 1, minWidth: 120 },
+    { field: 'sales_order_number', headerName: 'Sales Order #', flex: 1, minWidth: 120, valueFormatter: (params) => params.value ? String(params.value).replace('SO-', '') : '' },
     { field: 'customer_name', headerName: 'Customer', flex: 1.3, minWidth: 150 },
     { field: 'product_name', headerName: 'Product Name', flex: 1, minWidth: 120 },
     { field: 'product_description', headerName: 'Product Description', flex: 1.5, minWidth: 150 },

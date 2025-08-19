@@ -10,7 +10,7 @@ export class SalesOrderService {
   }
 
   // Update sales order with simple inventory validation
-  async updateSalesOrder(orderId: number, newLineItems: any[], clientArg?: PoolClient): Promise<null> {
+  async updateSalesOrder(orderId: number, newLineItems: any[], clientArg?: PoolClient, user?: any): Promise<null> {
     const client = clientArg || await this.pool.connect();
     let startedTransaction = false;
     
@@ -151,21 +151,46 @@ export class SalesOrderService {
           // For SUPPLY, use the quantity_sold from frontend (should be 1) but it doesn't affect inventory
           quantity_sold = item.quantity_sold !== undefined && item.quantity_sold !== null ? parseFloat(item.quantity_sold) : 1;
         }
+        
+        // Check if trying to delete LABOUR, OVERHEAD, or SUPPLY line items
+        const isDeletingSpecialItem = quantity_sold <= 0;
+        if (isDeletingSpecialItem) {
+          // Only allow admin to delete LABOUR, OVERHEAD, and SUPPLY line items
+          if (!user || user.access_role !== 'Admin') {
+            throw new Error(`Only administrators can delete ${item.part_number} line items`);
+          }
+          console.log(`Admin deleting ${item.part_number} line item for order ${orderId}`);
+        }
+        
         // Check if item exists
         const existingItemRes = await client.query(
           'SELECT quantity_sold FROM salesorderlineitems WHERE sales_order_id = $1 AND part_number = $2',
           [orderId, item.part_number]
         );
+        
         if (existingItemRes.rows.length > 0) {
-          await client.query(
-            `UPDATE salesorderlineitems SET part_description = $1, unit = $2, unit_price = $3, line_amount = $4, quantity_sold = $5 WHERE sales_order_id = $6 AND part_number = $7`,
-            [item.part_description, item.unit, unit_price, line_amount, quantity_sold, orderId, item.part_number]
-          );
+          if (isDeletingSpecialItem) {
+            // Delete the special line item when admin sets quantity to 0
+            await client.query(
+              `DELETE FROM salesorderlineitems WHERE sales_order_id = $1 AND part_number = $2`,
+              [orderId, item.part_number]
+            );
+            console.log(`Admin deleted ${item.part_number} line item for order ${orderId}`);
+          } else {
+            // Update the special line item
+            await client.query(
+              `UPDATE salesorderlineitems SET part_description = $1, unit = $2, unit_price = $3, line_amount = $4, quantity_sold = $5 WHERE sales_order_id = $6 AND part_number = $7`,
+              [item.part_description, item.unit, unit_price, line_amount, quantity_sold, orderId, item.part_number]
+            );
+          }
         } else {
-          await client.query(
-            `INSERT INTO salesorderlineitems (sales_order_id, part_number, part_description, quantity_sold, unit, unit_price, line_amount) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-            [orderId, item.part_number, item.part_description, quantity_sold, item.unit, unit_price, line_amount]
-          );
+          if (!isDeletingSpecialItem) {
+            // Only insert if not trying to delete
+            await client.query(
+              `INSERT INTO salesorderlineitems (sales_order_id, part_number, part_description, quantity_sold, unit, unit_price, line_amount) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+              [orderId, item.part_number, item.part_description, quantity_sold, item.unit, unit_price, line_amount]
+            );
+          }
         }
       }
       if (startedTransaction) await client.query('COMMIT');
@@ -180,7 +205,7 @@ export class SalesOrderService {
     }
   }
 
-  async upsertLineItem(orderId: number, item: any, clientArg?: PoolClient): Promise<void> {
+  async upsertLineItem(orderId: number, item: any, clientArg?: PoolClient, user?: any): Promise<void> {
     const client = clientArg || await this.pool.connect();
     let startedTransaction = false;
     try {
@@ -206,9 +231,32 @@ export class SalesOrderService {
       }
       // Handle zero quantities by deleting the line item (except for LABOUR, OVERHEAD, and SUPPLY)
       const quantityToOrder = parseFloat(item.quantity_to_order) || 0;
+      
+      // Check if trying to delete LABOUR, OVERHEAD, or SUPPLY line items
+      const isSpecialLineItem = item.part_number === 'LABOUR' || item.part_number === 'OVERHEAD' || item.part_number === 'SUPPLY';
+      const isDeletingSpecialItem = isSpecialLineItem && quantity_sold <= 0 && quantityToOrder <= 0;
+      
+      if (isDeletingSpecialItem) {
+        // Only allow admin to delete LABOUR, OVERHEAD, and SUPPLY line items
+        if (!user || user.access_role !== 'Admin') {
+          throw new Error(`Only administrators can delete ${item.part_number} line items`);
+        }
+        console.log(`Admin deleting ${item.part_number} line item for order ${orderId}`);
+      }
+      
       if (quantity_sold <= 0 && quantityToOrder <= 0 && item.part_number !== 'LABOUR' && item.part_number !== 'OVERHEAD' && item.part_number !== 'SUPPLY') {
         if (lineRes.rows.length > 0) {
           console.log(`Deleting zero quantity line item: ${item.part_number} for order ${orderId}`);
+          await client.query(
+            `DELETE FROM salesorderlineitems WHERE sales_order_id = $1 AND part_number = $2`,
+            [orderId, item.part_number]
+          );
+        }
+        // Don't insert anything for zero quantities
+      } else if (isDeletingSpecialItem) {
+        // Delete special line items (LABOUR, OVERHEAD, SUPPLY) when admin sets quantity to 0
+        if (lineRes.rows.length > 0) {
+          console.log(`Admin deleting ${item.part_number} line item for order ${orderId}`);
           await client.query(
             `DELETE FROM salesorderlineitems WHERE sales_order_id = $1 AND part_number = $2`,
             [orderId, item.part_number]

@@ -1,5 +1,5 @@
 // src/pages/SalesOrderDetailPage.tsx
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Typography, Box, TextField, Button, MenuItem, Stack, Autocomplete, Grid,
@@ -160,24 +160,46 @@ const SalesOrderDetailPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [quantityToOrderItems, setQuantityToOrderItems] = useState<PartsToOrderItem[]>([]);
-  // Unsaved changes guard
+  // Unsaved changes guard (normalize header + stable line items signature; exclude derived quantityToOrderItems)
   const [initialSignature, setInitialSignature] = useState<string>('');
+  const getLineItemsSignature = useCallback((items: SalesOrderLineItem[]) => {
+    return JSON.stringify(
+      (items || [])
+        .map(it => ({
+          part_number: (it.part_number || '').trim(),
+          part_description: (it.part_description || '').trim(),
+          quantity: parseNumericInput(it.quantity),
+          unit: (it.unit || '').trim(),
+          unit_price: parseNumericInput(it.unit_price),
+        }))
+        .sort((a, b) => {
+          if (a.part_number !== b.part_number) return a.part_number.localeCompare(b.part_number);
+          return a.quantity - b.quantity;
+        })
+    );
+  }, []);
+
+  const getHeaderSignature = useCallback(() => ({
+    customer: customer ? { id: customer.id, label: customer.label } : null,
+    product: product ? { id: product.id, label: product.label } : null,
+    salesDate: salesDate ? salesDate.toISOString() : null,
+    terms: (terms || '').trim(),
+    customerPoNumber: (customerPoNumber || '').trim(),
+    vinNumber: (vinNumber || '').trim(),
+    estimatedCost: estimatedCost != null ? Number(estimatedCost) : null,
+  }), [customer, product, salesDate, terms, customerPoNumber, vinNumber, estimatedCost]);
+
   useEffect(() => {
+    if (initialSignature !== '') return;
     if (!isCreationMode && salesOrder) {
-      setInitialSignature(JSON.stringify({
-        header: { customer, product, salesDate, terms, customerPoNumber, vinNumber, estimatedCost },
-        lineItems,
-        quantityToOrderItems,
-      }));
+      setInitialSignature(JSON.stringify({ header: getHeaderSignature(), lineItems: getLineItemsSignature(lineItems) }));
     } else if (isCreationMode) {
-      setInitialSignature(JSON.stringify({ header: { customer, product, salesDate, terms }, lineItems }));
+      setInitialSignature(JSON.stringify({ header: getHeaderSignature(), lineItems: getLineItemsSignature(lineItems) }));
     }
-  }, [isCreationMode, salesOrder]);
-  const isDirty = Boolean(initialSignature) && initialSignature !== JSON.stringify({
-    header: { customer, product, salesDate, terms, customerPoNumber, vinNumber, estimatedCost },
-    lineItems,
-    quantityToOrderItems,
-  });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isCreationMode, salesOrder, lineItems, getHeaderSignature, getLineItemsSignature]);
+
+  const isDirty = Boolean(initialSignature) && initialSignature !== JSON.stringify({ header: getHeaderSignature(), lineItems: getLineItemsSignature(lineItems) });
   const isClosed = !!salesOrder && salesOrder.status?.toLowerCase() === 'closed';
   const [originalLineItems, setOriginalLineItems] = useState<SalesOrderLineItem[]>([]);
   const [negativeAvailabilityItems, setNegativeAvailabilityItems] = useState<Array<{
@@ -565,7 +587,7 @@ const SalesOrderDetailPage: React.FC = () => {
       // Calculate total quantity for this part across ALL line items (including this one)
       const totalQuantityForPart = lineItems
         .filter(li => li.part_number.toLowerCase() === item.part_number.toLowerCase())
-        .reduce((sum, li) => sum + (parseFloat(li.quantity) || 0), 0);
+        .reduce((sum, li) => sum + (parseFloat(String(li.quantity).replace(/[^\d.-]/g, '')) || 0), 0);
       
       const available = onHand - totalQuantityForPart;
       return { 
@@ -581,12 +603,12 @@ const SalesOrderDetailPage: React.FC = () => {
     // Calculate total quantity for this part across ALL line items (including this one)
     const totalQuantityForPart = lineItems
       .filter(li => li.part_number.toLowerCase() === item.part_number.toLowerCase())
-      .reduce((sum, li) => sum + (parseFloat(li.quantity) || 0), 0);
+      .reduce((sum, li) => sum + (parseFloat(String(li.quantity).replace(/[^\d.-]/g, '')) || 0), 0);
 
     // Calculate total quantity from original line items for this part
     const totalOriginalQuantityForPart = originalLineItems
       .filter(li => li.part_number.toLowerCase() === item.part_number.toLowerCase())
-      .reduce((sum, li) => sum + (parseFloat(li.quantity) || 0), 0);
+      .reduce((sum, li) => sum + (parseFloat(String(li.quantity).replace(/[^\d.-]/g, '')) || 0), 0);
 
     // Calculate the delta: how much more/less we're using now vs originally
     const delta = totalQuantityForPart - totalOriginalQuantityForPart;
@@ -602,6 +624,11 @@ const SalesOrderDetailPage: React.FC = () => {
       totalOriginalQuantityForPart
     };
   };
+
+  // Memoize availability per index for this render to avoid repeated recomputation
+  const availabilityByIndex = useMemo(() => {
+    return lineItems.map((item, idx) => calculateAvailableQuantity(item, idx));
+  }, [lineItems, inventoryItems, originalLineItems, isCreationMode]);
 
   // Check negatives (edit mode banners)
   useEffect(() => {
@@ -685,9 +712,10 @@ const SalesOrderDetailPage: React.FC = () => {
         acc[partNumber].unit_price = 0;
         acc[partNumber].line_amount += Number(item.line_amount || 0);
       } else {
-        const quantity = parseFloat(item.quantity) || 0;
+        // Ensure quantity is a valid number, default to 0 if invalid
+        const quantity = parseFloat(String(item.quantity).replace(/[^\d.-]/g, '')) || 0;
         acc[partNumber].quantity_sold += Math.round(quantity);
-        acc[partNumber].line_amount += (parseFloat(item.quantity) || 0) * (item.unit_price || 0);
+        acc[partNumber].line_amount += quantity * (item.unit_price || 0);
       }
       
       return acc;
@@ -722,8 +750,14 @@ const SalesOrderDetailPage: React.FC = () => {
 
     try {
       if (isCreationMode) {
+        if ((window as any).__soCreateInFlight) {
+          console.log('[SO] Skipping duplicate create (in flight)');
+          return;
+        }
+        (window as any).__soCreateInFlight = true;
         const res = await api.post('/api/sales-orders', payload);
         toast.success('Sales Order created successfully!');
+        (window as any).__unsavedGuardAllowNext = true;
         navigate(`/open-sales-orders/${res.data.sales_order_id}`);
       } else {
         // Include Parts to Order only on edit mode
@@ -769,6 +803,8 @@ const SalesOrderDetailPage: React.FC = () => {
     } catch (err: any) {
       const message = err?.response?.data?.error || err?.response?.data?.details || err?.response?.data?.message || 'Failed to save sales order.';
       setInventoryAlert(message);
+    } finally {
+      (window as any).__soCreateInFlight = false;
     }
   };
 
@@ -776,7 +812,7 @@ const SalesOrderDetailPage: React.FC = () => {
   const handleCloseSO = async () => {
     if (isCreationMode || !salesOrder) return;
     // Disallow close if any non-special line has 0 quantity
-    const zeros = lineItems.filter(i => !['LABOUR','OVERHEAD','SUPPLY'].includes(i.part_number) && (parseFloat(String(i.quantity)) || 0) === 0);
+    const zeros = lineItems.filter(i => !['LABOUR','OVERHEAD','SUPPLY'].includes(i.part_number) && (parseFloat(String(i.quantity).replace(/[^\d.-]/g, '')) || 0) === 0);
     if (zeros.length > 0) {
       toast.error(`Cannot close: line items with 0 quantity: ${zeros.map(i => i.part_number).join(', ')}`);
       return;
@@ -1373,7 +1409,7 @@ const SalesOrderDetailPage: React.FC = () => {
                   line_amount: (inv?.last_unit_cost || 0) * excess
                 };
                 setQuantityToOrderItems(prev => [...prev, newItem]);
-                const newQty = Math.max(0, (parseFloat(li.quantity) || 0) - excess);
+                const newQty = Math.max(0, (parseFloat(String(li.quantity).replace(/[^\d.-]/g, '')) || 0) - excess);
                 setLineItems(prev => prev.map((x, idx) => idx === item.lineItemIndex ? { ...x, quantity: String(newQty) } : x));
                 setNegativeAvailabilityItems(prev => prev.filter(n => n.lineItemIndex !== item.lineItemIndex));
                 setTransferDialogItem(null);
@@ -1404,6 +1440,7 @@ const SalesOrderDetailPage: React.FC = () => {
                     onClose={() => setPartOpenIndex(null)}
                     autoHighlight
                     value={item.part_number}
+                    inputValue={item.part_number}
                     onChange={(_, newValue) => {
                       if (typeof newValue === 'string') {
                         // Check if this part number already exists in another line item
@@ -1433,11 +1470,7 @@ const SalesOrderDetailPage: React.FC = () => {
                       }
                     }}
                     onInputChange={(_, v, reason) => {
-                      setLineItems(prev => {
-                        const u = [...prev];
-                        u[originalIndex] = { ...u[originalIndex], part_number: (v || '').toUpperCase() };
-                        return u;
-                      });
+                      // Stop mutating lineItems per keystroke; only control dropdown visibility
                       if (partTypingTimer) window.clearTimeout(partTypingTimer);
                       if (reason === 'reset') return;
                       const text = (v || '').trim();
@@ -1528,20 +1561,20 @@ const SalesOrderDetailPage: React.FC = () => {
                   <TextField
                     label="Avail"
                     value={(() => {
-                      const a = calculateAvailableQuantity(item, originalIndex);
+                      const a = availabilityByIndex[originalIndex];
                       if (!a) return 'N/A';
                       return a.available < 0 ? `${a.available} (Insufficient)` : String(a.available);
                     })()}
                     fullWidth InputProps={{ readOnly: true }}
                     sx={{
                       backgroundColor: (() => {
-                        const a = calculateAvailableQuantity(item, originalIndex);
+                        const a = availabilityByIndex[originalIndex];
                         if (!a) return '#f5f5f5';
                         return a.available >= 0 ? '#e8f5e8' : '#ffeaea';
                       })(),
                       '& .MuiInputBase-input': {
                         color: (() => {
-                          const a = calculateAvailableQuantity(item, originalIndex);
+                          const a = availabilityByIndex[originalIndex];
                           return a?.isNegative ? '#d32f2f' : '#2e7d32';
                         })()
                       }

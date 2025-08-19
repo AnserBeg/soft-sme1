@@ -28,7 +28,7 @@ router.get('/', async (req: Request, res: Response) => {
   console.log('inventoryRoutes: Received GET request for inventory items');
   try {
     const { partType } = req.query;
-    let query = 'SELECT part_number, part_description, unit, last_unit_cost, quantity_on_hand, reorder_point, part_type, category, created_at, updated_at FROM inventory';
+    let query = 'SELECT part_id, part_number, part_description, unit, last_unit_cost, quantity_on_hand, reorder_point, part_type, category, created_at, updated_at FROM inventory';
     let params: any[] = [];
 
     // Add part_type filter if provided
@@ -179,24 +179,18 @@ function cleanPartNumberAdvanced(input: string): { cleaned: string, hadIllegal: 
   console.log(`cleanPartNumberAdvanced: After complex fraction formatting -> "${result}"`);
   
   // Then handle simple fractions like 1/4 -> (1/4) (but only if not already formatted)
-  const fractionPattern = /(\d+)\/(\d+)/g;
+  // Use a negative lookbehind to avoid matching fractions already in parentheses
+  const fractionPattern = /(?<!\()(\d+)\/(\d+)(?!\))/g;
   result = result.replace(fractionPattern, (match, p1, p2) => {
-    // Check if this specific fraction is already properly formatted with parentheses
-    const expectedFormatted = `(${p1}/${p2})`;
-    // Look for the formatted version in the original string
-    if (input.includes(expectedFormatted)) {
-      console.log(`Simple fraction already formatted: "${match}" -> keeping as is`);
-      return match; // Already formatted, don't change
-    }
-    console.log(`Formatting simple fraction: "${match}" -> "${expectedFormatted}"`);
-    return expectedFormatted;
+    console.log(`Formatting simple fraction: "${match}" -> "(${p1}/${p2})"`);
+    return `(${p1}/${p2})`;
   });
   
   console.log(`cleanPartNumberAdvanced: After fraction formatting -> "${result}"`);
   
-  // Step 4: Handle remaining hyphens (remove them if they're not part of fractions)
-  // But keep them if they're part of valid patterns like E-11
-  result = result.replace(/(?<!\d)-(?!\d)/g, ''); // Remove hyphens not between digits
+  // Step 4: Remove all hyphens (and other punctuation except ()/)
+  // Remove all hyphens
+  result = result.replace(/-/g, '');
   
   console.log(`cleanPartNumberAdvanced: Final result "${input}" -> "${result}" (hadIllegal: ${hadIllegal})`);
   
@@ -442,7 +436,14 @@ router.post('/upload-csv', upload.single('csvFile'), async (req: Request, res: R
           const partDescription = data.part_description.toString().trim();
           const unit = data.unit ? data.unit.toString().trim() : 'Each';
           const quantity = parseFloat(data.quantity) || 0;
-          const lastUnitCost = parseFloat(data.last_unit_cost) || 0;
+          
+          // Debug last_unit_cost parsing for recent uploads
+          console.log(`Row ${rowNumber}: last_unit_cost raw value: "${data.last_unit_cost}"`);
+          const lastUnitCostParsed = parseFloat(data.last_unit_cost);
+          console.log(`Row ${rowNumber}: last_unit_cost parsed: ${lastUnitCostParsed}`);
+          const lastUnitCost = lastUnitCostParsed || 0;
+          console.log(`Row ${rowNumber}: last_unit_cost final: ${lastUnitCost}`);
+          
           const reorderPoint = parseFloat(data.reorder_point) || 0;
           const partType = data.part_type ? data.part_type.toString().trim().toLowerCase() : 'stock';
           const category = data.category ? data.category.toString().trim() : 'Uncategorized';

@@ -369,7 +369,7 @@ router.post('/', async (req: Request, res: Response) => {
     await client.query(salesOrderQuery, salesOrderValues);
     // For each line item, upsert all fields
     for (const item of lineItemsParsed) {
-      await salesOrderService.upsertLineItem(newSalesOrderId, item, client);
+      await salesOrderService.upsertLineItem(newSalesOrderId, item, client, req.user);
     }
     // Recalculate and update summary fields
     await salesOrderService.recalculateAndUpdateSummary(newSalesOrderId, client);
@@ -588,7 +588,7 @@ if (lineItems && lineItems.length > 0) {
     }
     // Update line items with simple inventory validation
     if (trimmedLineItems && trimmedLineItems.length >= 0) {
-      await salesOrderService.updateSalesOrder(Number(id), trimmedLineItems, client);
+      await salesOrderService.updateSalesOrder(Number(id), trimmedLineItems, client, req.user);
     }
     
     // Update parts to order if provided

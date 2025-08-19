@@ -34,7 +34,7 @@ describe('SalesOrderService', () => {
       unit: 'EA',
       unit_price: 10,
       line_amount: 20
-    });
+    }, undefined, { access_role: 'Admin' });
     const qty = await inventoryService.getOnHand(testPart);
     expect(qty).toBe(8);
   });
@@ -47,7 +47,7 @@ describe('SalesOrderService', () => {
       unit: 'EA',
       unit_price: 10,
       line_amount: 50
-    });
+    }, undefined, { access_role: 'Admin' });
     const qty = await inventoryService.getOnHand(testPart);
     expect(qty).toBe(5);
   });
@@ -60,7 +60,7 @@ describe('SalesOrderService', () => {
       unit: 'EA',
       unit_price: 10,
       line_amount: 30
-    });
+    }, undefined, { access_role: 'Admin' });
     const qty = await inventoryService.getOnHand(testPart);
     expect(qty).toBe(7);
   });
@@ -73,7 +73,7 @@ describe('SalesOrderService', () => {
       unit: 'EA',
       unit_price: 10,
       line_amount: 0
-    });
+    }, undefined, { access_role: 'Admin' });
     const qty = await inventoryService.getOnHand(testPart);
     expect(qty).toBe(10);
   });
@@ -86,7 +86,7 @@ describe('SalesOrderService', () => {
       unit: 'EA',
       unit_price: 10,
       line_amount: 200
-    })).rejects.toThrow(/Insufficient inventory/);
+    }, undefined, { access_role: 'Admin' })).rejects.toThrow(/Insufficient inventory/);
   });
 
   test('cannot modify closed order', async () => {
@@ -98,7 +98,7 @@ describe('SalesOrderService', () => {
       unit: 'EA',
       unit_price: 10,
       line_amount: 10
-    })).rejects.toThrow(/Cannot modify closed order/);
+    }, undefined, { access_role: 'Admin' })).rejects.toThrow(/Cannot modify closed order/);
   });
 
   test('delete order restores inventory', async () => {
@@ -111,9 +111,68 @@ describe('SalesOrderService', () => {
       unit: 'EA',
       unit_price: 10,
       line_amount: 20
-    });
+    }, undefined, { access_role: 'Admin' });
     await salesOrderService.deleteOrder(testOrderId);
     const qty = await inventoryService.getOnHand(testPart);
     expect(qty).toBe(10);
+  });
+
+  test('non-admin cannot delete LABOUR line item', async () => {
+    await expect(salesOrderService.upsertLineItem(testOrderId, {
+      part_number: 'LABOUR',
+      part_description: 'Labour',
+      quantity: 0,
+      unit: 'Hours',
+      unit_price: 50,
+      line_amount: 0
+    }, undefined, { access_role: 'User' })).rejects.toThrow(/Only administrators can delete LABOUR line items/);
+  });
+
+  test('non-admin cannot delete OVERHEAD line item', async () => {
+    await expect(salesOrderService.upsertLineItem(testOrderId, {
+      part_number: 'OVERHEAD',
+      part_description: 'Overhead',
+      quantity: 0,
+      unit: 'Hours',
+      unit_price: 25,
+      line_amount: 0
+    }, undefined, { access_role: 'User' })).rejects.toThrow(/Only administrators can delete OVERHEAD line items/);
+  });
+
+  test('non-admin cannot delete SUPPLY line item', async () => {
+    await expect(salesOrderService.upsertLineItem(testOrderId, {
+      part_number: 'SUPPLY',
+      part_description: 'Supply',
+      quantity: 0,
+      unit: 'Each',
+      unit_price: 10,
+      line_amount: 0
+    }, undefined, { access_role: 'User' })).rejects.toThrow(/Only administrators can delete SUPPLY line items/);
+  });
+
+  test('admin can delete LABOUR line item', async () => {
+    // First add the line item
+    await salesOrderService.upsertLineItem(testOrderId, {
+      part_number: 'LABOUR',
+      part_description: 'Labour',
+      quantity: 5,
+      unit: 'Hours',
+      unit_price: 50,
+      line_amount: 250
+    }, undefined, { access_role: 'Admin' });
+    
+    // Then delete it as admin
+    await salesOrderService.upsertLineItem(testOrderId, {
+      part_number: 'LABOUR',
+      part_description: 'Labour',
+      quantity: 0,
+      unit: 'Hours',
+      unit_price: 50,
+      line_amount: 0
+    }, undefined, { access_role: 'Admin' });
+    
+    // Verify it was deleted
+    const result = await pool.query('SELECT * FROM salesorderlineitems WHERE sales_order_id = $1 AND part_number = $2', [testOrderId, 'LABOUR']);
+    expect(result.rows.length).toBe(0);
   });
 }); 

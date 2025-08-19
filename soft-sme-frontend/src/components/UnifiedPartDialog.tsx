@@ -15,11 +15,13 @@ import {
 } from '@mui/material';
 import { toast } from 'react-toastify';
 import api from '../api/axios';
-import { getPartVendors, createPartVendor, updatePartVendor, deletePartVendor, InventoryVendorLink } from '../services/inventoryService';
+import { getPartVendors, getPartVendorsById, createPartVendor, createPartVendorById, updatePartVendor, updatePartVendorById, deletePartVendor, deletePartVendorById, InventoryVendorLink } from '../services/inventoryService';
 import CategorySelect from './CategorySelect';
 import { useAuth } from '../contexts/AuthContext';
+import { useDebounce } from '../hooks/useDebounce';
 
 export interface PartFormValues {
+  part_id?: number;
   part_number: string;
   part_description: string;
   unit: string;
@@ -79,6 +81,7 @@ const UnifiedPartDialog: React.FC<UnifiedPartDialogProps> = ({
   useEffect(() => {
     if (open) {
       setFormData({
+        part_id: initialPart?.part_id,
         part_number: initialPart?.part_number || '',
         part_description: initialPart?.part_description || '',
         unit: initialPart?.unit || UNIT_OPTIONS[0],
@@ -91,7 +94,7 @@ const UnifiedPartDialog: React.FC<UnifiedPartDialogProps> = ({
       setErrors({});
       setIsSubmitting(false);
     }
-  }, [open]); // Only depend on 'open' to prevent unnecessary resets
+  }, [open, initialPart]); // Depend on both 'open' and 'initialPart' to ensure part_id is set
 
   // Focus part number field when dialog opens
   useEffect(() => {
@@ -299,31 +302,57 @@ const UnifiedPartDialog: React.FC<UnifiedPartDialogProps> = ({
     })();
   }, [open]);
 
+  const debouncedPN = useDebounce(String(formData.part_number || '').trim().toUpperCase(), 300);
   useEffect(() => {
     if (!open) return;
-    const pn = String(formData.part_number || '').trim().toUpperCase();
-    if (!pn) { setVendorLinks([]); return; }
+    // Use part_id if available, otherwise fall back to debounced part_number
+    const partId = formData.part_id;
+    const pn = debouncedPN;
+    if (!pn && !partId) { setVendorLinks([]); return; }
+    const isEditingExistingPart = isEditMode && initialPart?.part_id;
+    const originalPartId = initialPart?.part_id;
     (async () => {
       try {
-        const links = await getPartVendors(pn);
+        let links;
+        if (partId) {
+          links = await getPartVendorsById(partId);
+        } else {
+          links = await getPartVendors(pn);
+        }
         setVendorLinks(links || []);
-      } catch {}
+      } catch (error) {
+        if (isEditingExistingPart && originalPartId && partId !== originalPartId) {
+          try {
+            const originalLinks = await getPartVendorsById(originalPartId);
+            setVendorLinks(originalLinks || []);
+          } catch {}
+        }
+      }
     })();
-  }, [open, formData.part_number]);
+  }, [open, debouncedPN, formData.part_id, isEditMode, initialPart?.part_id]);
 
   const handleAddVendorLink = async () => {
     const pn = String(formData.part_number || '').trim().toUpperCase();
     if (!pn) return;
     if (!newVendorId || !newVendorPN.trim()) { toast.error('Select a vendor and enter vendor part number'); return; }
     try {
-      await createPartVendor(pn, {
+      const payload = {
         vendor_id: Number(newVendorId),
         vendor_part_number: newVendorPN.trim().toUpperCase(),
         vendor_part_description: newVendorDesc || undefined,
         preferred: newPreferred,
-      });
-      const links = await getPartVendors(pn);
-      setVendorLinks(links || []);
+      };
+      
+      if (formData.part_id) {
+        await createPartVendorById(formData.part_id, payload);
+        const links = await getPartVendorsById(formData.part_id);
+        setVendorLinks(links || []);
+      } else {
+        await createPartVendor(pn, payload);
+        const links = await getPartVendors(pn);
+        setVendorLinks(links || []);
+      }
+      
       setNewVendorId(''); setNewVendorPN(''); setNewVendorDesc(''); setNewPreferred(false);
       toast.success('Vendor mapping added');
     } catch (e:any) {
@@ -333,18 +362,30 @@ const UnifiedPartDialog: React.FC<UnifiedPartDialogProps> = ({
 
   const handleTogglePreferred = async (link: InventoryVendorLink) => {
     try {
-      await updatePartVendor(formData.part_number.toUpperCase(), link.id!, { preferred: !link.preferred });
-      const links = await getPartVendors(formData.part_number.toUpperCase());
-      setVendorLinks(links || []);
+      if (formData.part_id) {
+        await updatePartVendorById(formData.part_id, link.id!, { preferred: !link.preferred });
+        const links = await getPartVendorsById(formData.part_id);
+        setVendorLinks(links || []);
+      } else {
+        await updatePartVendor(formData.part_number.toUpperCase(), link.id!, { preferred: !link.preferred });
+        const links = await getPartVendors(formData.part_number.toUpperCase());
+        setVendorLinks(links || []);
+      }
     } catch { toast.error('Failed to update preferred'); }
   };
 
   const handleDeleteLink = async (link: InventoryVendorLink) => {
     if (!window.confirm('Remove this vendor mapping?')) return;
     try {
-      await deletePartVendor(formData.part_number.toUpperCase(), link.id!);
-      const links = await getPartVendors(formData.part_number.toUpperCase());
-      setVendorLinks(links || []);
+      if (formData.part_id) {
+        await deletePartVendorById(formData.part_id, link.id!);
+        const links = await getPartVendorsById(formData.part_id);
+        setVendorLinks(links || []);
+      } else {
+        await deletePartVendor(formData.part_number.toUpperCase(), link.id!);
+        const links = await getPartVendors(formData.part_number.toUpperCase());
+        setVendorLinks(links || []);
+      }
     } catch { toast.error('Failed to delete mapping'); }
   };
 
@@ -514,25 +555,48 @@ const UnifiedPartDialog: React.FC<UnifiedPartDialogProps> = ({
                 ) : (
                   <Grid container spacing={1}>
                     <Grid item xs={12}>
-                      <Grid container spacing={1} sx={{ fontWeight: 600 }}>
-                        <Grid item xs={3}>Vendor</Grid>
-                        <Grid item xs={3}>Vendor Part #</Grid>
-                        <Grid item xs={3}>Description</Grid>
-                        <Grid item xs={1}>Pref</Grid>
-                        <Grid item xs={2}>Actions</Grid>
+                      <Grid container spacing={1} sx={{ fontWeight: 600, mb: 1 }}>
+                        <Grid item xs={12} sm={2.5}>Vendor</Grid>
+                        <Grid item xs={12} sm={2.5}>Vendor Part #</Grid>
+                        <Grid item xs={12} sm={3}>Description</Grid>
+                        <Grid item xs={12} sm={1}>Pref</Grid>
+                        <Grid item xs={12} sm={3}>Actions</Grid>
                       </Grid>
                     </Grid>
                     {vendorLinks.map(link => (
                       <Grid item xs={12} key={link.id}>
-                        <Grid container spacing={1} alignItems="center">
-                          <Grid item xs={3}>{link.vendor_name || link.vendor_id}</Grid>
-                          <Grid item xs={3}>{link.vendor_part_number}</Grid>
-                          <Grid item xs={3}>{link.vendor_part_description || ''}</Grid>
-                          <Grid item xs={1}>{link.preferred ? '✓' : ''}</Grid>
-                          <Grid item xs={2}>
-                            <Stack direction="row" spacing={1}>
-                              <Button size="small" variant="outlined" onClick={() => handleTogglePreferred(link)}>{link.preferred ? 'Unset' : 'Set Preferred'}</Button>
-                              <Button size="small" color="error" variant="outlined" onClick={() => handleDeleteLink(link)}>Remove</Button>
+                        <Grid container spacing={1} alignItems="center" sx={{ py: 1, borderBottom: '1px solid #e0e0e0' }}>
+                          <Grid item xs={12} sm={2.5}>
+                            <Typography variant="body2" noWrap>{link.vendor_name || link.vendor_id}</Typography>
+                          </Grid>
+                          <Grid item xs={12} sm={2.5}>
+                            <Typography variant="body2" noWrap>{link.vendor_part_number}</Typography>
+                          </Grid>
+                          <Grid item xs={12} sm={3}>
+                            <Typography variant="body2" noWrap>{link.vendor_part_description || ''}</Typography>
+                          </Grid>
+                          <Grid item xs={12} sm={1} sx={{ textAlign: 'center' }}>
+                            {link.preferred ? '✓' : ''}
+                          </Grid>
+                          <Grid item xs={12} sm={3}>
+                            <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap' }}>
+                              <Button 
+                                size="small" 
+                                variant="outlined" 
+                                onClick={() => handleTogglePreferred(link)}
+                                sx={{ minWidth: 'fit-content' }}
+                              >
+                                {link.preferred ? 'Unset' : 'Set Preferred'}
+                              </Button>
+                              <Button 
+                                size="small" 
+                                color="error" 
+                                variant="outlined" 
+                                onClick={() => handleDeleteLink(link)}
+                                sx={{ minWidth: 'fit-content' }}
+                              >
+                                Remove
+                              </Button>
                             </Stack>
                           </Grid>
                         </Grid>

@@ -228,4 +228,223 @@ router.delete('/:id', async (req: Request, res: Response) => {
   }
 });
 
+// =========================
+// Customer contact endpoints
+// =========================
+
+// List contacts (people, emails, phones) for a customer
+router.get('/:id/contacts', async (req: Request, res: Response) => {
+  const customerId = Number(req.params.id);
+  if (!Number.isFinite(customerId)) return res.status(400).json({ error: 'Invalid customer id' });
+  try {
+    const [people, emails, phones] = await Promise.all([
+      pool.query('SELECT * FROM customer_contact_people WHERE customer_id = $1 ORDER BY is_preferred DESC, name ASC', [customerId]),
+      pool.query('SELECT * FROM customer_emails WHERE customer_id = $1 ORDER BY is_preferred DESC, email ASC', [customerId]),
+      pool.query('SELECT * FROM customer_phones WHERE customer_id = $1 ORDER BY is_preferred DESC, label NULLS LAST, phone ASC', [customerId]),
+    ]);
+    res.json({ people: people.rows, emails: emails.rows, phones: phones.rows });
+  } catch (err) {
+    console.error('customerRoutes: list contacts error', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Add contact person
+router.post('/:id/contacts/people', async (req: Request, res: Response) => {
+  const customerId = Number(req.params.id);
+  const { name, is_preferred } = req.body || {};
+  if (!Number.isFinite(customerId)) return res.status(400).json({ error: 'Invalid customer id' });
+  if (!name || String(name).trim() === '') return res.status(400).json({ error: 'name is required' });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    if (is_preferred === true) {
+      await client.query('UPDATE customer_contact_people SET is_preferred = FALSE WHERE customer_id = $1', [customerId]);
+    }
+    const q = await client.query('INSERT INTO customer_contact_people (customer_id, name, is_preferred) VALUES ($1,$2,COALESCE($3,false)) RETURNING *', [customerId, String(name).trim(), !!is_preferred]);
+    await client.query('COMMIT');
+    res.status(201).json(q.rows[0]);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('customerRoutes: add contact person error', err);
+    res.status(500).json({ error: 'Internal server error' });
+  } finally {
+    client.release();
+  }
+});
+
+// Update contact person
+router.put('/:id/contacts/people/:personId', async (req: Request, res: Response) => {
+  const customerId = Number(req.params.id);
+  const personId = Number(req.params.personId);
+  const { name, is_preferred } = req.body || {};
+  if (!Number.isFinite(customerId) || !Number.isFinite(personId)) return res.status(400).json({ error: 'Invalid id' });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    if (is_preferred === true) {
+      await client.query('UPDATE customer_contact_people SET is_preferred = FALSE WHERE customer_id = $1', [customerId]);
+    }
+    const q = await client.query('UPDATE customer_contact_people SET name = COALESCE($1, name), is_preferred = COALESCE($2, is_preferred) WHERE id = $3 AND customer_id = $4 RETURNING *', [name ? String(name).trim() : null, is_preferred, personId, customerId]);
+    if (q.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Not found' });
+    }
+    await client.query('COMMIT');
+    res.json(q.rows[0]);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('customerRoutes: update contact person error', err);
+    res.status(500).json({ error: 'Internal server error' });
+  } finally {
+    client.release();
+  }
+});
+
+// Delete contact person
+router.delete('/:id/contacts/people/:personId', async (req: Request, res: Response) => {
+  const customerId = Number(req.params.id);
+  const personId = Number(req.params.personId);
+  if (!Number.isFinite(customerId) || !Number.isFinite(personId)) return res.status(400).json({ error: 'Invalid id' });
+  try {
+    const q = await pool.query('DELETE FROM customer_contact_people WHERE id = $1 AND customer_id = $2', [personId, customerId]);
+    res.json({ ok: true, deleted: q.rowCount });
+  } catch (err) {
+    console.error('customerRoutes: delete contact person error', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Add email
+router.post('/:id/contacts/emails', async (req: Request, res: Response) => {
+  const customerId = Number(req.params.id);
+  const { email, is_preferred } = req.body || {};
+  if (!Number.isFinite(customerId)) return res.status(400).json({ error: 'Invalid customer id' });
+  if (!email || String(email).trim() === '') return res.status(400).json({ error: 'email is required' });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    if (is_preferred === true) {
+      await client.query('UPDATE customer_emails SET is_preferred = FALSE WHERE customer_id = $1', [customerId]);
+    }
+    const q = await client.query('INSERT INTO customer_emails (customer_id, email, is_preferred) VALUES ($1,$2,COALESCE($3,false)) ON CONFLICT (customer_id, email) DO UPDATE SET is_preferred = EXCLUDED.is_preferred RETURNING *', [customerId, String(email).trim(), !!is_preferred]);
+    await client.query('COMMIT');
+    res.status(201).json(q.rows[0]);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('customerRoutes: add email error', err);
+    res.status(500).json({ error: 'Internal server error' });
+  } finally {
+    client.release();
+  }
+});
+
+// Update email
+router.put('/:id/contacts/emails/:emailId', async (req: Request, res: Response) => {
+  const customerId = Number(req.params.id);
+  const emailId = Number(req.params.emailId);
+  const { email, is_preferred } = req.body || {};
+  if (!Number.isFinite(customerId) || !Number.isFinite(emailId)) return res.status(400).json({ error: 'Invalid id' });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    if (is_preferred === true) {
+      await client.query('UPDATE customer_emails SET is_preferred = FALSE WHERE customer_id = $1', [customerId]);
+    }
+    const q = await client.query('UPDATE customer_emails SET email = COALESCE($1, email), is_preferred = COALESCE($2, is_preferred) WHERE id = $3 AND customer_id = $4 RETURNING *', [email ? String(email).trim() : null, is_preferred, emailId, customerId]);
+    if (q.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Not found' });
+    }
+    await client.query('COMMIT');
+    res.json(q.rows[0]);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('customerRoutes: update email error', err);
+    res.status(500).json({ error: 'Internal server error' });
+  } finally {
+    client.release();
+  }
+});
+
+// Delete email
+router.delete('/:id/contacts/emails/:emailId', async (req: Request, res: Response) => {
+  const customerId = Number(req.params.id);
+  const emailId = Number(req.params.emailId);
+  if (!Number.isFinite(customerId) || !Number.isFinite(emailId)) return res.status(400).json({ error: 'Invalid id' });
+  try {
+    const q = await pool.query('DELETE FROM customer_emails WHERE id = $1 AND customer_id = $2', [emailId, customerId]);
+    res.json({ ok: true, deleted: q.rowCount });
+  } catch (err) {
+    console.error('customerRoutes: delete email error', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Add phone
+router.post('/:id/contacts/phones', async (req: Request, res: Response) => {
+  const customerId = Number(req.params.id);
+  const { phone, label, is_preferred } = req.body || {};
+  if (!Number.isFinite(customerId)) return res.status(400).json({ error: 'Invalid customer id' });
+  if (!phone || String(phone).trim() === '') return res.status(400).json({ error: 'phone is required' });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    if (is_preferred === true) {
+      await client.query('UPDATE customer_phones SET is_preferred = FALSE WHERE customer_id = $1', [customerId]);
+    }
+    const q = await client.query('INSERT INTO customer_phones (customer_id, phone, label, is_preferred) VALUES ($1,$2,$3,COALESCE($4,false)) ON CONFLICT (customer_id, phone) DO UPDATE SET label = EXCLUDED.label, is_preferred = EXCLUDED.is_preferred RETURNING *', [customerId, String(phone).trim(), label || null, !!is_preferred]);
+    await client.query('COMMIT');
+    res.status(201).json(q.rows[0]);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('customerRoutes: add phone error', err);
+    res.status(500).json({ error: 'Internal server error' });
+  } finally {
+    client.release();
+  }
+});
+
+// Update phone
+router.put('/:id/contacts/phones/:phoneId', async (req: Request, res: Response) => {
+  const customerId = Number(req.params.id);
+  const phoneId = Number(req.params.phoneId);
+  const { phone, label, is_preferred } = req.body || {};
+  if (!Number.isFinite(customerId) || !Number.isFinite(phoneId)) return res.status(400).json({ error: 'Invalid id' });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    if (is_preferred === true) {
+      await client.query('UPDATE customer_phones SET is_preferred = FALSE WHERE customer_id = $1', [customerId]);
+    }
+    const q = await client.query('UPDATE customer_phones SET phone = COALESCE($1, phone), label = COALESCE($2, label), is_preferred = COALESCE($3, is_preferred) WHERE id = $4 AND customer_id = $5 RETURNING *', [phone ? String(phone).trim() : null, label || null, is_preferred, phoneId, customerId]);
+    if (q.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Not found' });
+    }
+    await client.query('COMMIT');
+    res.json(q.rows[0]);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('customerRoutes: update phone error', err);
+    res.status(500).json({ error: 'Internal server error' });
+  } finally {
+    client.release();
+  }
+});
+
+// Delete phone
+router.delete('/:id/contacts/phones/:phoneId', async (req: Request, res: Response) => {
+  const customerId = Number(req.params.id);
+  const phoneId = Number(req.params.phoneId);
+  if (!Number.isFinite(customerId) || !Number.isFinite(phoneId)) return res.status(400).json({ error: 'Invalid id' });
+  try {
+    const q = await pool.query('DELETE FROM customer_phones WHERE id = $1 AND customer_id = $2', [phoneId, customerId]);
+    res.json({ ok: true, deleted: q.rowCount });
+  } catch (err) {
+    console.error('customerRoutes: delete phone error', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 export default router; 

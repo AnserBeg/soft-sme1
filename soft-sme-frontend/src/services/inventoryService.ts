@@ -56,8 +56,18 @@ export const getPartVendors = async (partNumber: string): Promise<InventoryVendo
   return res.data;
 };
 
+export const getPartVendorsById = async (partId: number): Promise<InventoryVendorLink[]> => {
+  const res = await api.get(`/api/inventory/part/${partId}/vendors`);
+  return res.data;
+};
+
 export const createPartVendor = async (partNumber: string, payload: Omit<InventoryVendorLink, 'id'|'part_number'>) => {
   const res = await api.post(`/api/inventory/${encodeURIComponent(partNumber)}/vendors`, payload);
+  return res.data as InventoryVendorLink;
+};
+
+export const createPartVendorById = async (partId: number, payload: Omit<InventoryVendorLink, 'id'|'part_number'>) => {
+  const res = await api.post(`/api/inventory/part/${partId}/vendors`, payload);
   return res.data as InventoryVendorLink;
 };
 
@@ -66,8 +76,18 @@ export const updatePartVendor = async (partNumber: string, id: number, payload: 
   return res.data as InventoryVendorLink;
 };
 
+export const updatePartVendorById = async (partId: number, id: number, payload: Partial<InventoryVendorLink>) => {
+  const res = await api.put(`/api/inventory/part/${partId}/vendors/${id}`, payload);
+  return res.data as InventoryVendorLink;
+};
+
 export const deletePartVendor = async (partNumber: string, id: number) => {
   const res = await api.delete(`/api/inventory/${encodeURIComponent(partNumber)}/vendors/${id}`);
+  return res.data;
+};
+
+export const deletePartVendorById = async (partId: number, id: number) => {
+  const res = await api.delete(`/api/inventory/part/${partId}/vendors/${id}`);
   return res.data;
 };
 

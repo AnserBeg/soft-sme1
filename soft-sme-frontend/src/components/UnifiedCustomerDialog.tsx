@@ -1,8 +1,20 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Dialog, DialogTitle, DialogContent, DialogActions, TextField, Button, Grid } from '@mui/material';
+import { Dialog, DialogTitle, DialogContent, DialogActions, TextField, Button, Grid, Typography, Box, Stack } from '@mui/material';
 import { getBusinessProfileData } from '../services/businessProfileService';
 import { useDebounce } from '../hooks/useDebounce';
 import api from '../api/axios';
+import {
+  getCustomerContacts,
+  addCustomerContactPerson,
+  updateCustomerContactPerson,
+  deleteCustomerContactPerson,
+  addCustomerEmail,
+  updateCustomerEmail,
+  deleteCustomerEmail,
+  addCustomerPhone,
+  updateCustomerPhone,
+  deleteCustomerPhone,
+} from '../services/customerService';
 
 export interface CustomerFormValues {
   customer_id: string;
@@ -57,6 +69,13 @@ const UnifiedCustomerDialog: React.FC<UnifiedCustomerDialogProps> = ({
   const debouncedCustomer = useDebounce(customer, 300);
   const [existingCustomers, setExistingCustomers] = useState<Array<{ customer_id: number; customer_name: string }>>([]);
   const [duplicateCandidate, setDuplicateCandidate] = useState<{ customer_id: number; customer_name: string } | null>(null);
+  const [contactPeople, setContactPeople] = useState<any[]>([]);
+  const [contactEmails, setContactEmails] = useState<any[]>([]);
+  const [contactPhones, setContactPhones] = useState<any[]>([]);
+  const [newPerson, setNewPerson] = useState<string>('');
+  const [newEmail, setNewEmail] = useState<string>('');
+  const [newPhone, setNewPhone] = useState<string>('');
+  const [newPhoneLabel, setNewPhoneLabel] = useState<string>('');
 
   const handleAutoFill = async () => {
     try {
@@ -91,6 +110,25 @@ const UnifiedCustomerDialog: React.FC<UnifiedCustomerDialogProps> = ({
       // Auto-fill city, province, and country from business profile for new customers
       if (!isEditMode && (!initialCustomer?.city || initialCustomer.city === '') && (!initialCustomer?.province || initialCustomer.province === '') && (!initialCustomer?.country || initialCustomer.country === '')) {
         handleAutoFill();
+      }
+
+      // Load contacts when editing existing customer
+      const cid = (initialCustomer as any)?.customer_id as number | undefined;
+      if (isEditMode && cid) {
+        (async () => {
+          try {
+            const data = await getCustomerContacts(cid);
+            setContactPeople(data.people || []);
+            setContactEmails(data.emails || []);
+            setContactPhones(data.phones || []);
+          } catch (e) {
+            // ignore
+          }
+        })();
+      } else {
+        setContactPeople([]);
+        setContactEmails([]);
+        setContactPhones([]);
       }
     }
   }, [open, initialCustomer, isEditMode]);
@@ -204,6 +242,70 @@ const UnifiedCustomerDialog: React.FC<UnifiedCustomerDialogProps> = ({
     setFieldErrors(prev => ({ ...prev, ...newFieldErrors }));
   }, [debouncedCustomer, open]);
 
+  // Contact helpers
+  const customerId = (initialCustomer as any)?.customer_id as number | undefined;
+  const refreshContacts = async () => {
+    if (!isEditMode || !customerId) return;
+    try {
+      const data = await getCustomerContacts(customerId);
+      setContactPeople(data.people || []);
+      setContactEmails(data.emails || []);
+      setContactPhones(data.phones || []);
+    } catch {}
+  };
+
+  const addPerson = async () => {
+    if (!customerId || !newPerson.trim()) return;
+    await addCustomerContactPerson(customerId, { name: newPerson.trim() });
+    setNewPerson('');
+    refreshContacts();
+  };
+  const makePreferredPerson = async (id: number) => {
+    if (!customerId) return;
+    await updateCustomerContactPerson(customerId, id, { is_preferred: true });
+    refreshContacts();
+  };
+  const removePerson = async (id: number) => {
+    if (!customerId) return;
+    await deleteCustomerContactPerson(customerId, id);
+    refreshContacts();
+  };
+
+  const addEmailLocal = async () => {
+    if (!customerId || !newEmail.trim()) return;
+    await addCustomerEmail(customerId, { email: newEmail.trim() });
+    setNewEmail('');
+    refreshContacts();
+  };
+  const makePreferredEmail = async (id: number) => {
+    if (!customerId) return;
+    await updateCustomerEmail(customerId, id, { is_preferred: true });
+    refreshContacts();
+  };
+  const removeEmail = async (id: number) => {
+    if (!customerId) return;
+    await deleteCustomerEmail(customerId, id);
+    refreshContacts();
+  };
+
+  const addPhoneLocal = async () => {
+    if (!customerId || !newPhone.trim()) return;
+    await addCustomerPhone(customerId, { phone: newPhone.trim(), label: newPhoneLabel.trim() || undefined });
+    setNewPhone('');
+    setNewPhoneLabel('');
+    refreshContacts();
+  };
+  const makePreferredPhone = async (id: number) => {
+    if (!customerId) return;
+    await updateCustomerPhone(customerId, id, { is_preferred: true });
+    refreshContacts();
+  };
+  const removePhone = async (id: number) => {
+    if (!customerId) return;
+    await deleteCustomerPhone(customerId, id);
+    refreshContacts();
+  };
+
   return (
     <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
       <DialogTitle>{isEditMode ? 'Edit Customer' : 'Add New Customer'}</DialogTitle>
@@ -240,7 +342,67 @@ const UnifiedCustomerDialog: React.FC<UnifiedCustomerDialogProps> = ({
             <TextField name="website" label="Website" value={customer.website} onChange={handleInputChange} fullWidth />
           </Grid>
 
-
+          {isEditMode && customerId && (
+            <Grid item xs={12}>
+              <Box sx={{ mt: 2 }}>
+                <Typography variant="h6" sx={{ mb: 1 }}>Contacts</Typography>
+                <Grid container spacing={2}>
+                  <Grid item xs={12} md={4}>
+                    <Typography variant="subtitle1" sx={{ mb: 1 }}>People</Typography>
+                    <Stack direction="row" spacing={1} sx={{ mb: 1 }}>
+                      <TextField size="small" label="Name" value={newPerson} onChange={(e) => setNewPerson(e.target.value)} fullWidth />
+                      <Button variant="outlined" size="small" onClick={addPerson}>Add</Button>
+                    </Stack>
+                    <Stack spacing={1}>
+                      {contactPeople.map((p) => (
+                        <Stack key={p.id} direction="row" spacing={1} alignItems="center">
+                          <Typography variant="body2" sx={{ flex: 1 }}>{p.name} {p.is_preferred ? '(Preferred)' : ''}</Typography>
+                          {!p.is_preferred && <Button size="small" onClick={() => makePreferredPerson(p.id)}>Set Preferred</Button>}
+                          <Button size="small" color="error" onClick={() => removePerson(p.id)}>Remove</Button>
+                        </Stack>
+                      ))}
+                      {contactPeople.length === 0 && <Typography variant="body2" color="text.secondary">No people yet.</Typography>}
+                    </Stack>
+                  </Grid>
+                  <Grid item xs={12} md={4}>
+                    <Typography variant="subtitle1" sx={{ mb: 1 }}>Emails</Typography>
+                    <Stack direction="row" spacing={1} sx={{ mb: 1 }}>
+                      <TextField size="small" label="Email" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} fullWidth />
+                      <Button variant="outlined" size="small" onClick={addEmailLocal}>Add</Button>
+                    </Stack>
+                    <Stack spacing={1}>
+                      {contactEmails.map((e) => (
+                        <Stack key={e.id} direction="row" spacing={1} alignItems="center">
+                          <Typography variant="body2" sx={{ flex: 1 }}>{e.email} {e.is_preferred ? '(Preferred)' : ''}</Typography>
+                          {!e.is_preferred && <Button size="small" onClick={() => makePreferredEmail(e.id)}>Set Preferred</Button>}
+                          <Button size="small" color="error" onClick={() => removeEmail(e.id)}>Remove</Button>
+                        </Stack>
+                      ))}
+                      {contactEmails.length === 0 && <Typography variant="body2" color="text.secondary">No emails yet.</Typography>}
+                    </Stack>
+                  </Grid>
+                  <Grid item xs={12} md={4}>
+                    <Typography variant="subtitle1" sx={{ mb: 1 }}>Phones</Typography>
+                    <Stack direction="row" spacing={1} sx={{ mb: 1 }}>
+                      <TextField size="small" label="Phone" value={newPhone} onChange={(e) => setNewPhone(e.target.value)} fullWidth />
+                      <TextField size="small" label="Label" value={newPhoneLabel} onChange={(e) => setNewPhoneLabel(e.target.value)} sx={{ width: 120 }} />
+                      <Button variant="outlined" size="small" onClick={addPhoneLocal}>Add</Button>
+                    </Stack>
+                    <Stack spacing={1}>
+                      {contactPhones.map((ph) => (
+                        <Stack key={ph.id} direction="row" spacing={1} alignItems="center">
+                          <Typography variant="body2" sx={{ flex: 1 }}>{ph.phone}{ph.label ? ` (${ph.label})` : ''} {ph.is_preferred ? '(Preferred)' : ''}</Typography>
+                          {!ph.is_preferred && <Button size="small" onClick={() => makePreferredPhone(ph.id)}>Set Preferred</Button>}
+                          <Button size="small" color="error" onClick={() => removePhone(ph.id)}>Remove</Button>
+                        </Stack>
+                      ))}
+                      {contactPhones.length === 0 && <Typography variant="body2" color="text.secondary">No phones yet.</Typography>}
+                    </Stack>
+                  </Grid>
+                </Grid>
+              </Box>
+            </Grid>
+          )}
         </Grid>
         {error && <div style={{ color: 'red', marginTop: 8 }}>{error}</div>}
         {duplicateCandidate && (

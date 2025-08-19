@@ -25,6 +25,7 @@ BEGIN
 END;
 $$ language 'plpgsql';
 
+DROP TRIGGER IF EXISTS update_sales_order_parts_to_order_updated_at ON sales_order_parts_to_order;
 CREATE TRIGGER update_sales_order_parts_to_order_updated_at 
     BEFORE UPDATE ON sales_order_parts_to_order 
     FOR EACH ROW 

@@ -164,12 +164,13 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
   const [partOpenIndex, setPartOpenIndex] = useState<number | null>(null);
   const [partTypingTimer, setPartTypingTimer] = useState<number | null>(null);
   const [partEnterPressedIndex, setPartEnterPressedIndex] = useState<number | null>(null);
+  const [partInputs, setPartInputs] = useState<Record<number, string>>({});
 
-  const [errors, setErrors] = useState<{
+  const [errors, setErrors] = useState<{ 
     vendor?: string;
     date?: string;
     billNumber?: string;
-    lineItems?: Array<{
+    lineItems?: Array<{ 
       part_number?: string;
       part_description?: string;
       quantity?: string;
@@ -283,7 +284,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
           part_number: '',
           part_description: '',
           quantity: '',
-          unit: 'Each',
+          unit: UNIT_OPTIONS[0],
           unit_cost: '',
           line_amount: 0,
           quantity_to_order: 0
@@ -456,74 +457,109 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
   const totalGSTAmount = memoizedTotals.total_gst_amount;
   const totalAmount = memoizedTotals.total_amount;
 
-  // Unsaved changes guard
+  // Helper to create a stable signature for line items
+  const getLineItemsSignature = useCallback((items: PurchaseOrderLineItem[]) => {
+    return JSON.stringify(
+      items
+        .map(item => ({
+          part_number: item.part_number.trim(),
+          part_description: item.part_description.trim(),
+          quantity: parseFloat(String(item.quantity)),
+          unit: item.unit.trim(),
+          unit_cost: parseFloat(String(item.unit_cost)),
+          // line_amount is derived, so don't include in signature to avoid noise
+          // quantity_to_order is also derived/fetched, not user-editable
+        }))
+        .sort((a, b) => {
+          // Stable sort for line items
+          if (a.part_number !== b.part_number) return a.part_number.localeCompare(b.part_number);
+          return a.quantity - b.quantity; // Assuming quantity is numeric
+        })
+    );
+  }, []);
+
   const [initialSignature, setInitialSignature] = useState<string>('');
   useEffect(() => {
-    if (purchaseOrder) {
-      setInitialSignature(JSON.stringify({ 
-        vendor, 
-        billNumber, 
-        date, 
-        lineItems,
-        pickup_time: purchaseOrder.pickup_time,
-        pickup_location: purchaseOrder.pickup_location,
-        pickup_contact_person: purchaseOrder.pickup_contact_person,
-        pickup_phone: purchaseOrder.pickup_phone,
-        pickup_instructions: purchaseOrder.pickup_instructions,
-        pickup_notes: purchaseOrder.pickup_notes,
-        // Order placement tracking fields
-        order_placed: purchaseOrder.order_placed,
-        order_placed_at: purchaseOrder.order_placed_at,
-        order_placed_by: purchaseOrder.order_placed_by,
-        order_placed_method: purchaseOrder.order_placed_method,
-        vendor_confirmation_status: purchaseOrder.vendor_confirmation_status,
-        vendor_confirmation_notes: purchaseOrder.vendor_confirmation_notes,
-        vendor_confirmation_date: purchaseOrder.vendor_confirmation_date,
-        pricing_updated: purchaseOrder.pricing_updated,
-        pricing_updated_at: purchaseOrder.pricing_updated_at,
-        pricing_updated_by: purchaseOrder.pricing_updated_by,
-        pricing_updated_method: purchaseOrder.pricing_updated_method,
-        quantity_adjusted: purchaseOrder.quantity_adjusted,
-        quantity_adjusted_at: purchaseOrder.quantity_adjusted_at,
-        quantity_adjusted_by: purchaseOrder.quantity_adjusted_by,
-        quantity_adjusted_method: purchaseOrder.quantity_adjusted_method,
-        original_quantities: purchaseOrder.original_quantities,
-        adjusted_quantities: purchaseOrder.adjusted_quantities,
-        vendor_pricing_notes: purchaseOrder.vendor_pricing_notes
+    // Initialize baseline only once after data loads
+    if (!isCreationMode && !isInitialLoad && purchaseOrder && initialSignature === '') {
+      console.log('[PO Detail] Setting initial signature for dirty tracking');
+      setInitialSignature(JSON.stringify({
+        vendor: vendor ? { id: vendor.id, label: vendor.label } : null,
+        billNumber: billNumber.trim(),
+        date: date?.toISOString(),
+        lineItems: getLineItemsSignature(lineItems),
+        pickup_time: purchaseOrder.pickup_time || null,
+        pickup_location: purchaseOrder.pickup_location || null,
+        pickup_contact_person: purchaseOrder.pickup_contact_person || null,
+        pickup_phone: purchaseOrder.pickup_phone || null,
+        pickup_instructions: purchaseOrder.pickup_instructions || null,
+        pickup_notes: purchaseOrder.pickup_notes || null,
+        order_placed: purchaseOrder.order_placed || false,
+        order_placed_at: purchaseOrder.order_placed_at || null,
+        order_placed_by: purchaseOrder.order_placed_by || null,
+        order_placed_method: purchaseOrder.order_placed_method || null,
+        vendor_confirmation_status: purchaseOrder.vendor_confirmation_status || 'pending',
+        vendor_confirmation_notes: purchaseOrder.vendor_confirmation_notes || null,
+        vendor_confirmation_date: purchaseOrder.vendor_confirmation_date || null,
+        pricing_updated: purchaseOrder.pricing_updated || false,
+        pricing_updated_at: purchaseOrder.pricing_updated_at || null,
+        pricing_updated_by: purchaseOrder.pricing_updated_by || null,
+        pricing_updated_method: purchaseOrder.pricing_updated_method || null,
+        quantity_adjusted: purchaseOrder.quantity_adjusted || false,
+        quantity_adjusted_at: purchaseOrder.quantity_adjusted_at || null,
+        quantity_adjusted_by: purchaseOrder.quantity_adjusted_by || null,
+        quantity_adjusted_method: purchaseOrder.quantity_adjusted_method || null,
+        original_quantities: purchaseOrder.original_quantities || null,
+        adjusted_quantities: purchaseOrder.adjusted_quantities || null,
+        vendor_pricing_notes: purchaseOrder.vendor_pricing_notes || null
       }));
     }
-  }, [purchaseOrder]);
-  const isDirty = Boolean(initialSignature) && initialSignature !== JSON.stringify({ 
-    vendor, 
-    billNumber, 
-    date, 
-    lineItems,
-    pickup_time: purchaseOrder?.pickup_time,
-    pickup_location: purchaseOrder?.pickup_location,
-    pickup_contact_person: purchaseOrder?.pickup_contact_person,
-    pickup_phone: purchaseOrder?.pickup_phone,
-    pickup_instructions: purchaseOrder?.pickup_instructions,
-    pickup_notes: purchaseOrder?.pickup_notes,
-    // Order placement tracking fields
-    order_placed: purchaseOrder?.order_placed,
-    order_placed_at: purchaseOrder?.order_placed_at,
-    order_placed_by: purchaseOrder?.order_placed_by,
-    order_placed_method: purchaseOrder?.order_placed_method,
-    vendor_confirmation_status: purchaseOrder?.vendor_confirmation_status,
-    vendor_confirmation_notes: purchaseOrder?.vendor_confirmation_notes,
-    vendor_confirmation_date: purchaseOrder?.vendor_confirmation_date,
-    pricing_updated: purchaseOrder?.pricing_updated,
-    pricing_updated_at: purchaseOrder?.pricing_updated_at,
-    pricing_updated_by: purchaseOrder?.pricing_updated_by,
-    pricing_updated_method: purchaseOrder?.pricing_updated_method,
-    quantity_adjusted: purchaseOrder?.quantity_adjusted,
-    quantity_adjusted_at: purchaseOrder?.quantity_adjusted_at,
-    quantity_adjusted_by: purchaseOrder?.quantity_adjusted_by,
-    quantity_adjusted_method: purchaseOrder?.quantity_adjusted_method,
-    original_quantities: purchaseOrder?.original_quantities,
-    adjusted_quantities: purchaseOrder?.adjusted_quantities,
-    vendor_pricing_notes: purchaseOrder?.vendor_pricing_notes
-  });
+  }, [isCreationMode, isInitialLoad, purchaseOrder, vendor, billNumber, date, lineItems]);
+
+  const currentSignature = useMemo(() => JSON.stringify({ 
+    vendor: vendor ? { id: vendor.id, label: vendor.label } : null,
+    billNumber: billNumber.trim(), 
+    date: date?.toISOString(),
+    lineItems: getLineItemsSignature(lineItems),
+    pickup_time: purchaseOrder?.pickup_time || null,
+    pickup_location: purchaseOrder?.pickup_location || null,
+    pickup_contact_person: purchaseOrder?.pickup_contact_person || null,
+    pickup_phone: purchaseOrder?.pickup_phone || null,
+    pickup_instructions: purchaseOrder?.pickup_instructions || null,
+    pickup_notes: purchaseOrder?.pickup_notes || null,
+    order_placed: purchaseOrder?.order_placed || false,
+    order_placed_at: purchaseOrder?.order_placed_at || null,
+    order_placed_by: purchaseOrder?.order_placed_by || null,
+    order_placed_method: purchaseOrder?.order_placed_method || null,
+    vendor_confirmation_status: purchaseOrder?.vendor_confirmation_status || 'pending',
+    vendor_confirmation_notes: purchaseOrder?.vendor_confirmation_notes || null,
+    vendor_confirmation_date: purchaseOrder?.vendor_confirmation_date || null,
+    pricing_updated: purchaseOrder?.pricing_updated || false,
+    pricing_updated_at: purchaseOrder?.pricing_updated_at || null,
+    pricing_updated_by: purchaseOrder?.pricing_updated_by || null,
+    pricing_updated_method: purchaseOrder?.pricing_updated_method || null,
+    quantity_adjusted: purchaseOrder?.quantity_adjusted || false,
+    quantity_adjusted_at: purchaseOrder?.quantity_adjusted_at || null,
+    quantity_adjusted_by: purchaseOrder?.quantity_adjusted_by || null,
+    quantity_adjusted_method: purchaseOrder?.quantity_adjusted_method || null,
+    original_quantities: purchaseOrder?.original_quantities || null,
+    adjusted_quantities: purchaseOrder?.adjusted_quantities || null,
+    vendor_pricing_notes: purchaseOrder?.vendor_pricing_notes || null
+  }), [vendor, billNumber, date, lineItems, purchaseOrder]);
+
+  const isDirty = Boolean(initialSignature) && initialSignature !== currentSignature;
+  
+  // Debug logging for UnsavedChangesGuard
+  useEffect(() => {
+    console.log('[PO Detail] isDirty changed:', {
+      isDirty,
+      hasInitialSignature: Boolean(initialSignature),
+      signaturesMatch: initialSignature === currentSignature,
+      initialSignature: initialSignature.slice(0, 100) + '...',
+      currentSignature: currentSignature.slice(0, 100) + '...'
+    });
+    console.log('[PO Detail] About to render UnsavedChangesGuard with when=', isDirty);
+  }, [isDirty, initialSignature, currentSignature]);
 
   // Update line items with aggregate quantities when they change
   useEffect(() => {
@@ -849,12 +885,18 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
         };
 
         console.log('Creating new purchase order:', newPurchaseOrder);
+        if ((window as any).__poCreateInFlight) {
+          console.log('[PO] Skipping duplicate create (in flight)');
+          return;
+        }
+        (window as any).__poCreateInFlight = true;
         const response = await api.post('/api/purchase-orders', newPurchaseOrder);
         
         toast.success('Purchase Order created successfully!');
         
         // Navigate to the newly created purchase order
         const newPurchaseId = response.data.purchase_id;
+        (window as any).__unsavedGuardAllowNext = true;
         navigate(`/open-purchase-orders/${newPurchaseId}`);
       } else {
         // Update existing purchase order
@@ -948,6 +990,8 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
       } else {
         toast.error('Error saving Purchase Order. Please try again.');
       }
+    } finally {
+      (window as any).__poCreateInFlight = false;
     }
   };
 
@@ -1390,8 +1434,8 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
   const normalizeString = (value: string): string => {
     return value
       .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .replace(/[^\w\s]/g, ' ')
+      .replace(/[̀-ͯ]/g, '')
+      .replace(/[^a-zA-Z0-9\s]/g, ' ')
       .replace(/\s+/g, ' ')
       .trim()
       .toUpperCase();
@@ -1742,7 +1786,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
         <Box mt={4} display="flex" justifyContent={{ xs:'center', sm:'flex-end' }} gap={2}>
           <Button variant="contained" color="primary" startIcon={<DownloadIcon />} onClick={handleSaveAndDownloadPdf}>Download PDF</Button>
           
-          {/* QuickBooks Export Button - Admin users get full functionality */}
+          {/* QuickBooks Export Button - Admin users get full functionality */} 
           {!purchaseOrder?.exported_to_qbo && user?.access_role === 'Admin' && (
             <Button 
               variant="contained" 
@@ -1753,9 +1797,9 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
             >
               {exportLoading ? 'Exporting...' : 'Export to QuickBooks'}
             </Button>
-          )}
+          )} 
           
-          {/* Reopen PO button - for admin and purchase/sales users */}
+          {/* Reopen PO button - for admin and purchase/sales users */} 
           {(user?.access_role === 'Admin' || user?.access_role === 'Sales and Purchase') && (
             <Button variant="contained" color="primary" onClick={handleReopenPO}>Reopen PO</Button>
           )}
@@ -1834,7 +1878,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
                 </Box>
               )}
             </Box>
-            <Stack direction="row" spacing={1}>
+            <Stack direction="row" spacing={1}> 
               <Button variant="contained" color="primary" onClick={handleSave} startIcon={<SaveIcon />}>
                 {isCreationMode ? 'Create Purchase Order' : 'Save Changes'}
               </Button>
@@ -1849,7 +1893,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
             </Stack>
           </Box>
 
-          {/* Bill Number Alert Banner */}
+          {/* Bill Number Alert Banner */} 
           {showBillNumberAlert && (
             <Alert 
               severity="warning" 
@@ -1866,9 +1910,9 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
           )}
 
           <Paper sx={{ p: 3 }}>
-            <Grid container spacing={3}>
-              {/* Purchase Order fields: Vendor, Bill Number, GST Rate */}
-              <Grid item xs={12} sm={4}>
+            <Grid container spacing={3}> 
+              {/* Purchase Order fields: Vendor, Bill Number, GST Rate */} 
+              <Grid item xs={12} sm={4}> 
                 <Autocomplete<VendorOption, false, false, true>
                   disablePortal={false}
                   open={vendorOpen}
@@ -1954,7 +1998,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
                   )}
                 />
               </Grid>
-              <Grid item xs={12} sm={4}>
+              <Grid item xs={12} sm={4}> 
                 <TextField
                   label="Bill Number"
                   value={billNumber}
@@ -1969,7 +2013,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
                   helperText={errors.billNumber}
                 />
               </Grid>
-              <Grid item xs={12} sm={4}>
+              <Grid item xs={12} sm={4}> 
                 <TextField
                   label="GST Rate (%)"
                   type="number"
@@ -1979,7 +2023,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
                   inputProps={{ 
                     min: 0, 
                     max: 100, 
-                    step: 0.01, 
+                    step: '0.01',
                     readOnly: status === 'Closed',
                     onWheel: (e) => e.currentTarget.blur()
                   }}
@@ -2007,10 +2051,10 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
             </Button>
           </Box>
           <Paper sx={{ p: 3, mb: 3, mt: 0 }} elevation={3}>
-            <Grid container spacing={2}>
+            <Grid container spacing={2}> 
               {lineItems.map((item, idx) => (
-                <React.Fragment key={idx}>
-                  <Grid item xs={12} sm={6} md={3}>
+                <React.Fragment key={idx}> 
+                  <Grid item xs={12} sm={6} md={3}> 
                     <Autocomplete<PartOption, false, false, true>
                       disablePortal={false}
                       open={partOpenIndex === idx}
@@ -2018,16 +2062,9 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
                       onClose={() => setPartOpenIndex(null)}
                       autoHighlight
                       value={item.part_number}
+                      inputValue={partInputs[idx] ?? item.part_number}
                       onInputChange={(_, newInputValue, reason) => {
-                        // Prevent during initial load
-                        if (!isInitialLoad) {
-                          // Keep the visible input in sync with what the user types
-                          setLineItems(prev => {
-                            const updated = [...prev];
-                            updated[idx] = { ...updated[idx], part_number: newInputValue };
-                            return updated;
-                          });
-                        }
+                        setPartInputs(prev => ({ ...prev, [idx]: newInputValue }));
                         if (reason === 'reset') return;
                         const text = (newInputValue || '').trim();
                         if (!text) setPartOpenIndex(null);
@@ -2036,7 +2073,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
                         if (typeof newValue === 'string') {
                           const selected = newValue;
                           // Update both UI state and calc state immediately
-                      const inv = inventoryItems.find(inv => inv.part_number === selected);
+                          const inv = inventoryItems.find(inv => inv.part_number === selected);
                           const quantityToOrder = aggregateQuantities[selected] || 
                                                   aggregateQuantities[selected?.toUpperCase?.() || ''] || 
                                                   aggregateQuantities[selected?.toLowerCase?.() || ''] || 0;
@@ -2085,12 +2122,14 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
                           });
                           handlePartNumberChange(idx, selected);
                           setPartOpenIndex(null);
+                          setPartInputs(prev => ({ ...prev, [idx]: '' }));
                         } else if (newValue && typeof newValue === 'object' && 'isNew' in newValue) {
                           const inputValue = (newValue as any).inputValue || '';
                           setPartNumberForModal(inputValue);
                           setPartToAddIndex(idx);
                           setOpenPartDialog(true);
                           setPartOpenIndex(null);
+                          setPartInputs(prev => ({ ...prev, [idx]: '' }));
                         }
                       }}
                       options={inventoryItems.map(inv => inv.part_number)}
@@ -2193,7 +2232,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
                       )}
                     />
                   </Grid>
-                  <Grid item xs={12} sm={6} md={3}>
+                  <Grid item xs={12} sm={6} md={3}> 
                     <TextField
                       label="Part Description"
                       value={item.part_description}
@@ -2203,7 +2242,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
                       helperText={errors.lineItems?.[idx]?.part_description}
                     />
                   </Grid>
-                  <Grid item xs={6} sm={3} md={1}>
+                  <Grid item xs={6} sm={3} md={1}> 
                     <TextField
                       label="Qty"
                       value={item.quantity}
@@ -2219,7 +2258,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
                       }}
                     />
                   </Grid>
-                  <Grid item xs={6} sm={3} md={1}>
+                  <Grid item xs={6} sm={3} md={1}> 
                     <TextField
                       label="Unit"
                       value={item.unit}
@@ -2235,7 +2274,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
                       ))}
                     </TextField>
                   </Grid>
-                  <Grid item xs={6} sm={3} md={1.5}>
+                  <Grid item xs={6} sm={3} md={1.5}> 
                     <TextField
                       label="Unit Cost"
                       value={item.unit_cost}
@@ -2250,7 +2289,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
                       }}
                     />
                   </Grid>
-                  <Grid item xs={6} sm={3} md={1.5}>
+                  <Grid item xs={6} sm={3} md={1.5}> 
                     <TextField
                       label="Amount"
                       value={item.line_amount != null && !isNaN(Number(item.line_amount)) ? Number(item.line_amount).toFixed(2) : '0.00'}
@@ -2309,27 +2348,27 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
             </Box>
           </Paper>
 
-          <Paper sx={{ p: 3, mb: 3 }} elevation={3}>
-            <Grid container spacing={2}>
-              <Grid item xs={12} sm={4}>
+          <Paper sx={{ p: 3, mb: 3 }} elevation={3}> 
+            <Grid container spacing={2}> 
+              <Grid item xs={12} sm={4}> 
                 <Typography variant="subtitle1">Subtotal: ${subTotal != null && !isNaN(Number(subTotal)) ? Number(subTotal).toFixed(2) : '0.00'}</Typography>
               </Grid>
-              <Grid item xs={12} sm={4}>
+              <Grid item xs={12} sm={4}> 
                 <Typography variant="subtitle1">Total GST: ${totalGSTAmount != null && !isNaN(Number(totalGSTAmount)) ? Number(totalGSTAmount).toFixed(2) : '0.00'}</Typography>
               </Grid>
-              <Grid item xs={12} sm={4}>
+              <Grid item xs={12} sm={4}> 
                 <Typography variant="h6">Total Amount: ${totalAmount != null && !isNaN(Number(totalAmount)) ? Number(totalAmount).toFixed(2) : '0.00'}</Typography>
               </Grid>
             </Grid>
           </Paper>
 
-          {/* Pickup Details Section */}
+          {/* Pickup Details Section */} 
           <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 3, mb: 2 }}>
             <Typography variant="h6">Pickup Details for Drivers</Typography>
           </Box>
-          <Paper sx={{ p: 3, mb: 3 }} elevation={3}>
-            <Grid container spacing={3}>
-              <Grid item xs={12} sm={6}>
+          <Paper sx={{ p: 3, mb: 3 }} elevation={3}> 
+            <Grid container spacing={3}> 
+              <Grid item xs={12} sm={6}> 
                 <TextField
                   label="Pickup Time"
                   placeholder="e.g., tomorrow at 2 PM, Friday morning"
@@ -2346,7 +2385,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
                   helperText="When to pick up the order"
                 />
               </Grid>
-              <Grid item xs={12} sm={6}>
+              <Grid item xs={12} sm={6}> 
                 <TextField
                   label="Pickup Location"
                   placeholder="e.g., 123 Main St, Building A, Loading Dock"
@@ -2363,7 +2402,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
                   helperText="Where to pick up the order"
                 />
               </Grid>
-              <Grid item xs={12} sm={6}>
+              <Grid item xs={12} sm={6}> 
                 <TextField
                   label="Contact Person"
                   placeholder="e.g., John Smith, Warehouse Manager"
@@ -2380,7 +2419,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
                   helperText="Name of person to contact at pickup location"
                 />
               </Grid>
-              <Grid item xs={12} sm={6}>
+              <Grid item xs={12} sm={6}> 
                 <TextField
                   label="Contact Phone"
                   placeholder="e.g., (555) 123-4567"
@@ -2397,7 +2436,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
                   helperText="Phone number for pickup contact person"
                 />
               </Grid>
-              <Grid item xs={12}>
+              <Grid item xs={12}> 
                 <TextField
                   label="Pickup Instructions"
                   placeholder="e.g., Use loading dock on east side, call 15 minutes before arrival, parking available in lot B"
@@ -2416,7 +2455,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
                   helperText="Special instructions for pickup (parking, loading dock, etc.)"
                 />
               </Grid>
-              <Grid item xs={12}>
+              <Grid item xs={12}> 
                 <TextField
                   label="Pickup Notes"
                   placeholder="e.g., After-hours pickup available, bring ID, parts are in warehouse section C"
@@ -2438,14 +2477,14 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
             </Grid>
           </Paper>
 
-          {/* Order Placement Tracking Section */}
+          {/* Order Placement Tracking Section */} 
           <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 3, mb: 2 }}>
             <Typography variant="h6">Order Placement Tracking</Typography>
           </Box>
-          <Paper sx={{ p: 3, mb: 3 }} elevation={3}>
-            <Grid container spacing={3}>
-              {/* Order Placed Status */}
-              <Grid item xs={12} sm={6}>
+          <Paper sx={{ p: 3, mb: 3 }} elevation={3}> 
+            <Grid container spacing={3}> 
+              {/* Order Placed Status */} 
+              <Grid item xs={12} sm={6}> 
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                   <input
                     type="checkbox"
@@ -2477,8 +2516,8 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
                 </Box>
               </Grid>
               
-              {/* Vendor Confirmation Status */}
-              <Grid item xs={12} sm={6}>
+              {/* Vendor Confirmation Status */} 
+              <Grid item xs={12} sm={6}> 
                 <TextField
                   select
                   label="Vendor Confirmation Status"
@@ -2502,8 +2541,8 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
                 </TextField>
               </Grid>
 
-              {/* Vendor Confirmation Notes */}
-              <Grid item xs={12}>
+              {/* Vendor Confirmation Notes */} 
+              <Grid item xs={12}> 
                 <TextField
                   label="Vendor Confirmation Notes"
                   placeholder="e.g., Parts available, pricing confirmed, minimum order 10ft packs"
@@ -2523,8 +2562,8 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
                 />
               </Grid>
 
-              {/* Pricing and Quantity Updates */}
-              <Grid item xs={12} sm={6}>
+              {/* Pricing and Quantity Updates */} 
+              <Grid item xs={12} sm={6}> 
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                   <input
                     type="checkbox"
@@ -2556,7 +2595,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
                 </Box>
               </Grid>
 
-              <Grid item xs={12} sm={6}>
+              <Grid item xs={12} sm={6}> 
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                   <input
                     type="checkbox"
@@ -2588,8 +2627,8 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
                 </Box>
               </Grid>
 
-              {/* Vendor Pricing Notes */}
-              <Grid item xs={12}>
+              {/* Vendor Pricing Notes */} 
+              <Grid item xs={12}> 
                 <TextField
                   label="Vendor Pricing Structure Notes"
                   placeholder="e.g., Sold by 10ft packs, minimum order 50ft, bulk pricing available over 100ft"
@@ -2609,8 +2648,8 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
                 />
               </Grid>
 
-              {/* Quantity Adjustment Button */}
-              <Grid item xs={12}>
+              {/* Quantity Adjustment Button */} 
+              <Grid item xs={12}> 
                 <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2 }}>
                   <Button
                     variant="outlined"
@@ -2627,21 +2666,21 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
                 </Typography>
               </Grid>
 
-              {/* Original vs Adjusted Quantities Display */}
+              {/* Original vs Adjusted Quantities Display */} 
               {(purchaseOrder?.original_quantities || purchaseOrder?.adjusted_quantities) && (
-                <Grid item xs={12}>
+                <Grid item xs={12}> 
                   <Typography variant="subtitle1" sx={{ fontWeight: 'bold', mb: 2 }}>
                     Quantity Adjustments
                   </Typography>
-                  <Grid container spacing={2}>
+                  <Grid container spacing={2}> 
                     {lineItems.map((item, idx) => {
                       const originalQty = purchaseOrder?.original_quantities?.[idx] || item.quantity;
                       const adjustedQty = purchaseOrder?.adjusted_quantities?.[idx] || item.quantity;
                       const hasAdjustment = originalQty !== adjustedQty;
                       
                       return hasAdjustment ? (
-                        <Grid item xs={12} sm={6} key={idx}>
-                          <Paper sx={{ p: 2, backgroundColor: '#f5f5f5' }} elevation={1}>
+                        <Grid item xs={12} sm={6} key={idx}> 
+                          <Paper sx={{ p: 2, backgroundColor: '#f5f5f5' }} elevation={1}> 
                             <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
                               {item.part_number}
                             </Typography>
@@ -2751,7 +2790,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
             defaultTo={vendorEmail}
             allowMessageEdit={true}
           />
-          {/* Debug info */}
+          {/* Debug info */} 
           {isEmailModalOpen && (
             <div style={{ display: 'none' }}>
               Debug: vendorEmail = {vendorEmail}, vendor = {JSON.stringify(vendor)}
@@ -2773,4 +2812,4 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
   );
 };
 
-export default OpenPurchaseOrderDetailPage; 
+export default OpenPurchaseOrderDetailPage;

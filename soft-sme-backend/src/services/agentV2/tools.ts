@@ -53,7 +53,7 @@ export class AgentToolsV2 {
       const soId = insert.rows[0].sales_order_id;
       const lines = Array.isArray(payload.lineItems) ? payload.lineItems : [];
       for (const item of lines) {
-        await this.soService.upsertLineItem(soId, item, client);
+        await this.soService.upsertLineItem(soId, item, client, { access_role: 'Admin' }); // Agent V2 has admin privileges
       }
       await this.soService.recalculateAndUpdateSummary(soId, client);
       await client.query('COMMIT');
@@ -79,7 +79,7 @@ export class AgentToolsV2 {
         if (fields.length){ values.push(salesOrderId); await client.query(`UPDATE salesorderhistory SET ${fields.join(', ')}, updated_at = NOW() WHERE sales_order_id = $${i}`, values); }
       }
       if (Array.isArray(patch.lineItems)) {
-        await this.soService.updateSalesOrder(salesOrderId, patch.lineItems, client);
+        await this.soService.updateSalesOrder(salesOrderId, patch.lineItems, client, { access_role: 'Admin' }); // Agent V2 has admin privileges
       }
       if (Array.isArray(patch.partsToOrder)) {
         for (const p of patch.partsToOrder) {

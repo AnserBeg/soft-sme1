@@ -1,5 +1,5 @@
 // src/pages/QuoteEditorPage.tsx
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Box,
   Button,
@@ -152,47 +152,31 @@ const QuoteEditorPage: React.FC = () => {
   // email modal
   const [isEmailModalOpen, setIsEmailModalOpen] = useState(false);
 
-  // Unsaved changes guard: track initial signature once data is loaded
+  // Unsaved changes guard: normalized signature structure
   const [initialSignature, setInitialSignature] = useState<string>('');
-  useEffect(() => {
-    if (isEditMode && quote) {
-      setInitialSignature(JSON.stringify({
-        customerId: quote.customer_id,
-        product: quote.product_name,
-        quoteDate: quote.quote_date,
-        validUntil: quote.valid_until,
-        estimatedCost: quote.estimated_cost,
-        productDescription: quote.product_description,
-        terms: quote.terms,
-        customerPoNumber: quote.customer_po_number,
-        vinNumber: quote.vin_number,
-      }));
-    } else if (!isEditMode) {
-      setInitialSignature(JSON.stringify({
-        customer: selectedCustomer?.id || null,
-        product: selectedProduct?.label || '',
-        quoteDate: quoteDate?.toISOString?.() || null,
-        validUntil: validUntil?.toISOString?.() || null,
-        estimatedCost,
-        productDescription,
-        terms,
-        customerPoNumber,
-        vinNumber,
-      }));
-    }
-  }, [isEditMode, quote]);
-  const currentSignature = JSON.stringify({
+  
+  const getNormalizedSignature = useCallback(() => ({
     customer: selectedCustomer?.id || quote?.customer_id || null,
     product: selectedProduct?.label || quote?.product_name || '',
     quoteDate: quoteDate?.toISOString?.() || quote?.quote_date || null,
     validUntil: validUntil?.toISOString?.() || quote?.valid_until || null,
     estimatedCost: estimatedCost ?? quote?.estimated_cost ?? null,
-    productDescription,
-    terms,
-    customerPoNumber,
-    vinNumber,
-  });
-  const isDirty = Boolean(initialSignature) && currentSignature !== initialSignature;
+    productDescription: (productDescription || '').trim(),
+    terms: (terms || '').trim(),
+    customerPoNumber: (customerPoNumber || '').trim(),
+    vinNumber: (vinNumber || '').trim(),
+  }), [selectedCustomer, quote, selectedProduct, quoteDate, validUntil, estimatedCost, productDescription, terms, customerPoNumber, vinNumber]);
+  
+  useEffect(() => {
+    if (initialSignature !== '') return;
+    if (isEditMode && quote) {
+      setInitialSignature(JSON.stringify(getNormalizedSignature()));
+    } else if (!isEditMode) {
+      setInitialSignature(JSON.stringify(getNormalizedSignature()));
+    }
+  }, [isEditMode, quote, getNormalizedSignature]);
+  
+  const isDirty = Boolean(initialSignature) && initialSignature !== JSON.stringify(getNormalizedSignature());
 
   // load lists
   useEffect(() => {
@@ -318,6 +302,12 @@ const QuoteEditorPage: React.FC = () => {
         await api.put(`/api/quotes/${quote.quote_id}`, payload);
         setSuccess('Quote updated successfully');
       } else {
+        // Prevent duplicate submission
+        if ((window as any).__quoteCreateInFlight) {
+          console.log('[QuoteEditor] Skipping duplicate create (in flight)');
+          return;
+        }
+        (window as any).__quoteCreateInFlight = true;
         const res = await api.post('/api/quotes', payload);
         setSuccess('Quote created successfully');
 
@@ -342,8 +332,10 @@ const QuoteEditorPage: React.FC = () => {
           };
           setQuote(newQuote);
           // jump to edit URL for the new quote
+          // Bypass guard for this navigation
+          (window as any).__unsavedGuardAllowNext = true;
           navigate(`/quotes/${newId}`, { replace: true });
-          setInitialSignature(currentSignature);
+          setInitialSignature(JSON.stringify(getNormalizedSignature()));
           return;
         }
       }
@@ -358,6 +350,7 @@ const QuoteEditorPage: React.FC = () => {
       setError(msg);
     } finally {
       setLoading(false);
+      (window as any).__quoteCreateInFlight = false;
     }
   };
 

@@ -72,6 +72,7 @@ const InventoryPage: React.FC = () => {
       // Debug: Log sample data
       if (response.length > 0) {
         console.log('Sample inventory item from frontend:', {
+          part_id: response[0].part_id,
           part_number: response[0].part_number,
           last_unit_cost: response[0].last_unit_cost,
           last_unit_cost_type: typeof response[0].last_unit_cost,
@@ -335,6 +336,7 @@ const InventoryPage: React.FC = () => {
 
   const handleRowClick = (params: any) => {
     setEditingPart({
+      part_id: params.row.part_id,
       part_number: params.row.part_number,
       part_description: params.row.part_description || '',
       unit: params.row.unit || 'Each',
@@ -696,6 +698,7 @@ const InventoryPage: React.FC = () => {
                   <ListItem key={idx} button onClick={() => {
                     const row = rows.find(r => r.part_number === f.part_number);
                     if (row) { setEditingPart({
+                      part_id: row.part_id,
                       part_number: row.part_number,
                       part_description: row.part_description || '',
                       unit: row.unit || 'Each',
@@ -718,6 +721,7 @@ const InventoryPage: React.FC = () => {
                       <ListItem key={idx} button onClick={() => {
                         const row = rows.find(r => r.part_number === g.part_number);
                         if (row) { setEditingPart({
+                          part_id: row.part_id,
                           part_number: row.part_number,
                           part_description: row.part_description || '',
                           unit: row.unit || 'Each',

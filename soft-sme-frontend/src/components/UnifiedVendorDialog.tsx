@@ -1,9 +1,21 @@
 import React, { useState, useEffect } from 'react';
-import { Dialog, DialogTitle, DialogContent, DialogActions, TextField, Button, Grid, IconButton, Tooltip } from '@mui/material';
+import { Dialog, DialogTitle, DialogContent, DialogActions, TextField, Button, Grid, IconButton, Tooltip, Typography, Box, Stack } from '@mui/material';
 import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh';
 import { getBusinessProfileData } from '../services/businessProfileService';
 import { useDebounce } from '../hooks/useDebounce';
 import api from '../api/axios';
+import { 
+  getVendorContacts,
+  addVendorContactPerson,
+  updateVendorContactPerson,
+  deleteVendorContactPerson,
+  addVendorEmail,
+  updateVendorEmail,
+  deleteVendorEmail,
+  addVendorPhone,
+  updateVendorPhone,
+  deleteVendorPhone,
+} from '../services/vendorService';
 
 export interface VendorFormValues {
   vendor_name: string;
@@ -52,6 +64,13 @@ const UnifiedVendorDialog: React.FC<UnifiedVendorDialogProps> = ({
   const [fieldErrors, setFieldErrors] = useState<Partial<Record<keyof VendorFormValues, string>>>({});
   const debouncedVendor = useDebounce(vendor, 300);
   const [existingVendors, setExistingVendors] = useState<Array<{ vendor_id: number; vendor_name: string }>>([]);
+  const [contactPeople, setContactPeople] = useState<any[]>([]);
+  const [contactEmails, setContactEmails] = useState<any[]>([]);
+  const [contactPhones, setContactPhones] = useState<any[]>([]);
+  const [newPerson, setNewPerson] = useState<string>('');
+  const [newEmail, setNewEmail] = useState<string>('');
+  const [newPhone, setNewPhone] = useState<string>('');
+  const [newPhoneLabel, setNewPhoneLabel] = useState<string>('');
 
   useEffect(() => {
     if (open) {
@@ -73,6 +92,24 @@ const UnifiedVendorDialog: React.FC<UnifiedVendorDialogProps> = ({
           // ignore
         }
       })();
+      // Load contacts in edit mode
+      const vid = (initialVendor as any)?.vendor_id as number | undefined;
+      if (isEditMode && vid) {
+        (async () => {
+          try {
+            const data = await getVendorContacts(vid);
+            setContactPeople(data.people || []);
+            setContactEmails(data.emails || []);
+            setContactPhones(data.phones || []);
+          } catch (e) {
+            // ignore
+          }
+        })();
+      } else {
+        setContactPeople([]);
+        setContactEmails([]);
+        setContactPhones([]);
+      }
     }
   }, [open, initialVendor, isEditMode]);
 
@@ -123,6 +160,70 @@ const UnifiedVendorDialog: React.FC<UnifiedVendorDialogProps> = ({
     }
   };
 
+  // Contact handlers (edit mode only)
+  const vendorId = (initialVendor as any)?.vendor_id as number | undefined;
+  const refreshContacts = async () => {
+    if (!isEditMode || !vendorId) return;
+    try {
+      const data = await getVendorContacts(vendorId);
+      setContactPeople(data.people || []);
+      setContactEmails(data.emails || []);
+      setContactPhones(data.phones || []);
+    } catch {}
+  };
+
+  const addPerson = async () => {
+    if (!vendorId || !newPerson.trim()) return;
+    await addVendorContactPerson(vendorId, { name: newPerson.trim() });
+    setNewPerson('');
+    refreshContacts();
+  };
+  const makePreferredPerson = async (id: number) => {
+    if (!vendorId) return;
+    await updateVendorContactPerson(vendorId, id, { is_preferred: true });
+    refreshContacts();
+  };
+  const removePerson = async (id: number) => {
+    if (!vendorId) return;
+    await deleteVendorContactPerson(vendorId, id);
+    refreshContacts();
+  };
+
+  const addEmailLocal = async () => {
+    if (!vendorId || !newEmail.trim()) return;
+    await addVendorEmail(vendorId, { email: newEmail.trim() });
+    setNewEmail('');
+    refreshContacts();
+  };
+  const makePreferredEmail = async (id: number) => {
+    if (!vendorId) return;
+    await updateVendorEmail(vendorId, id, { is_preferred: true });
+    refreshContacts();
+  };
+  const removeEmail = async (id: number) => {
+    if (!vendorId) return;
+    await deleteVendorEmail(vendorId, id);
+    refreshContacts();
+  };
+
+  const addPhoneLocal = async () => {
+    if (!vendorId || !newPhone.trim()) return;
+    await addVendorPhone(vendorId, { phone: newPhone.trim(), label: newPhoneLabel.trim() || undefined });
+    setNewPhone('');
+    setNewPhoneLabel('');
+    refreshContacts();
+  };
+  const makePreferredPhone = async (id: number) => {
+    if (!vendorId) return;
+    await updateVendorPhone(vendorId, id, { is_preferred: true });
+    refreshContacts();
+  };
+  const removePhone = async (id: number) => {
+    if (!vendorId) return;
+    await deleteVendorPhone(vendorId, id);
+    refreshContacts();
+  };
+
   return (
     <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth sx={{ zIndex: (theme) => theme.zIndex.modal + 5 }}>
       <DialogTitle>{isEditMode ? 'Edit Vendor' : 'Add New Vendor'}</DialogTitle>
@@ -159,6 +260,68 @@ const UnifiedVendorDialog: React.FC<UnifiedVendorDialogProps> = ({
           <Grid item xs={12}>
             <TextField name="website" label="Website" value={vendor.website} onChange={handleInputChange} fullWidth autoComplete="new-password" inputProps={{ autoComplete: 'new-password' }} />
           </Grid>
+
+          {isEditMode && vendorId && (
+            <Grid item xs={12}>
+              <Box sx={{ mt: 2 }}>
+                <Typography variant="h6" sx={{ mb: 1 }}>Contacts</Typography>
+                <Grid container spacing={2}>
+                  <Grid item xs={12} md={4}>
+                    <Typography variant="subtitle1" sx={{ mb: 1 }}>People</Typography>
+                    <Stack direction="row" spacing={1} sx={{ mb: 1 }}>
+                      <TextField size="small" label="Name" value={newPerson} onChange={(e) => setNewPerson(e.target.value)} fullWidth />
+                      <Button variant="outlined" size="small" onClick={addPerson}>Add</Button>
+                    </Stack>
+                    <Stack spacing={1}>
+                      {contactPeople.map((p) => (
+                        <Stack key={p.id} direction="row" spacing={1} alignItems="center">
+                          <Typography variant="body2" sx={{ flex: 1 }}>{p.name} {p.is_preferred ? '(Preferred)' : ''}</Typography>
+                          {!p.is_preferred && <Button size="small" onClick={() => makePreferredPerson(p.id)}>Set Preferred</Button>}
+                          <Button size="small" color="error" onClick={() => removePerson(p.id)}>Remove</Button>
+                        </Stack>
+                      ))}
+                      {contactPeople.length === 0 && <Typography variant="body2" color="text.secondary">No people yet.</Typography>}
+                    </Stack>
+                  </Grid>
+                  <Grid item xs={12} md={4}>
+                    <Typography variant="subtitle1" sx={{ mb: 1 }}>Emails</Typography>
+                    <Stack direction="row" spacing={1} sx={{ mb: 1 }}>
+                      <TextField size="small" label="Email" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} fullWidth />
+                      <Button variant="outlined" size="small" onClick={addEmailLocal}>Add</Button>
+                    </Stack>
+                    <Stack spacing={1}>
+                      {contactEmails.map((e) => (
+                        <Stack key={e.id} direction="row" spacing={1} alignItems="center">
+                          <Typography variant="body2" sx={{ flex: 1 }}>{e.email} {e.is_preferred ? '(Preferred)' : ''}</Typography>
+                          {!e.is_preferred && <Button size="small" onClick={() => makePreferredEmail(e.id)}>Set Preferred</Button>}
+                          <Button size="small" color="error" onClick={() => removeEmail(e.id)}>Remove</Button>
+                        </Stack>
+                      ))}
+                      {contactEmails.length === 0 && <Typography variant="body2" color="text.secondary">No emails yet.</Typography>}
+                    </Stack>
+                  </Grid>
+                  <Grid item xs={12} md={4}>
+                    <Typography variant="subtitle1" sx={{ mb: 1 }}>Phones</Typography>
+                    <Stack direction="row" spacing={1} sx={{ mb: 1 }}>
+                      <TextField size="small" label="Phone" value={newPhone} onChange={(e) => setNewPhone(e.target.value)} fullWidth />
+                      <TextField size="small" label="Label" value={newPhoneLabel} onChange={(e) => setNewPhoneLabel(e.target.value)} sx={{ width: 120 }} />
+                      <Button variant="outlined" size="small" onClick={addPhoneLocal}>Add</Button>
+                    </Stack>
+                    <Stack spacing={1}>
+                      {contactPhones.map((ph) => (
+                        <Stack key={ph.id} direction="row" spacing={1} alignItems="center">
+                          <Typography variant="body2" sx={{ flex: 1 }}>{ph.phone}{ph.label ? ` (${ph.label})` : ''} {ph.is_preferred ? '(Preferred)' : ''}</Typography>
+                          {!ph.is_preferred && <Button size="small" onClick={() => makePreferredPhone(ph.id)}>Set Preferred</Button>}
+                          <Button size="small" color="error" onClick={() => removePhone(ph.id)}>Remove</Button>
+                        </Stack>
+                      ))}
+                      {contactPhones.length === 0 && <Typography variant="body2" color="text.secondary">No phones yet.</Typography>}
+                    </Stack>
+                  </Grid>
+                </Grid>
+              </Box>
+            </Grid>
+          )}
         </Grid>
       </DialogContent>
       <DialogActions>

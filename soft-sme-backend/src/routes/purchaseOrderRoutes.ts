@@ -19,46 +19,34 @@ async function createVendorMappingsForPO(client: any, lineItems: any[], vendorId
     
     // Check if this part exists in inventory
     const existingPartResult = await client.query(
-      `SELECT part_number FROM "inventory" 
+      `SELECT part_number, part_id FROM "inventory" 
        WHERE REPLACE(REPLACE(UPPER(part_number), '-', ''), ' ', '') = REPLACE(REPLACE(UPPER($1), '-', ''), ' ', '')`,
       [normalizedPartNumber]
     );
 
     if (existingPartResult.rows.length > 0) {
       const canonicalPartNumber = existingPartResult.rows[0].part_number;
+      const canonicalPartId = existingPartResult.rows[0].part_id;
       
-      // Check if vendor mapping already exists for this part and vendor
-      const existingMappingResult = await client.query(
-        `SELECT id FROM inventory_vendors 
-         WHERE part_number = $1 AND vendor_id = $2`,
-        [canonicalPartNumber, vendorId]
+      // Upsert vendor mapping (normalize vendor part number) with part_id populated
+      const vendorPartNumber = normalizedPartNumber;
+      await client.query(
+        `INSERT INTO inventory_vendors (part_number, part_id, vendor_id, vendor_part_number, vendor_part_description, preferred, is_active, usage_count, last_used_at)
+         VALUES ($1, $2, $3, $4, $5, COALESCE($6,false), true, 1, NOW())
+         ON CONFLICT (part_id, vendor_id, vendor_part_number)
+         DO UPDATE SET 
+           usage_count = inventory_vendors.usage_count + 1,
+           vendor_part_description = COALESCE(EXCLUDED.vendor_part_description, inventory_vendors.vendor_part_description),
+           last_used_at = NOW()`,
+        [
+          canonicalPartNumber,
+          canonicalPartId,
+          vendorId,
+          vendorPartNumber,
+          part_description || null,
+          false
+        ]
       );
-
-      if (existingMappingResult.rows.length === 0) {
-        // Create new vendor mapping
-        console.log(`Creating vendor mapping for part ${canonicalPartNumber} to vendor ${vendorId}`);
-        await client.query(
-          `INSERT INTO inventory_vendors (part_number, vendor_id, vendor_part_number, vendor_part_description, usage_count, last_used_at)
-           VALUES ($1, $2, $3, $4, 1, NOW())`,
-          [
-            canonicalPartNumber,
-            vendorId,
-            normalizedPartNumber, // Use the part number from PO as vendor part number
-            part_description || null
-          ]
-        );
-      } else {
-        // Update existing mapping - increment usage count and update last used
-        console.log(`Updating existing vendor mapping for part ${canonicalPartNumber} to vendor ${vendorId}`);
-        await client.query(
-          `UPDATE inventory_vendors 
-           SET usage_count = usage_count + 1, 
-               last_used_at = NOW(),
-               vendor_part_description = COALESCE($1, vendor_part_description)
-           WHERE part_number = $2 AND vendor_id = $3`,
-          [part_description || null, canonicalPartNumber, vendorId]
-        );
-      }
     } else {
       console.log(`Skipping vendor mapping for part ${normalizedPartNumber} - not found in inventory`);
     }
@@ -315,7 +303,12 @@ router.get('/:id', async (req, res) => {
   const { id } = req.params;
   try {
     const result = await pool.query(
-      `SELECT *, exported_to_qbo, qbo_exported_at, qbo_export_status FROM purchasehistory WHERE purchase_id = $1`,
+      `SELECT ph.*, vm.vendor_name, vm.street_address as vendor_street_address, vm.city as vendor_city,
+              vm.province as vendor_province, vm.country as vendor_country, vm.postal_code as vendor_postal_code,
+              vm.telephone_number as vendor_phone, vm.email as vendor_email, ph.exported_to_qbo, ph.qbo_exported_at, ph.qbo_export_status
+       FROM purchasehistory ph
+       LEFT JOIN vendormaster vm ON ph.vendor_id = vm.vendor_id
+       WHERE ph.purchase_id = $1`,
       [id]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Not found' });
@@ -1315,6 +1308,7 @@ router.put('/:id', async (req, res) => {
             );
 
             if (existingLineItemResult.rows.length > 0) {
+              // Update existing line item
               const currentLineItem = existingLineItemResult.rows[0];
               const currentQuantitySold = parseFloat(currentLineItem.quantity_sold) || 0;
               const newQuantitySold = currentQuantitySold + allocateQuantity;
@@ -1324,14 +1318,32 @@ router.put('/:id', async (req, res) => {
               );
               console.log(`✅ Updated line item for sales order ${salesOrder.sales_order_id}, part ${partNumber}: quantity_sold increased from ${currentQuantitySold} to ${newQuantitySold}`);
             } else {
-              const unitPrice = parseFloat(salesOrder.unit_price) || 0;
-              const lineAmount = allocateQuantity * unitPrice;
-              await client.query(
-                `INSERT INTO salesorderlineitems (sales_order_id, part_number, part_description, quantity_sold, unit, unit_price, line_amount)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-                [salesOrder.sales_order_id, partNumber, salesOrder.part_description, allocateQuantity, salesOrder.unit, unitPrice, lineAmount]
+              // Create new line item with sensible fallbacks for description/unit/price
+              const invRes = await client.query(
+                'SELECT part_description, unit, last_unit_cost FROM inventory WHERE part_number = $1',
+                [partNumber]
               );
-              console.log(`✅ Created new line item for sales order ${salesOrder.sales_order_id}, part ${partNumber}: quantity_sold=${allocateQuantity}`);
+              const invDesc = invRes.rows[0]?.part_description || '';
+              const invUnit = invRes.rows[0]?.unit || '';
+              const invPrice = parseFloat(invRes.rows[0]?.last_unit_cost) || 0;
+
+              const poUnit = poItem.unit || '';
+              const poDesc = poItem.part_description || '';
+              const poPrice = parseFloat(poItem.unit_cost) || 0;
+
+              const insertUnit = salesOrder.unit || poUnit || invUnit || 'Each';
+              const insertDesc = salesOrder.part_description || poDesc || invDesc || '';
+              const unitPrice = (parseFloat(salesOrder.unit_price) || 0) || poPrice || invPrice || 0;
+              const lineAmount = allocateQuantity * unitPrice;
+              
+              await client.query(
+                `INSERT INTO salesorderlineitems 
+                 (sales_order_id, part_number, part_description, quantity_sold, unit, unit_price, line_amount)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+                [salesOrder.sales_order_id, partNumber, insertDesc, allocateQuantity, insertUnit, unitPrice, lineAmount]
+              );
+              
+              console.log(`✅ Created new line item for sales order ${salesOrder.sales_order_id}, part ${partNumber}: quantity_sold=${allocateQuantity}, unit_price=${unitPrice}, line_amount=${lineAmount}`);
             }
 
             // Update sales_order_parts_to_order only if this sales order was from parts to order
@@ -1521,7 +1533,7 @@ router.put('/:id', async (req, res) => {
     }
 
     // If PO is being closed, trigger automatic allocation process
-    if (status === 'Closed' && oldStatus !== 'Closed') {
+    if (status === 'Closed' && oldStatus !== 'Closed' && false /* duplicate block disabled */) {
       console.log(`PO ${id} closed. Triggering automatic allocation process...`);
       
       try {
@@ -1611,15 +1623,29 @@ router.put('/:id', async (req, res) => {
               
               console.log(`✅ Updated line item for sales order ${salesOrder.sales_order_id}, part ${partNumber}: quantity_sold increased from ${currentQuantitySold} to ${newQuantitySold}`);
             } else {
-              // Create new line item
-              const unitPrice = parseFloat(salesOrder.unit_price) || 0;
+              // Create new line item with sensible fallbacks for description/unit/price
+              const invRes = await client.query(
+                'SELECT part_description, unit, last_unit_cost FROM inventory WHERE part_number = $1',
+                [partNumber]
+              );
+              const invDesc = invRes.rows[0]?.part_description || '';
+              const invUnit = invRes.rows[0]?.unit || '';
+              const invPrice = parseFloat(invRes.rows[0]?.last_unit_cost) || 0;
+
+              const poUnit = poItem.unit || '';
+              const poDesc = poItem.part_description || '';
+              const poPrice = parseFloat(poItem.unit_cost) || 0;
+
+              const insertUnit = salesOrder.unit || poUnit || invUnit || 'Each';
+              const insertDesc = salesOrder.part_description || poDesc || invDesc || '';
+              const unitPrice = (parseFloat(salesOrder.unit_price) || 0) || poPrice || invPrice || 0;
               const lineAmount = allocateQuantity * unitPrice;
               
               await client.query(
                 `INSERT INTO salesorderlineitems 
                  (sales_order_id, part_number, part_description, quantity_sold, unit, unit_price, line_amount)
                  VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-                [salesOrder.sales_order_id, partNumber, salesOrder.part_description, allocateQuantity, salesOrder.unit, unitPrice, lineAmount]
+                [salesOrder.sales_order_id, partNumber, insertDesc, allocateQuantity, insertUnit, unitPrice, lineAmount]
               );
               
               console.log(`✅ Created new line item for sales order ${salesOrder.sales_order_id}, part ${partNumber}: quantity_sold=${allocateQuantity}, unit_price=${unitPrice}, line_amount=${lineAmount}`);

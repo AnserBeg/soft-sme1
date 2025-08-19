@@ -1287,70 +1287,171 @@ app.post('/api/inventory', async (req, res) => {
   }
 });
 
-// API endpoint to update inventory quantity by item name
-app.put('/api/inventory/:partNumber', async (req, res) => {
+// Inventory update endpoint is now handled by modular inventoryRoutes
+// app.put('/api/inventory/:partNumber', async (req, res) => {
+/*
   const { partNumber } = req.params;
-  // Expecting quantityOnHand, reorderPoint, and lastUnitCost
-  const { quantityOnHand, reorderPoint, lastUnitCost } = req.body;
+  // Expecting quantityOnHand, reorderPoint, lastUnitCost, part_number, category, etc.
+  const { quantityOnHand, reorderPoint, lastUnitCost, part_number, category, part_description, unit } = req.body;
+  
+  console.log('🔍 PUT /api/inventory/:partNumber called');
+  console.log('📋 URL param partNumber:', partNumber);
+  console.log('📋 Request body:', req.body);
+  console.log('📋 part_number from body:', part_number);
+  console.log('📋 part_number !== partNumber:', part_number !== partNumber);
 
   const client = await pool.connect();
 
-  // Build the update query dynamically based on provided fields
-  const updateFields = [];
-  const queryParams = [];
-  let paramIndex = 1;
-
-  if (quantityOnHand !== undefined) {
-    if (typeof quantityOnHand !== 'number') {
-      return res.status(400).json({ error: 'Quantity must be a number' });
-    }
-    updateFields.push(`quantity_on_hand = $${paramIndex++}`);
-    queryParams.push(quantityOnHand);
-  }
-
-  if (reorderPoint !== undefined) {
-     if (typeof reorderPoint !== 'number') {
-      return res.status(400).json({ error: 'Reorder point must be a number' });
-    }
-    updateFields.push(`reorder_point = $${paramIndex++}`);
-    queryParams.push(reorderPoint);
-  }
-
-  if (lastUnitCost !== undefined) {
-     if (typeof lastUnitCost !== 'number') {
-      // Allow string to number conversion, but validate after conversion
-      const numericLastUnitCost = parseFloat(String(lastUnitCost));
-      if (isNaN(numericLastUnitCost)) {
-        return res.status(400).json({ error: 'Last unit cost must be a number' });
-      }
-       updateFields.push(`last_unit_cost = $${paramIndex++}`);
-       queryParams.push(numericLastUnitCost);
-    } else {
-        updateFields.push(`last_unit_cost = $${paramIndex++}`);
-        queryParams.push(lastUnitCost);
-    }
-  }
-
-  // If no fields are provided, return a bad request error
-  if (updateFields.length === 0) {
-    return res.status(400).json({ error: 'No update fields provided' });
-  }
-
-  // Add the partNumber to the query parameters for the WHERE clause
-  updateFields.push(`part_number = $${paramIndex++}`);
-  queryParams.push(partNumber);
-
-  const query = `UPDATE Inventory SET ${updateFields.slice(0, -1).join(', ')} WHERE ${updateFields.slice(-1)[0]} RETURNING *;`;
-
   try {
-    const result = await client.query(query, queryParams);
+    // Check if part_number is being changed
+    if (part_number && part_number !== partNumber) {
+      console.log(`Part number change detected: ${partNumber} -> ${part_number}`);
+      
+      // Use the update_part_number function to handle all related updates
+      const updateResult = await client.query('SELECT update_part_number($1, $2)', [partNumber, part_number]);
+      
+      if (!updateResult.rows[0].update_part_number) {
+        return res.status(400).json({ error: 'Failed to update part number' });
+      }
+      
+      // Now update other fields if provided
+      const additionalUpdateFields = [];
+      const additionalQueryParams = [];
+      let paramIndex = 1;
+      
+      if (quantityOnHand !== undefined) {
+        if (typeof quantityOnHand !== 'number') {
+          return res.status(400).json({ error: 'Quantity must be a number' });
+        }
+        additionalUpdateFields.push(`quantity_on_hand = $${paramIndex++}`);
+        additionalQueryParams.push(quantityOnHand);
+      }
 
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Item not found in inventory' });
+      if (reorderPoint !== undefined) {
+        if (typeof reorderPoint !== 'number') {
+          return res.status(400).json({ error: 'Reorder point must be a number' });
+        }
+        additionalUpdateFields.push(`reorder_point = $${paramIndex++}`);
+        additionalQueryParams.push(reorderPoint);
+      }
+
+      if (lastUnitCost !== undefined) {
+        if (typeof lastUnitCost !== 'number') {
+          const numericLastUnitCost = parseFloat(String(lastUnitCost));
+          if (isNaN(numericLastUnitCost)) {
+            return res.status(400).json({ error: 'Last unit cost must be a number' });
+          }
+          additionalUpdateFields.push(`last_unit_cost = $${paramIndex++}`);
+          additionalQueryParams.push(numericLastUnitCost);
+        } else {
+          additionalUpdateFields.push(`last_unit_cost = $${paramIndex++}`);
+          additionalQueryParams.push(lastUnitCost);
+        }
+      }
+
+      if (category !== undefined) {
+        additionalUpdateFields.push(`category = $${paramIndex++}`);
+        additionalQueryParams.push(category);
+      }
+
+      if (part_description !== undefined) {
+        additionalUpdateFields.push(`part_description = $${paramIndex++}`);
+        additionalQueryParams.push(part_description);
+      }
+
+      if (unit !== undefined) {
+        additionalUpdateFields.push(`unit = $${paramIndex++}`);
+        additionalQueryParams.push(unit);
+      }
+
+      // Update additional fields if any
+      if (additionalUpdateFields.length > 0) {
+        additionalQueryParams.push(part_number); // Use new part number
+        const additionalQuery = `UPDATE Inventory SET ${additionalUpdateFields.join(', ')} WHERE part_number = $${paramIndex} RETURNING *;`;
+        const additionalResult = await client.query(additionalQuery, additionalQueryParams);
+        
+        if (additionalResult.rows.length === 0) {
+          return res.status(404).json({ error: 'Item not found in inventory after part number update' });
+        }
+        
+        res.json({ message: 'Inventory updated successfully', updatedItem: additionalResult.rows[0] });
+      } else {
+        // Just get the updated item
+        const result = await client.query('SELECT * FROM Inventory WHERE part_number = $1', [part_number]);
+        res.json({ message: 'Inventory updated successfully', updatedItem: result.rows[0] });
+      }
+      
+    } else {
+      // No part number change, handle as before
+      const updateFields = [];
+      const queryParams = [];
+      let paramIndex = 1;
+
+      if (quantityOnHand !== undefined) {
+        if (typeof quantityOnHand !== 'number') {
+          return res.status(400).json({ error: 'Quantity must be a number' });
+        }
+        updateFields.push(`quantity_on_hand = $${paramIndex++}`);
+        queryParams.push(quantityOnHand);
+      }
+
+      if (reorderPoint !== undefined) {
+        if (typeof reorderPoint !== 'number') {
+          return res.status(400).json({ error: 'Reorder point must be a number' });
+        }
+        updateFields.push(`reorder_point = $${paramIndex++}`);
+        queryParams.push(reorderPoint);
+      }
+
+      if (lastUnitCost !== undefined) {
+        if (typeof lastUnitCost !== 'number') {
+          const numericLastUnitCost = parseFloat(String(lastUnitCost));
+          if (isNaN(numericLastUnitCost)) {
+            return res.status(400).json({ error: 'Last unit cost must be a number' });
+          }
+          updateFields.push(`last_unit_cost = $${paramIndex++}`);
+          queryParams.push(numericLastUnitCost);
+        } else {
+          updateFields.push(`last_unit_cost = $${paramIndex++}`);
+          queryParams.push(lastUnitCost);
+        }
+      }
+
+      if (category !== undefined) {
+        updateFields.push(`category = $${paramIndex++}`);
+        queryParams.push(category);
+      }
+
+      if (part_description !== undefined) {
+        updateFields.push(`part_description = $${paramIndex++}`);
+        queryParams.push(part_description);
+      }
+
+      if (unit !== undefined) {
+        updateFields.push(`unit = $${paramIndex++}`);
+        queryParams.push(unit);
+      }
+
+      // If no fields are provided, return a bad request error
+      if (updateFields.length === 0) {
+        return res.status(400).json({ error: 'No update fields provided' });
+      }
+
+      // Add the partNumber to the query parameters for the WHERE clause
+      updateFields.push(`part_number = $${paramIndex++}`);
+      queryParams.push(partNumber);
+
+      const query = `UPDATE Inventory SET ${updateFields.slice(0, -1).join(', ')} WHERE ${updateFields.slice(-1)[0]} RETURNING *;`;
+
+      const result = await client.query(query, queryParams);
+
+      if (result.rows.length === 0) {
+        return res.status(404).json({ error: 'Item not found in inventory' });
+      }
+
+      // Return the updated item
+      res.json({ message: 'Inventory updated successfully', updatedItem: result.rows[0] });
     }
-
-    // Return the updated item
-    res.json({ message: 'Inventory updated successfully', updatedItem: result.rows[0] });
 
   } catch (err) {
     console.error(`Error updating inventory for ${partNumber}:`, err);
@@ -1359,6 +1460,7 @@ app.put('/api/inventory/:partNumber', async (req, res) => {
     client.release();
   }
 });
+*/
 
 // API endpoint to get all margin schedule records
 app.get('/api/margin-schedule', async (req, res) => {

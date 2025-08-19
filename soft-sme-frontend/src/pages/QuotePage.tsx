@@ -123,7 +123,7 @@ const QuotePage: React.FC = () => {
   const rows = filteredQuotes.map((q) => ({ ...q, id: q.quote_id }));
 
   const columns: GridColDef[] = [
-    { field: 'quote_number', headerName: 'Quote #', flex: 1.05, minWidth: 150 },
+    { field: 'quote_number', headerName: 'Quote #', flex: 1.05, minWidth: 150, valueFormatter: (params) => params.value ? String(params.value).replace('QO-', '') : '' },
     { field: 'customer_name', headerName: 'Customer', flex: 1.2, minWidth: 170 },
     { field: 'product_name', headerName: 'Product', flex: 1.1, minWidth: 160 },
     {

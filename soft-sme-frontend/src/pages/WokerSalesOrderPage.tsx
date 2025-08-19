@@ -141,12 +141,12 @@ const WokerSalesOrderPage: React.FC = () => {
     // Calculate total quantity for this part across ALL line items (including this one)
     const totalQuantityForPart = lineItems
       .filter(li => li.part_number.toLowerCase() === item.part_number.toLowerCase())
-      .reduce((sum, li) => sum + (parseFloat(li.quantity) || 0), 0);
+      .reduce((sum, li) => sum + (parseFloat(String(li.quantity).replace(/[^\d.-]/g, '')) || 0), 0);
 
     // Calculate total quantity from original line items for this part
     const totalOriginalQuantityForPart = originalLineItems
       .filter(li => li.part_number.toLowerCase() === item.part_number.toLowerCase())
-      .reduce((sum, li) => sum + (parseFloat(li.quantity) || 0), 0);
+      .reduce((sum, li) => sum + (parseFloat(String(li.quantity).replace(/[^\d.-]/g, '')) || 0), 0);
 
     // Calculate the delta: how much more/less we're using now vs originally
     const delta = totalQuantityForPart - totalOriginalQuantityForPart;
@@ -444,9 +444,10 @@ const WokerSalesOrderPage: React.FC = () => {
       }
       
       // Add quantities and line amounts
-      const quantity = parseFloat(item.quantity) || 0;
+      // Ensure quantity is a valid number, default to 0 if invalid
+      const quantity = parseFloat(String(item.quantity).replace(/[^\d.-]/g, '')) || 0;
       acc[partNumber].quantity_sold += Math.round(quantity);
-      acc[partNumber].line_amount += (parseFloat(item.quantity) || 0) * (item.unit_price || 0);
+      acc[partNumber].line_amount += quantity * (item.unit_price || 0);
       
       return acc;
     }, {} as Record<string, any>);
@@ -634,7 +635,7 @@ const WokerSalesOrderPage: React.FC = () => {
                             line_amount: (inv?.last_unit_cost || 0) * excess
                           };
                           setPartsToOrder(prev => [...prev, newItem]);
-                          const newQty = Math.max(0, (parseFloat(li.quantity) || 0) - excess);
+                          const newQty = Math.max(0, (parseFloat(String(li.quantity).replace(/[^\d.-]/g, '')) || 0) - excess);
                           setLineItems(prev => prev.map((x, idx) => idx === item.lineItemIndex ? { ...x, quantity: String(newQty) } : x));
                           setNegativeAvailabilityItems(prev => prev.filter(n => n.lineItemIndex !== item.lineItemIndex));
                           toast.success(`Transferred ${excess} ${li.unit} of ${li.part_number} to parts to order`);
