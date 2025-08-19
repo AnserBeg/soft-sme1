@@ -622,35 +622,37 @@ router.post('/upload-csv', upload.single('csvFile'), async (req: Request, res: R
             vendorId = vendorResult.rows[0].vendor_id;
           }
 
-          // Get the canonical part number from inventory
+          // Get the canonical part number and part_id from inventory
           const partResult = await pool.query(
-            `SELECT part_number FROM inventory WHERE REPLACE(REPLACE(UPPER(part_number), '-', ''), ' ', '') = $1`,
+            `SELECT part_number, part_id FROM inventory WHERE REPLACE(REPLACE(UPPER(part_number), '-', ''), ' ', '') = $1`,
             [item.normalizedKey]
           );
 
           if (partResult.rows.length > 0) {
             const canonicalPartNumber = partResult.rows[0].part_number;
+            const canonicalPartId = partResult.rows[0].part_id;
             
             // Check if vendor mapping already exists
             const existingMappingResult = await pool.query(
-              'SELECT id FROM inventory_vendors WHERE part_number = $1 AND vendor_id = $2',
-              [canonicalPartNumber, vendorId]
+              'SELECT id FROM inventory_vendors WHERE part_id = $1 AND vendor_id = $2',
+              [canonicalPartId, vendorId]
             );
 
             if (existingMappingResult.rows.length === 0) {
-              // Create new vendor mapping
+              // Create new vendor mapping with part_id
               await pool.query(
-                `INSERT INTO inventory_vendors (part_number, vendor_id, vendor_part_number, vendor_part_description, usage_count, last_used_at)
-                 VALUES ($1, $2, $3, $4, 1, NOW())`,
+                `INSERT INTO inventory_vendors (part_number, part_id, vendor_id, vendor_part_number, vendor_part_description, usage_count, last_used_at)
+                 VALUES ($1, $2, $3, $4, $5, 1, NOW())`,
                 [
                   canonicalPartNumber,
+                  canonicalPartId,
                   vendorId,
                   item.visualPartNumber, // Use the part number from CSV as vendor part number
                   item.partDescription || null
                 ]
               );
               vendorMappingCount++;
-              console.log(`Created vendor mapping for part ${canonicalPartNumber} to vendor ${item.vendorName}`);
+              console.log(`Created vendor mapping for part ${canonicalPartNumber} (ID: ${canonicalPartId}) to vendor ${item.vendorName}`);
             } else {
               // Update existing mapping
               await pool.query(
@@ -658,11 +660,11 @@ router.post('/upload-csv', upload.single('csvFile'), async (req: Request, res: R
                  SET usage_count = usage_count + 1, 
                      last_used_at = NOW(),
                      vendor_part_description = COALESCE($1, vendor_part_description)
-                 WHERE part_number = $2 AND vendor_id = $3`,
-                [item.partDescription || null, canonicalPartNumber, vendorId]
+                 WHERE part_id = $2 AND vendor_id = $3`,
+                [item.partDescription || null, canonicalPartId, vendorId]
               );
               vendorMappingCount++;
-              console.log(`Updated vendor mapping for part ${canonicalPartNumber} to vendor ${item.vendorName}`);
+              console.log(`Updated vendor mapping for part ${canonicalPartNumber} (ID: ${canonicalPartId}) to vendor ${item.vendorName}`);
             }
           }
         } catch (vendorError) {
