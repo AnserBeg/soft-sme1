@@ -1288,8 +1288,8 @@ app.post('/api/inventory', async (req, res) => {
 });
 
 // Inventory update endpoint is now handled by modular inventoryRoutes
-// app.put('/api/inventory/:partNumber', async (req, res) => {
 /*
+app.put('/api/inventory/:partNumber', async (req, res) => {
   const { partNumber } = req.params;
   // Expecting quantityOnHand, reorderPoint, lastUnitCost, part_number, category, etc.
   const { quantityOnHand, reorderPoint, lastUnitCost, part_number, category, part_description, unit } = req.body;

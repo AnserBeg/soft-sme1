@@ -242,11 +242,16 @@ const InventoryPage: React.FC = () => {
         return newRow;
     }
 
-    // Use the old part number for the API call URL, but include the new part number in the request body if it changed
-    const apiPartNumber = updatedFields.part_number ? oldRow.part_number : newRow.part_number;
+    // Always use the old part number for the API call URL (this is what we're updating)
+    const apiPartNumber = oldRow.part_number;
 
     try {
       // This PUT request now sends the updated fields including part_number if it changed
+      console.log('🔍 processRowUpdate: Sending PUT request');
+      console.log('📋 URL:', `/api/inventory/${encodeURIComponent(apiPartNumber)}`);
+      console.log('📋 Request body:', updatedFields);
+      console.log('📋 Old part number:', oldRow.part_number);
+      console.log('📋 New part number:', newRow.part_number);
       const response = await api.put(`/api/inventory/${encodeURIComponent(apiPartNumber)}`, updatedFields);
 
       console.log(`Inventory updated for part ${apiPartNumber}:`, response.data);
@@ -319,6 +324,11 @@ const InventoryPage: React.FC = () => {
           ...trimmedPartData,
           part_number: trimmedPartData.part_number // Include the new part number
         };
+        console.log('🔍 Frontend: Sending PUT request');
+        console.log('📋 URL:', `/api/inventory/${encodeURIComponent(editingPart.part_number)}`);
+        console.log('📋 Request body:', updateData);
+        console.log('📋 Original part number:', editingPart.part_number);
+        console.log('📋 New part number:', trimmedPartData.part_number);
         await api.put(`/api/inventory/${encodeURIComponent(editingPart.part_number)}`, updateData);
       } else {
         await api.post('/api/inventory', trimmedPartData);
