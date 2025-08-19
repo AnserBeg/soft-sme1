@@ -307,6 +307,12 @@ router.put('/:id', async (req: Request, res: Response) => {
   const decodedPartNumber = decodeURIComponent(id);
   const { quantity_on_hand, reorder_point, last_unit_cost, part_description, unit, part_type, category, part_number } = req.body;
 
+  console.log('🔍 PUT /api/inventory/:id called');
+  console.log('📋 URL param id:', id);
+  console.log('📋 decodedPartNumber:', decodedPartNumber);
+  console.log('📋 Request body:', req.body);
+  console.log('📋 part_number from body:', part_number);
+
   // Trim string fields if provided
   const trimmedPartDescription = part_description ? part_description.toString().trim() : undefined;
   const trimmedUnit = unit ? unit.toString().trim() : undefined;
@@ -329,8 +335,9 @@ router.put('/:id', async (req: Request, res: Response) => {
     const partId = existingItem.part_id;
 
     // Handle part number change if provided
+    console.log(`🔍 Checking part number change: trimmedPartNumber="${trimmedPartNumber}", decodedPartNumber="${decodedPartNumber}"`);
     if (trimmedPartNumber && trimmedPartNumber !== decodedPartNumber) {
-      console.log(`Part number change detected: ${decodedPartNumber} -> ${trimmedPartNumber}`);
+      console.log(`✅ Part number change detected: ${decodedPartNumber} -> ${trimmedPartNumber}`);
 
       // Check if new part number already exists
       const duplicateCheck = await client.query('SELECT part_number FROM inventory WHERE part_number = $1 AND part_id != $2', [trimmedPartNumber, partId]);
@@ -348,7 +355,9 @@ router.put('/:id', async (req: Request, res: Response) => {
       await client.query('UPDATE salesorderlineitems SET part_number = $1 WHERE part_number = $2', [trimmedPartNumber, decodedPartNumber]);
       await client.query('UPDATE purchasehistory SET part_number = $1 WHERE part_number = $2', [trimmedPartNumber, decodedPartNumber]);
 
-      console.log(`Successfully updated part number from ${decodedPartNumber} to ${trimmedPartNumber}`);
+      console.log(`✅ Successfully updated part number from ${decodedPartNumber} to ${trimmedPartNumber}`);
+    } else {
+      console.log(`❌ No part number change detected or trimmedPartNumber is undefined`);
     }
 
     // Build update fields dynamically (excluding part_number as it's handled above)
