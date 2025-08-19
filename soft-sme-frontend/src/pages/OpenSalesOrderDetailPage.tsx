@@ -393,6 +393,7 @@ const SalesOrderDetailPage: React.FC = () => {
           line_amount: item.line_amount,
           quantity: item.part_number === 'SUPPLY' ? '1' : String(item.quantity_sold ?? item.quantity ?? 0),
           gst: DEFAULT_GST_RATE,
+          part_id: item.part_id ?? undefined,
         })) as SalesOrderLineItem[];
         
         setLineItems(li);
@@ -666,21 +667,21 @@ const SalesOrderDetailPage: React.FC = () => {
 
     // invalid/supply items
     const invalids = lineItems.filter(i => {
-      if (['LABOUR','OVERHEAD','SUPPLY'].includes(i.part_number)) return false;
-      
-      // First try to find by part_id if available
-      let inv = null as any;
-      const pid = (i as any).part_id;
+      // Allow special non-inventory items
+      if (['LABOUR','OVERHEAD','SUPPLY'].includes(String(i.part_number).toUpperCase())) return false;
+
+      const pid = (i as any).part_id as number | undefined;
+
+      // If part_id present, prefer it. If not found in cache, do NOT block; server will verify.
       if (pid) {
-        inv = inventoryItems.find((x:any) => x.part_id === pid);
+        const invById = (inventoryItems || []).find((x:any) => x.part_id === pid);
+        if (!invById) return false; // allow when cache is stale
+        return invById.part_type === 'supply';
       }
-      
-      // If not found by part_id, fall back to part_number
-      if (!inv) {
-        inv = inventoryItems.find((x:any) => x.part_number.toLowerCase() === i.part_number.trim().toLowerCase());
-      }
-      
-      return !inv || inv.part_type === 'supply';
+
+      // Fall back to part_number lookup if no part_id
+      const invByPn = (inventoryItems || []).find((x:any) => String(x.part_number).toUpperCase() === String(i.part_number).trim().toUpperCase());
+      return !invByPn || invByPn.part_type === 'supply';
     });
     if (invalids.length > 0) {
       const msg = invalids.map(i => i.part_number).join(', ');
@@ -720,8 +721,10 @@ const SalesOrderDetailPage: React.FC = () => {
           unit_price: item.unit_price != null ? Number(item.unit_price) : 0,
           line_amount: 0,
           quantity_sold: 0,
-          // Include part_id for backend to use canonical identifier
-          ...(invMatch && invMatch.part_id ? { part_id: invMatch.part_id } : {}),
+          // Include part_id for backend to use canonical identifier (prefer existing line item's part_id)
+          ...(((item as any).part_id)
+              ? { part_id: (item as any).part_id }
+              : (invMatch && invMatch.part_id ? { part_id: invMatch.part_id } : {})),
         };
       }
       
@@ -815,6 +818,7 @@ const SalesOrderDetailPage: React.FC = () => {
             line_amount: item.line_amount,
             quantity: item.part_number === 'SUPPLY' ? '1' : String(item.quantity_sold ?? item.quantity ?? 0),
             gst: DEFAULT_GST_RATE,
+            part_id: item.part_id ?? undefined,
           })) as SalesOrderLineItem[];
           setLineItems(li);
           setOriginalLineItems(li);
@@ -975,6 +979,7 @@ const SalesOrderDetailPage: React.FC = () => {
         unit_price: it.unit_price,
         gst: DEFAULT_GST_RATE,
         line_amount: it.line_amount,
+        part_id: it.part_id ?? undefined,
       })) as SalesOrderLineItem[];
       setLineItems(mapped);
       setImportDialogOpen(false);

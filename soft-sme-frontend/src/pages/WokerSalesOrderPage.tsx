@@ -266,6 +266,7 @@ const WokerSalesOrderPage: React.FC = () => {
             line_amount: item.line_amount,
             quantity: String(item.quantity_sold ?? item.quantity ?? 0),
             gst: DEFAULT_GST_RATE,
+            part_id: item.part_id ?? undefined,
           })) as SalesOrderLineItem[];
         
         console.log('WokerSalesOrderPage: Loaded line items (filtered):', li);
@@ -406,19 +407,17 @@ const WokerSalesOrderPage: React.FC = () => {
     // allow 0 quantity items on save in worker page (no close action here)
     // invalid/supply items
     const invalids = lineItems.filter(i => {
-      // First try to find by part_id if available
-      let inv = null as any;
-      const pid = (i as any).part_id;
+      if (['LABOUR','OVERHEAD','SUPPLY'].includes(String(i.part_number).toUpperCase())) return false;
+
+      const pid = (i as any).part_id as number | undefined;
       if (pid) {
-        inv = inventoryItems.find((x:any) => x.part_id === pid);
+        const invById = (inventoryItems || []).find((x:any) => x.part_id === pid);
+        if (!invById) return false; // allow if cache is stale; server validates
+        return invById.part_type === 'supply';
       }
-      
-      // If not found by part_id, fall back to part_number
-      if (!inv) {
-        inv = inventoryItems.find((x:any) => x.part_number.toLowerCase() === i.part_number.trim().toLowerCase());
-      }
-      
-      return !inv || inv.part_type === 'supply';
+
+      const invByPn = (inventoryItems || []).find((x:any) => String(x.part_number).toUpperCase() === String(i.part_number).trim().toUpperCase());
+      return !invByPn || invByPn.part_type === 'supply';
     });
     if (invalids.length > 0) {
       const msg = invalids.map(i => i.part_number).join(', ');
@@ -456,7 +455,9 @@ const WokerSalesOrderPage: React.FC = () => {
           unit_price: item.unit_price != null ? Number(item.unit_price) : 0,
           line_amount: 0,
           quantity_sold: 0,
-          ...(invMatch && invMatch.part_id ? { part_id: invMatch.part_id } : {}),
+          ...(((item as any).part_id)
+              ? { part_id: (item as any).part_id }
+              : (invMatch && invMatch.part_id ? { part_id: invMatch.part_id } : {})),
         };
       }
       

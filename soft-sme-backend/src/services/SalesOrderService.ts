@@ -22,17 +22,15 @@ export class SalesOrderService {
         startedTransaction = true;
       }
       
+      const isSpecialPart = (pn: string) => ['LABOUR','OVERHEAD','SUPPLY'].includes(String(pn).toUpperCase());
+
       // Get current line items to calculate inventory changes
       const currentLineItemsRes = await client.query('SELECT * FROM salesorderlineitems WHERE sales_order_id = $1', [orderId]);
       const currentLineItems = currentLineItemsRes.rows;
       
       // Filter out LABOUR, OVERHEAD, and SUPPLY from inventory management
-      const inventoryLineItems = currentLineItems.filter(item => 
-        item.part_number !== 'LABOUR' && item.part_number !== 'OVERHEAD' && item.part_number !== 'SUPPLY'
-      );
-      const inventoryNewLineItems = newLineItems.filter(item => 
-        item.part_number !== 'LABOUR' && item.part_number !== 'OVERHEAD' && item.part_number !== 'SUPPLY'
-      );
+      const inventoryLineItems = currentLineItems.filter(item => !isSpecialPart(item.part_number));
+      const inventoryNewLineItems = newLineItems.filter(item => !isSpecialPart(item.part_number));
       
       // Simple inventory validation: quantity_on_hand - change_in_quantity_sold = new_quantity_on_hand
       for (const newItem of inventoryNewLineItems) {
@@ -115,15 +113,11 @@ export class SalesOrderService {
       
       // Update line items in database
       // For LABOUR, OVERHEAD, and SUPPLY items, preserve existing quantity_sold values from time tracking or set to 'N/A' for SUPPLY
-      const specialItems = newLineItems.filter(item => 
-        item.part_number === 'LABOUR' || item.part_number === 'OVERHEAD' || item.part_number === 'SUPPLY'
-      );
-      const otherItems = newLineItems.filter(item => 
-        item.part_number !== 'LABOUR' && item.part_number !== 'OVERHEAD' && item.part_number !== 'SUPPLY'
-      );
+      const specialItems = newLineItems.filter(item => isSpecialPart(item.part_number));
+      const otherItems = newLineItems.filter(item => !isSpecialPart(item.part_number));
       
       // Delete non-labour/overhead/supply items and reinsert them
-      await client.query('DELETE FROM salesorderlineitems WHERE sales_order_id = $1 AND part_number NOT IN ($2, $3, $4)', [orderId, 'LABOUR', 'OVERHEAD', 'SUPPLY']);
+      await client.query('DELETE FROM salesorderlineitems WHERE sales_order_id = $1 AND UPPER(part_number) NOT IN ($2, $3, $4)', [orderId, 'LABOUR', 'OVERHEAD', 'SUPPLY']);
       
       // Insert other items (skip zero quantities)
       for (const item of otherItems) {
@@ -164,7 +158,7 @@ export class SalesOrderService {
         const unit_price = item.unit_price !== undefined && item.unit_price !== null ? parseFloat(item.unit_price) : 0;
         const line_amount = item.line_amount !== undefined && item.line_amount !== null ? parseFloat(item.line_amount) : 0;
         let quantity_sold: any = quantity;
-        if (item.part_number === 'SUPPLY') {
+        if (String(item.part_number).toUpperCase() === 'SUPPLY') {
           // For SUPPLY, use the quantity_sold from frontend (should be 1) but it doesn't affect inventory
           quantity_sold = item.quantity_sold !== undefined && item.quantity_sold !== null ? parseFloat(item.quantity_sold) : 1;
         }
@@ -230,6 +224,7 @@ export class SalesOrderService {
         await client.query('BEGIN');
         startedTransaction = true;
       }
+      const isSpecialPart = (pn: string) => ['LABOUR','OVERHEAD','SUPPLY'].includes(String(pn).toUpperCase());
       // Defensive: coerce all numeric fields to numbers
       const quantity = item.quantity !== undefined && item.quantity !== null ? parseFloat(item.quantity) : 0;
       const quantity_sold = item.quantity_sold !== undefined && item.quantity_sold !== null ? parseFloat(item.quantity_sold) : 0;
@@ -241,7 +236,7 @@ export class SalesOrderService {
       if (orderRes.rows[0].status === 'Closed') throw new Error('Cannot modify closed order');
       // Prefer part_id for matching when available
       let resolvedPartId: number | null = item.part_id || null;
-      if (!resolvedPartId && item.part_number && !['LABOUR','OVERHEAD','SUPPLY'].includes(String(item.part_number).toUpperCase())) {
+      if (!resolvedPartId && item.part_number && !isSpecialPart(item.part_number)) {
         const r = await client.query('SELECT part_id FROM inventory WHERE part_number = $1', [item.part_number]);
         resolvedPartId = r.rows[0]?.part_id || null;
       }
@@ -252,7 +247,7 @@ export class SalesOrderService {
       const oldQty = lineRes.rows.length > 0 ? lineRes.rows[0].quantity_sold : 0;
       const newQty = quantity;
       const delta = newQty - oldQty;
-      if (delta !== 0 && item.part_number !== 'SUPPLY') {
+      if (delta !== 0 && !isSpecialPart(item.part_number)) {
         if (resolvedPartId) {
           await this.inventoryService.adjustInventoryByPartId(resolvedPartId, -delta, 'Sales order line item update', orderId, undefined, client);
         } else {
@@ -263,7 +258,7 @@ export class SalesOrderService {
       const quantityToOrder = parseFloat(item.quantity_to_order) || 0;
       
       // Check if trying to delete LABOUR, OVERHEAD, or SUPPLY line items
-      const isSpecialLineItem = item.part_number === 'LABOUR' || item.part_number === 'OVERHEAD' || item.part_number === 'SUPPLY';
+      const isSpecialLineItem = isSpecialPart(item.part_number);
       const isDeletingSpecialItem = isSpecialLineItem && quantity_sold <= 0 && quantityToOrder <= 0;
       
       if (isDeletingSpecialItem) {
@@ -274,7 +269,7 @@ export class SalesOrderService {
         console.log(`Admin deleting ${item.part_number} line item for order ${orderId}`);
       }
       
-      if (quantity_sold <= 0 && quantityToOrder <= 0 && item.part_number !== 'LABOUR' && item.part_number !== 'OVERHEAD' && item.part_number !== 'SUPPLY') {
+      if (quantity_sold <= 0 && quantityToOrder <= 0 && !isSpecialPart(item.part_number)) {
         if (lineRes.rows.length > 0) {
           console.log(`Deleting zero quantity line item: ${item.part_number} for order ${orderId}`);
           await client.query(
