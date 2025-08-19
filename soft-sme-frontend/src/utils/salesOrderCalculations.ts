@@ -10,6 +10,7 @@ export interface SalesOrderLineItem {
   unit: string;
   unit_price: number;
   line_amount?: number;
+  part_id?: number;
 }
 
 export interface SalesOrderTotals {

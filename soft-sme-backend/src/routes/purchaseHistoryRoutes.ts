@@ -184,12 +184,20 @@ router.put('/:id', async (req: Request, res: Response) => {
         // Convert part_number to uppercase for consistency, keep visual '-' but ensure duplicate-safe checks elsewhere
         const visualPartNumber = item.part_number.toString().trim().toUpperCase();
         
-        // Check if this part exists in inventory using normalized comparison (ignore '-' and spaces)
-        const existingPartResult = await client.query(
-          `SELECT part_number, part_type FROM inventory 
-           WHERE REPLACE(REPLACE(UPPER(part_number), '-', ''), ' ', '') = REPLACE(REPLACE(UPPER($1), '-', ''), ' ', '')`,
-          [visualPartNumber]
-        );
+        // Prefer part_id from purchaselineitems if available
+        let existingPartResult;
+        if (item.part_id) {
+          existingPartResult = await client.query(
+            `SELECT part_id, part_number, part_type FROM inventory WHERE part_id = $1`,
+            [item.part_id]
+          );
+        } else {
+          existingPartResult = await client.query(
+            `SELECT part_id, part_number, part_type FROM inventory 
+             WHERE REPLACE(REPLACE(UPPER(part_number), '-', ''), ' ', '') = REPLACE(REPLACE(UPPER($1), '-', ''), ' ', '')`,
+            [visualPartNumber]
+          );
+        }
         
         // Only update quantity_on_hand for stock items, not supply items
         if (existingPartResult.rows.length === 0) {
@@ -202,27 +210,27 @@ router.put('/:id', async (req: Request, res: Response) => {
           );
         } else {
           const partType = existingPartResult.rows[0].part_type;
-          const existingPartNumber: string = existingPartResult.rows[0].part_number;
+          const existingPartId: number = existingPartResult.rows[0].part_id;
           if (partType === 'stock') {
             // Update quantity_on_hand for stock items
-            console.log(`purchaseHistoryRoutes: Updating inventory for stock part: '${existingPartNumber}' (quantity: ${quantity}, unit_cost: ${unitCost})`);
+            console.log(`purchaseHistoryRoutes: Updating inventory for stock part: '${visualPartNumber}' (quantity: ${quantity}, unit_cost: ${unitCost})`);
             await client.query(
               `UPDATE inventory SET
                quantity_on_hand = COALESCE(NULLIF(quantity_on_hand, 'NA')::NUMERIC, 0) + CAST($1 AS NUMERIC),
                last_unit_cost = $2,
                updated_at = NOW()
-               WHERE part_number = $3`,
-              [quantity, unitCost, existingPartNumber]
+               WHERE part_id = $3`,
+              [quantity, unitCost, existingPartId]
             );
           } else {
             // For supply items, only update last_unit_cost, not quantity_on_hand
-            console.log(`purchaseHistoryRoutes: Updating last_unit_cost for supply part: '${existingPartNumber}' (unit_cost: ${unitCost})`);
+            console.log(`purchaseHistoryRoutes: Updating last_unit_cost for supply part: '${visualPartNumber}' (unit_cost: ${unitCost})`);
             await client.query(
               `UPDATE inventory SET
                last_unit_cost = $1,
                updated_at = NOW()
-               WHERE part_number = $2`,
-              [unitCost, existingPartNumber]
+               WHERE part_id = $2`,
+              [unitCost, existingPartId]
             );
           }
         }
@@ -235,12 +243,19 @@ router.put('/:id', async (req: Request, res: Response) => {
         // Convert part_number to uppercase for consistency
         const visualPartNumber = item.part_number.toString().trim().toUpperCase();
         
-        // Check if this part is a stock item before checking inventory
-        const existingPartResult = await client.query(
-          `SELECT part_number, part_type, quantity_on_hand FROM inventory 
-           WHERE REPLACE(REPLACE(UPPER(part_number), '-', ''), ' ', '') = REPLACE(REPLACE(UPPER($1), '-', ''), ' ', '')`,
-          [visualPartNumber]
-        );
+        let existingPartResult;
+        if (item.part_id) {
+          existingPartResult = await client.query(
+            `SELECT part_id, part_number, part_type, quantity_on_hand FROM inventory WHERE part_id = $1`,
+            [item.part_id]
+          );
+        } else {
+          existingPartResult = await client.query(
+            `SELECT part_id, part_number, part_type, quantity_on_hand FROM inventory 
+             WHERE REPLACE(REPLACE(UPPER(part_number), '-', ''), ' ', '') = REPLACE(REPLACE(UPPER($1), '-', ''), ' ', '')`,
+            [visualPartNumber]
+          );
+        }
         
         if (existingPartResult.rows.length > 0 && existingPartResult.rows[0].part_type === 'stock') {
           // Only check for negative inventory for stock items
@@ -262,21 +277,29 @@ router.put('/:id', async (req: Request, res: Response) => {
         // Convert part_number to uppercase for consistency
         const visualPartNumber = item.part_number.toString().trim().toUpperCase();
         
-        // Check if this part is a stock item before subtracting
-        const existingPartResult = await client.query(
-          `SELECT part_number, part_type FROM inventory 
-           WHERE REPLACE(REPLACE(UPPER(part_number), '-', ''), ' ', '') = REPLACE(REPLACE(UPPER($1), '-', ''), ' ', '')`,
-          [visualPartNumber]
-        );
+        let existingPartResult;
+        if (item.part_id) {
+          existingPartResult = await client.query(
+            `SELECT part_id, part_type FROM inventory 
+             WHERE REPLACE(REPLACE(UPPER(part_number), '-', ''), ' ', '') = REPLACE(REPLACE(UPPER($1), '-', ''), ' ', '')`,
+            [visualPartNumber]
+          );
+        } else {
+          existingPartResult = await client.query(
+            `SELECT part_id, part_type FROM inventory 
+             WHERE REPLACE(REPLACE(UPPER(part_number), '-', ''), ' ', '') = REPLACE(REPLACE(UPPER($1), '-', ''), ' ', '')`,
+            [visualPartNumber]
+          );
+        }
         
         if (existingPartResult.rows.length > 0 && existingPartResult.rows[0].part_type === 'stock') {
-          const existingPartNumber: string = existingPartResult.rows[0].part_number;
-          console.log(`purchaseHistoryRoutes: Reverting inventory for stock part: '${existingPartNumber}' (quantity: ${quantity})`);
+          const existingPartId: number = existingPartResult.rows[0].part_id;
+          console.log(`purchaseHistoryRoutes: Reverting inventory for stock part: '${visualPartNumber}' (quantity: ${quantity})`);
           await client.query(
             `UPDATE inventory 
              SET quantity_on_hand = COALESCE(NULLIF(quantity_on_hand, '')::NUMERIC, 0) - $1::NUMERIC
-             WHERE part_number = $2`,
-            [quantity, existingPartNumber]
+             WHERE part_id = $2`,
+            [quantity, existingPartId]
           );
         } else {
           console.log(`purchaseHistoryRoutes: Skipping inventory revert for supply part: '${visualPartNumber}'`);
@@ -1003,15 +1026,15 @@ router.post('/:id/close-with-allocations', async (req: Request, res: Response) =
     
     // Process allocations
     for (const allocation of allocations) {
-      const { sales_order_id, part_number, allocate_qty } = allocation;
+      const { sales_order_id, part_number, allocate_qty, part_id } = allocation as any;
       const allocateQty = parseFloat(allocate_qty);
       
       if (allocateQty <= 0) continue;
       
       // Update sales order line item - increase quantity_sold and decrease quantity_to_order
       const soLineItemResult = await client.query(
-        'SELECT * FROM salesorderlineitems WHERE sales_order_id = $1 AND part_number = $2',
-        [sales_order_id, part_number]
+        'SELECT * FROM salesorderlineitems WHERE sales_order_id = $1 AND (part_id = $2 OR part_number = $3)',
+        [sales_order_id, part_id || null, part_number]
       );
       
       if (soLineItemResult.rows.length > 0) {
@@ -1031,13 +1054,13 @@ router.post('/:id/close-with-allocations', async (req: Request, res: Response) =
               quantity_committed = COALESCE(quantity_committed, 0) + $2,
               updated_at = CURRENT_TIMESTAMP
           ${currentLineItem.hasOwnProperty('quantity_to_order') ? ', quantity_to_order = $3' : ''}
-          WHERE sales_order_id = $${currentLineItem.hasOwnProperty('quantity_to_order') ? '4' : '3'} AND part_number = $${currentLineItem.hasOwnProperty('quantity_to_order') ? '5' : '4'}
+          WHERE sales_order_id = $${currentLineItem.hasOwnProperty('quantity_to_order') ? '4' : '3'} AND (part_id = $${currentLineItem.hasOwnProperty('quantity_to_order') ? '5' : '4'} OR part_number = $${currentLineItem.hasOwnProperty('quantity_to_order') ? '6' : '5'})
         `;
-        
+
         const updateParams = currentLineItem.hasOwnProperty('quantity_to_order') 
-          ? [newQuantitySold, allocateQty, newQuantityToOrder, sales_order_id, part_number]
-          : [newQuantitySold, allocateQty, sales_order_id, part_number];
-        
+          ? [newQuantitySold, allocateQty, newQuantityToOrder, sales_order_id, part_id || null, part_number]
+          : [newQuantitySold, allocateQty, sales_order_id, part_id || null, part_number];
+
         await client.query(updateQuery, updateParams);
         
 
@@ -1087,14 +1110,21 @@ router.post('/:id/close-with-allocations', async (req: Request, res: Response) =
         
         const hasQuantityToOrder = tableInfo.rows.length > 0;
         
+        // resolve part_id for canonical link
+        let resolvedPartId: number | null = part_id || null;
+        if (!resolvedPartId) {
+          const invQ = await client.query('SELECT part_id FROM inventory WHERE part_number = $1', [part_number]);
+          resolvedPartId = invQ.rows[0]?.part_id || null;
+        }
+
         const insertQuery = `
           INSERT INTO salesorderlineitems 
-          (sales_order_id, part_number, part_description, quantity_sold, quantity_committed, unit, unit_price, line_amount${hasQuantityToOrder ? ', quantity_to_order' : ''})
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8${hasQuantityToOrder ? ', 0' : ''})
+          (sales_order_id, part_number, part_description, quantity_sold, quantity_committed, unit, unit_price, line_amount${hasQuantityToOrder ? ', quantity_to_order' : ''}, part_id)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8${hasQuantityToOrder ? ', 0' : ''}, $9)
         `;
-        
-        const insertParams = [sales_order_id, part_number, partDescription, allocateQty, allocateQty, unit, unitPrice, lineAmount];
-        
+
+        const insertParams = [sales_order_id, part_number, partDescription, allocateQty, allocateQty, unit, unitPrice, lineAmount, resolvedPartId];
+
         await client.query(insertQuery, insertParams);
         
         console.log(`✅ Created new line item for sales order ${sales_order_id}, part ${part_number}: quantity_sold=${allocateQty}, unit_price=${unitPrice}, line_amount=${lineAmount}`);
@@ -1260,19 +1290,29 @@ router.post('/:id/save-allocations', async (req: Request, res: Response) => {
     // Clear any existing allocations for this purchase order
     await client.query('DELETE FROM purchase_order_allocations WHERE purchase_id = $1', [id]);
     
-    // Store the new allocations
+    // Store the new allocations (resolve and include part_id; align with columns: allocation_id, purchase_id, sales_order_id, part_number, part_description, allocate_qty, created_at, updated_at, part_id)
     for (const allocation of allocations) {
-      const { sales_order_id, part_number, allocate_qty, part_description } = allocation;
+      const { sales_order_id, part_number, allocate_qty, part_description } = allocation || {};
       const allocateQty = parseFloat(allocate_qty);
-      
+
+      if (!(part_number && sales_order_id)) continue;
+
+      // Resolve part_id by normalized part_number
+      const normalized = String(part_number).trim().toUpperCase();
+      const invQ = await client.query(
+        `SELECT part_id FROM inventory WHERE REPLACE(REPLACE(UPPER(part_number), '-', ''), ' ', '') = REPLACE(REPLACE(UPPER($1), '-', ''), ' ', '')`,
+        [normalized]
+      );
+      const resolvedPartId = invQ.rows[0]?.part_id || null;
+
       if (allocateQty > 0) {
         await client.query(
           `INSERT INTO purchase_order_allocations 
-           (purchase_id, sales_order_id, part_number, part_description, allocate_qty, created_at) 
-           VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP)`,
-          [id, sales_order_id, part_number, part_description || '', allocateQty]
+           (purchase_id, sales_order_id, part_number, part_description, allocate_qty, created_at, updated_at, part_id) 
+           VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, $6)`,
+          [id, sales_order_id, part_number, part_description || '', allocateQty, resolvedPartId]
         );
-        console.log(`💾 Stored allocation: ${allocateQty} of ${part_number} to sales order ${sales_order_id}`);
+        console.log(`💾 Stored allocation: ${allocateQty} of ${part_number} (part_id=${resolvedPartId}) to sales order ${sales_order_id}`);
       }
     }
     

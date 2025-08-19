@@ -128,9 +128,15 @@ export class AgentToolsV2 {
       const poId = insert.rows[0].purchase_id;
       const lines = Array.isArray(payload.lineItems) ? payload.lineItems : [];
       for (const item of lines) {
+        const normalized = String(item.part_number || '').trim().toUpperCase();
+        const invQ = await client.query(
+          `SELECT part_id FROM inventory WHERE REPLACE(REPLACE(UPPER(part_number), '-', ''), ' ', '') = REPLACE(REPLACE(UPPER($1), '-', ''), ' ', '')`,
+          [normalized]
+        );
+        const resolvedPartId = invQ.rows[0]?.part_id || null;
         await client.query(
-          'INSERT INTO purchaselineitems (purchase_id, part_number, part_description, quantity, unit_cost, line_amount, unit) VALUES ($1,$2,$3,$4,$5,$6,$7)',
-          [poId, item.part_number || '', item.part_description || '', Number(item.quantity || 0), Number(item.unit_cost || 0), Number(item.line_amount || 0), item.unit || 'Each']
+          'INSERT INTO purchaselineitems (purchase_id, part_number, part_description, quantity, unit_cost, line_amount, unit, part_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
+          [poId, item.part_number || '', item.part_description || '', Number(item.quantity || 0), Number(item.unit_cost || 0), Number(item.line_amount || 0), item.unit || 'Each', resolvedPartId]
         );
       }
       await client.query('COMMIT');
@@ -159,9 +165,15 @@ export class AgentToolsV2 {
         // Clear existing line items and add new ones
         await client.query('DELETE FROM purchaselineitems WHERE purchase_id = $1', [purchaseOrderId]);
         for (const item of patch.lineItems) {
+          const normalized = String(item.part_number || '').trim().toUpperCase();
+          const invQ = await client.query(
+            `SELECT part_id FROM inventory WHERE REPLACE(REPLACE(UPPER(part_number), '-', ''), ' ', '') = REPLACE(REPLACE(UPPER($1), '-', ''), ' ', '')`,
+            [normalized]
+          );
+          const resolvedPartId = invQ.rows[0]?.part_id || null;
           await client.query(
-            'INSERT INTO purchaselineitems (purchase_id, part_number, part_description, quantity, unit_cost, line_amount, unit) VALUES ($1,$2,$3,$4,$5,$6,$7)',
-            [purchaseOrderId, item.part_number || '', item.part_description || '', Number(item.quantity || 0), Number(item.unit_cost || 0), Number(item.line_amount || 0), item.unit || 'Each']
+            'INSERT INTO purchaselineitems (purchase_id, part_number, part_description, quantity, unit_cost, line_amount, unit, part_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
+            [purchaseOrderId, item.part_number || '', item.part_description || '', Number(item.quantity || 0), Number(item.unit_cost || 0), Number(item.line_amount || 0), item.unit || 'Each', resolvedPartId]
           );
         }
       }

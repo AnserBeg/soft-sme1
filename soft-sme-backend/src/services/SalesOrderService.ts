@@ -37,6 +37,7 @@ export class SalesOrderService {
       // Simple inventory validation: quantity_on_hand - change_in_quantity_sold = new_quantity_on_hand
       for (const newItem of inventoryNewLineItems) {
         const partNumber = newItem.part_number;
+        const partId: number | null = newItem.part_id || null;
         const newQuantitySold = parseFloat(newItem.quantity_sold || 0);
         
         // Find current quantity sold for this part
@@ -53,8 +54,10 @@ export class SalesOrderService {
         });
         
         if (changeInQuantitySold > 0) {
-          // Get current quantity on hand
-          const currentQuantityOnHand = await this.inventoryService.getOnHand(partNumber, client);
+          // Get current quantity on hand (prefer part_id if available)
+          const currentQuantityOnHand = partId
+            ? await this.inventoryService.getOnHandByPartId(partId, client)
+            : await this.inventoryService.getOnHand(partNumber, client);
           
           // Calculate new quantity on hand
           const newQuantityOnHand = currentQuantityOnHand - changeInQuantitySold;
@@ -101,7 +104,12 @@ export class SalesOrderService {
       // Apply inventory changes
       for (const [partNumber, change] of inventoryChanges.entries()) {
         if (change !== 0) {
-          await this.inventoryService.adjustInventory(partNumber, change, 'Sales order update', orderId, undefined, client);
+          const invRes = await client.query('SELECT part_id FROM inventory WHERE part_number = $1', [partNumber]);
+          if (invRes.rows.length > 0 && invRes.rows[0].part_id) {
+            await this.inventoryService.adjustInventoryByPartId(invRes.rows[0].part_id, change, 'Sales order update', orderId, undefined, client);
+          } else {
+            await this.inventoryService.adjustInventory(partNumber, change, 'Sales order update', orderId, undefined, client);
+          }
         }
       }
       
@@ -133,9 +141,18 @@ export class SalesOrderService {
         
         console.log(`Saving line item: ${item.part_number}, quantity_sold: ${quantity_sold}`);
         
+        // Resolve part_id for canonical reference
+        let partIdInsert: number | null = null;
+        if (item.part_id) {
+          partIdInsert = item.part_id;
+        } else {
+          const invQ = await client.query('SELECT part_id FROM inventory WHERE part_number = $1', [item.part_number]);
+          partIdInsert = invQ.rows[0]?.part_id || null;
+        }
+
         await client.query(
-          `INSERT INTO salesorderlineitems (sales_order_id, part_number, part_description, quantity_sold, unit, unit_price, line_amount) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-          [orderId, item.part_number, item.part_description, quantity_sold, item.unit, unit_price, line_amount]
+          `INSERT INTO salesorderlineitems (sales_order_id, part_number, part_description, quantity_sold, unit, unit_price, line_amount, part_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          [orderId, item.part_number, item.part_description, quantity_sold, item.unit, unit_price, line_amount, partIdInsert]
         );
         
         console.log(`✅ Saved line item to database: ${item.part_number} with quantity_sold: ${quantity_sold}`);
@@ -222,12 +239,25 @@ export class SalesOrderService {
       const orderRes = await client.query('SELECT status FROM salesorderhistory WHERE sales_order_id = $1 FOR UPDATE', [orderId]);
       if (orderRes.rows.length === 0) throw new Error('Sales order not found');
       if (orderRes.rows[0].status === 'Closed') throw new Error('Cannot modify closed order');
-      const lineRes = await client.query('SELECT * FROM salesorderlineitems WHERE sales_order_id = $1 AND part_number = $2 FOR UPDATE', [orderId, item.part_number]);
+      // Prefer part_id for matching when available
+      let resolvedPartId: number | null = item.part_id || null;
+      if (!resolvedPartId && item.part_number && !['LABOUR','OVERHEAD','SUPPLY'].includes(String(item.part_number).toUpperCase())) {
+        const r = await client.query('SELECT part_id FROM inventory WHERE part_number = $1', [item.part_number]);
+        resolvedPartId = r.rows[0]?.part_id || null;
+      }
+      const lineRes = await client.query(
+        'SELECT * FROM salesorderlineitems WHERE sales_order_id = $1 AND (part_id = $2 OR part_number = $3) FOR UPDATE',
+        [orderId, resolvedPartId, item.part_number]
+      );
       const oldQty = lineRes.rows.length > 0 ? lineRes.rows[0].quantity_sold : 0;
       const newQty = quantity;
       const delta = newQty - oldQty;
       if (delta !== 0 && item.part_number !== 'SUPPLY') {
-        await this.inventoryService.adjustInventory(item.part_number, -delta, 'Sales order line item update', orderId, undefined, client);
+        if (resolvedPartId) {
+          await this.inventoryService.adjustInventoryByPartId(resolvedPartId, -delta, 'Sales order line item update', orderId, undefined, client);
+        } else {
+          await this.inventoryService.adjustInventory(item.part_number, -delta, 'Sales order line item update', orderId, undefined, client);
+        }
       }
       // Handle zero quantities by deleting the line item (except for LABOUR, OVERHEAD, and SUPPLY)
       const quantityToOrder = parseFloat(item.quantity_to_order) || 0;
@@ -248,8 +278,8 @@ export class SalesOrderService {
         if (lineRes.rows.length > 0) {
           console.log(`Deleting zero quantity line item: ${item.part_number} for order ${orderId}`);
           await client.query(
-            `DELETE FROM salesorderlineitems WHERE sales_order_id = $1 AND part_number = $2`,
-            [orderId, item.part_number]
+            `DELETE FROM salesorderlineitems WHERE sales_order_id = $1 AND (part_id = $2 OR part_number = $3)`,
+            [orderId, resolvedPartId, item.part_number]
           );
         }
         // Don't insert anything for zero quantities
@@ -258,21 +288,21 @@ export class SalesOrderService {
         if (lineRes.rows.length > 0) {
           console.log(`Admin deleting ${item.part_number} line item for order ${orderId}`);
           await client.query(
-            `DELETE FROM salesorderlineitems WHERE sales_order_id = $1 AND part_number = $2`,
-            [orderId, item.part_number]
+            `DELETE FROM salesorderlineitems WHERE sales_order_id = $1 AND (part_id = $2 OR part_number = $3)`,
+            [orderId, resolvedPartId, item.part_number]
           );
         }
         // Don't insert anything for zero quantities
       } else {
         if (lineRes.rows.length > 0) {
           await client.query(
-            `UPDATE salesorderlineitems SET quantity_sold = $1, part_description = $2, unit = $3, unit_price = $4, line_amount = $5 WHERE sales_order_id = $6 AND part_number = $7`,
-            [quantity_sold, item.part_description, item.unit, unit_price, line_amount, orderId, item.part_number]
+            `UPDATE salesorderlineitems SET quantity_sold = $1, part_description = $2, unit = $3, unit_price = $4, line_amount = $5 WHERE sales_order_id = $6 AND (part_id = $7 OR part_number = $8)`,
+            [quantity_sold, item.part_description, item.unit, unit_price, line_amount, orderId, resolvedPartId, item.part_number]
           );
         } else {
           await client.query(
-            `INSERT INTO salesorderlineitems (sales_order_id, part_number, part_description, quantity_sold, unit, unit_price, line_amount) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-            [orderId, item.part_number, item.part_description, quantity_sold, item.unit, unit_price, line_amount]
+            `INSERT INTO salesorderlineitems (sales_order_id, part_number, part_description, quantity_sold, unit, unit_price, line_amount, part_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+            [orderId, item.part_number, item.part_description, quantity_sold, item.unit, unit_price, line_amount, resolvedPartId]
           );
         }
       }

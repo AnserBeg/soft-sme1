@@ -30,7 +30,7 @@ async function createVendorMappingsForPO(client: any, lineItems: any[], vendorId
       
       // Upsert vendor mapping (normalize vendor part number) with part_id populated
       const vendorPartNumber = normalizedPartNumber;
-      await client.query(
+        await client.query(
         `INSERT INTO inventory_vendors (part_number, part_id, vendor_id, vendor_part_number, vendor_part_description, preferred, is_active, usage_count, last_used_at)
          VALUES ($1, $2, $3, $4, $5, COALESCE($6,false), true, 1, NOW())
          ON CONFLICT (part_id, vendor_id, vendor_part_number)
@@ -38,10 +38,10 @@ async function createVendorMappingsForPO(client: any, lineItems: any[], vendorId
            usage_count = inventory_vendors.usage_count + 1,
            vendor_part_description = COALESCE(EXCLUDED.vendor_part_description, inventory_vendors.vendor_part_description),
            last_used_at = NOW()`,
-        [
-          canonicalPartNumber,
+          [
+            canonicalPartNumber,
           canonicalPartId,
-          vendorId,
+            vendorId,
           vendorPartNumber,
           part_description || null,
           false
@@ -257,12 +257,19 @@ router.post('/auto-create-from-parts-to-order', async (req: Request, res: Respon
 
       const purchaseId = poResult.rows[0].purchase_id;
 
-      // Create line items
+      // Create line items (resolve and store part_id)
       for (const item of lineItems) {
+        const normalized = String(item.part_number || '').trim().toUpperCase();
+        const invQ = await pool.query(
+          `SELECT part_id FROM inventory WHERE REPLACE(REPLACE(UPPER(part_number), '-', ''), ' ', '') = REPLACE(REPLACE(UPPER($1), '-', ''), ' ', '')`,
+          [normalized]
+        );
+        const resolvedPartId = invQ.rows[0]?.part_id || null;
+
         await pool.query(`
           INSERT INTO purchaselineitems (
-            purchase_id, part_number, part_description, quantity, unit, unit_cost, line_total
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+            purchase_id, part_number, part_description, quantity, unit, unit_cost, line_total, part_id
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         `, [
           purchaseId,
           item.part_number,
@@ -270,7 +277,8 @@ router.post('/auto-create-from-parts-to-order', async (req: Request, res: Respon
           item.quantity,
           item.unit,
           item.unit_cost,
-          item.line_total
+          item.line_total,
+          resolvedPartId
         ]);
       }
 
@@ -1207,6 +1215,14 @@ router.put('/:id', async (req, res) => {
       const trimmedItem = trimmedLineItems.find((ti: any) => ti.part_number === item.part_number);
       
       if (item.line_item_id) {
+        // Resolve part_id for canonical link
+        const normalized = String(trimmedItem.part_number || '').trim().toUpperCase();
+        const invQ = await client.query(
+          `SELECT part_id FROM inventory WHERE REPLACE(REPLACE(UPPER(part_number), '-', ''), ' ', '') = REPLACE(REPLACE(UPPER($1), '-', ''), ' ', '')`,
+          [normalized]
+        );
+        const resolvedPartId = invQ.rows[0]?.part_id || null;
+
         // Update existing line item
         await client.query(`
           UPDATE "purchaselineitems" SET
@@ -1216,15 +1232,23 @@ router.put('/:id', async (req, res) => {
             unit_cost = $4,
             line_total = $5,
             unit = $6,
+            part_id = $7,
             updated_at = NOW()
-          WHERE line_item_id = $7;
-        `, [trimmedItem.part_number, trimmedItem.part_description, item.quantity, item.unit_cost, item.line_amount, trimmedItem.unit, item.line_item_id]);
+          WHERE line_item_id = $8;
+        `, [trimmedItem.part_number, trimmedItem.part_description, item.quantity, item.unit_cost, item.line_amount, trimmedItem.unit, resolvedPartId, item.line_item_id]);
       } else {
-        // Insert new line item
+        // Insert new line item, storing part_id
+        const normalized = String(trimmedItem.part_number || '').trim().toUpperCase();
+        const invQ = await client.query(
+          `SELECT part_id FROM inventory WHERE REPLACE(REPLACE(UPPER(part_number), '-', ''), ' ', '') = REPLACE(REPLACE(UPPER($1), '-', ''), ' ', '')`,
+          [normalized]
+        );
+        const resolvedPartId = invQ.rows[0]?.part_id || null;
+
         await client.query(`
-          INSERT INTO "purchaselineitems" (purchase_id, part_number, part_description, quantity, unit_cost, line_total, unit)
-          VALUES ($1, $2, $3, $4, $5, $6, $7);
-        `, [id, trimmedItem.part_number, trimmedItem.part_description, item.quantity, item.unit_cost, item.line_amount, trimmedItem.unit]);
+          INSERT INTO "purchaselineitems" (purchase_id, part_number, part_description, quantity, unit_cost, line_total, unit, part_id)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8);
+        `, [id, trimmedItem.part_number, trimmedItem.part_description, item.quantity, item.unit_cost, item.line_amount, trimmedItem.unit, resolvedPartId]);
       }
     }
 
@@ -1320,7 +1344,7 @@ router.put('/:id', async (req, res) => {
             } else {
               // Create new line item with sensible fallbacks for description/unit/price
               const invRes = await client.query(
-                'SELECT part_description, unit, last_unit_cost FROM inventory WHERE part_number = $1',
+                'SELECT part_id, part_description, unit, last_unit_cost FROM inventory WHERE part_number = $1',
                 [partNumber]
               );
               const invDesc = invRes.rows[0]?.part_description || '';
@@ -1338,9 +1362,9 @@ router.put('/:id', async (req, res) => {
               
               await client.query(
                 `INSERT INTO salesorderlineitems 
-                 (sales_order_id, part_number, part_description, quantity_sold, unit, unit_price, line_amount)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-                [salesOrder.sales_order_id, partNumber, insertDesc, allocateQuantity, insertUnit, unitPrice, lineAmount]
+                 (sales_order_id, part_number, part_description, quantity_sold, unit, unit_price, line_amount, part_id)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+                [salesOrder.sales_order_id, partNumber, insertDesc, allocateQuantity, insertUnit, unitPrice, lineAmount, invRes.rows[0]?.part_id || null]
               );
               
               console.log(`✅ Created new line item for sales order ${salesOrder.sales_order_id}, part ${partNumber}: quantity_sold=${allocateQuantity}, unit_price=${unitPrice}, line_amount=${lineAmount}`);
@@ -1401,7 +1425,7 @@ router.put('/:id', async (req, res) => {
         }
 
         const existingPartResult = await client.query(
-          `SELECT part_number, part_type FROM "inventory" 
+          `SELECT part_id, part_number, part_type FROM "inventory" 
            WHERE REPLACE(REPLACE(UPPER(part_number), '-', ''), ' ', '') = REPLACE(REPLACE(UPPER($1), '-', ''), ' ', '')`,
           [normalizedPartNumber]
         );
@@ -1421,6 +1445,7 @@ router.put('/:id', async (req, res) => {
         } else {
           const partType = existingPartResult.rows[0].part_type;
           const existingPartNumber: string = existingPartResult.rows[0].part_number;
+          const existingPartId: number = existingPartResult.rows[0].part_id;
           if (partType === 'stock') {
             // Update quantity_on_hand for stock items, only if there's a quantity to add
             if (quantityToAddToInventory > 0) {
@@ -1430,23 +1455,23 @@ router.put('/:id', async (req, res) => {
                  quantity_on_hand = COALESCE(NULLIF(quantity_on_hand, 'NA')::NUMERIC, 0) + CAST($1 AS NUMERIC),
                  last_unit_cost = $2,
                  updated_at = NOW()
-                 WHERE part_number = $3`,
-                [quantityToAddToInventory, numericUnitCost, existingPartNumber]
+                 WHERE part_id = $3`,
+                [quantityToAddToInventory, numericUnitCost, existingPartId]
               );
             } else {
               console.log(`Skipping inventory update for '${normalizedPartNumber}' as the entire quantity was allocated.`);
               // Still update the unit cost even if no quantity is added
               await client.query(
-                `UPDATE "inventory" SET last_unit_cost = $1, updated_at = NOW() WHERE part_number = $2`,
-                [numericUnitCost, existingPartNumber]
+                `UPDATE "inventory" SET last_unit_cost = $1, updated_at = NOW() WHERE part_id = $2`,
+                [numericUnitCost, existingPartId]
               );
             }
           } else {
             // For supply items, only update last_unit_cost, not quantity_on_hand
             console.log(`Updating last_unit_cost for supply part: '${normalizedPartNumber}' (unit_cost: ${numericUnitCost})`);
             await client.query(
-              `UPDATE "inventory" SET last_unit_cost = $1, updated_at = NOW() WHERE part_number = $2`,
-              [numericUnitCost, normalizedPartNumber]
+              `UPDATE "inventory" SET last_unit_cost = $1, updated_at = NOW() WHERE part_id = $2`,
+              [numericUnitCost, existingPartResult.rows[0].part_id]
             );
           }
         }
@@ -1513,17 +1538,17 @@ router.put('/:id', async (req, res) => {
            
            // Check if this part is a stock item before subtracting
       const existingPartResult = await client.query(
-        `SELECT part_number, part_type FROM "inventory" 
+         `SELECT part_id, part_number, part_type FROM "inventory" 
          WHERE REPLACE(REPLACE(UPPER(part_number), '-', ''), ' ', '') = REPLACE(REPLACE(UPPER($1), '-', ''), ' ', '')`,
         [normalizedPartNumber]
       );
            
                  if (existingPartResult.rows.length > 0 && existingPartResult.rows[0].part_type === 'stock') {
-        const existingPartNumber: string = existingPartResult.rows[0].part_number;
+        const existingPartId: number = existingPartResult.rows[0].part_id;
              console.log(`Reverting inventory for stock part: '${normalizedPartNumber}' (quantity: ${numericQuantity})`);
              await client.query(
-              'UPDATE "inventory" SET quantity_on_hand = (COALESCE(NULLIF(quantity_on_hand, \'\')::NUMERIC, 0) - $1::NUMERIC)::TEXT WHERE part_number = $2',
-         [numericQuantity, existingPartNumber]
+                'UPDATE "inventory" SET quantity_on_hand = (COALESCE(NULLIF(quantity_on_hand, '')::NUMERIC, 0) - $1::NUMERIC)::TEXT WHERE part_id = $2',
+         [numericQuantity, existingPartId]
              );
            } else {
              console.log(`Skipping inventory revert for supply part: '${normalizedPartNumber}'`);

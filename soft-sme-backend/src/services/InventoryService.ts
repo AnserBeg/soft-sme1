@@ -6,11 +6,44 @@ export class InventoryService {
     this.pool = pool;
   }
 
+  // Prefer using part_id where available
+  async getOnHandByPartId(partId: number, client?: PoolClient): Promise<number> {
+    const db = client || this.pool;
+    const result = await db.query('SELECT quantity_on_hand FROM inventory WHERE part_id = $1', [partId]);
+    if (result.rows.length === 0) throw new Error(`Part not found by part_id: ${partId}`);
+    return result.rows[0].quantity_on_hand;
+  }
+
   async getOnHand(partId: string, client?: PoolClient): Promise<number> {
     const db = client || this.pool;
     const result = await db.query('SELECT quantity_on_hand FROM inventory WHERE part_number = $1', [partId]);
     if (result.rows.length === 0) throw new Error(`Part not found: ${partId}`);
     return result.rows[0].quantity_on_hand;
+  }
+
+  async adjustInventoryByPartId(partId: number, delta: number, reason: string, salesOrderId?: number, userId?: number, client?: PoolClient): Promise<void> {
+    const db = client || this.pool;
+    const result = await db.query('SELECT quantity_on_hand, part_type FROM inventory WHERE part_id = $1 FOR UPDATE', [partId]);
+    if (result.rows.length === 0) throw new Error(`Part not found by part_id: ${partId}`);
+
+    const partType = result.rows[0].part_type;
+    if (partType !== 'stock') {
+      console.warn(`Attempted to adjust inventory for non-stock part_id ${partId} (type: ${partType}). Skipping quantity adjustment.`);
+      return;
+    }
+
+    const onHand = parseFloat(result.rows[0].quantity_on_hand);
+    if (isNaN(onHand)) {
+      throw new Error(`Invalid quantity_on_hand for stock part_id ${partId}: ${result.rows[0].quantity_on_hand}`);
+    }
+
+    const newQty = onHand + delta;
+    if (newQty < 0) throw new Error(`Insufficient stock for part_id ${partId}. Available: ${onHand}, Requested: ${-delta}`);
+    await db.query('UPDATE inventory SET quantity_on_hand = $1 WHERE part_id = $2', [newQty, partId]);
+    await db.query(
+      'INSERT INTO inventory_audit_log (part_id, delta, new_on_hand, reason, sales_order_id, user_id) VALUES ($1, $2, $3, $4, $5, $6)',
+      [partId, delta, newQty, reason, salesOrderId || null, userId || null]
+    );
   }
 
   async adjustInventory(partId: string, delta: number, reason: string, salesOrderId?: number, userId?: number, client?: PoolClient): Promise<void> {

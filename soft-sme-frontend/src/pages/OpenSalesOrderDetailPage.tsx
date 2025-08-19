@@ -47,6 +47,8 @@ interface SalesOrderLineItem {
   unit_price: number;
   gst: number;
   line_amount: number;
+  // Optional canonical identifier used for backend validation and saving
+  part_id?: number;
 }
 
 interface SalesOrder {
@@ -665,7 +667,19 @@ const SalesOrderDetailPage: React.FC = () => {
     // invalid/supply items
     const invalids = lineItems.filter(i => {
       if (['LABOUR','OVERHEAD','SUPPLY'].includes(i.part_number)) return false;
-      const inv = inventoryItems.find((x:any) => x.part_number.toLowerCase() === i.part_number.trim().toLowerCase());
+      
+      // First try to find by part_id if available
+      let inv = null as any;
+      const pid = (i as any).part_id;
+      if (pid) {
+        inv = inventoryItems.find((x:any) => x.part_id === pid);
+      }
+      
+      // If not found by part_id, fall back to part_number
+      if (!inv) {
+        inv = inventoryItems.find((x:any) => x.part_number.toLowerCase() === i.part_number.trim().toLowerCase());
+      }
+      
       return !inv || inv.part_type === 'supply';
     });
     if (invalids.length > 0) {
@@ -694,6 +708,11 @@ const SalesOrderDetailPage: React.FC = () => {
     const grouped = items.reduce((acc, item) => {
       const partNumber = item.part_number.trim().toLowerCase();
       if (!acc[partNumber]) {
+        // Try to resolve part_id from current inventory cache for non-special items
+        const invMatch = ['LABOUR','OVERHEAD','SUPPLY'].includes(item.part_number.toUpperCase())
+          ? null
+          : (inventoryItems || []).find((x: any) => String(x.part_number).toUpperCase() === item.part_number.trim().toUpperCase());
+
         acc[partNumber] = {
           part_number: item.part_number.trim(),
           part_description: item.part_description.trim(),
@@ -701,6 +720,8 @@ const SalesOrderDetailPage: React.FC = () => {
           unit_price: item.unit_price != null ? Number(item.unit_price) : 0,
           line_amount: 0,
           quantity_sold: 0,
+          // Include part_id for backend to use canonical identifier
+          ...(invMatch && invMatch.part_id ? { part_id: invMatch.part_id } : {}),
         };
       }
       

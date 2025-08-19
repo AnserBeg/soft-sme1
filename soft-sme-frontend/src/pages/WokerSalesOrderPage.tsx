@@ -29,6 +29,7 @@ interface SalesOrderLineItem {
   unit_price: number;
   gst: number;
   line_amount: number;
+  part_id?: number;
 }
 
 interface SalesOrder {
@@ -405,7 +406,18 @@ const WokerSalesOrderPage: React.FC = () => {
     // allow 0 quantity items on save in worker page (no close action here)
     // invalid/supply items
     const invalids = lineItems.filter(i => {
-      const inv = inventoryItems.find((x:any) => x.part_number.toLowerCase() === i.part_number.trim().toLowerCase());
+      // First try to find by part_id if available
+      let inv = null as any;
+      const pid = (i as any).part_id;
+      if (pid) {
+        inv = inventoryItems.find((x:any) => x.part_id === pid);
+      }
+      
+      // If not found by part_id, fall back to part_number
+      if (!inv) {
+        inv = inventoryItems.find((x:any) => x.part_number.toLowerCase() === i.part_number.trim().toLowerCase());
+      }
+      
       return !inv || inv.part_type === 'supply';
     });
     if (invalids.length > 0) {
@@ -433,6 +445,10 @@ const WokerSalesOrderPage: React.FC = () => {
     const grouped = items.reduce((acc, item) => {
       const partNumber = item.part_number.trim().toLowerCase();
       if (!acc[partNumber]) {
+        const invMatch = ['LABOUR','OVERHEAD','SUPPLY'].includes(item.part_number.toUpperCase())
+          ? null
+          : (inventoryItems || []).find((x: any) => String(x.part_number).toUpperCase() === item.part_number.trim().toUpperCase());
+
         acc[partNumber] = {
           part_number: item.part_number.trim(),
           part_description: item.part_description.trim(),
@@ -440,6 +456,7 @@ const WokerSalesOrderPage: React.FC = () => {
           unit_price: item.unit_price != null ? Number(item.unit_price) : 0,
           line_amount: 0,
           quantity_sold: 0,
+          ...(invMatch && invMatch.part_id ? { part_id: invMatch.part_id } : {}),
         };
       }
       
