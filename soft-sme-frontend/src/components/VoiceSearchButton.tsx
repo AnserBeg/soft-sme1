@@ -11,7 +11,7 @@ import StopIcon from '@mui/icons-material/Stop';
 import voiceSearchService from '../services/voiceSearchService';
 import { toast } from 'react-toastify';
 
-// TypeScript declarations for Web Speech API and Electro
+// TypeScript declarations for Web Speech API and Electron
 declare global {
   interface Window {
     webkitSpeechRecognition: any;
