@@ -291,6 +291,42 @@ router.post('/time-entries/:id/clock-out', async (req: Request, res: Response) =
           [soId, 'Overhead Hours', totalHours, 'hr', overheadRate, totalOverheadCost]
         );
       }
+
+      // Automatically add/update supply line item based on labour amount
+      if (totalCost > 0) {
+        const supplyRateRes = await pool.query('SELECT value FROM global_settings WHERE key = $1', ['supply_rate']);
+        const supplyRate = supplyRateRes.rows.length > 0 ? parseFloat(supplyRateRes.rows[0].value) : 0;
+        
+        if (supplyRate > 0) {
+          const supplyAmount = totalCost * (supplyRate / 100);
+          
+          // Check if supply line item already exists
+          const existingSupplyResult = await pool.query(
+            'SELECT sales_order_line_item_id FROM salesorderlineitems WHERE sales_order_id = $1 AND part_number = $2',
+            [soId, 'SUPPLY']
+          );
+          
+          if (existingSupplyResult.rows.length > 0) {
+            // Update existing supply line item
+            await pool.query(
+              `UPDATE salesorderlineitems 
+               SET line_amount = $1, unit_price = $2, updated_at = NOW() 
+               WHERE sales_order_id = $3 AND part_number = $4`,
+              [supplyAmount, supplyAmount, soId, 'SUPPLY']
+            );
+            console.log(`Updated SUPPLY line item for SO ${soId}: amount=${supplyAmount}, rate=${supplyRate}%`);
+          } else {
+            // Create new supply line item
+            await pool.query(
+              `INSERT INTO salesorderlineitems 
+               (sales_order_id, part_number, part_description, quantity_sold, unit, unit_price, line_amount) 
+               VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+              [soId, 'SUPPLY', 'Supply', 1, 'Each', supplyAmount, supplyAmount]
+            );
+            console.log(`Created SUPPLY line item for SO ${soId}: amount=${supplyAmount}, rate=${supplyRate}%`);
+          }
+        }
+      }
     }
 
     res.json(updatedEntryRes.rows[0]);
@@ -395,6 +431,42 @@ router.put('/time-entries/:id', async (req: Request, res: Response) => {
            VALUES ($1, 'OVERHEAD', $2, $3, $4, $5, $6)`,
           [soId, 'Overhead Hours', totalHours, 'hr', overheadRate, totalOverheadCost]
         );
+      }
+
+      // Automatically add/update supply line item based on labour amount
+      if (totalCost > 0) {
+        const supplyRateRes = await pool.query('SELECT value FROM global_settings WHERE key = $1', ['supply_rate']);
+        const supplyRate = supplyRateRes.rows.length > 0 ? parseFloat(supplyRateRes.rows[0].value) : 0;
+        
+        if (supplyRate > 0) {
+          const supplyAmount = totalCost * (supplyRate / 100);
+          
+          // Check if supply line item already exists
+          const existingSupplyResult = await pool.query(
+            'SELECT sales_order_line_item_id FROM salesorderlineitems WHERE sales_order_id = $1 AND part_number = $2',
+            [soId, 'SUPPLY']
+          );
+          
+          if (existingSupplyResult.rows.length > 0) {
+            // Update existing supply line item
+            await pool.query(
+              `UPDATE salesorderlineitems 
+               SET line_amount = $1, unit_price = $2, updated_at = NOW() 
+               WHERE sales_order_id = $3 AND part_number = $4`,
+              [supplyAmount, supplyAmount, soId, 'SUPPLY']
+            );
+            console.log(`Updated SUPPLY line item for SO ${soId}: amount=${supplyAmount}, rate=${supplyRate}%`);
+          } else {
+            // Create new supply line item
+            await pool.query(
+              `INSERT INTO salesorderlineitems 
+               (sales_order_id, part_number, part_description, quantity_sold, unit, unit_price, line_amount) 
+               VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+              [soId, 'SUPPLY', 'Supply', 1, 'Each', supplyAmount, supplyAmount]
+            );
+            console.log(`Created SUPPLY line item for SO ${soId}: amount=${supplyAmount}, rate=${supplyRate}%`);
+          }
+        }
       }
 
       // Recalculate sales order summary statistics

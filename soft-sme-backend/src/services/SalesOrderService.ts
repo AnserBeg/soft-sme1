@@ -9,6 +9,48 @@ export class SalesOrderService {
     this.inventoryService = new InventoryService(pool);
   }
 
+  // Helper function to automatically add supply line items based on labour amount
+  private async addSupplyLineItem(orderId: number, labourAmount: number, client: PoolClient): Promise<void> {
+    try {
+      // Get the global supply rate
+      const supplyRateResult = await client.query('SELECT value FROM global_settings WHERE key = $1', ['supply_rate']);
+      const supplyRate = supplyRateResult.rows.length > 0 ? parseFloat(supplyRateResult.rows[0].value) : 0;
+      
+      if (supplyRate > 0 && labourAmount > 0) {
+        const supplyAmount = labourAmount * (supplyRate / 100);
+        
+        // Check if supply line item already exists
+        const existingSupplyResult = await client.query(
+          'SELECT sales_order_line_item_id FROM salesorderlineitems WHERE sales_order_id = $1 AND part_number = $2',
+          [orderId, 'SUPPLY']
+        );
+        
+        if (existingSupplyResult.rows.length > 0) {
+          // Update existing supply line item
+          await client.query(
+            `UPDATE salesorderlineitems 
+             SET line_amount = $1, unit_price = $2, updated_at = NOW() 
+             WHERE sales_order_id = $3 AND part_number = $4`,
+            [supplyAmount, supplyAmount, orderId, 'SUPPLY']
+          );
+          console.log(`Updated SUPPLY line item for SO ${orderId}: amount=${supplyAmount}, rate=${supplyRate}%`);
+        } else {
+          // Create new supply line item
+          await client.query(
+            `INSERT INTO salesorderlineitems 
+             (sales_order_id, part_number, part_description, quantity_sold, unit, unit_price, line_amount) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+            [orderId, 'SUPPLY', 'Supply', 1, 'Each', supplyAmount, supplyAmount]
+          );
+          console.log(`Created SUPPLY line item for SO ${orderId}: amount=${supplyAmount}, rate=${supplyRate}%`);
+        }
+      }
+    } catch (error) {
+      console.error(`Error adding supply line item for SO ${orderId}:`, error);
+      // Don't throw error - supply calculation failure shouldn't break the entire operation
+    }
+  }
+
   // Update sales order with simple inventory validation
   async updateSalesOrder(orderId: number, newLineItems: any[], clientArg?: PoolClient, user?: any): Promise<null> {
     const client = clientArg || await this.pool.connect();
@@ -204,6 +246,16 @@ export class SalesOrderService {
           }
         }
       }
+      
+      // Automatically add/update supply line items based on labour amount
+      const labourItem = specialItems.find(item => String(item.part_number).toUpperCase() === 'LABOUR');
+      if (labourItem) {
+        const labourAmount = parseFloat(labourItem.line_amount || 0);
+        if (labourAmount > 0) {
+          await this.addSupplyLineItem(orderId, labourAmount, client);
+        }
+      }
+      
       if (startedTransaction) await client.query('COMMIT');
       
       // Return null to indicate no adjustments were made (since we don't do auto-adjustments anymore)
@@ -301,6 +353,12 @@ export class SalesOrderService {
           );
         }
       }
+      
+      // Automatically add/update supply line items if this was a labour line item update
+      if (String(item.part_number).toUpperCase() === 'LABOUR' && line_amount > 0) {
+        await this.addSupplyLineItem(orderId, line_amount, client);
+      }
+      
       if (startedTransaction) await client.query('COMMIT');
     } catch (err) {
       if (startedTransaction) await client.query('ROLLBACK');
