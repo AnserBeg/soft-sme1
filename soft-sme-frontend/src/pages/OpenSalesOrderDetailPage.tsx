@@ -164,6 +164,9 @@ const SalesOrderDetailPage: React.FC = () => {
   const [quantityToOrderItems, setQuantityToOrderItems] = useState<PartsToOrderItem[]>([]);
   // Unsaved changes guard (normalize header + stable line items signature; exclude derived quantityToOrderItems)
   const [initialSignature, setInitialSignature] = useState<string>('');
+  const [isDataFullyLoaded, setIsDataFullyLoaded] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  
   const getLineItemsSignature = useCallback((items: SalesOrderLineItem[]) => {
     return JSON.stringify(
       (items || [])
@@ -191,17 +194,24 @@ const SalesOrderDetailPage: React.FC = () => {
     estimatedCost: estimatedCost != null ? Number(estimatedCost) : null,
   }), [customer, product, salesDate, terms, customerPoNumber, vinNumber, estimatedCost]);
 
+  // Set initial signature only once after data is fully loaded
   useEffect(() => {
-    if (initialSignature !== '') return;
-    if (!isCreationMode && salesOrder) {
-      setInitialSignature(JSON.stringify({ header: getHeaderSignature(), lineItems: getLineItemsSignature(lineItems) }));
-    } else if (isCreationMode) {
-      setInitialSignature(JSON.stringify({ header: getHeaderSignature(), lineItems: getLineItemsSignature(lineItems) }));
+    if (isDataFullyLoaded && initialSignature === '') {
+      const signature = JSON.stringify({ 
+        header: getHeaderSignature(), 
+        lineItems: getLineItemsSignature(lineItems) 
+      });
+      setInitialSignature(signature);
+      console.log('[SalesOrderDetail] Initial signature set:', signature);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isCreationMode, salesOrder, lineItems, getHeaderSignature, getLineItemsSignature]);
+  }, [isDataFullyLoaded, initialSignature, getHeaderSignature, getLineItemsSignature, lineItems]);
 
-  const isDirty = Boolean(initialSignature) && initialSignature !== JSON.stringify({ header: getHeaderSignature(), lineItems: getLineItemsSignature(lineItems) });
+  const currentSignature = useMemo(() => JSON.stringify({ 
+    header: getHeaderSignature(), 
+    lineItems: getLineItemsSignature(lineItems) 
+  }), [getHeaderSignature, getLineItemsSignature, lineItems]);
+
+  const isDirty = Boolean(initialSignature) && initialSignature !== currentSignature && !isSaving;
   const isClosed = !!salesOrder && salesOrder.status?.toLowerCase() === 'closed';
   const [originalLineItems, setOriginalLineItems] = useState<SalesOrderLineItem[]>([]);
   const [negativeAvailabilityItems, setNegativeAvailabilityItems] = useState<Array<{
@@ -337,6 +347,11 @@ const SalesOrderDetailPage: React.FC = () => {
         setProducts(prodRes.data.map((p: any) => ({ label: p.product_name, id: p.product_id, description: p.product_description })));
         setInventoryItems(invRes.data);
         setMarginSchedule(marginRes.data);
+        
+        // For creation mode, mark as loaded after lists are fetched
+        if (isCreationMode) {
+          setIsDataFullyLoaded(true);
+        }
       } catch (e) {
         console.error('Prefetch failed', e);
       }
@@ -373,6 +388,7 @@ const SalesOrderDetailPage: React.FC = () => {
           gst: DEFAULT_GST_RATE,
           line_amount: 0,
         }]);
+        setIsDataFullyLoaded(true); // Mark data as loaded for creation mode
       }
       return;
     }
@@ -420,6 +436,7 @@ const SalesOrderDetailPage: React.FC = () => {
           : 'Failed to load sales order data. Please try again.');
       } finally {
         setLoading(false);
+        setIsDataFullyLoaded(true);
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -772,6 +789,7 @@ const SalesOrderDetailPage: React.FC = () => {
       lineItems: buildPayloadLineItems(lineItems),
     };
 
+    setIsSaving(true);
     try {
       if (isCreationMode) {
         if ((window as any).__soCreateInFlight) {
@@ -798,6 +816,10 @@ const SalesOrderDetailPage: React.FC = () => {
           }));
         await api.put(`/api/sales-orders/${id}`, { ...payload, partsToOrder });
         setSuccess('Sales Order updated successfully!');
+        // Allow immediate navigation after save with a small delay to ensure state updates
+        setTimeout(() => {
+          (window as any).__unsavedGuardAllowNext = true;
+        }, 100);
         setInitialSignature(JSON.stringify({
           header: { customer, product, salesDate, terms, customerPoNumber, vinNumber, estimatedCost },
           lineItems,
@@ -829,6 +851,7 @@ const SalesOrderDetailPage: React.FC = () => {
       const message = err?.response?.data?.error || err?.response?.data?.details || err?.response?.data?.message || 'Failed to save sales order.';
       setInventoryAlert(message);
     } finally {
+      setIsSaving(false);
       (window as any).__soCreateInFlight = false;
     }
   };

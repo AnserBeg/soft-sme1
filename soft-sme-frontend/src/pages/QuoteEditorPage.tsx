@@ -154,6 +154,8 @@ const QuoteEditorPage: React.FC = () => {
 
   // Unsaved changes guard: normalized signature structure
   const [initialSignature, setInitialSignature] = useState<string>('');
+  const [isDataLoaded, setIsDataLoaded] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   
   const getNormalizedSignature = useCallback(() => ({
     customer: selectedCustomer?.id || quote?.customer_id || null,
@@ -167,21 +169,38 @@ const QuoteEditorPage: React.FC = () => {
     vinNumber: (vinNumber || '').trim(),
   }), [selectedCustomer, quote, selectedProduct, quoteDate, validUntil, estimatedCost, productDescription, terms, customerPoNumber, vinNumber]);
   
+  // Set initial signature only once after data is fully loaded
   useEffect(() => {
-    if (initialSignature !== '') return;
-    if (isEditMode && quote) {
-      setInitialSignature(JSON.stringify(getNormalizedSignature()));
-    } else if (!isEditMode) {
-      setInitialSignature(JSON.stringify(getNormalizedSignature()));
+    if (isDataLoaded && initialSignature === '') {
+      const signature = JSON.stringify(getNormalizedSignature());
+      setInitialSignature(signature);
+      console.log('[QuoteEditor] Initial signature set:', signature);
     }
-  }, [isEditMode, quote, getNormalizedSignature]);
-  
-  const isDirty = Boolean(initialSignature) && initialSignature !== JSON.stringify(getNormalizedSignature());
+  }, [isDataLoaded, initialSignature, getNormalizedSignature]);
+
+  const currentSignature = useMemo(() => JSON.stringify(getNormalizedSignature()), [getNormalizedSignature]);
+  const isDirty = Boolean(initialSignature) && initialSignature !== currentSignature && !isSaving;
+
+  // Debug logging for signature comparison
+  useEffect(() => {
+    if (initialSignature) {
+      console.log('[QuoteEditor] Signature comparison:', {
+        isDirty,
+        initialSignature: initialSignature.slice(0, 100) + '...',
+        currentSignature: currentSignature.slice(0, 100) + '...',
+        signaturesMatch: initialSignature === currentSignature
+      });
+    }
+  }, [isDirty, initialSignature, currentSignature]);
 
   // load lists
   useEffect(() => {
     fetchCustomers();
     fetchProducts();
+    // For creation mode, mark as loaded after lists are fetched
+    if (!isEditMode) {
+      setIsDataLoaded(true);
+    }
   }, []);
 
   // load quote for edit
@@ -205,6 +224,7 @@ const QuoteEditorPage: React.FC = () => {
         setVinNumber(q.vin_number || '');
         setCustomerInput(q.customer_name || '');
         setProductInput(q.product_name || '');
+        setIsDataLoaded(true); // Mark data as loaded
       } catch (error) {
         console.error('Failed to load quote:', error);
         setError('Failed to load quote');
@@ -285,6 +305,7 @@ const QuoteEditorPage: React.FC = () => {
     }
 
     setLoading(true);
+    setIsSaving(true);
     try {
       const payload = {
         customer_id: selectedCustomer.id,
@@ -301,6 +322,14 @@ const QuoteEditorPage: React.FC = () => {
       if (isEditMode && quote) {
         await api.put(`/api/quotes/${quote.quote_id}`, payload);
         setSuccess('Quote updated successfully');
+        // Reset initial signature after successful save - use a more stable approach
+        const newSignature = JSON.stringify(getNormalizedSignature());
+        setInitialSignature(newSignature);
+        console.log('[QuoteEditor] Signature reset after save:', newSignature.slice(0, 100) + '...');
+        // Allow immediate navigation after save with a small delay to ensure state updates
+        setTimeout(() => {
+          (window as any).__unsavedGuardAllowNext = true;
+        }, 100);
       } else {
         // Prevent duplicate submission
         if ((window as any).__quoteCreateInFlight) {
@@ -350,6 +379,7 @@ const QuoteEditorPage: React.FC = () => {
       setError(msg);
     } finally {
       setLoading(false);
+      setIsSaving(false);
       (window as any).__quoteCreateInFlight = false;
     }
   };

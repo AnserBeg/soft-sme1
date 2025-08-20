@@ -7,7 +7,7 @@ import path from 'path';
 
 const router = express.Router();
 
-// Get all quotes
+// Get all quotes'
 router.get('/', async (req: Request, res: Response) => {
   try {
     const result = await pool.query(`
