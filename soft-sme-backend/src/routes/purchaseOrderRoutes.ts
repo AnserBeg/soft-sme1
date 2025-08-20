@@ -24,29 +24,37 @@ async function createVendorMappingsForPO(client: any, lineItems: any[], vendorId
       [normalizedPartNumber]
     );
 
-    if (existingPartResult.rows.length > 0) {
-      const canonicalPartNumber = existingPartResult.rows[0].part_number;
-      const canonicalPartId = existingPartResult.rows[0].part_id;
-      
-      // Upsert vendor mapping (normalize vendor part number) with part_id populated
-      const vendorPartNumber = normalizedPartNumber;
-        await client.query(
-        `INSERT INTO inventory_vendors (part_number, part_id, vendor_id, vendor_part_number, vendor_part_description, preferred, is_active, usage_count, last_used_at)
-         VALUES ($1, $2, $3, $4, $5, COALESCE($6,false), true, 1, NOW())
-         ON CONFLICT (part_id, vendor_id, vendor_part_number)
-         DO UPDATE SET 
-           usage_count = inventory_vendors.usage_count + 1,
-           vendor_part_description = COALESCE(EXCLUDED.vendor_part_description, inventory_vendors.vendor_part_description),
-           last_used_at = NOW()`,
-          [
-            canonicalPartNumber,
-          canonicalPartId,
-            vendorId,
-          vendorPartNumber,
-          part_description || null,
-          false
-        ]
+          if (existingPartResult.rows.length > 0) {
+        const canonicalPartNumber = existingPartResult.rows[0].part_number;
+        const canonicalPartId = existingPartResult.rows[0].part_id;
+        const vendorPartNumber = normalizedPartNumber;
+        
+        // Check if vendor mapping already exists
+      const existingMapping = await client.query(
+        `SELECT id, usage_count FROM inventory_vendors 
+         WHERE part_id = $1 AND vendor_id = $2 AND vendor_part_number = $3`,
+        [canonicalPartId, vendorId, vendorPartNumber]
       );
+
+      if (existingMapping.rows.length > 0) {
+        // Update existing mapping
+        const currentMapping = existingMapping.rows[0];
+        await client.query(
+          `UPDATE inventory_vendors SET 
+           usage_count = $1,
+           vendor_part_description = COALESCE($2, vendor_part_description),
+           last_used_at = NOW()
+           WHERE id = $3`,
+          [currentMapping.usage_count + 1, part_description || null, currentMapping.id]
+        );
+      } else {
+        // Insert new mapping
+        await client.query(
+          `INSERT INTO inventory_vendors (part_number, part_id, vendor_id, vendor_part_number, vendor_part_description, preferred, is_active, usage_count, last_used_at)
+           VALUES ($1, $2, $3, $4, $5, false, true, 1, NOW())`,
+          [canonicalPartNumber, canonicalPartId, vendorId, vendorPartNumber, part_description || null]
+        );
+      }
     } else {
       console.log(`Skipping vendor mapping for part ${normalizedPartNumber} - not found in inventory`);
     }
