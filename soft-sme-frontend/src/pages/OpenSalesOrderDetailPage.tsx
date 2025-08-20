@@ -1465,7 +1465,6 @@ const SalesOrderDetailPage: React.FC = () => {
                     onOpen={() => setPartOpenIndex(originalIndex)}
                     onClose={() => setPartOpenIndex(null)}
                     autoHighlight
-                    value={item.part_number}
                     inputValue={item.part_number}
                     onChange={(_, newValue) => {
                       if (typeof newValue === 'string') {
@@ -1496,10 +1495,17 @@ const SalesOrderDetailPage: React.FC = () => {
                       }
                     }}
                     onInputChange={(_, v, reason) => {
-                      // Stop mutating lineItems per keystroke; only control dropdown visibility
-                      if (partTypingTimer) window.clearTimeout(partTypingTimer);
+                      // Update the line item's part_number as user types
                       if (reason === 'reset') return;
                       const text = (v || '').trim();
+                      
+                      // Update the line item state immediately
+                      setLineItems(prev => prev.map((item, idx) => 
+                        idx === originalIndex ? { ...item, part_number: text } : item
+                      ));
+                      
+                      // Control dropdown visibility with debouncing
+                      if (partTypingTimer) window.clearTimeout(partTypingTimer);
                       if (text.length > 0) {
                         const t = window.setTimeout(() => setPartOpenIndex(originalIndex), 200);
                         setPartTypingTimer(t as unknown as number);

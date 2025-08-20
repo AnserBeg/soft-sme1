@@ -678,7 +678,7 @@ const WokerSalesOrderPage: React.FC = () => {
                     onOpen={() => setPartOpenIndex(idx)}
                     onClose={() => setPartOpenIndex(null)}
                     autoHighlight
-                    value={item.part_number}
+                    inputValue={item.part_number}
                                          onChange={(_, newValue) => {
                        if (typeof newValue === 'string') {
                          handlePartNumberChange(idx, newValue);

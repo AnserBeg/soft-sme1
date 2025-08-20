@@ -16,7 +16,17 @@ export class InventoryService {
 
   async getOnHand(partId: string, client?: PoolClient): Promise<number> {
     const db = client || this.pool;
-    const result = await db.query('SELECT quantity_on_hand FROM inventory WHERE part_number = $1', [partId]);
+    // Normalize part number by removing dashes and spaces for lookup
+    const normalizedPartNumber = partId.replace(/[-"\s]/g, '');
+    
+    // Try exact match first
+    let result = await db.query('SELECT quantity_on_hand FROM inventory WHERE part_number = $1', [partId]);
+    
+    // If not found, try normalized match
+    if (result.rows.length === 0) {
+      result = await db.query('SELECT quantity_on_hand FROM inventory WHERE part_number = $1', [normalizedPartNumber]);
+    }
+    
     if (result.rows.length === 0) throw new Error(`Part not found: ${partId}`);
     return result.rows[0].quantity_on_hand;
   }
@@ -48,8 +58,17 @@ export class InventoryService {
 
   async adjustInventory(partId: string, delta: number, reason: string, salesOrderId?: number, userId?: number, client?: PoolClient): Promise<void> {
     const db = client || this.pool;
-    // Row-level lock and fetch part_type and numeric part_id
-    const result = await db.query('SELECT quantity_on_hand, part_type, part_id FROM inventory WHERE part_number = $1 FOR UPDATE', [partId]);
+    // Normalize part number by removing dashes and spaces for lookup
+    const normalizedPartNumber = partId.replace(/[-"\s]/g, '');
+    
+    // Row-level lock and fetch part_type and numeric part_id - try exact match first
+    let result = await db.query('SELECT quantity_on_hand, part_type, part_id FROM inventory WHERE part_number = $1 FOR UPDATE', [partId]);
+    
+    // If not found, try normalized match
+    if (result.rows.length === 0) {
+      result = await db.query('SELECT quantity_on_hand, part_type, part_id FROM inventory WHERE part_number = $1 FOR UPDATE', [normalizedPartNumber]);
+    }
+    
     if (result.rows.length === 0) throw new Error(`Part not found: ${partId}`);
 
     const partType = result.rows[0].part_type;
