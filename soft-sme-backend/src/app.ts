@@ -35,24 +35,32 @@ const allowedOrigins = [
   'http://localhost:3000', // local dev
   'http://localhost:5173', // Vite dev server
   'http://localhost:8080', // allow dev server
-  process.env.CORS_ORIGIN, // production frontend
-].filter(Boolean); // Remove undefined values
+  'https://mobile.phoenixtrailers.ca', // mobile app tunnel
+  process.env.CORS_ORIGIN, // production frontend (e.g., https://softsme.phoenixtrailers.ca)
+].filter(Boolean);
 
-app.use(cors({
+const corsOptions: cors.CorsOptions = {
   origin: (origin, callback) => {
-    // Allow requests with no origin (like mobile apps or curl requests)
+    // Allow requests with no origin (like mobile apps, curl, or same-origin)
     if (!origin) return callback(null, true);
-    
-    if (allowedOrigins.indexOf(origin) !== -1) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
+
+    // Allow any Cloudflare temporary tunnel domain
+    if (origin.includes('trycloudflare.com')) return callback(null, true);
+
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
     }
+    return callback(new Error('Not allowed by CORS'));
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
-}));
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'x-device-id'],
+  optionsSuccessStatus: 204,
+};
+
+app.use(cors(corsOptions));
+// Explicitly handle preflight for all routes
+app.options('*', cors(corsOptions));
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));

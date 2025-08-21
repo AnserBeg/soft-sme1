@@ -84,18 +84,28 @@ export class EmailService {
   // Get transporter for a specific user
   private async getTransporterForUser(userId?: number): Promise<{ transporter: nodemailer.Transporter, fromEmail?: string }> {
     if (!userId) {
+      const defaultFrom = process.env.EMAIL_FROM || process.env.EMAIL_USER || 'noreply@system.com';
       return { 
         transporter: this.defaultTransporter, 
-        fromEmail: process.env.EMAIL_FROM || process.env.EMAIL_USER 
+        fromEmail: defaultFrom
       };
     }
 
     // Check if we already have a cached transporter for this user
     if (this.userTransporters.has(userId)) {
       const userSettings = await this.getUserEmailSettings(userId);
+      const fromEmail = userSettings?.email_user; // Always use email_user for the actual email address
+      if (!fromEmail) {
+        console.warn('User settings found but no email address available for user:', userId);
+        const defaultFrom = process.env.EMAIL_FROM || process.env.EMAIL_USER || 'noreply@system.com';
+        return { 
+          transporter: this.userTransporters.get(userId)!, 
+          fromEmail: defaultFrom
+        };
+      }
       return { 
         transporter: this.userTransporters.get(userId)!, 
-        fromEmail: userSettings?.email_from || userSettings?.email_user 
+        fromEmail: fromEmail
       };
     }
 
@@ -103,9 +113,10 @@ export class EmailService {
     const userSettings = await this.getUserEmailSettings(userId);
     if (!userSettings) {
       // Fall back to default transporter if user has no settings
+      const defaultFrom = process.env.EMAIL_FROM || process.env.EMAIL_USER || 'noreply@system.com';
       return { 
         transporter: this.defaultTransporter, 
-        fromEmail: process.env.EMAIL_FROM || process.env.EMAIL_USER 
+        fromEmail: defaultFrom
       };
     }
 
@@ -113,9 +124,19 @@ export class EmailService {
     const userTransporter = await this.createUserTransporter(userSettings);
     this.userTransporters.set(userId, userTransporter);
     
+    const fromEmail = userSettings.email_user; // Always use email_user for the actual email address
+    if (!fromEmail) {
+      console.warn('User settings found but no email address available for user:', userId);
+      const defaultFrom = process.env.EMAIL_FROM || process.env.EMAIL_USER || 'noreply@system.com';
+      return { 
+        transporter: userTransporter, 
+        fromEmail: defaultFrom
+      };
+    }
+    
     return { 
       transporter: userTransporter, 
-      fromEmail: userSettings.email_from || userSettings.email_user 
+      fromEmail: fromEmail
     };
   }
 
@@ -123,8 +144,32 @@ export class EmailService {
     try {
       const { transporter, fromEmail } = await this.getTransporterForUser(userId);
       
+      // Ensure we have a valid from email address
+      if (!fromEmail) {
+        console.error('No valid from email address found for user:', userId);
+        return false;
+      }
+      
+      // Format the from field properly for RFC 5322
+      let formattedFrom = fromEmail;
+      
+      if (userId) {
+        const userSettings = await this.getUserEmailSettings(userId);
+        if (userSettings) {
+          if (userSettings.email_from && userSettings.email_from !== userSettings.email_user) {
+            // If email_from is different from email_user, it's likely a display name
+            formattedFrom = `"${userSettings.email_from}" <${userSettings.email_user}>`;
+          } else {
+            // Use just the email address
+            formattedFrom = userSettings.email_user;
+          }
+        }
+      }
+      
+      console.log('Formatted from address:', formattedFrom);
+      
       const mailOptions = {
-        from: fromEmail,
+        from: formattedFrom,
         to: Array.isArray(emailData.to) ? emailData.to.join(', ') : emailData.to,
         subject: emailData.subject,
         html: emailData.html,
@@ -578,6 +623,15 @@ This quote is valid until ${data.validUntil}.
         }
       }
 
+      const finalFromEmail = emailSettings.email_from || emailSettings.email_user;
+      console.log('Saving email settings for user:', userId);
+      console.log('Email provider:', emailSettings.email_provider);
+      console.log('Email host:', emailSettings.email_host);
+      console.log('Email port:', emailSettings.email_port);
+      console.log('Email secure:', emailSettings.email_secure);
+      console.log('Email user:', emailSettings.email_user);
+      console.log('Email from:', finalFromEmail);
+      
       // Use UPSERT to handle both insert and update cases
       await this.pool.query(`
         INSERT INTO user_email_settings 
@@ -602,7 +656,7 @@ This quote is valid until ${data.validUntil}.
         emailSettings.email_secure,
         emailSettings.email_user,
         finalPassword,
-        emailSettings.email_from || emailSettings.email_user
+        finalFromEmail
       ]);
 
       // Clear cached transporter for this user
@@ -619,7 +673,13 @@ This quote is valid until ${data.validUntil}.
   // Test user email configuration
   async testUserEmailConnection(userId: number): Promise<boolean> {
     try {
-      const { transporter } = await this.getTransporterForUser(userId);
+      const userSettings = await this.getUserEmailSettings(userId);
+      console.log('Testing email connection for user:', userId);
+      console.log('User email settings:', userSettings);
+      
+      const { transporter, fromEmail } = await this.getTransporterForUser(userId);
+      console.log('From email address:', fromEmail);
+      
       await transporter.verify();
       console.log('User email service is ready for user:', userId);
       return true;

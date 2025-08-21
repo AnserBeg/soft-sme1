@@ -540,11 +540,11 @@ router.get('/profiles', async (req: Request, res: Response) => {
     let query: string;
     let params: any[] = [];
 
-    // Admin, Time Tracking, and Mobile Time Tracker users can see all profiles in regular frontend
-    if (userRole === 'Admin' || userRole === 'Time Tracking' || userRole === 'Mobile Time Tracker') {
+    // Admin and Time Tracking users can see all profiles in regular frontend
+    if (userRole === 'Admin' || userRole === 'Time Tracking') {
       query = 'SELECT id, name, email FROM profiles ORDER BY name';
     } else {
-      // Other users can only see profiles they have access to
+      // Mobile Time Tracker and other users can only see profiles they have access to
       query = `
         SELECT DISTINCT p.id, p.name, p.email 
         FROM profiles p

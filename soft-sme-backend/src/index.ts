@@ -63,25 +63,23 @@ const PORT = process.env.PORT || 5000;
 const wsInstance = expressWs(app);
 
 const allowedOrigins = [
-  'http://localhost:3000', // local dev
-  'http://localhost:5173', // Vite dev server
-  'http://localhost:8080', // allow dev server
-  process.env.CORS_ORIGIN, // production frontend
+  'http://localhost:3000',
+  'http://localhost:5173',
+  'http://localhost:8080',
+  'https://softsme.phoenixtrailers.ca',
+  process.env.CORS_ORIGIN,
 ].filter(Boolean);
 
-app.use(cors({
-  origin: (origin, callback) => {
-    if (!origin) return callback(null, true);
-    if (allowedOrigins.indexOf(origin) !== -1) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
+const corsOptions: cors.CorsOptions = {
+  origin: true, // Allow all origins - disable CORS restrictions
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'x-device-id'],
-}));
+  optionsSuccessStatus: 204,
+};
+
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
 app.use('/uploads', express.static('uploads'));

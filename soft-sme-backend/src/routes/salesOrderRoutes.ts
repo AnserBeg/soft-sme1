@@ -593,15 +593,15 @@ if (lineItems && lineItems.length > 0) {
     
     // Update parts to order if provided
     if (partsToOrder !== undefined) {
-      // Remove existing parts to order for specific parts being updated
+      // First, clear ALL existing parts to order for this sales order
+      await client.query(
+        'DELETE FROM sales_order_parts_to_order WHERE sales_order_id = $1',
+        [id]
+      );
+      
+      // Then insert the new parts to order (if any)
       if (partsToOrder && partsToOrder.length > 0) {
         for (const part of partsToOrder) {
-          await client.query(
-            'DELETE FROM sales_order_parts_to_order WHERE sales_order_id = $1 AND part_number = $2', 
-            [id, part.part_number]
-          );
-          
-          // Insert new parts to order
           await client.query(
             `INSERT INTO sales_order_parts_to_order 
              (sales_order_id, part_number, part_description, quantity_needed, unit, unit_price, line_amount) 

@@ -15,6 +15,8 @@ export default defineConfig({
         secure: false,
       },
     },
+    // Allow Cloudflare tunnel hostnames when exposing the dev server
+    allowedHosts: true,
   },
   preview: {
     port: 3000,
@@ -37,6 +39,7 @@ export default defineConfig({
           vendor: ['react', 'react-dom'],
           mui: ['@mui/material', '@mui/icons-material', '@mui/x-data-grid', '@mui/x-date-pickers'],
         },
+        sourcemapExcludeSources: true,
       },
     },
   },
@@ -50,5 +53,5 @@ export default defineConfig({
     __VITE_API_BASE_URL__: JSON.stringify(process.env.VITE_API_BASE_URL),
     __VITE_CLOUDFLARE_URL__: JSON.stringify(process.env.VITE_CLOUDFLARE_URL),
   },
-  base: './',
-}); 
+  base: '/',
+});

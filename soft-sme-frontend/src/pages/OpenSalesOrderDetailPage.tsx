@@ -414,6 +414,19 @@ const SalesOrderDetailPage: React.FC = () => {
         
         setLineItems(li);
         setOriginalLineItems(li);
+        
+        // Load parts to order data
+        const partsToOrder = (data.partsToOrder || []).map((item: any) => ({
+          sales_order_id: parseInt(id),
+          part_number: item.part_number,
+          part_description: item.part_description,
+          quantity_to_order: String(item.quantity_needed || 0),
+          unit: item.unit || 'Each',
+          unit_price: Number(item.unit_price || 0),
+          line_amount: Number(item.line_amount || 0),
+        })) as PartsToOrderItem[];
+        setQuantityToOrderItems(partsToOrder);
+        
         setSalesDate(dayjs(data.salesOrder?.sales_date));
         setEstimatedCost(data.salesOrder?.estimated_cost || 0);
         setProductDescription(data.salesOrder?.product_description || '');

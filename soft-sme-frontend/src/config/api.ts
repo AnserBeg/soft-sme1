@@ -7,8 +7,8 @@ declare global {
 // API Configuration for different environments
 // Replace YOUR_CLOUD_URL with your actual cloud backend URL
 
-// Detect if running in Electron
-const isElectron = window && (window as any).electronAPI;
+// Detect if running in Electron (safe for non-browser contexts)
+const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI;
 
 // Function to normalize URL - use HTTP for localhost
 function normalizeURL(url: string): string {
@@ -18,7 +18,6 @@ function normalizeURL(url: string): string {
   return url;
 }
 
-const baseURL = normalizeURL(import.meta.env.VITE_API_BASE_URL || (typeof __VITE_API_BASE_URL__ !== 'undefined' ? __VITE_API_BASE_URL__ : 'http://localhost:5000'));
 console.log('API baseURL:', import.meta.env.VITE_API_BASE_URL); // Debug: Print the API base URL
 console.log('Is Electron:', isElectron); // Debug: Check if running in Electron
 
@@ -28,11 +27,12 @@ export const API_CONFIG = {
     timeout: 120000, // 2 minutes for AI queries
   },
   production: {
-    baseURL: import.meta.env.VITE_API_BASE_URL || (typeof __VITE_API_BASE_URL__ !== 'undefined' ? __VITE_API_BASE_URL__ : 'https://consequences-composition-uh-counters.trycloudflare.com'), // Use environment variable with fallback
+    // Use empty baseURL when using Vite proxy to avoid double /api
+    baseURL: import.meta.env.VITE_API_BASE_URL || '',
     timeout: 120000, // 2 minutes for AI queries
   },
   staging: {
-    baseURL: import.meta.env.VITE_API_BASE_URL || 'https://consequences-composition-uh-counters.trycloudflare.com', // Use environment variable with fallback
+    baseURL: import.meta.env.VITE_API_BASE_URL || '',
     timeout: 120000, // 2 minutes for AI queries
   },
   cloudflare: {
@@ -48,7 +48,7 @@ export function getApiConfig() {
     VITE_API_BASE_URL: import.meta.env.VITE_API_BASE_URL,
     VITE_CLOUDFLARE_URL: import.meta.env.VITE_CLOUDFLARE_URL,
     MODE: import.meta.env.MODE,
-    NODE_ENV: process.env.NODE_ENV,
+    NODE_ENV: import.meta.env.MODE,
     isElectron: isElectron
   });
 
@@ -95,14 +95,14 @@ export function getApiConfig() {
   if (import.meta.env.MODE === 'production') {
     console.log('Using production config');
     return {
-      baseURL: normalizeURL(API_CONFIG.production.baseURL),
+      baseURL: normalizeURL(API_CONFIG.production.baseURL || API_CONFIG.cloudflare.baseURL),
       timeout: 120000,
     };
   }
   if (import.meta.env.MODE === 'staging') {
     console.log('Using staging config');
     return {
-      baseURL: normalizeURL(API_CONFIG.staging.baseURL),
+      baseURL: normalizeURL(API_CONFIG.staging.baseURL || API_CONFIG.cloudflare.baseURL),
       timeout: 120000,
     };
   }
@@ -116,8 +116,8 @@ export function getApiConfig() {
 
 // Get current environment
 export const getCurrentEnvironment = (): 'development' | 'production' | 'staging' | 'cloudflare' => {
-  if (import.meta.env.VITE_CLOUDFLARE_URL) return 'cloudflare';
-  if (process.env.NODE_ENV === 'production') {
+  if (import.meta.env.VITE_CLOUDFLARE_URL && !import.meta.env.VITE_CLOUDFLARE_URL.includes('localhost')) return 'cloudflare';
+  if (import.meta.env.MODE === 'production') {
     // You can add logic here to detect staging vs production
     // For example, check window.location.hostname
     return 'production';

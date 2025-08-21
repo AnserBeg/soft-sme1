@@ -39,6 +39,7 @@ const EMAIL_PROVIDERS = [
   { value: 'outlook', label: 'Outlook/Hotmail', host: 'smtp-mail.outlook.com', port: 587, secure: false },
   { value: 'yahoo', label: 'Yahoo', host: 'smtp.mail.yahoo.com', port: 587, secure: false },
   { value: 'icloud', label: 'iCloud', host: 'smtp.mail.me.com', port: 587, secure: false },
+  { value: 'titan', label: 'Titan Email', host: 'smtp.titan.email', port: 465, secure: true },
   { value: 'custom', label: 'Custom SMTP', host: '', port: 587, secure: false }
 ];
 

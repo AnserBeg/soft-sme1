@@ -23,7 +23,9 @@ app.use(cors({
       'file://',
       'null',
       'app://-',
-      'https://consequences-composition-uh-counters.trycloudflare.com'
+      'https://consequences-composition-uh-counters.trycloudflare.com',
+      'https://kinda-broker-railroad-eyes.trycloudflare.com',
+      'https://softsme.phoenixtrailers.ca'
     ];
     // Allow requests with no origin (like curl or some Electron requests)
     if (!origin) return callback(null, true);
