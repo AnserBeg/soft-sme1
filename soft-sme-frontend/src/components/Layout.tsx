@@ -29,6 +29,7 @@ import {
   QueryStats as QueryStatsIcon,
   Store as StoreIcon,
   Timeline as TimelineIcon,
+  Event as CalendarIcon,
   ArrowBack as ArrowBackIcon,
   Backup as BackupIcon,
   LocalShipping as LocalShippingIcon,
@@ -99,13 +100,16 @@ const Layout: React.FC = () => {
     { text: 'Time Tracking', icon: <TimelineIcon />, path: '/time-tracking' },
     { text: 'Time Tracking Reports', icon: <QueryStatsIcon />, path: '/time-tracking/reports' },
 
+    { type: 'header', text: 'Human Resources' },
+    { text: 'Employees', icon: <GroupIcon />, path: '/employees' },
+    { text: 'Leave Management', icon: <CalendarIcon />, path: '/leave-management' },
+    { text: 'Mobile User Access', icon: <PeopleIcon />, path: '/mobile-user-access' },
+
     { type: 'header', text: 'Settings' },
     { text: 'Business Profile', icon: <BusinessIcon />, path: '/business-profile' },
-    { text: 'Employees', icon: <GroupIcon />, path: '/employees' },
     { text: 'Accounting', icon: <AttachMoneyIcon />, path: '/qbo-account-mapping' },
     { text: 'Global Variables', icon: <AttachMoneyIcon />, path: '/margin-schedule' },
     { text: 'Email Settings', icon: <EmailIcon />, path: '/email-settings' },
-    { text: 'Mobile User Access', icon: <PeopleIcon />, path: '/mobile-user-access' },
     { text: 'Backup Management', icon: <BackupIcon />, path: '/backup-management' },
   ];
 
@@ -113,8 +117,12 @@ const Layout: React.FC = () => {
   const filteredMenuItems = React.useMemo(() => {
     if (user?.access_role === 'Time Tracking') {
       return [
+        { type: 'header', text: 'Time Tracking' },
         { text: 'Attendance', icon: <TimelineIcon />, path: '/attendance' },
         { text: 'Time Tracking', icon: <TimelineIcon />, path: '/time-tracking' },
+        { type: 'header', text: 'Human Resources' },
+        { text: 'Leave Management', icon: <CalendarIcon />, path: '/leave-management' },
+        { type: 'header', text: 'Sales' },
         { text: 'Sales Orders', icon: <ReceiptIcon />, path: '/open-sales-orders' },
       ];
     }

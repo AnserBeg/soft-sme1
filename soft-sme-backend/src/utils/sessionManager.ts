@@ -341,11 +341,8 @@ export class SessionManager {
   }
 
   private static generateSessionToken(userId: number): string {
-    return jwt.sign(
-      { userId, type: 'session' },
-      this.SESSION_SECRET,
-      { expiresIn: '24h' }
-    );
+    // Generate a random token instead of JWT to avoid expiration conflicts
+    return crypto.randomBytes(64).toString('hex');
   }
 
   private static generateRefreshToken(userId: number): string {

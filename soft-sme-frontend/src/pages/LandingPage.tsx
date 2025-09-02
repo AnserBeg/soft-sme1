@@ -30,7 +30,8 @@ import {
   LocalOffer as LocalOfferIcon,
   LocalShipping as LocalShippingIcon,
     Backup as BackupIcon,
-  Email as EmailIcon
+  Email as EmailIcon,
+  Event as CalendarIcon
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -39,6 +40,7 @@ const sectionIcons: Record<string, React.ReactNode> = {
   'Sales': <ReceiptIcon sx={{ color: 'primary.main' }} />,
   'Products & Inventory': <InventoryIcon sx={{ color: 'primary.main' }} />,
   'Time Tracking': <TimelineIcon sx={{ color: 'primary.main' }} />,
+  'Human Resources': <PeopleIcon sx={{ color: 'primary.main' }} />,
   'Settings': <BusinessIcon sx={{ color: 'primary.main' }} />,
 };
 
@@ -83,14 +85,20 @@ const LandingPage: React.FC = () => {
       ]
     },
     {
+      title: "Human Resources",
+      items: [
+        { title: 'Employees', description: 'Manage employee accounts and roles', icon: <GroupIcon sx={{ fontSize: 40, color: 'primary.main' }} />, path: '/employees' },
+        { title: 'Leave Management', description: 'Manage employee leave requests and approvals', icon: <CalendarIcon sx={{ fontSize: 40, color: 'primary.main' }} />, path: '/leave-management' },
+        { title: 'Mobile User Access', description: 'Manage mobile user access to profiles', icon: <PeopleIcon sx={{ fontSize: 40, color: 'primary.main' }} />, path: '/mobile-user-access' }
+      ]
+    },
+    {
       title: "Settings",
             items: [
         { title: 'Business Profile', description: 'Manage your company information and settings', icon: <BusinessIcon sx={{ fontSize: 40, color: 'primary.main' }} />, path: '/business-profile' },
-        { title: 'Employees', description: 'Manage employee accounts and roles', icon: <GroupIcon sx={{ fontSize: 40, color: 'primary.main' }} />, path: '/employees' },
         { title: 'Accounting', description: 'Configure QuickBooks account mappings', icon: <AttachMoneyIcon sx={{ fontSize: 40, color: 'primary.main' }} />, path: '/qbo-account-mapping' },
         { title: 'Global Variables', description: 'Set and manage margin, labour, and overhead rates', icon: <AttachMoneyIcon sx={{ fontSize: 40, color: 'primary.main' }} />, path: '/margin-schedule' },
         { title: 'Email Settings', description: 'Configure system email settings', icon: <EmailIcon sx={{ fontSize: 40, color: 'primary.main' }} />, path: '/email-settings' },
-        { title: 'Mobile User Access', description: 'Manage mobile user access to profiles', icon: <PeopleIcon sx={{ fontSize: 40, color: 'primary.main' }} />, path: '/mobile-user-access' },
         { title: 'Backup Management', description: 'Manage system backups and restores', icon: <BackupIcon sx={{ fontSize: 40, color: 'primary.main' }} />, path: '/backup-management' }
       ]
     }

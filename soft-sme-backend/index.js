@@ -15,6 +15,17 @@ require('dotenv').config();
 const app = express();
 const port = process.env.PORT || 5000;
 
+// Enable compression for better performance
+const compression = require('compression');
+app.use(compression());
+
+// Set keep-alive headers
+app.use((req, res, next) => {
+  res.set('Connection', 'keep-alive');
+  res.set('Keep-Alive', 'timeout=5, max=1000');
+  next();
+});
+
 // Enable CORS for all routes
 app.use(cors({
   origin: function(origin, callback) {
@@ -44,13 +55,20 @@ app.use(cookieParser());
 // Set up multer for file uploads
 const upload = multer({ dest: 'uploads/' }); // Temporary directory for uploads
 
-// PostgreSQL connection pool
+// PostgreSQL connection pool with optimized settings
 const pool = new Pool({
-  user: process.env.DB_USER || 'postgres', // Replace with your PostgreSQL username
-  host: process.env.DB_HOST || 'localhost', // Replace with your PostgreSQL host
-  database: process.env.DB_NAME || 'soft_sme_db', // Replace with your database name
-  password: process.env.DB_PASSWORD || '123', // Replace with your PostgreSQL password
-  port: parseInt(process.env.DB_PORT || '5432', 10), // Replace with your PostgreSQL port
+  user: process.env.DB_USER || 'postgres',
+  host: process.env.DB_HOST || 'localhost',
+  database: process.env.DB_NAME || 'soft_sme_db',
+  password: process.env.DB_PASSWORD || '123',
+  port: parseInt(process.env.DB_PORT || '5432', 10),
+  // Connection pool optimization
+  max: 20, // Maximum number of clients in the pool
+  idleTimeoutMillis: 30000, // Close idle clients after 30 seconds
+  connectionTimeoutMillis: 2000, // Return an error after 2 seconds if connection could not be established
+  // Keep connections alive
+  keepAlive: true,
+  keepAliveInitialDelayMillis: 10000,
 });
 
 // Initialize calculation service
@@ -132,6 +150,11 @@ app.use('/api/categories', categoryRoutes);
 // API endpoint to delete an employee (Admin Only)
 // Note: This route is now handled by modular employeeRoutes
 
+// Health check endpoint for connection warmup
+app.get('/api/auth/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
 // Basic route
 app.get('/', async (req, res) => {
   try {
@@ -167,9 +190,9 @@ app.get('/api/purchase-history/open/:id', async (req, res) => {
         CAST(ph.subtotal AS FLOAT) as subtotal,
         CAST(ph.total_gst_amount AS FLOAT) as total_gst_amount,
         CAST(ph.total_amount AS FLOAT) as total_amount,
-        vm.vendor_name 
+        COALESCE(vm.vendor_name, 'No Vendor') as vendor_name 
       FROM PurchaseHistory ph 
-      JOIN VendorMaster vm ON ph.vendor_id = vm.vendor_id 
+      LEFT JOIN VendorMaster vm ON ph.vendor_id = vm.vendor_id 
       WHERE ph.purchase_id = $1 AND LOWER(ph.status) = 'open'`,
       [id]
     );
@@ -203,9 +226,9 @@ app.get('/api/purchase-history/open', async (req, res) => {
         CAST(ph.subtotal AS FLOAT) as subtotal,
         CAST(ph.total_gst_amount AS FLOAT) as total_gst_amount,
         CAST(ph.total_amount AS FLOAT) as total_amount,
-        vm.vendor_name 
+        COALESCE(vm.vendor_name, 'No Vendor') as vendor_name 
       FROM PurchaseHistory ph 
-      JOIN VendorMaster vm ON ph.vendor_id = vm.vendor_id 
+      LEFT JOIN VendorMaster vm ON ph.vendor_id = vm.vendor_id 
       WHERE LOWER(ph.status) = 'open'
       ORDER BY ph.created_at DESC
     `);
@@ -256,7 +279,7 @@ app.get('/api/purchase-history/:id/pdf', async (req, res) => {
   const { id } = req.params;
   try {
     const purchaseOrderResult = await pool.query(
-      `SELECT ph.*, vm.vendor_name, vm.street_address, vm.city, vm.province, vm.country, vm.telephone_number, vm.email FROM PurchaseHistory ph JOIN VendorMaster vm ON ph.vendor_id = vm.vendor_id WHERE ph.purchase_id = $1`,
+      `SELECT ph.*, COALESCE(vm.vendor_name, 'No Vendor') as vendor_name, vm.street_address, vm.city, vm.province, vm.country, vm.telephone_number, vm.email FROM PurchaseHistory ph LEFT JOIN VendorMaster vm ON ph.vendor_id = vm.vendor_id WHERE ph.purchase_id = $1`,
       [id]
     );
 
@@ -443,9 +466,9 @@ app.get('/api/purchase-history', async (req, res) => {
         CAST(ph.subtotal AS FLOAT) as subtotal,
         CAST(ph.total_gst_amount AS FLOAT) as total_gst_amount,
         CAST(ph.total_amount AS FLOAT) as total_amount,
-        vm.vendor_name 
+        COALESCE(vm.vendor_name, 'No Vendor') as vendor_name 
       FROM PurchaseHistory ph 
-      JOIN VendorMaster vm ON ph.vendor_id = vm.vendor_id 
+      LEFT JOIN VendorMaster vm ON ph.vendor_id = vm.vendor_id 
       WHERE LOWER(ph.status) = 'closed'
       ORDER BY ph.created_at DESC
     `);
@@ -1646,107 +1669,11 @@ app.put('/api/vendors/:vendorId', async (req, res) => {
   }
 });
 
-// Add API endpoint to add a new customer
-app.post('/api/customers', async (req, res) => {
-  const client = await pool.connect();
-  try {
-    // Destructure fields directly from req.body
-    const { customer_name, street_address, city, province, country, contact_person, telephone_number, email, website } = req.body;
+// Customer creation is now handled by customerRoutes.ts
+// This endpoint has been removed to prevent conflicts
 
-    console.log('Received new customer data:', req.body);
-    console.log('Destructured customer_name:', customer_name); // Add log for destructured value
-
-    // Insert into customermaster (lowercase table name)
-    const result = await client.query(
-      'INSERT INTO customermaster (customer_name, street_address, city, province, country, contact_person, telephone_number, email, website) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING customer_id, customer_name',
-      [customer_name, street_address, city, province, country, contact_person, telephone_number, email, website]
-    );
-
-    const newCustomer = result.rows[0];
-
-    res.status(201).json({ message: 'Customer created successfully', customer: newCustomer });
-  } catch (err) {
-    console.error('Error creating customer:', err);
-    res.status(500).json({ error: 'Internal server error' });
-  } finally {
-    client.release();
-  }
-});
-
-// Add API endpoint to update a customer by ID
-app.put('/api/customers/:customerId', async (req, res) => {
-  const { customerId } = req.params;
-  const { name, street_address, city, province, country, contact, phone, email, website } = req.body;
-
-  const client = await pool.connect();
-
-  // Build the update query dynamically based on provided fields
-  const updateFields = [];
-  const queryParams = [];
-  let paramIndex = 1;
-
-  if (name !== undefined) { updateFields.push(`customer_name = $${paramIndex++}`); queryParams.push(name); }
-  if (street_address !== undefined) { updateFields.push(`street_address = $${paramIndex++}`); queryParams.push(street_address); }
-  if (city !== undefined) { updateFields.push(`city = $${paramIndex++}`); queryParams.push(city); }
-  if (province !== undefined) { updateFields.push(`province = $${paramIndex++}`); queryParams.push(province); }
-  if (country !== undefined) { updateFields.push(`country = $${paramIndex++}`); queryParams.push(country); }
-  if (contact !== undefined) { updateFields.push(`contact_person = $${paramIndex++}`); queryParams.push(contact); }
-  if (phone !== undefined) { updateFields.push(`telephone_number = $${paramIndex++}`); queryParams.push(phone); }
-  if (email !== undefined) { updateFields.push(`email = $${paramIndex++}`); queryParams.push(email); }
-  if (website !== undefined) { updateFields.push(`website = $${paramIndex++}`); queryParams.push(website); }
-
-  if (updateFields.length === 0) {
-    return res.status(400).json({ error: 'No update fields provided' });
-  }
-
-  // Add the customerId to the query parameters for the WHERE clause
-  updateFields.push(`customer_id = $${paramIndex++}`);
-  queryParams.push(customerId);
-
-  const query = `UPDATE customermaster SET ${updateFields.slice(0, -1).join(', ')} WHERE ${updateFields.slice(-1)[0]} RETURNING *;`; // Corrected table name
-
-  try {
-    const result = await client.query(query, queryParams);
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Customer not found' });
-    }
-
-    res.json({ message: 'Customer updated successfully', updatedCustomer: result.rows[0] });
-
-  } catch (err) {
-    console.error(`Error updating customer ${customerId}:`, err);
-    res.status(500).json({ error: 'Internal server error' });
-  } finally {
-    client.release();
-  }
-});
-
-// Add API endpoint to delete a customer by ID
-app.delete('/api/customers/:customerId', async (req, res) => {
-  const { customerId } = req.params; // Get customerId from URL parameters
-  const client = await pool.connect();
-  try {
-    const result = await client.query(
-      'DELETE FROM CustomerMaster WHERE customer_id = $1 RETURNING *;',
-      [customerId] // Use customerId from the URL
-    );
-
-    if (result.rows.length === 0) {
-      // No row was deleted, likely because the customerId was not found
-      return res.status(404).json({ error: 'Customer not found' });
-    }
-
-    // Return the deleted item or a success message
-    res.json({ message: 'Customer deleted successfully', deletedCustomer: result.rows[0] });
-
-  } catch (err) {
-    console.error(`Error deleting customer ${customerId}:`, err);
-    res.status(500).json({ error: 'Internal server error' });
-  } finally {
-    client.release();
-  }
-});
+// Customer operations are now handled by customerRoutes.ts
+// These duplicate endpoints have been removed to prevent conflicts
 
 // API endpoint to get all products
 app.get('/api/products', async (req, res) => {
@@ -1759,68 +1686,8 @@ app.get('/api/products', async (req, res) => {
   }
 });
 
-// API endpoint to add a new product
-app.post('/api/products', async (req, res) => {
-  const client = await pool.connect();
-  try {
-    const { product_name, product_description } = req.body;
-    const result = await client.query(
-      'INSERT INTO products (product_name, product_description) VALUES ($1, $2) RETURNING *;',
-      [product_name, product_description]
-    );
-    const newProduct = result.rows[0];
-    res.status(201).json({ message: 'Product created successfully', product: newProduct });
-  } catch (err) {
-    console.error('Error creating product:', err);
-    res.status(500).json({ error: 'Internal server error' });
-  } finally {
-    client.release();
-  }
-});
-
-// API endpoint to update a product by ID
-app.put('/api/products/:productId', async (req, res) => {
-  const { productId } = req.params;
-  const { product_name, product_description } = req.body;
-
-  const client = await pool.connect();
-  try {
-    const result = await client.query(
-      'UPDATE products SET product_name = $1, product_description = $2, updated_at = CURRENT_TIMESTAMP WHERE product_id = $3 RETURNING *;',
-      [product_name, product_description, productId]
-    );
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Product not found' });
-    }
-    res.json({ message: 'Product updated successfully', updatedProduct: result.rows[0] });
-  } catch (err) {
-    console.error(`Error updating product ${productId}:`, err);
-    res.status(500).json({ error: 'Internal server error' });
-  } finally {
-    client.release();
-  }
-});
-
-// API endpoint to delete a product by ID
-app.delete('/api/products/:productId', async (req, res) => {
-  const { productId } = req.params;
-  const client = await pool.connect();
-  try {
-    const result = await client.query(
-      'DELETE FROM products WHERE product_id = $1 RETURNING *;',
-      [productId]
-    );
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Product not found' });
-    }
-    res.json({ message: 'Product deleted successfully', deletedProduct: result.rows[0] });
-  } catch (err) {
-    console.error(`Error deleting product ${productId}:`, err);
-    res.status(500).json({ error: 'Internal server error' });
-  } finally {
-    client.release();
-  }
-});
+// Product operations are now handled by productRoutes.ts
+// These duplicate endpoints have been removed to prevent conflicts
 
 // Create quotes table
 pool.query(`

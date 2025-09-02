@@ -113,15 +113,62 @@ router.post('/', async (req: Request, res: Response) => {
   const client = await pool.connect();
   try {
     const { product_name, product_description } = req.body;
+
+    // Validate required fields
+    if (!product_name || product_name.trim() === '') {
+      return res.status(400).json({ error: 'Product name is required' });
+    }
+
+    // Check if product with same name already exists
+    const existingProduct = await client.query(
+      'SELECT product_id FROM products WHERE LOWER(product_name) = LOWER($1)',
+      [product_name.trim()]
+    );
+
+    if (existingProduct.rows.length > 0) {
+      return res.status(409).json({ 
+        error: 'Product already exists',
+        message: `A product with the name "${product_name}" already exists`,
+        existingProductId: existingProduct.rows[0].product_id
+      });
+    }
+
     const result = await client.query(
       'INSERT INTO products (product_name, product_description) VALUES ($1, $2) RETURNING product_id, product_name, product_description, created_at, updated_at',
-      [product_name, product_description]
+      [product_name.trim(), product_description]
     );
+    
     const newProduct = result.rows[0];
+    console.log('Product created successfully:', newProduct);
     res.status(201).json({ message: 'Product created successfully', product: newProduct });
-  } catch (err) {
+  } catch (err: any) {
     console.error('productRoutes: Error creating product:', err);
-    res.status(500).json({ error: 'Internal server error' });
+    
+    // Handle specific database errors
+    if (err.code === '23505') { // Unique constraint violation
+      if (err.constraint?.includes('product_name')) {
+        res.status(409).json({ 
+          error: 'Product name already exists',
+          message: `A product with the name "${req.body.product_name}" already exists`,
+          details: 'Please choose a different product name or use the existing product.'
+        });
+      } else {
+        res.status(409).json({ 
+          error: 'Duplicate entry',
+          message: 'A product with this information already exists'
+        });
+      }
+    } else if (err.code === '23502') { // Not null violation
+      res.status(400).json({ 
+        error: 'Missing required field',
+        message: 'Please fill in all required fields'
+      });
+    } else {
+      res.status(500).json({ 
+        error: 'Internal server error',
+        message: 'Failed to create product. Please try again.'
+      });
+    }
   } finally {
     client.release();
   }

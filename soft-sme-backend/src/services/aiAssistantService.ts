@@ -27,7 +27,7 @@ class AIAssistantService {
 
   constructor() {
     this.isLocalMode = process.env.AI_AGENT_MODE === 'local';
-    this.aiEndpoint = process.env.AI_AGENT_ENDPOINT || 'http://localhost:8001';
+    this.aiEndpoint = process.env.AI_AGENT_ENDPOINT || 'http://localhost:15000';
   }
 
   /**
@@ -37,33 +37,33 @@ class AIAssistantService {
     if (this.isLocalMode) {
       await this.startLocalAIAgent();
       
-                        // Wait for the agent to be ready
-                  let retries = 0;
-                  const maxRetries = 30; // Increased to 30 (60 seconds total)
-                  
-                  while (retries < maxRetries) {
-                    try {
-                      const health = await this.getHealthStatus();
-                      console.log(`Health check attempt ${retries + 1}:`, health);
-                      
-                      // Check if the agent is healthy or still starting
-                      if (health.status === 'healthy' || health.status === 'starting') {
-                        if (health.status === 'healthy') {
-                          console.log('AI Agent is ready');
-                          return;
-                        } else {
-                          console.log('AI Agent is starting, continuing to wait...');
-                        }
-                      }
-                    } catch (error) {
-                      console.log(`Waiting for AI Agent to be ready... (attempt ${retries + 1}/${maxRetries})`);
-                    }
-                    
-                    await new Promise(resolve => setTimeout(resolve, 2000));
-                    retries++;
-                  }
-                  
-                  throw new Error('AI Agent failed to start within expected time');
+                              // Wait for the agent to be ready
+      let retries = 0;
+      const maxRetries = 60; // Increased to 60 (120 seconds total)
+      
+      while (retries < maxRetries) {
+        try {
+          const health = await this.getHealthStatus();
+          console.log(`Health check attempt ${retries + 1}:`, health);
+          
+          // Check if the agent is healthy or still starting
+          if (health.status === 'healthy' || health.status === 'starting') {
+            if (health.status === 'healthy') {
+              console.log('AI Agent is ready');
+              return;
+            } else {
+              console.log('AI Agent is starting, continuing to wait...');
+            }
+          }
+        } catch (error) {
+          console.log(`Waiting for AI Agent to be ready... (attempt ${retries + 1}/${maxRetries})`);
+        }
+        
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        retries++;
+      }
+      
+      throw new Error('AI Agent failed to start within expected time');
     }
   }
 
@@ -87,7 +87,8 @@ class AIAssistantService {
         stdio: ['pipe', 'pipe', 'pipe'],
         env: {
           ...process.env,
-          PYTHONPATH: aiAgentPath
+          PYTHONPATH: aiAgentPath,
+          AI_AGENT_PORT: process.env.AI_AGENT_PORT || '15000'
         }
       });
 
@@ -192,9 +193,14 @@ class AIAssistantService {
    */
   async getHealthStatus(): Promise<{ status: string; details?: any }> {
     try {
-      const response = await axios.get(`${this.aiEndpoint}/health`, {
+      const healthUrl = `${this.aiEndpoint}/health`;
+      console.log(`🔍 Health check: Attempting to access ${healthUrl}`);
+      
+      const response = await axios.get(healthUrl, {
         timeout: 5000
       });
+      
+      console.log(`✅ Health check successful: ${response.status} - ${JSON.stringify(response.data)}`);
       
       // The Python endpoint returns a HealthResponse object
       const healthData = response.data;
@@ -205,6 +211,13 @@ class AIAssistantService {
         details: healthData.details || healthData
       };
     } catch (error) {
+      console.log(`❌ Health check failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      if (axios.isAxiosError(error)) {
+        console.log(`   Status: ${error.response?.status}`);
+        console.log(`   URL: ${error.config?.url}`);
+        console.log(`   Method: ${error.config?.method}`);
+      }
+      
       return {
         status: 'unhealthy',
         details: error instanceof Error ? error.message : 'Unknown error'

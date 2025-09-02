@@ -8,7 +8,7 @@ import {
   GridActionsCellItem,
 } from '@mui/x-data-grid';
 import Papa from 'papaparse';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import api from '../api/axios';
 import { useAuth } from '../contexts/AuthContext';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -33,6 +33,7 @@ const OpenSalesOrdersPage: React.FC = () => {
   const [status, setStatus] = useState<'all' | 'open' | 'closed'>('open');
   const [workInProcessTotal, setWorkInProcessTotal] = useState<number>(0);
   const navigate = useNavigate();
+  const location = useLocation();
   const { user } = useAuth();
   const [openDialog, setOpenDialog] = useState(false);
 
@@ -47,7 +48,13 @@ const OpenSalesOrdersPage: React.FC = () => {
       // For Sales and Purchase users, only fetch open sales orders
       const effectiveStatusFilter = user?.access_role === 'Sales and Purchase' ? 'open' : statusFilter;
       
-      const response = await api.get('/api/sales-orders', { params: { status: effectiveStatusFilter } });
+      // Add cache-busting parameter to ensure fresh data
+      const response = await api.get('/api/sales-orders', { 
+        params: { 
+          status: effectiveStatusFilter, 
+          _ts: Date.now() 
+        } 
+      });
       
       // Sort by sequence number (extracted from sales_order_number) with latest on top
       const sortedOrders = response.data.sort((a: any, b: any) => {
@@ -64,10 +71,10 @@ const OpenSalesOrdersPage: React.FC = () => {
       const ordersWithId = sortedOrders.map((order: any) => ({
         ...order,
         id: order.sales_order_id,
-        // Use backend summary fields directly, do not recalculate
-        subtotal: order.subtotal,
-        total_gst_amount: order.total_gst_amount,
-        total_amount: order.total_amount,
+        // Ensure numeric totals (backend may return strings)
+        subtotal: Number(order.subtotal) || 0,
+        total_gst_amount: Number(order.total_gst_amount) || 0,
+        total_amount: Number(order.total_amount) || 0,
       }));
       setRows(ordersWithId);
 
@@ -93,6 +100,29 @@ const OpenSalesOrdersPage: React.FC = () => {
     fetchSalesOrders(status);
   }, [status, user?.access_role]);
 
+  // Refetch when route location changes (e.g., back from detail page)
+  useEffect(() => {
+    // Add a delay to ensure backend transactions are committed
+    setTimeout(() => {
+      fetchSalesOrders(status);
+    }, 500);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.key]);
+
+  // Refresh when the window/tab regains focus or becomes visible
+  useEffect(() => {
+    const onFocus = () => fetchSalesOrders(status);
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') fetchSalesOrders(status);
+    };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [status]);
+
   const handleCloseOrder = async (salesOrderId: number) => {
     if (window.confirm(`Are you sure you want to close this Sales Order?`)) {
       try {
@@ -101,17 +131,41 @@ const OpenSalesOrdersPage: React.FC = () => {
         const { salesOrder, lineItems } = response.data;
 
         // Send all fields, but with status: 'Closed'
+        const { subtotal, total_gst_amount, total_amount, ...salesOrderWithoutTotals } = salesOrder;
         await api.put(`/api/sales-orders/${salesOrderId}`, {
-          ...salesOrder,
+          ...salesOrderWithoutTotals,
           status: 'Closed',
-          lineItems: lineItems.map((item: any) => ({
-            part_number: item.part_number,
-            part_description: item.part_description,
-            quantity: item.quantity, // or quantity_sold depending on your backend
-            unit: item.unit,
-            unit_price: item.unit_price,
-            line_amount: item.line_amount,
-          })),
+          lineItems: (lineItems || []).map((it: any) => {
+            const pn = String(it.part_number || '').toUpperCase();
+
+            const base = {
+              part_number: String(it.part_number || ''),
+              part_description: String(it.part_description || ''),
+              unit: String(it.unit || ''),
+              // For SUPPLY we always force 0; backend should ignore this anyway.
+              unit_price: pn === 'SUPPLY' ? 0 : (Number(it.unit_price) || 0),
+              // Always preserve the UI/server computed amount
+              line_amount: Number(it.line_amount) || 0,
+              ...(it.part_id ? { part_id: Number(it.part_id) } : {}),
+            };
+
+            if (pn === 'SUPPLY') {
+              // SUPPLY is % of LABOUR: quantity 1, unit Each, unit_price 0
+              return { ...base, unit: 'Each', quantity: 1 };
+            }
+
+            if (pn === 'LABOUR' || pn === 'OVERHEAD') {
+              // Hours come from quantity/quantity_sold; preserve the exact line_amount
+              const hours = Number(it.quantity_sold ?? it.quantity ?? 0) || 0;
+              return { ...base, quantity: hours };
+            }
+
+            // Normal inventory part
+            return {
+              ...base,
+              quantity: Number(it.quantity_sold ?? it.quantity ?? 0) || 0,
+            };
+          }),
         });
 
         toast.success('Sales Order closed successfully!');
@@ -160,19 +214,43 @@ const OpenSalesOrdersPage: React.FC = () => {
         const { salesOrder, lineItems } = response.data;
 
         // Send all fields, but with status: 'Open'
+        const { subtotal, total_gst_amount, total_amount, ...salesOrderWithoutTotals } = salesOrder;
         await api.put(`/api/sales-orders/${salesOrderId}`, {
-          ...salesOrder,
+          ...salesOrderWithoutTotals,
           sales_order_id: Number(salesOrder.sales_order_id),
           customer_id: Number(salesOrder.customer_id),
           status: 'Open',
-          lineItems: lineItems.map((item: any) => ({
-            part_number: item.part_number,
-            part_description: item.part_description,
-            quantity: Number(item.quantity),
-            unit: item.unit,
-            unit_price: Number(item.unit_price),
-            line_amount: Number(item.line_amount),
-          })),
+          lineItems: (lineItems || []).map((it: any) => {
+            const pn = String(it.part_number || '').toUpperCase();
+
+            const base = {
+              part_number: String(it.part_number || ''),
+              part_description: String(it.part_description || ''),
+              unit: String(it.unit || ''),
+              // For SUPPLY we always force 0; backend should ignore this anyway.
+              unit_price: pn === 'SUPPLY' ? 0 : (Number(it.unit_price) || 0),
+              // Always preserve the UI/server computed amount
+              line_amount: Number(it.line_amount) || 0,
+              ...(it.part_id ? { part_id: Number(it.part_id) } : {}),
+            };
+
+            if (pn === 'SUPPLY') {
+              // SUPPLY is % of LABOUR: quantity 1, unit Each, unit_price 0
+              return { ...base, unit: 'Each', quantity: 1 };
+            }
+
+            if (pn === 'LABOUR' || pn === 'OVERHEAD') {
+              // Hours come from quantity/quantity_sold; preserve the exact line_amount
+              const hours = Number(it.quantity_sold ?? it.quantity ?? 0) || 0;
+              return { ...base, quantity: hours };
+            }
+
+            // Normal inventory part
+            return {
+              ...base,
+              quantity: Number(it.quantity_sold ?? it.quantity ?? 0) || 0,
+            };
+          }),
         });
 
         toast.success('Sales Order reopened successfully!');
@@ -266,7 +344,10 @@ const OpenSalesOrdersPage: React.FC = () => {
   ];
 
   const handleRefresh = () => {
-    fetchSalesOrders();
+    // Add a delay to ensure backend transactions are committed
+    setTimeout(() => {
+      fetchSalesOrders();
+    }, 500);
   };
 
   const handleExportCSV = () => {
@@ -322,7 +403,7 @@ const OpenSalesOrdersPage: React.FC = () => {
     
     if (user?.access_role === 'Time Tracking') {
       // Redirect time tracking users to the worker sales order page
-      const targetPath = `/woker-sales-orders/${params.row.sales_order_id}`;
+      const targetPath = `/worker-sales-orders/${params.row.sales_order_id}`;
       console.log('OpenSalesOrdersPage: Navigating time tracking user to:', targetPath);
       navigate(targetPath);
     } else {
@@ -342,7 +423,13 @@ const OpenSalesOrdersPage: React.FC = () => {
             Sales Orders
           </Typography>
           <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2 }}>
-            {/* No buttons for time tracking users */}
+            <Button
+              variant="outlined"
+              startIcon={<RefreshIcon />}
+              onClick={handleRefresh}
+            >
+              Refresh
+            </Button>
           </Box>
         </Box>
         <Paper sx={{ width: '100%', overflow: 'hidden', mb: 3 }}>
@@ -442,6 +529,13 @@ const OpenSalesOrdersPage: React.FC = () => {
               onClick={handleExportCSV}
             >
               Export CSV
+            </Button>
+            <Button
+              variant="outlined"
+              startIcon={<RefreshIcon />}
+              onClick={handleRefresh}
+            >
+              Refresh
             </Button>
             
           </Stack>

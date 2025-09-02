@@ -286,7 +286,7 @@ router.post('/:id/recalculate', async (req: Request, res: Response) => {
 
 // Create a new sales order
 router.post('/', async (req: Request, res: Response) => {
-  const { customer_id, sales_date, product_name, product_description, terms, customer_po_number, vin_number, subtotal, total_gst_amount, total_amount, status, estimated_cost, lineItems, user_id } = req.body;
+  const { customer_id, sales_date, product_name, product_description, terms, customer_po_number, vin_number, status, estimated_cost, lineItems, user_id } = req.body;
 
   // Trim string fields
   const trimmedProductName = product_name ? product_name.trim() : '';
@@ -303,9 +303,6 @@ router.post('/', async (req: Request, res: Response) => {
   // Add this logging block:
   console.log('Incoming sales order POST request body:', req.body);
   console.log('Summary fields:', {
-    subtotal, subtotalType: typeof subtotal,
-    total_gst_amount, totalGstAmountType: typeof total_gst_amount,
-    total_amount, totalAmountType: typeof total_amount,
     estimated_cost, estimatedCostType: typeof estimated_cost,
   });
   if (lineItems && lineItems.length > 0) {
@@ -339,9 +336,6 @@ router.post('/', async (req: Request, res: Response) => {
     `;
     const customerIdInt = customer_id !== undefined && customer_id !== null ? parseInt(customer_id, 10) : null;
     const quoteIdInt = req.body.quote_id !== undefined && req.body.quote_id !== null ? parseInt(req.body.quote_id, 10) : null;
-    const subtotalNum = subtotal !== undefined && subtotal !== null ? parseFloat(subtotal) : 0;
-    const totalGstAmountNum = total_gst_amount !== undefined && total_gst_amount !== null ? parseFloat(total_gst_amount) : 0;
-    const totalAmountNum = total_amount !== undefined && total_amount !== null ? parseFloat(total_amount) : 0;
     const estimatedCostNum = estimated_cost !== undefined && estimated_cost !== null ? parseFloat(estimated_cost) : 0;
     const lineItemsParsed = (trimmedLineItems || []).map((item: any) => ({
       ...item,
@@ -359,9 +353,9 @@ router.post('/', async (req: Request, res: Response) => {
       trimmedTerms,
       trimmedCustomerPoNumber,
       trimmedVinNumber,
-      subtotalNum,
-      totalGstAmountNum,
-      totalAmountNum,
+      0, // subtotal - will be calculated by backend
+      0, // total_gst_amount - will be calculated by backend
+      0, // total_amount - will be calculated by backend
       status || 'Open',
       estimatedCostNum,
       sequenceNumber,
@@ -406,34 +400,16 @@ router.get('/:id', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Sales order not found' });
     }
     const salesOrder = salesOrderResult.rows[0];
+    
+    // First, ensure LABOUR/OVERHEAD line items are synced from time entries
+    await salesOrderService.recalculateAndUpdateSummary(Number(id));
+    
+    // Now fetch the updated line items (including synced LABOUR/OVERHEAD)
     const lineItemsResult = await pool.query(
       'SELECT *, CAST(quantity_sold AS TEXT) as quantity FROM salesorderlineitems WHERE sales_order_id = $1 ORDER BY sales_order_line_item_id ASC',
       [id]
     );
 
-    // Compute actual LABOUR/OVERHEAD from time entries to ensure quantities are accurate in the response
-    let actualTotalHours = 0;
-    let actualAvgRate = 0;
-    let actualTotalCost = 0;
-    let overheadRate = 0;
-    let actualTotalOverheadCost = 0;
-    try {
-      const te = await pool.query(
-        `SELECT SUM(duration) as total_hours, AVG(unit_price) as avg_rate, SUM(duration * unit_price) as total_cost
-         FROM time_entries WHERE sales_order_id = $1 AND clock_out IS NOT NULL`,
-        [id]
-      );
-      actualTotalHours = parseFloat(te.rows[0]?.total_hours) || 0;
-      actualAvgRate = parseFloat(te.rows[0]?.avg_rate) || 0;
-      actualTotalCost = parseFloat(te.rows[0]?.total_cost) || 0;
-
-      const ohRes = await pool.query("SELECT value FROM global_settings WHERE key = 'overhead_rate'");
-      overheadRate = ohRes.rows.length > 0 ? parseFloat(ohRes.rows[0].value) : 0;
-      actualTotalOverheadCost = actualTotalHours * overheadRate;
-    } catch (calcErr) {
-      console.warn('Could not compute labour/overhead from time entries:', calcErr);
-    }
-    
     // Fetch parts to order for this sales order
     const partsToOrderResult = await pool.query(
       'SELECT * FROM sales_order_parts_to_order WHERE sales_order_id = $1 ORDER BY id ASC',
@@ -446,49 +422,12 @@ router.get('/:id', async (req: Request, res: Response) => {
       partsToOrderMap.set(row.part_number, row.quantity_needed);
     });
     
-    // Merge quantity_to_order data with line items and overlay LABOUR/OVERHEAD actuals if available
-    const mergedLineItemsRaw = lineItemsResult.rows.map(item => ({
+    // Add quantity_to_order data to line items
+    const mergedLineItems = lineItemsResult.rows.map(item => ({
       ...item,
       quantity_sold: item.part_number === 'SUPPLY' ? 'N/A' : item.quantity_sold,
       quantity_to_order: partsToOrderMap.get(item.part_number) || 0
     }));
-
-    const mergedLineItems = [...mergedLineItemsRaw];
-    if (actualTotalHours > 0) {
-      // Adjust or add LABOUR
-      const labourIdx = mergedLineItems.findIndex((it: any) => it.part_number === 'LABOUR');
-      const labourPayload: any = {
-        part_number: 'LABOUR',
-        part_description: 'Labour Hours',
-        quantity_sold: actualTotalHours,
-        quantity: String(actualTotalHours),
-        unit: 'hr',
-        unit_price: actualAvgRate,
-        line_amount: actualTotalCost
-      };
-      if (labourIdx >= 0) {
-        mergedLineItems[labourIdx] = { ...mergedLineItems[labourIdx], ...labourPayload };
-      } else {
-        mergedLineItems.push(labourPayload);
-      }
-
-      // Adjust or add OVERHEAD
-      const overheadIdx = mergedLineItems.findIndex((it: any) => it.part_number === 'OVERHEAD');
-      const overheadPayload: any = {
-        part_number: 'OVERHEAD',
-        part_description: 'Overhead Hours',
-        quantity_sold: actualTotalHours,
-        quantity: String(actualTotalHours),
-        unit: 'hr',
-        unit_price: overheadRate,
-        line_amount: actualTotalOverheadCost
-      };
-      if (overheadIdx >= 0) {
-        mergedLineItems[overheadIdx] = { ...mergedLineItems[overheadIdx], ...overheadPayload };
-      } else if (overheadRate > 0) {
-        mergedLineItems.push(overheadPayload);
-      }
-    }
     
     res.json({ 
       salesOrder, 
@@ -552,9 +491,6 @@ if (lineItems && lineItems.length > 0) {
     'product_name',
     'product_description',
     'terms',
-    'subtotal',
-    'total_gst_amount',
-    'total_amount',
     'status',
     'estimated_cost',
     'sequence_number',
@@ -1189,21 +1125,24 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
 
     // Calculate actual labour and overhead hours from time entries
     const timeEntriesResult = await pool.query(
-      `SELECT SUM(duration) as total_hours, AVG(unit_price) as avg_rate, SUM(duration * unit_price) as total_cost
+      `SELECT SUM(duration) as total_hours
        FROM time_entries WHERE sales_order_id = $1 AND clock_out IS NOT NULL`,
       [id]
     );
     
     const actualTotalHours = parseFloat(timeEntriesResult.rows[0].total_hours) || 0;
-    const actualAvgRate = parseFloat(timeEntriesResult.rows[0].avg_rate) || 0;
-    const actualTotalCost = parseFloat(timeEntriesResult.rows[0].total_cost) || 0;
+    
+    // Get global labour rate
+    const labourRateRes = await pool.query("SELECT value FROM global_settings WHERE key = 'labour_rate'");
+    const actualAvgRate = labourRateRes.rows.length > 0 ? parseFloat(labourRateRes.rows[0].value) : 60;
+    const actualTotalCost = actualTotalHours * actualAvgRate;
     
     // Get global overhead rate
     const overheadRateRes = await pool.query("SELECT value FROM global_settings WHERE key = 'overhead_rate'");
     const overheadRate = overheadRateRes.rows.length > 0 ? parseFloat(overheadRateRes.rows[0].value) : 0;
     const actualTotalOverheadCost = actualTotalHours * overheadRate;
     
-    console.log(`Time entries: total_hours=${actualTotalHours}, avg_rate=${actualAvgRate}, total_cost=${actualTotalCost}, overhead_rate=${overheadRate}, overhead_cost=${actualTotalOverheadCost}`);
+    console.log(`Time entries: total_hours=${actualTotalHours}, labour_rate=${actualAvgRate}, total_cost=${actualTotalCost}, overhead_rate=${overheadRate}, overhead_cost=${actualTotalOverheadCost}`);
     
     // Update labour and overhead items with actual values from time entries
     if (actualTotalHours > 0) {
@@ -1211,7 +1150,7 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
       if (labourItems.length > 0) {
         labourItems[0].quantity_sold = actualTotalHours;
         labourItems[0].unit_price = actualAvgRate;
-        labourItems[0].line_amount = actualTotalCost;
+        labourItems[0].line_amount = actualTotalHours * actualAvgRate;
         console.log(`Updated LABOUR item: quantity_sold=${labourItems[0].quantity_sold}, unit_price=${labourItems[0].unit_price}, line_amount=${labourItems[0].line_amount}`);
       } else {
         labourItems.push({
@@ -1220,9 +1159,9 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
           quantity_sold: actualTotalHours,
           unit: 'hr',
           unit_price: actualAvgRate,
-          line_amount: actualTotalCost
+          line_amount: actualTotalHours * actualAvgRate
         });
-        console.log(`Created LABOUR item: quantity_sold=${actualTotalHours}, unit_price=${actualAvgRate}, line_amount=${actualTotalCost}`);
+        console.log(`Created LABOUR item: quantity_sold=${actualTotalHours}, unit_price=${actualAvgRate}, line_amount=${actualTotalHours * actualAvgRate}`);
       }
       
       // Update or create OVERHEAD item with actual values

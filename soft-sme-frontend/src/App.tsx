@@ -33,6 +33,9 @@ import OpenPurchaseOrderDetailPage from './pages/OpenPurchaseOrderDetailPage';
 import WokerSalesOrderPage from './pages/WokerSalesOrderPage';
 import TimeTrackingPage from './pages/TimeTrackingPage';
 import TimeTrackingReportsPage from './pages/TimeTrackingReportsPage';
+import LeaveManagementPage from './pages/LeaveManagementPage';
+import LeaveHistoryPage from './pages/LeaveHistoryPage';
+import VacationDaysManagementPage from './pages/VacationDaysManagementPage';
 import ProductsPage from './pages/ProductsPage';
 import BackupManagementPage from './pages/BackupManagementPage';
 import AttendancePage from './pages/AttendancePage';
@@ -144,6 +147,11 @@ const AppRoutes: React.FC = () => {
         <Route path="time-tracking" element={<TimeTrackingPage />} />
         <Route path="attendance" element={<AttendancePage />} />
         <Route path="time-tracking/reports" element={<TimeTrackingReportsPage />} />
+        
+        {/* Leave Management */}
+        <Route path="leave-management" element={<LeaveManagementPage />} />
+        <Route path="leave-history" element={<LeaveHistoryPage />} />
+        <Route path="vacation-days-management" element={<VacationDaysManagementPage />} />
         
         {/* Sales Management */}
         {/* Removed legacy SalesOrder create/detail routes in favor of OpenSalesOrderDetailPage */}

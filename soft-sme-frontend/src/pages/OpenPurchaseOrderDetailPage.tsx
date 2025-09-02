@@ -16,7 +16,6 @@ import DoneAllIcon from '@mui/icons-material/DoneAll';
 import DownloadIcon from '@mui/icons-material/Download';
 import DeleteIcon from '@mui/icons-material/Delete';
 import EmailIcon from '@mui/icons-material/Email';
-import CallIcon from '@mui/icons-material/Call';
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import { createFilterOptions } from '@mui/material/Autocomplete';
@@ -1358,23 +1357,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
     await handleDownloadPdf();
   };
 
-  const handleCallVendor = async () => {
-    try {
-      if (!purchaseOrder?.purchase_id) { toast.error('Save PO first'); return; }
-      const res = await VoiceService.startVendorCall(purchaseOrder.purchase_id);
-      setCallSessionId(res.session_id);
-      if (res.provider === 'twilio') {
-        toast.success(`Calling ${vendor?.label || 'vendor'} at ${res.vendor_phone || ''}`);
-      } else {
-        const reason = res.reason ? ` (${res.reason})` : '';
-        const baseUrl = res.debug?.baseUrl ? ` BASE_URL=${res.debug.baseUrl}` : '';
-        toast.info(`Simulated call session created${reason}. Telephony not configured or failed.${baseUrl}`);
-        console.log('Voice call debug:', res.debug);
-      }
-    } catch (e: any) {
-      toast.error(e?.response?.data?.error || 'Failed to start vendor call');
-    }
-  };
+  // handleCallVendor removed per request
 
   const handleQuantityAdjustment = () => {
     if (!purchaseOrder) return;
@@ -1900,7 +1883,6 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
                   <Button variant="contained" color="primary" onClick={handleClosePurchaseOrder} startIcon={<DoneAllIcon />}>Close PO</Button>
                   <Button variant="contained" color="primary" onClick={handleSaveAndDownloadPdf} startIcon={<DownloadIcon />}>Download PDF</Button>
                   <Button variant="contained" onClick={handleEmailClick} startIcon={<EmailIcon />} sx={{ backgroundColor: '#ff9800', '&:hover': { backgroundColor: '#f57c00' } }}>Email Vendor</Button>
-                  <Button variant="contained" color="secondary" onClick={handleCallVendor} startIcon={<CallIcon />}>Call Vendor</Button>
                 </>
               )}
             </Stack>

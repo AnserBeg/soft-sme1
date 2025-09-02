@@ -22,13 +22,10 @@ import UnifiedProductDialog, { ProductFormValues } from '../components/UnifiedPr
 import UnifiedPartDialog, { PartFormValues } from '../components/UnifiedPartDialog';
 import UnifiedCustomerDialog, { CustomerFormValues } from '../components/UnifiedCustomerDialog';
 import {
-  calculateLineAmount,
-  calculateSalesOrderTotals,
   parseNumericInput,
   SalesOrderLineItem as RobustLineItem
 } from '../utils/salesOrderCalculations';
 import { formatCurrency } from '../utils/formatters';
-import { useDebounce } from '../hooks/useDebounce';
 import UnsavedChangesGuard from '../components/UnsavedChangesGuard';
 
 const UNIT_OPTIONS = ['Each', 'cm', 'ft', 'kg', 'pcs', 'hr', 'L'];
@@ -104,7 +101,7 @@ const SalesOrderDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const isCreationMode = id === 'new';
   const isNumericId = !!id && /^\d+$/.test(id);
-  console.log('[OpenSalesOrderDetailPage] id:', id, 'isCreationMode:', isCreationMode, 'isNumericId:', isNumericId);
+
   const navigate = useNavigate();
   const { user } = useAuth();
   const isSalesPurchaseUser = user?.access_role === 'Sales and Purchase';
@@ -139,19 +136,43 @@ const SalesOrderDetailPage: React.FC = () => {
   const [estimatedCost, setEstimatedCost] = useState<number | null>(null);
 
   const [lineItems, setLineItems] = useState<SalesOrderLineItem[]>([]);
-  const debouncedLineItems = useDebounce(lineItems, 300);
 
   const robust: RobustLineItem[] = useMemo(() => (
-    debouncedLineItems.map(li => ({
+    lineItems.map(li => ({
       part_number: li.part_number,
       part_description: li.part_description,
       quantity: parseNumericInput(li.quantity),
       unit: li.unit,
-      unit_price: parseNumericInput(li.unit_price),
+      unit_price: li.unit_price,
     }))
-  ), [debouncedLineItems]);
+  ), [lineItems]);
 
-  const totals = useMemo(() => calculateSalesOrderTotals(robust, DEFAULT_GST_RATE), [robust]);
+  // Calculate totals from all visible line items (including LABOUR/OVERHEAD from backend)
+  const totals = useMemo(() => {
+    // If no line items, return zero totals
+    if (!lineItems || lineItems.length === 0) {
+      return {
+        subtotal: 0,
+        total_gst_amount: 0,
+        total_amount: 0
+      };
+    }
+    
+    const subtotal = lineItems.reduce((sum, item) => {
+      const itemAmount = item.line_amount || 0;
+      return sum + itemAmount;
+    }, 0);
+    
+    const total_gst_amount = subtotal * 0.05;
+    const total_amount = subtotal + total_gst_amount;
+    
+    return {
+      subtotal: Math.round(subtotal * 100) / 100,
+      total_gst_amount: Math.round(total_gst_amount * 100) / 100,
+      total_amount: Math.round(total_amount * 100) / 100
+    };
+  }, [lineItems]);
+  
   const subtotal = totals.subtotal;
   const totalGSTAmount = totals.total_gst_amount;
   const totalAmount = totals.total_amount;
@@ -202,7 +223,6 @@ const SalesOrderDetailPage: React.FC = () => {
         lineItems: getLineItemsSignature(lineItems) 
       });
       setInitialSignature(signature);
-      console.log('[SalesOrderDetail] Initial signature set:', signature);
     }
   }, [isDataFullyLoaded, initialSignature, getHeaderSignature, getLineItemsSignature, lineItems]);
 
@@ -236,6 +256,20 @@ const SalesOrderDetailPage: React.FC = () => {
   const [ptoPartNumberForModal, setPtoPartNumberForModal] = useState('');
   const alertHeightPx = 64; // approximate banner height
   const activeAlertOffset = negativeAvailabilityItems.length > 0 ? (8 + alertHeightPx * negativeAvailabilityItems.length) : 0;
+
+  // Line items signature for change detection - no debouncing needed
+  const lineItemsSignature = useMemo(() => {
+    return JSON.stringify(
+      lineItems.map(li => ({
+        part_number: li.part_number,
+        part_description: li.part_description,
+        quantity: li.quantity,
+        unit: li.unit,
+        unit_price: li.unit_price,
+        line_amount: li.line_amount,
+      }))
+    );
+  }, [lineItems]);
 
   // Handle Ctrl+Enter and Enter/Tab on part input similar to PO page
   const handleLinePartKeyDown = (idx: number, event: React.KeyboardEvent) => {
@@ -406,11 +440,20 @@ const SalesOrderDetailPage: React.FC = () => {
           part_description: item.part_description,
           unit: item.unit,
           unit_price: item.unit_price,
-          line_amount: item.line_amount,
-          quantity: item.part_number === 'SUPPLY' ? '1' : String(item.quantity_sold ?? item.quantity ?? 0),
+          line_amount: Number(item.line_amount || 0), // Ensure line_amount is always a number
+          // For LABOUR/OVERHEAD, use the quantity from backend (time entries)
+          // For SUPPLY, use 1 as quantity
+          // For other items, use quantity_sold or quantity
+          quantity: item.part_number === 'SUPPLY' ? '1' : 
+                   ['LABOUR', 'OVERHEAD'].includes(item.part_number) ? 
+                   String(item.quantity_sold || 0) :  // Use quantity_sold for LABOUR/OVERHEAD (hours from time entries)
+                   String(item.quantity_sold ?? item.quantity ?? 0),
           gst: DEFAULT_GST_RATE,
           part_id: item.part_id ?? undefined,
         })) as SalesOrderLineItem[];
+        
+        console.log('[SalesOrderDetail] Raw line items from backend:', data.lineItems);
+        console.log('[SalesOrderDetail] Mapped line items:', li);
         
         setLineItems(li);
         setOriginalLineItems(li);
@@ -457,32 +500,44 @@ const SalesOrderDetailPage: React.FC = () => {
 
   // debouncedLineItems derives from lineItems directly
 
-  // Auto-update LABOUR/OVERHEAD rates when global changes
+  // Auto-update LABOUR/OVERHEAD rates when global changes - REMOVED CALCULATIONS
   useEffect(() => {
+    // Don't run rate updates until data is fully loaded from backend
+    if (!isDataFullyLoaded) return;
+    
     if (globalLabourRate !== null) {
       setLineItems(prev => prev.map(i => {
         if (i.part_number !== 'LABOUR') return i;
-        const q = parseNumericInput(i.quantity);
-        const unit_price = globalLabourRate;
-        const line_amount = calculateLineAmount(q, unit_price);
-        return { ...i, unit_price, line_amount };
+        // Only update unit_price if it's different - no calculations
+        if (i.unit_price !== globalLabourRate) {
+          return { ...i, unit_price: globalLabourRate };
+        }
+        return i;
       }));
     }
-  }, [globalLabourRate]);
+  }, [globalLabourRate, isDataFullyLoaded]);
+  
   useEffect(() => {
+    // Don't run rate updates until data is fully loaded from backend
+    if (!isDataFullyLoaded) return;
+    
     if (globalOverheadRate !== null) {
       setLineItems(prev => prev.map(i => {
         if (i.part_number !== 'OVERHEAD') return i;
-        const q = parseNumericInput(i.quantity);
-        const unit_price = globalOverheadRate;
-        const line_amount = calculateLineAmount(q, unit_price);
-        return { ...i, unit_price, line_amount };
+        // Only update unit_price if it's different - no calculations
+        if (i.unit_price !== globalOverheadRate) {
+          return { ...i, unit_price: globalOverheadRate };
+        }
+        return i;
       }));
     }
-  }, [globalOverheadRate]);
+  }, [globalOverheadRate, isDataFullyLoaded]);
 
-  // SUPPLY line management (only when labour exists and supply rate > 0)
+  // SUPPLY line management (only when labour exists and supply rate > 0) - REMOVED CALCULATIONS
   useEffect(() => {
+    // Don't run SUPPLY logic until data is fully loaded from backend
+    if (!isDataFullyLoaded) return;
+    
     setLineItems(prev => {
       const hasLabour = prev.some(i => i.part_number === 'LABOUR');
       const hasSupply = prev.some(i => i.part_number === 'SUPPLY');
@@ -495,7 +550,7 @@ const SalesOrderDetailPage: React.FC = () => {
             unit: isCreationMode ? '' : 'Each',
             unit_price: 0,
             gst: DEFAULT_GST_RATE,
-            line_amount: 0,
+            line_amount: 0, // Will be calculated by backend
           }];
         } else if (!hasLabour && hasSupply) {
           return prev.filter(i => i.part_number !== 'SUPPLY');
@@ -505,26 +560,9 @@ const SalesOrderDetailPage: React.FC = () => {
       }
       return prev;
     });
-  }, [globalSupplyRate, lineItems]);
+  }, [globalSupplyRate, lineItems, isDataFullyLoaded, isCreationMode]);
 
-  // Recompute SUPPLY amount from LABOUR amount
-  useEffect(() => {
-    if (globalSupplyRate && globalSupplyRate > 0) {
-      setLineItems(prev => {
-        const labour = prev.find(i => i.part_number === 'LABOUR');
-        const supply = prev.find(i => i.part_number === 'SUPPLY');
-        if (labour && supply) {
-          const q = parseNumericInput(labour.quantity);
-          const labourAmt = calculateLineAmount(q, labour.unit_price);
-          const newSupplyAmt = labourAmt * (globalSupplyRate / 100);
-          if (newSupplyAmt !== supply.line_amount) {
-            return prev.map(i => i.part_number === 'SUPPLY' ? { ...i, line_amount: newSupplyAmt } : i);
-          }
-        }
-        return prev;
-      });
-    }
-  }, [globalSupplyRate, lineItems]);
+  // SUPPLY amount calculation - REMOVED, backend handles this
 
   // ---------- Helpers ----------
   const findMarginFactor = (cost: number) => {
@@ -547,11 +585,11 @@ const SalesOrderDetailPage: React.FC = () => {
       if (!newValue || newValue.trim() === '') {
         updated[idx] = { ...updated[idx], part_number: '', part_description: '', quantity: '', unit: UNIT_OPTIONS[0], unit_price: 0, line_amount: 0 };
       } else if (newValue.toUpperCase() === 'LABOUR') {
-        updated[idx] = { ...updated[idx], part_number: 'LABOUR', part_description: 'Labour', unit: 'hr', unit_price: globalLabourRate ?? 0 };
+        updated[idx] = { ...updated[idx], part_number: 'LABOUR', part_description: 'Labour', unit: 'hr', unit_price: globalLabourRate ?? 0, line_amount: 0 };
       } else if (newValue.toUpperCase() === 'OVERHEAD') {
-        updated[idx] = { ...updated[idx], part_number: 'OVERHEAD', part_description: 'Overhead', unit: 'hr', unit_price: globalOverheadRate ?? 0 };
+        updated[idx] = { ...updated[idx], part_number: 'OVERHEAD', part_description: 'Overhead', unit: 'hr', unit_price: globalOverheadRate ?? 0, line_amount: 0 };
       } else if (newValue.toUpperCase() === 'SUPPLY') {
-        updated[idx] = { ...updated[idx], part_number: 'SUPPLY', part_description: 'Supply', unit: isCreationMode ? '' : 'Each', unit_price: 0 };
+        updated[idx] = { ...updated[idx], part_number: 'SUPPLY', part_description: 'Supply', unit: isCreationMode ? '' : 'Each', unit_price: 0, line_amount: 0 };
       } else {
         const inv = findInventoryPart(newValue);
         if (inv) {
@@ -559,10 +597,10 @@ const SalesOrderDetailPage: React.FC = () => {
           const marginFactor = findMarginFactor(lastUnitCost);
           updated[idx] = { ...updated[idx],
             part_number: newValue, part_description: inv.part_description || '',
-            unit: inv.unit, unit_price: lastUnitCost * marginFactor
+            unit: inv.unit, unit_price: lastUnitCost * marginFactor, line_amount: 0
           };
         } else {
-          updated[idx] = { ...updated[idx], part_number: newValue, part_description: 'Part not found', unit_price: 0 };
+          updated[idx] = { ...updated[idx], part_number: newValue, part_description: 'Part not found', unit_price: 0, line_amount: 0 };
         }
       }
       return updated;
@@ -579,15 +617,24 @@ const SalesOrderDetailPage: React.FC = () => {
         return updated.filter((_, i) => i !== idx);
       }
 
-      const q = parseNumericInput(it.quantity);
-      const unitPrice = it.part_number === 'LABOUR'
-        ? (globalLabourRate ?? parseNumericInput(it.unit_price))
-        : it.part_number === 'OVERHEAD'
-        ? (globalOverheadRate ?? parseNumericInput(it.unit_price))
-        : parseNumericInput(it.unit_price);
+      // For LABOUR/OVERHEAD, only update unit_price if needed - no calculations
+      if (['LABOUR', 'OVERHEAD'].includes(it.part_number)) {
+        if (field === 'unit_price') {
+          const globalRate = it.part_number === 'LABOUR' ? globalLabourRate : globalOverheadRate;
+          if (globalRate !== null && it.unit_price !== globalRate) {
+            it.unit_price = globalRate;
+          }
+        }
+        // Keep existing line_amount - backend will recalculate on save
+        updated[idx] = it;
+        return updated;
+      }
 
-      it.unit_price = unitPrice;
-      it.line_amount = calculateLineAmount(q, unitPrice);
+      // For other items, only update unit_price - no line_amount calculations
+      if (field === 'unit_price') {
+        it.unit_price = parseNumericInput(value);
+      }
+      // Keep existing line_amount - backend will recalculate on save
       updated[idx] = it;
       return updated;
     });
@@ -601,7 +648,7 @@ const SalesOrderDetailPage: React.FC = () => {
       unit: UNIT_OPTIONS[0],
       unit_price: 0,
       gst: DEFAULT_GST_RATE,
-      line_amount: 0,
+      line_amount: 0, // Will be calculated by backend
     }]));
   };
 
@@ -765,6 +812,11 @@ const SalesOrderDetailPage: React.FC = () => {
         acc[partNumber].unit = 'Each';
         acc[partNumber].unit_price = 0;
         acc[partNumber].line_amount += Number(item.line_amount || 0);
+      } else if (['LABOUR', 'OVERHEAD'].includes(item.part_number.toUpperCase())) {
+        // For LABOUR/OVERHEAD, use the actual line_amount from UI and quantity from UI
+        const quantity = parseFloat(String(item.quantity).replace(/[^\d.-]/g, '')) || 0;
+        acc[partNumber].quantity_sold = quantity;
+        acc[partNumber].line_amount = Number(item.line_amount || 0); // Use actual line_amount, don't sum
       } else {
         // Ensure quantity is a valid number, default to 0 if invalid
         const quantity = parseFloat(String(item.quantity).replace(/[^\d.-]/g, '')) || 0;
@@ -794,9 +846,6 @@ const SalesOrderDetailPage: React.FC = () => {
       terms: terms.trim(),
       customer_po_number: customerPoNumber.trim(),
       vin_number: vinNumber.trim(),
-      subtotal: Number(subtotal || 0),
-      total_gst_amount: Number(totalGSTAmount || 0),
-      total_amount: Number(totalAmount || 0),
       status: isCreationMode ? 'Open' : (salesOrder?.status || 'Open'),
       estimated_cost: estimatedCost != null ? Number(estimatedCost) : 0,
       lineItems: buildPayloadLineItems(lineItems),
@@ -845,13 +894,19 @@ const SalesOrderDetailPage: React.FC = () => {
             api.get('/api/inventory')
           ]);
           const data = soRes.data;
+          
+
+          
           const li = (data.lineItems || data.salesOrder?.line_items || []).map((item: any) => ({
             part_number: item.part_number,
             part_description: item.part_description,
             unit: item.unit,
             unit_price: item.unit_price,
-            line_amount: item.line_amount,
-            quantity: item.part_number === 'SUPPLY' ? '1' : String(item.quantity_sold ?? item.quantity ?? 0),
+            line_amount: Number(item.line_amount || 0), // Ensure line_amount is always a number
+            quantity: item.part_number === 'SUPPLY' ? '1' : 
+                     ['LABOUR', 'OVERHEAD'].includes(item.part_number) ? 
+                     String(item.quantity_sold || 0) :  // Use quantity_sold for LABOUR/OVERHEAD (hours from time entries)
+                     String(item.quantity_sold ?? item.quantity ?? 0),
             gst: DEFAULT_GST_RATE,
             part_id: item.part_id ?? undefined,
           })) as SalesOrderLineItem[];
@@ -891,7 +946,6 @@ const SalesOrderDetailPage: React.FC = () => {
         product_name: product?.label?.trim() || salesOrder.product_name,
         product_description: productDescription.trim(),
         terms: terms.trim(),
-        subtotal, total_gst_amount: totalGSTAmount, total_amount: totalAmount,
         status: 'Closed',
         estimated_cost: estimatedCost ?? salesOrder.estimated_cost,
         lineItems: buildPayloadLineItems(lineItems),
@@ -913,7 +967,6 @@ const SalesOrderDetailPage: React.FC = () => {
         product_name: product?.label?.trim() || salesOrder.product_name,
         product_description: productDescription.trim(),
         terms: terms.trim(),
-        subtotal, total_gst_amount: totalGSTAmount, total_amount: totalAmount,
         status: 'Open',
         estimated_cost: estimatedCost ?? salesOrder.estimated_cost,
         lineItems: buildPayloadLineItems(lineItems),

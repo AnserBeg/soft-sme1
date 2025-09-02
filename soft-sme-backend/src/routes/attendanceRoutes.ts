@@ -188,13 +188,16 @@ router.post('/clock-out', async (req: Request, res: Response) => {
       if (salesOrderIdRes.rows.length > 0) {
         const soId = salesOrderIdRes.rows[0].sales_order_id;
         const sumRes = await pool.query(
-          `SELECT SUM(duration) as total_hours, AVG(unit_price) as avg_rate, SUM(duration * unit_price) as total_cost
+          `SELECT SUM(duration) as total_hours
            FROM time_entries WHERE sales_order_id = $1 AND clock_out IS NOT NULL`,
           [soId]
         );
         const totalHours = parseFloat(sumRes.rows[0].total_hours) || 0;
-        const avgRate = parseFloat(sumRes.rows[0].avg_rate) || 0;
-        const totalCost = parseFloat(sumRes.rows[0].total_cost) || 0;
+        
+        // Get global labour rate
+        const labourRateRes = await pool.query("SELECT value FROM global_settings WHERE key = 'labour_rate'");
+        const avgRate = labourRateRes.rows.length > 0 ? parseFloat(labourRateRes.rows[0].value) : 60;
+        const totalCost = totalHours * avgRate;
 
         const overheadRateRes = await pool.query("SELECT value FROM global_settings WHERE key = 'overhead_rate'");
         const overheadRate = overheadRateRes.rows.length > 0 ? parseFloat(overheadRateRes.rows[0].value) : 0;
@@ -207,13 +210,13 @@ router.post('/clock-out', async (req: Request, res: Response) => {
         if (labourRes.rows.length > 0) {
           await pool.query(
             `UPDATE salesorderlineitems SET part_description = $1, quantity_sold = $2, unit = $3, unit_price = $4, line_amount = $5 WHERE sales_order_id = $6 AND part_number = 'LABOUR'`,
-            ['Labour Hours', totalHours, 'hr', avgRate, totalCost, soId]
+            ['Labour Hours', totalHours, 'hr', avgRate, totalHours * avgRate, soId]
           );
         } else {
           await pool.query(
             `INSERT INTO salesorderlineitems (sales_order_id, part_number, part_description, quantity_sold, unit, unit_price, line_amount)
              VALUES ($1, 'LABOUR', $2, $3, $4, $5, $6)`,
-            [soId, 'Labour Hours', totalHours, 'hr', avgRate, totalCost]
+            [soId, 'Labour Hours', totalHours, 'hr', avgRate, totalHours * avgRate]
           );
         }
 
@@ -224,13 +227,13 @@ router.post('/clock-out', async (req: Request, res: Response) => {
         if (overheadRes.rows.length > 0) {
           await pool.query(
             `UPDATE salesorderlineitems SET part_description = $1, quantity_sold = $2, unit = $3, unit_price = $4, line_amount = $5 WHERE sales_order_id = $6 AND part_number = 'OVERHEAD'`,
-            ['Overhead Hours', totalHours, 'hr', overheadRate, totalOverheadCost, soId]
+            ['Overhead Hours', totalHours, 'hr', overheadRate, totalHours * overheadRate, soId]
           );
         } else {
           await pool.query(
             `INSERT INTO salesorderlineitems (sales_order_id, part_number, part_description, quantity_sold, unit, unit_price, line_amount)
              VALUES ($1, 'OVERHEAD', $2, $3, $4, $5, $6)`,
-            [soId, 'Overhead Hours', totalHours, 'hr', overheadRate, totalOverheadCost]
+            [soId, 'Overhead Hours', totalHours, 'hr', overheadRate, totalHours * overheadRate]
           );
         }
       }

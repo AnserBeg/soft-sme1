@@ -1,0 +1,14 @@
+{
+  "backup_timestamp": "2025-08-22T22-38-50-847Z",
+  "backup_type": "complete",
+  "components": {
+    "database": "database_backup_2025-08-22T22-38-50-847Z.sql",
+    "uploads": "uploads_backup_2025-08-22T22-38-50-847Z.zip",
+    "config": "config_backup_2025-08-22T22-38-50-847Z.zip"
+  },
+  "system_info": {
+    "node_version": "v22.18.0",
+    "platform": "win32",
+    "arch": "x64"
+  }
+}

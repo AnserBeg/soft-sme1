@@ -9,6 +9,7 @@ import {
   Box,
   Typography,
   Alert,
+  AlertTitle,
   CircularProgress,
   Divider,
   Grid,
@@ -26,6 +27,10 @@ import api from '../api/axios';
 interface BackupSettings {
   customBackupDir: string;
   customRestoreDir: string;
+  currentBackupDir?: string;
+  defaultBackupDir?: string;
+  isUsingCustomDir?: boolean;
+  customDirExists?: boolean;
 }
 
 interface BackupSettingsDialogProps {
@@ -118,24 +123,6 @@ const BackupSettingsDialog: React.FC<BackupSettingsDialogProps> = ({
     }
   };
 
-  const handleBrowseBackupDir = async () => {
-    try {
-      // Check if we're in Electron environment
-      if (window.api?.browseDirectory) {
-        const result = await window.api.browseDirectory({ title: 'Select Backup Directory' });
-        if (result.success && result.directory) {
-          setSettings(prev => ({ ...prev, customBackupDir: result.directory }));
-        }
-      } else {
-        // Fallback to manual input
-        toast.info('Please enter the backup directory path manually');
-      }
-    } catch (error) {
-      console.error('Error browsing backup directory:', error);
-      toast.error('Failed to browse directory');
-    }
-  };
-
   const handleBrowseRestoreDir = async () => {
     try {
       // Check if we're in Electron environment
@@ -150,6 +137,24 @@ const BackupSettingsDialog: React.FC<BackupSettingsDialogProps> = ({
       }
     } catch (error) {
       console.error('Error browsing restore directory:', error);
+      toast.error('Failed to browse directory');
+    }
+  };
+
+  const handleBrowseBackupDir = async () => {
+    try {
+      // Check if we're in Electron environment
+      if (window.api?.browseDirectory) {
+        const result = await window.api.browseDirectory({ title: 'Select Backup Directory' });
+        if (result.success && result.directory) {
+          setSettings(prev => ({ ...prev, customBackupDir: result.directory }));
+        }
+      } else {
+        // For web version, show helpful message
+        toast.info('In web version, please enter the backup directory path manually. Example: C:\\MyBackups or /home/user/backups');
+      }
+    } catch (error) {
+      console.error('Error browsing backup directory:', error);
       toast.error('Failed to browse directory');
     }
   };
@@ -173,7 +178,9 @@ const BackupSettingsDialog: React.FC<BackupSettingsDialogProps> = ({
               Custom Backup Directory
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-              Set a custom directory where backups will be stored on your device
+              Set a custom directory where backups will be stored on the server device. 
+              Note: Backups are created on the server, not your local device. 
+              The directory must be accessible from the server where the application is running.
             </Typography>
             <Grid container spacing={2} alignItems="center">
               <Grid item xs>
@@ -183,17 +190,43 @@ const BackupSettingsDialog: React.FC<BackupSettingsDialogProps> = ({
                   value={settings.customBackupDir}
                   onChange={(e) => setSettings(prev => ({ ...prev, customBackupDir: e.target.value }))}
                   placeholder="e.g., C:\MyBackups or /home/user/backups"
-                  helperText="Leave empty to use default backup location"
+                  helperText={settings.customBackupDir ? 
+                    `Backups will be stored in: ${settings.customBackupDir}` : 
+                    "Leave empty to use default backup location (backups folder in server directory)"
+                  }
                 />
               </Grid>
               <Grid item>
-                <Tooltip title="Browse for backup directory">
+                <Tooltip title="Browse for backup directory (Desktop app only)">
                   <IconButton onClick={handleBrowseBackupDir}>
                     <FolderOpenIcon />
                   </IconButton>
                 </Tooltip>
               </Grid>
             </Grid>
+            
+            {!settings.customBackupDir && (
+              <Alert severity="info" sx={{ mt: 1 }}>
+                <AlertTitle>Default Backup Location</AlertTitle>
+                Backups will be stored in the default location: <strong>backups/</strong> folder in the server directory.
+                To use a custom location, enter a valid directory path above.
+              </Alert>
+            )}
+            
+            {settings.customBackupDir && !settings.customDirExists && (
+              <Alert severity="warning" sx={{ mt: 1 }}>
+                <AlertTitle>Directory Not Found</AlertTitle>
+                The specified backup directory does not exist: <strong>{settings.customBackupDir}</strong>
+                Backups will fall back to the default location until this directory is created.
+              </Alert>
+            )}
+            
+            {settings.currentBackupDir && (
+              <Alert severity="success" sx={{ mt: 1 }}>
+                <AlertTitle>Current Backup Location</AlertTitle>
+                Backups are currently being stored in: <strong>{settings.currentBackupDir}</strong>
+              </Alert>
+            )}
 
             <Divider sx={{ my: 3 }} />
 
@@ -201,7 +234,8 @@ const BackupSettingsDialog: React.FC<BackupSettingsDialogProps> = ({
               Custom Restore Directory
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-              Set a custom directory to look for backup files when restoring
+              Set a custom directory on the server to look for backup files when restoring. 
+              Note: This directory must be accessible from the server.
             </Typography>
             <Grid container spacing={2} alignItems="center">
               <Grid item xs>

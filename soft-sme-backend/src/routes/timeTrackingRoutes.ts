@@ -2,6 +2,7 @@ import express, { Request, Response } from 'express';
 import { pool } from '../db';
 import PDFDocument from 'pdfkit';
 import Papa from 'papaparse';
+import { SalesOrderService } from '../services/SalesOrderService';
 
 // Helper function to calculate effective duration, excluding daily break times
 function calculateEffectiveDuration(clockIn: Date, clockOut: Date, breakStartStr: string | null, breakEndStr: string | null): number {
@@ -71,6 +72,7 @@ function calculateEffectiveDuration(clockIn: Date, clockOut: Date, breakStartStr
 }
 
 const router = express.Router();
+const salesOrderService = new SalesOrderService(pool);
 
 // Role-based access middleware
 function mobileTimeTrackerOnly(req: Request, res: Response, next: Function) {
@@ -109,6 +111,7 @@ router.get('/time-entries', async (req: Request, res: Response) => {
       p.name as profile_name,
       te.sales_order_id,
       soh.sales_order_number,
+      soh.product_name,
       te.clock_in,
       te.clock_out,
       te.duration,
@@ -140,7 +143,11 @@ router.post('/time-entries/clock-in', async (req: Request, res: Response) => {
   const { profile_id, so_id } = req.body;
 
   if (!profile_id || !so_id) {
-    return res.status(400).json({ error: 'Profile ID and Sales Order ID are required' });
+    return res.status(400).json({ 
+      error: 'Missing Required Fields',
+      message: 'Profile ID and Sales Order ID are required to clock in for time tracking.',
+      details: 'Please ensure you have selected both a profile and a sales order before attempting to clock in.'
+    });
   }
 
   try {
@@ -151,7 +158,11 @@ router.post('/time-entries/clock-in', async (req: Request, res: Response) => {
     );
 
     if (attendanceCheck.rows.length === 0) {
-      return res.status(400).json({ error: 'You must clock in for attendance before you can clock in for a sales order.' });
+      return res.status(400).json({ 
+        error: 'Attendance Required', 
+        message: 'You must clock in for attendance before you can clock in for time tracking on a sales order.',
+        details: 'Please go to the Attendance page and clock in first, then return here to track time on sales orders.'
+      });
     }
 
     // Get global labour rate
@@ -167,7 +178,7 @@ router.post('/time-entries/clock-in', async (req: Request, res: Response) => {
     const newEntryRes = await pool.query(
       `SELECT
         te.id, te.profile_id, p.name as profile_name, te.sales_order_id, soh.sales_order_number,
-        te.clock_in, te.clock_out, te.duration, te.unit_price
+        soh.product_name, te.clock_in, te.clock_out, te.duration, te.unit_price
       FROM time_entries te
       JOIN profiles p ON te.profile_id = p.id
       JOIN salesorderhistory soh ON te.sales_order_id = soh.sales_order_id
@@ -176,6 +187,10 @@ router.post('/time-entries/clock-in', async (req: Request, res: Response) => {
     );
 
     res.status(201).json(newEntryRes.rows[0]);
+    
+    // Note: No sales order recalculation needed here since we're only creating a time entry
+    // Sales order totals will be recalculated when the time entry is completed (clock-out)
+    // or when the time entry is edited
   } catch (err) {
     console.error('Error clocking in:', err);
     res.status(500).json({ error: 'Internal server error' });
@@ -225,7 +240,7 @@ router.post('/time-entries/:id/clock-out', async (req: Request, res: Response) =
     const updatedEntryRes = await pool.query(
       `SELECT
         te.id, te.profile_id, p.name as profile_name, te.sales_order_id, soh.sales_order_number,
-        te.clock_in, te.clock_out, te.duration, te.unit_price
+        soh.product_name, te.clock_in, te.clock_out, te.duration, te.unit_price
       FROM time_entries te
       JOIN profiles p ON te.profile_id = p.id
       JOIN salesorderhistory soh ON te.sales_order_id = soh.sales_order_id
@@ -237,20 +252,21 @@ router.post('/time-entries/:id/clock-out', async (req: Request, res: Response) =
     const salesOrderIdRes = await pool.query('SELECT sales_order_id FROM time_entries WHERE id = $1', [id]);
     if (salesOrderIdRes.rows.length > 0) {
       const soId = salesOrderIdRes.rows[0].sales_order_id;
-      // Sum all durations and costs for this sales order
+      // Sum all durations for this sales order
       const sumRes = await pool.query(
-        `SELECT SUM(duration) as total_hours, AVG(unit_price) as avg_rate, SUM(duration * unit_price) as total_cost
-         FROM time_entries WHERE sales_order_id = $1 AND clock_out IS NOT NULL`,
+        `SELECT SUM(duration) as total_hours
+         FROM time_entries WHERE sales_order_id = $1 AND clock_out IS NULL`,
         [soId]
       );
       const totalHours = parseFloat(sumRes.rows[0].total_hours) || 0;
-      const avgRate = parseFloat(sumRes.rows[0].avg_rate) || 0;
-      const totalCost = parseFloat(sumRes.rows[0].total_cost) || 0;
-
+      
+      // Get global labour rate (should be $60/hour)
+      const labourRateRes = await pool.query("SELECT value FROM global_settings WHERE key = 'labour_rate'");
+      const labourRate = labourRateRes.rows.length > 0 ? parseFloat(labourRateRes.rows[0].value) : 60;
+      
       // Get global overhead rate
       const overheadRateRes = await pool.query("SELECT value FROM global_settings WHERE key = 'overhead_rate'");
       const overheadRate = overheadRateRes.rows.length > 0 ? parseFloat(overheadRateRes.rows[0].value) : 0;
-      const totalOverheadCost = totalHours * overheadRate;
 
       // Upsert LABOUR line item
       const labourRes = await pool.query(
@@ -261,14 +277,14 @@ router.post('/time-entries/:id/clock-out', async (req: Request, res: Response) =
         // Update
         await pool.query(
           `UPDATE salesorderlineitems SET part_description = $1, quantity_sold = $2, unit = $3, unit_price = $4, line_amount = $5 WHERE sales_order_id = $6 AND part_number = 'LABOUR'`,
-          ['Labour Hours', totalHours, 'hr', avgRate, totalCost, soId]
+          ['Labour Hours', totalHours, 'hr', labourRate, totalHours * labourRate, soId]
         );
       } else {
         // Insert
         await pool.query(
           `INSERT INTO salesorderlineitems (sales_order_id, part_number, part_description, quantity_sold, unit, unit_price, line_amount)
            VALUES ($1, 'LABOUR', $2, $3, $4, $5, $6)` ,
-          [soId, 'Labour Hours', totalHours, 'hr', avgRate, totalCost]
+          [soId, 'Labour Hours', totalHours, 'hr', labourRate, totalHours * labourRate]
         );
       }
 
@@ -281,24 +297,25 @@ router.post('/time-entries/:id/clock-out', async (req: Request, res: Response) =
         // Update
         await pool.query(
           `UPDATE salesorderlineitems SET part_description = $1, quantity_sold = $2, unit = $3, unit_price = $4, line_amount = $5 WHERE sales_order_id = $6 AND part_number = 'OVERHEAD'`,
-          ['Overhead Hours', totalHours, 'hr', overheadRate, totalOverheadCost, soId]
+          ['Overhead Hours', totalHours, 'hr', overheadRate, totalHours * overheadRate, soId]
         );
       } else {
         // Insert
         await pool.query(
           `INSERT INTO salesorderlineitems (sales_order_id, part_number, part_description, quantity_sold, unit, unit_price, line_amount)
            VALUES ($1, 'OVERHEAD', $2, $3, $4, $5, $6)` ,
-          [soId, 'Overhead Hours', totalHours, 'hr', overheadRate, totalOverheadCost]
+          [soId, 'Overhead Hours', totalHours, 'hr', overheadRate, totalHours * overheadRate]
         );
       }
 
       // Automatically add/update supply line item based on labour amount
-      if (totalCost > 0) {
+      const labourLineAmount = totalHours * labourRate;
+      if (labourLineAmount > 0) {
         const supplyRateRes = await pool.query('SELECT value FROM global_settings WHERE key = $1', ['supply_rate']);
         const supplyRate = supplyRateRes.rows.length > 0 ? parseFloat(supplyRateRes.rows[0].value) : 0;
         
         if (supplyRate > 0) {
-          const supplyAmount = totalCost * (supplyRate / 100);
+          const supplyAmount = labourLineAmount * (supplyRate / 100);
           
           // Check if supply line item already exists
           const existingSupplyResult = await pool.query(
@@ -326,6 +343,21 @@ router.post('/time-entries/:id/clock-out', async (req: Request, res: Response) =
             console.log(`Created SUPPLY line item for SO ${soId}: amount=${supplyAmount}, rate=${supplyRate}%`);
           }
         }
+      }
+    }
+
+    // Automatically recalculate sales order totals to reflect the updated LABOUR/OVERHEAD/SUPPLY line items
+    // This ensures that summary stats (subtotal, GST, total) are updated to reflect
+    // the newly recorded time, including any LABOUR/OVERHEAD/SUPPLY calculations
+    if (salesOrderIdRes.rows.length > 0) {
+      const soId = salesOrderIdRes.rows[0].sales_order_id;
+      try {
+        console.log(`🔄 Recalculating sales order ${soId} totals after clock-out...`);
+        await salesOrderService.recalculateAndUpdateSummary(soId);
+        console.log(`✅ Sales order ${soId} totals recalculated successfully after clock-out`);
+      } catch (error) {
+        console.warn(`⚠️ Failed to recalculate totals for sales order ${soId} after clock-out:`, error);
+        // Don't fail the clock-out operation if recalculation fails
       }
     }
 
@@ -378,15 +410,18 @@ router.put('/time-entries/:id', async (req: Request, res: Response) => {
       const soId = salesOrderIdRes.rows[0].sales_order_id;
       
       // Recalculate LABOUR and OVERHEAD line items for the sales order
-      // Sum all durations and costs for this sales order
+      // Sum all durations for this sales order
       const sumRes = await pool.query(
-        `SELECT SUM(duration) as total_hours, AVG(unit_price) as avg_rate, SUM(duration * unit_price) as total_cost
+        `SELECT SUM(duration) as total_hours
          FROM time_entries WHERE sales_order_id = $1 AND clock_out IS NOT NULL`,
         [soId]
       );
       const totalHours = parseFloat(sumRes.rows[0].total_hours) || 0;
-      const avgRate = parseFloat(sumRes.rows[0].avg_rate) || 0;
-      const totalCost = parseFloat(sumRes.rows[0].total_cost) || 0;
+      
+      // Get global labour rate
+      const labourRateRes = await pool.query("SELECT value FROM global_settings WHERE key = 'labour_rate'");
+      const labourRate = labourRateRes.rows.length > 0 ? parseFloat(labourRateRes.rows[0].value) : 60;
+      const totalCost = totalHours * labourRate;
 
       // Get global overhead rate
       const overheadRateRes = await pool.query("SELECT value FROM global_settings WHERE key = 'overhead_rate'");
@@ -402,14 +437,14 @@ router.put('/time-entries/:id', async (req: Request, res: Response) => {
         // Update
         await pool.query(
           `UPDATE salesorderlineitems SET part_description = $1, quantity_sold = $2, unit = $3, unit_price = $4, line_amount = $5 WHERE sales_order_id = $6 AND part_number = 'LABOUR'`,
-          ['Labour Hours', totalHours, 'hr', avgRate, totalCost, soId]
+          ['Labour Hours', totalHours, 'hr', labourRate, totalCost, soId]
         );
       } else {
         // Insert
         await pool.query(
           `INSERT INTO salesorderlineitems (sales_order_id, part_number, part_description, quantity_sold, unit, unit_price, line_amount)
            VALUES ($1, 'LABOUR', $2, $3, $4, $5, $6)`,
-          [soId, 'Labour Hours', totalHours, 'hr', avgRate, totalCost]
+          [soId, 'Labour Hours', totalHours, 'hr', labourRate, totalCost]
         );
       }
 
@@ -434,12 +469,13 @@ router.put('/time-entries/:id', async (req: Request, res: Response) => {
       }
 
       // Automatically add/update supply line item based on labour amount
-      if (totalCost > 0) {
+      const labourLineAmount = totalHours * labourRate;
+      if (labourLineAmount > 0) {
         const supplyRateRes = await pool.query('SELECT value FROM global_settings WHERE key = $1', ['supply_rate']);
         const supplyRate = supplyRateRes.rows.length > 0 ? parseFloat(supplyRateRes.rows[0].value) : 0;
         
         if (supplyRate > 0) {
-          const supplyAmount = totalCost * (supplyRate / 100);
+          const supplyAmount = labourLineAmount * (supplyRate / 100);
           
           // Check if supply line item already exists
           const existingSupplyResult = await pool.query(
@@ -469,29 +505,17 @@ router.put('/time-entries/:id', async (req: Request, res: Response) => {
         }
       }
 
-      // Recalculate sales order summary statistics
-      const lineItemsRes = await pool.query('SELECT * FROM salesorderlineitems WHERE sales_order_id = $1', [soId]);
-      const lineItems = lineItemsRes.rows;
-      let subtotal = 0;
-      
-      // Calculate subtotal from line items with proper precision
-      for (const item of lineItems) {
-        subtotal += parseFloat(item.line_amount || 0);
+      // Automatically recalculate sales order totals to reflect the updated LABOUR/OVERHEAD/SUPPLY line items
+      // This ensures that summary stats (subtotal, GST, total) are updated to reflect
+      // the newly edited time, including any LABOUR/OVERHEAD/SUPPLY calculations
+      try {
+        console.log(`🔄 Recalculating sales order ${soId} totals after time entry edit...`);
+        await salesOrderService.recalculateAndUpdateSummary(soId);
+        console.log(`✅ Sales order ${soId} totals recalculated successfully after time entry edit`);
+      } catch (error) {
+        console.warn(`⚠️ Failed to recalculate totals for sales order ${soId} after time entry edit:`, error);
+        // Don't fail the time entry edit operation if recalculation fails
       }
-      
-      // Apply proper rounding to avoid floating-point precision issues
-      subtotal = Math.round(subtotal * 100) / 100;
-      
-      // Calculate GST and total with proper rounding
-      const total_gst_amount = Math.round((subtotal * 0.05) * 100) / 100;
-      const total_amount = Math.round((subtotal + total_gst_amount) * 100) / 100;
-      
-      console.log(`📊 Sales Order ${soId} recalculation after time entry edit: subtotal=${subtotal}, gst=${total_gst_amount}, total=${total_amount}`);
-      
-      await pool.query(
-        'UPDATE salesorderhistory SET subtotal = $1, total_gst_amount = $2, total_amount = $3 WHERE sales_order_id = $4',
-        [subtotal, total_gst_amount, total_amount, soId]
-      );
     }
 
     res.json(result.rows[0]);
@@ -532,6 +556,7 @@ router.post('/', async (req: Request, res: Response) => {
   }
 });
 
+// Frontend profiles endpoint - Admin and Time Tracking users see all profiles
 router.get('/profiles', async (req: Request, res: Response) => {
   try {
     const userId = req.user?.id;
@@ -540,11 +565,17 @@ router.get('/profiles', async (req: Request, res: Response) => {
     let query: string;
     let params: any[] = [];
 
-    // Admin and Time Tracking users can see all profiles in regular frontend
+    // Admin and Time Tracking users can see all profiles
+    // Mobile users can only see profiles they have access to
     if (userRole === 'Admin' || userRole === 'Time Tracking') {
-      query = 'SELECT id, name, email FROM profiles ORDER BY name';
+      query = `
+        SELECT p.id, p.name, p.email 
+        FROM profiles p
+        ORDER BY p.name
+      `;
+      params = [];
     } else {
-      // Mobile Time Tracker and other users can only see profiles they have access to
+      // Mobile users can only see profiles they have access to
       query = `
         SELECT DISTINCT p.id, p.name, p.email 
         FROM profiles p
@@ -559,6 +590,28 @@ router.get('/profiles', async (req: Request, res: Response) => {
     res.json(result.rows);
   } catch (err) {
     console.error('Error fetching profiles:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Mobile profiles endpoint - Mobile users (including admin) only see profiles they have access to
+router.get('/mobile/profiles', async (req: Request, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    
+    // Mobile users (including admin) can only see profiles they have access to
+    const query = `
+      SELECT DISTINCT p.id, p.name, p.email 
+      FROM profiles p
+      INNER JOIN user_profile_access upa ON p.id = upa.profile_id
+      WHERE upa.user_id = $1 AND upa.is_active = true
+      ORDER BY p.name
+    `;
+    
+    const result = await pool.query(query, [userId]);
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Error fetching mobile profiles:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

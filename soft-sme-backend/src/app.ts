@@ -3,6 +3,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import path from 'path';
 import cookieParser from 'cookie-parser';
+import compression from 'compression';
 import authRouter from './routes/authRoutes';
 import { authMiddleware } from './middleware/authMiddleware';
 import businessProfileRouter from './routes/businessProfile';
@@ -18,6 +19,7 @@ import purchaseOrderRouter from './routes/purchaseOrderRoutes';
 import employeeRouter from './routes/employeeRoutes';
 import marginScheduleRouter from './routes/marginScheduleRoutes';
 import timeTrackingRouter from './routes/timeTrackingRoutes';
+import leaveManagementRouter from './routes/leaveManagementRoutes';
 import globalSettingsRouter from './routes/globalSettingsRoutes';
 import attendanceRouter from './routes/attendanceRoutes';
 import aiAssistantRouter from './routes/aiAssistantRoutes';
@@ -30,26 +32,50 @@ dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
 const app = express();
 
+// Enable compression for better performance
+app.use(compression());
+
+// Set keep-alive headers for better connection reuse
+app.use((req, res, next) => {
+  res.set('Connection', 'keep-alive');
+  res.set('Keep-Alive', 'timeout=5, max=1000');
+  next();
+});
+
 // CORS configuration
 const allowedOrigins = [
   'http://localhost:3000', // local dev
   'http://localhost:5173', // Vite dev server
   'http://localhost:8080', // allow dev server
   'https://mobile.phoenixtrailers.ca', // mobile app tunnel
+  'https://clockwise-mobile.phoenixtrailers.ca', // alternative mobile tunnel
   process.env.CORS_ORIGIN, // production frontend (e.g., https://softsme.phoenixtrailers.ca)
 ].filter(Boolean);
 
+console.log('Allowed CORS origins:', allowedOrigins);
+
 const corsOptions: cors.CorsOptions = {
   origin: (origin, callback) => {
+    console.log('CORS check for origin:', origin);
+    
     // Allow requests with no origin (like mobile apps, curl, or same-origin)
-    if (!origin) return callback(null, true);
-
-    // Allow any Cloudflare temporary tunnel domain
-    if (origin.includes('trycloudflare.com')) return callback(null, true);
-
-    if (allowedOrigins.includes(origin)) {
+    if (!origin) {
+      console.log('No origin - allowing request');
       return callback(null, true);
     }
+
+    // Allow any Cloudflare temporary tunnel domain
+    if (origin.includes('trycloudflare.com')) {
+      console.log('Cloudflare tunnel domain - allowing request');
+      return callback(null, true);
+    }
+
+    if (allowedOrigins.includes(origin)) {
+      console.log('Origin in allowed list - allowing request');
+      return callback(null, true);
+    }
+    
+    console.log('Origin not allowed - blocking request');
     return callback(new Error('Not allowed by CORS'));
   },
   credentials: true,
@@ -65,6 +91,11 @@ app.options('*', cors(corsOptions));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(cookieParser());
+
+// Health check endpoint for connection warmup
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
 
 // Health check endpoint for AWS deployment
 app.get('/health', (req, res) => {
@@ -135,6 +166,9 @@ console.log('Registered employee routes');
 
 app.use('/api/time-tracking', authMiddleware, timeTrackingRouter);
 console.log('Registered time tracking routes');
+
+app.use('/api/leave-management', authMiddleware, leaveManagementRouter);
+console.log('Registered leave management routes');
 
 app.use('/api/attendance', authMiddleware, attendanceRouter);
 console.log('Registered attendance routes');

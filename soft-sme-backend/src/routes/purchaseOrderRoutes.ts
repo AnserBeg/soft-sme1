@@ -75,10 +75,10 @@ router.get('/open', async (req: Request, res: Response) => {
     const { startDate, endDate, status, searchTerm } = req.query;
     
     let query = `
-      SELECT poh.purchase_id, poh.purchase_number, vm.vendor_name, poh.purchase_date as bill_date, 
+      SELECT poh.purchase_id, poh.purchase_number, COALESCE(vm.vendor_name, 'No Vendor') as vendor_name, poh.purchase_date as bill_date, 
              poh.purchase_number as bill_number, poh.subtotal, poh.total_gst_amount, poh.total_amount, poh.status, poh.gst_rate
       FROM purchasehistory poh
-      JOIN vendormaster vm ON poh.vendor_id = vm.vendor_id
+      LEFT JOIN vendormaster vm ON poh.vendor_id = vm.vendor_id
       WHERE 1=1
     `;
     
@@ -129,10 +129,10 @@ router.get('/history', async (req: Request, res: Response) => {
   console.log('purchaseOrderRoutes: GET /history - Request received');
   try {
     const result = await pool.query(`
-      SELECT poh.purchase_id, poh.purchase_number, vm.vendor_name, poh.purchase_date as bill_date, 
+      SELECT poh.purchase_id, poh.purchase_number, COALESCE(vm.vendor_name, 'No Vendor') as vendor_name, poh.purchase_date as bill_date, 
              poh.purchase_number as bill_number, poh.subtotal, poh.total_gst_amount, poh.total_amount, poh.status, poh.gst_rate
       FROM purchasehistory poh
-      JOIN vendormaster vm ON poh.vendor_id = vm.vendor_id
+      LEFT JOIN vendormaster vm ON poh.vendor_id = vm.vendor_id
       WHERE poh.status = 'Closed' ORDER BY poh.created_at DESC`);
     console.log('purchaseOrderRoutes: History query result:', result.rows);
     res.json(result.rows);
@@ -1217,7 +1217,32 @@ router.put('/:id', async (req, res) => {
 
     console.log('Updated PO Header:', updatedPo.rows[0]);
 
-    // Update or insert line items
+    // Delete removed line items, then update or insert provided ones
+    // 1) Find existing line_item_ids for this purchase
+    const existingLineItemsRes = await client.query(
+      'SELECT line_item_id FROM "purchaselineitems" WHERE purchase_id = $1',
+      [id]
+    );
+    const existingIds: number[] = existingLineItemsRes.rows.map((r: any) => r.line_item_id);
+
+    // 2) Determine which existing items were kept (present in payload with line_item_id)
+    const providedExistingIds: number[] = (lineItems || [])
+      .map((item: any) => item.line_item_id)
+      .filter((v: any) => typeof v === 'number');
+
+    // 3) Compute deletions = existing - providedExisting
+    const toDelete: number[] = existingIds.filter((eid: number) => !providedExistingIds.includes(eid));
+
+    if (toDelete.length > 0) {
+      // Delete only those missing from payload (user removed them)
+      const placeholders = toDelete.map((_, idx) => `$${idx + 2}`).join(',');
+      await client.query(
+        `DELETE FROM "purchaselineitems" WHERE purchase_id = $1 AND line_item_id IN (${placeholders})`,
+        [id, ...toDelete]
+      );
+    }
+
+    // 4) Update or insert remaining/provided line items
     for (const item of lineItems) {
       // Find the corresponding trimmed line item
       const trimmedItem = trimmedLineItems.find((ti: any) => ti.part_number === item.part_number);

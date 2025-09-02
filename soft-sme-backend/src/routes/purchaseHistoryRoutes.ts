@@ -3,8 +3,10 @@ import { pool } from '../db';
 import PDFDocument from 'pdfkit';
 import fs from 'fs';
 import path from 'path';
+import { SalesOrderService } from '../services/SalesOrderService';
 
 const router = express.Router();
+const salesOrderService = new SalesOrderService(pool);
 
 // Get all closed purchase history records
 router.get('/', async (req: Request, res: Response) => {
@@ -17,10 +19,10 @@ router.get('/', async (req: Request, res: Response) => {
         CAST(ph.subtotal AS FLOAT) as subtotal,
         CAST(ph.total_gst_amount AS FLOAT) as total_gst_amount,
         CAST(ph.total_amount AS FLOAT) as total_amount,
-        vm.vendor_name,
+        COALESCE(vm.vendor_name, 'No Vendor') as vendor_name,
         ph.gst_rate
       FROM purchasehistory ph 
-      JOIN vendormaster vm ON ph.vendor_id = vm.vendor_id 
+      LEFT JOIN vendormaster vm ON ph.vendor_id = vm.vendor_id 
     `;
 
     const whereClauses = [];
@@ -75,10 +77,10 @@ router.get('/open', async (req: Request, res: Response) => {
         CAST(ph.subtotal AS FLOAT) as subtotal,
         CAST(ph.total_gst_amount AS FLOAT) as total_gst_amount,
         CAST(ph.total_amount AS FLOAT) as total_amount,
-        vm.vendor_name,
+        COALESCE(vm.vendor_name, 'No Vendor') as vendor_name,
         ph.gst_rate
       FROM purchasehistory ph 
-      JOIN vendormaster vm ON ph.vendor_id = vm.vendor_id 
+      LEFT JOIN vendormaster vm ON ph.vendor_id = vm.vendor_id 
       WHERE LOWER(ph.status) = 'open'
       ORDER BY ph.created_at DESC
     `);
@@ -1202,6 +1204,23 @@ router.post('/:id/close-with-allocations', async (req: Request, res: Response) =
     // Update aggregated parts to order table
     await updateAggregatedPartsToOrder(poLineItems, client);
     
+    // Automatically recalculate sales order totals for all affected sales orders
+    // This ensures that summary stats (subtotal, GST, total) are updated to reflect
+    // the newly allocated parts, including any LABOUR/OVERHEAD/SUPPLY calculations
+    console.log('🔄 Recalculating sales order totals for affected sales orders...');
+    const affectedSalesOrderIds = new Set(allocations.map((a: any) => a.sales_order_id));
+    
+    for (const salesOrderId of affectedSalesOrderIds) {
+      try {
+        console.log(`📊 Recalculating totals for sales order ${salesOrderId}...`);
+        await salesOrderService.recalculateAndUpdateSummary(salesOrderId, client);
+        console.log(`✅ Sales order ${salesOrderId} totals recalculated successfully`);
+      } catch (error) {
+        console.warn(`⚠️ Failed to recalculate totals for sales order ${salesOrderId}:`, error);
+        // Don't fail the entire operation if one sales order recalculation fails
+      }
+    }
+    
     // Close the purchase order (use existing bill_number from purchase order)
     await client.query(
       'UPDATE purchasehistory SET status = $1, updated_at = NOW() WHERE purchase_id = $2',
@@ -1324,6 +1343,8 @@ router.post('/:id/save-allocations', async (req: Request, res: Response) => {
     await updateAggregatedPartsToOrder(poLineItems, client);
     
     // Note: We don't close the purchase order here, just save the allocations
+    // Note: No sales order recalculation needed here since we're only storing allocation commitments
+    // Sales order totals will be recalculated when "Close with Allocations" is used
     
     await client.query('COMMIT');
     

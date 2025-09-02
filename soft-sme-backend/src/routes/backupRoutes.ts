@@ -49,8 +49,21 @@ function getBackupDir(): string {
   if (fs.existsSync(settingsPath)) {
     try {
       const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-      if (settings.customBackupDir && fs.existsSync(settings.customBackupDir)) {
-        return settings.customBackupDir;
+      if (settings.customBackupDir) {
+        // Check if directory exists and is writable
+        if (fs.existsSync(settings.customBackupDir)) {
+          try {
+            // Test write access by creating a temporary file
+            const testFile = path.join(settings.customBackupDir, '.test-write-access');
+            fs.writeFileSync(testFile, 'test');
+            fs.unlinkSync(testFile);
+            return settings.customBackupDir;
+          } catch (error) {
+            console.error('Custom backup directory is not writable:', settings.customBackupDir, error);
+          }
+        } else {
+          console.error('Custom backup directory does not exist:', settings.customBackupDir);
+        }
       }
     } catch (error) {
       console.error('Error reading backup settings:', error);
@@ -524,7 +537,17 @@ router.get('/settings', authMiddleware, async (req: Request, res: Response) => {
       settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
     }
 
-    res.json(settings);
+    // Get current backup directory info
+    const currentBackupDir = getBackupDir();
+    const defaultBackupDir = path.join(__dirname, '../../backups');
+    
+    res.json({
+      ...settings,
+      currentBackupDir,
+      defaultBackupDir,
+      isUsingCustomDir: currentBackupDir !== defaultBackupDir,
+      customDirExists: settings.customBackupDir ? fs.existsSync(settings.customBackupDir) : false
+    });
   } catch (error) {
     console.error('Error fetching backup settings:', error);
     res.status(500).json({ error: 'Failed to fetch backup settings' });

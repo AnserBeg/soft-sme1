@@ -51,6 +51,89 @@ export class SalesOrderService {
     }
   }
 
+  // Sync labour and overhead line items from time entries
+  private async syncLabourOverheadFromTimeEntries(orderId: number, client: PoolClient): Promise<void> {
+    try {
+      // Sum all durations for this sales order from time entries
+      const sumRes = await client.query(
+        `SELECT SUM(duration) as total_hours
+         FROM time_entries WHERE sales_order_id = $1 AND clock_out IS NOT NULL`,
+        [orderId]
+      );
+      
+      const totalHours = parseFloat(sumRes.rows[0].total_hours) || 0;
+      
+      // Get global labour rate
+      const labourRateRes = await client.query("SELECT value FROM global_settings WHERE key = 'labour_rate'");
+      const labourRate = labourRateRes.rows.length > 0 ? parseFloat(labourRateRes.rows[0].value) : 60;
+      const totalCost = totalHours * labourRate;
+
+      // Get global overhead rate
+      const overheadRateRes = await client.query("SELECT value FROM global_settings WHERE key = 'overhead_rate'");
+      const overheadRate = overheadRateRes.rows.length > 0 ? parseFloat(overheadRateRes.rows[0].value) : 0;
+      const totalOverheadCost = totalHours * overheadRate;
+
+      // Upsert LABOUR line item
+      const labourRes = await client.query(
+        `SELECT sales_order_line_item_id FROM salesorderlineitems WHERE sales_order_id = $1 AND part_number = 'LABOUR'`,
+        [orderId]
+      );
+      
+      if (labourRes.rows.length > 0) {
+        // Update existing labour line item
+        await client.query(
+          `UPDATE salesorderlineitems 
+           SET part_description = $1, quantity_sold = $2, unit = $3, unit_price = $4, line_amount = $5, updated_at = NOW() 
+           WHERE sales_order_id = $6 AND part_number = 'LABOUR'`,
+          ['Labour Hours', totalHours, 'hr', labourRate, totalHours * labourRate, orderId]
+        );
+      } else {
+        // Insert new labour line item
+        await client.query(
+          `INSERT INTO salesorderlineitems 
+           (sales_order_id, part_number, part_description, quantity_sold, unit, unit_price, line_amount) 
+           VALUES ($1, 'LABOUR', $2, $3, $4, $5, $6)`,
+          [orderId, 'Labour Hours', totalHours, 'hr', labourRate, totalHours * labourRate]
+        );
+      }
+
+      // Upsert OVERHEAD line item
+      const overheadRes = await client.query(
+        `SELECT sales_order_line_item_id FROM salesorderlineitems WHERE sales_order_id = $1 AND part_number = 'OVERHEAD'`,
+        [orderId]
+      );
+      
+      if (overheadRes.rows.length > 0) {
+        // Update existing overhead line item
+        await client.query(
+          `UPDATE salesorderlineitems 
+           SET part_description = $1, quantity_sold = $2, unit = $3, unit_price = $4, line_amount = $5, updated_at = NOW() 
+           WHERE sales_order_id = $6 AND part_number = 'OVERHEAD'`,
+          ['Overhead Hours', totalHours, 'hr', overheadRate, totalHours * overheadRate, orderId]
+        );
+      } else {
+        // Insert new overhead line item
+        await client.query(
+          `INSERT INTO salesorderlineitems 
+           (sales_order_line_item_id, sales_order_id, part_number, part_description, quantity_sold, unit, unit_price, line_amount) 
+           VALUES (DEFAULT, $1, 'OVERHEAD', $2, $3, $4, $5, $6)`,
+          [orderId, 'Overhead Hours', totalHours, 'hr', overheadRate, totalHours * overheadRate]
+        );
+      }
+
+      // Automatically add/update supply line item based on labour amount
+      const labourLineAmount = totalHours * labourRate;
+      if (labourLineAmount > 0) {
+        await this.addSupplyLineItem(orderId, labourLineAmount, client);
+      }
+
+      console.log(`✅ Synced LABOUR and OVERHEAD line items for SO ${orderId}: labour=${totalCost}, overhead=${totalOverheadCost}`);
+    } catch (error) {
+      console.error(`Error syncing labour and overhead from time entries for SO ${orderId}:`, error);
+      // Don't throw error - sync failure shouldn't break the entire operation
+    }
+  }
+
   // Update sales order with simple inventory validation
   async updateSalesOrder(orderId: number, newLineItems: any[], clientArg?: PoolClient, user?: any): Promise<null> {
     const client = clientArg || await this.pool.connect();
@@ -199,36 +282,49 @@ export class SalesOrderService {
         const quantity = item.quantity !== undefined && item.quantity !== null ? parseFloat(item.quantity) : 0;
         const unit_price = item.unit_price !== undefined && item.unit_price !== null ? parseFloat(item.unit_price) : 0;
         const line_amount = item.line_amount !== undefined && item.line_amount !== null ? parseFloat(item.line_amount) : 0;
-        let quantity_sold: any = quantity;
-        if (String(item.part_number).toUpperCase() === 'SUPPLY') {
-          // For SUPPLY, use the quantity_sold from frontend (should be 1) but it doesn't affect inventory
-          quantity_sold = item.quantity_sold !== undefined && item.quantity_sold !== null ? parseFloat(item.quantity_sold) : 1;
-        }
+        // For all special items (LABOUR, OVERHEAD, SUPPLY), use quantity_sold from frontend
+        let quantity_sold: any = item.quantity_sold !== undefined && item.quantity_sold !== null ? parseFloat(item.quantity_sold) : 0;
         
-        // Check if trying to delete LABOUR, OVERHEAD, or SUPPLY line items
-        const isDeletingSpecialItem = quantity_sold <= 0;
-        if (isDeletingSpecialItem) {
-          // Only allow admin to delete LABOUR, OVERHEAD, and SUPPLY line items
-          if (!user || user.access_role !== 'Admin') {
-            throw new Error(`Only administrators can delete ${item.part_number} line items`);
-          }
-          console.log(`Admin deleting ${item.part_number} line item for order ${orderId}`);
-        }
-        
-        // Check if item exists
+        // Check if item exists first
         const existingItemRes = await client.query(
           'SELECT quantity_sold FROM salesorderlineitems WHERE sales_order_id = $1 AND part_number = $2',
           [orderId, item.part_number]
         );
         
+        // Only prevent deletion if the line item already exists and user is trying to set quantity to 0
+        // Allow saving new line items with 0 quantity
+        // For LABOUR and OVERHEAD, allow non-admin users to save with quantity 0
+        // For SUPPLY, only allow admin to delete
+        const isDeletingSpecialItem = quantity_sold <= 0 && existingItemRes.rows.length > 0;
+        if (isDeletingSpecialItem) {
+          // Only block SUPPLY deletion for non-admin users
+          // Allow LABOUR and OVERHEAD to be saved with quantity 0 by non-admin users
+          if (item.part_number === 'SUPPLY' && (!user || user.access_role !== 'Admin')) {
+            throw new Error(`Only administrators can delete ${item.part_number} line items`);
+          }
+          console.log(`${item.part_number === 'SUPPLY' ? 'Admin' : 'User'} ${item.part_number === 'SUPPLY' ? 'deleting' : 'saving with 0 quantity'} ${item.part_number} line item for order ${orderId}`);
+        }
+        
+
+        
         if (existingItemRes.rows.length > 0) {
           if (isDeletingSpecialItem) {
-            // Delete the special line item when admin sets quantity to 0
-            await client.query(
-              `DELETE FROM salesorderlineitems WHERE sales_order_id = $1 AND part_number = $2`,
-              [orderId, item.part_number]
-            );
-            console.log(`Admin deleted ${item.part_number} line item for order ${orderId}`);
+            // For SUPPLY, delete the line item when admin sets quantity to 0
+            // For LABOUR and OVERHEAD, update with quantity 0 instead of deleting
+            if (item.part_number === 'SUPPLY') {
+              await client.query(
+                `DELETE FROM salesorderlineitems WHERE sales_order_id = $1 AND part_number = $2`,
+                [orderId, item.part_number]
+              );
+              console.log(`Admin deleted ${item.part_number} line item for order ${orderId}`);
+            } else {
+              // For LABOUR and OVERHEAD, update with quantity 0
+              await client.query(
+                `UPDATE salesorderlineitems SET part_description = $1, unit = $2, unit_price = $3, line_amount = $4, quantity_sold = $5 WHERE sales_order_id = $6 AND part_number = $7`,
+                [item.part_description, item.unit, unit_price, line_amount, quantity_sold, orderId, item.part_number]
+              );
+              console.log(`Updated ${item.part_number} line item with quantity 0 for order ${orderId}`);
+            }
           } else {
             // Update the special line item
             await client.query(
@@ -311,14 +407,21 @@ export class SalesOrderService {
       
       // Check if trying to delete LABOUR, OVERHEAD, or SUPPLY line items
       const isSpecialLineItem = isSpecialPart(item.part_number);
-      const isDeletingSpecialItem = isSpecialLineItem && quantity_sold <= 0 && quantityToOrder <= 0;
+      
+
+      
+      // Only prevent deletion if user is actually trying to remove an existing line item
+      // Allow saving with 0 quantity - only block when both quantity_sold and quantityToOrder are 0 AND line item exists
+      const isDeletingSpecialItem = isSpecialLineItem && lineRes.rows.length > 0 && quantity_sold <= 0 && quantityToOrder <= 0;
       
       if (isDeletingSpecialItem) {
-        // Only allow admin to delete LABOUR, OVERHEAD, and SUPPLY line items
-        if (!user || user.access_role !== 'Admin') {
+        console.log(`DEBUG: Detected deletion attempt for ${item.part_number}`);
+        // Only block SUPPLY deletion for non-admin users
+        // Allow LABOUR and OVERHEAD to be saved with quantity 0 by non-admin users
+        if (item.part_number === 'SUPPLY' && (!user || user.access_role !== 'Admin')) {
           throw new Error(`Only administrators can delete ${item.part_number} line items`);
         }
-        console.log(`Admin deleting ${item.part_number} line item for order ${orderId}`);
+        console.log(`${item.part_number === 'SUPPLY' ? 'Admin' : 'User'} ${item.part_number === 'SUPPLY' ? 'deleting' : 'saving with 0 quantity'} ${item.part_number} line item for order ${orderId}`);
       }
       
       if (quantity_sold <= 0 && quantityToOrder <= 0 && !isSpecialPart(item.part_number)) {
@@ -331,13 +434,23 @@ export class SalesOrderService {
         }
         // Don't insert anything for zero quantities
       } else if (isDeletingSpecialItem) {
-        // Delete special line items (LABOUR, OVERHEAD, SUPPLY) when admin sets quantity to 0
+        // For SUPPLY, delete the line item when admin sets quantity to 0
+        // For LABOUR and OVERHEAD, update with quantity 0 instead of deleting
         if (lineRes.rows.length > 0) {
-          console.log(`Admin deleting ${item.part_number} line item for order ${orderId}`);
-          await client.query(
-            `DELETE FROM salesorderlineitems WHERE sales_order_id = $1 AND (part_id = $2 OR part_number = $3)`,
-            [orderId, resolvedPartId, item.part_number]
-          );
+          if (item.part_number === 'SUPPLY') {
+            console.log(`Admin deleting ${item.part_number} line item for order ${orderId}`);
+            await client.query(
+              `DELETE FROM salesorderlineitems WHERE sales_order_id = $1 AND (part_id = $2 OR part_number = $3)`,
+              [orderId, resolvedPartId, item.part_number]
+            );
+          } else {
+            // For LABOUR and OVERHEAD, update with quantity 0
+            console.log(`Updating ${item.part_number} line item with quantity 0 for order ${orderId}`);
+            await client.query(
+              `UPDATE salesorderlineitems SET quantity_sold = $1, part_description = $2, unit = $3, unit_price = $4, line_amount = $5 WHERE sales_order_id = $6 AND (part_id = $7 OR part_number = $8)`,
+              [quantity_sold, item.part_description, item.unit, unit_price, line_amount, orderId, resolvedPartId, item.part_number]
+            );
+          }
         }
         // Don't insert anything for zero quantities
       } else {
@@ -376,6 +489,10 @@ export class SalesOrderService {
         await client.query('BEGIN');
         startedTransaction = true;
       }
+      
+      // First, ensure LABOUR and OVERHEAD line items exist and are up-to-date from time entries
+      await this.syncLabourOverheadFromTimeEntries(orderId, client);
+      
       const lineItemsRes = await client.query('SELECT * FROM salesorderlineitems WHERE sales_order_id = $1', [orderId]);
       const lineItems = lineItemsRes.rows;
       let subtotal = 0;

@@ -270,8 +270,8 @@ async def ingest_documentation(background_tasks: BackgroundTasks):
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
-    # Get port from environment or default to 8001
-    port = int(os.getenv("AI_AGENT_PORT", 8001))
+    # Get port from environment variable
+    port = int(os.getenv("AI_AGENT_PORT", 15000))
     host = os.getenv("AI_AGENT_HOST", "127.0.0.1")
     
     logger.info(f"Starting AI Agent server on {host}:{port}")

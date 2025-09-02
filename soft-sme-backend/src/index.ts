@@ -25,6 +25,7 @@ import salesOrderRoutes from './routes/salesOrderRoutes';
 import purchaseOrderRoutes from './routes/purchaseOrderRoutes';
 import employeeRoutes from './routes/employeeRoutes';
 import timeTrackingRoutes from './routes/timeTrackingRoutes';
+import leaveManagementRoutes from './routes/leaveManagementRoutes';
 import globalSettingsRouter from './routes/globalSettingsRoutes';
 import backupRoutes from './routes/backupRoutes';
 import attendanceRouter from './routes/attendanceRoutes';
@@ -84,6 +85,11 @@ app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
 app.use('/uploads', express.static('uploads'));
 
+// Health check endpoint for connection warmup
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
 // Public routes
 app.use('/api/auth', authRoutes);
 console.log('Registered auth routes at /api/auth');
@@ -128,6 +134,9 @@ console.log('Registered employee routes');
 
 app.use('/api/time-tracking', authMiddleware, timeTrackingRoutes);
 console.log('Registered time tracking routes');
+
+app.use('/api/leave-management', authMiddleware, leaveManagementRoutes);
+console.log('Registered leave management routes');
 
 app.use('/api/attendance', authMiddleware, attendanceRouter);
 console.log('Registered attendance routes');

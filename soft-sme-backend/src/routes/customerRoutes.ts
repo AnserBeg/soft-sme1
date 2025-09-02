@@ -129,9 +129,28 @@ router.post('/', async (req: Request, res: Response) => {
 
     console.log('Received new customer data:', req.body);
 
+    // Validate required fields
+    if (!customer_name || customer_name.trim() === '') {
+      return res.status(400).json({ error: 'Customer name is required' });
+    }
+
+    // Check if customer with same name already exists
+    const existingCustomer = await client.query(
+      'SELECT customer_id FROM customermaster WHERE LOWER(customer_name) = LOWER($1)',
+      [customer_name.trim()]
+    );
+
+    if (existingCustomer.rows.length > 0) {
+      return res.status(409).json({ 
+        error: 'Customer already exists',
+        message: `A customer with the name "${customer_name}" already exists`,
+        existingCustomerId: existingCustomer.rows[0].customer_id
+      });
+    }
+
     const result = await client.query(
       'INSERT INTO customermaster (customer_name, street_address, city, province, country, postal_code, contact_person, telephone_number, email, website) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *',
-      [customer_name, street_address, city, province, country, postal_code, contact_person, phone_number, email, website]
+      [customer_name.trim(), street_address, city, province, country, postal_code, contact_person, phone_number, email, website]
     );
 
     const newCustomer = result.rows[0];
@@ -140,10 +159,38 @@ router.post('/', async (req: Request, res: Response) => {
       ...newCustomer,
       id: newCustomer.customer_id
     };
+    
+    console.log('Customer created successfully:', customerWithId);
     res.status(201).json(customerWithId);
-  } catch (err) {
+  } catch (err: any) {
     console.error('Error creating customer:', err);
-    res.status(500).json({ error: 'Internal server error' });
+    
+    // Handle specific database errors
+    if (err.code === '23505') { // Unique constraint violation
+      if (err.constraint?.includes('customer_id')) {
+        console.error('Sequence issue detected - customer_id sequence may be out of sync');
+        res.status(500).json({ 
+          error: 'Database sequence error',
+          message: 'Customer ID sequence is out of sync. Please contact system administrator.',
+          details: 'This is a database configuration issue that needs to be resolved.'
+        });
+      } else {
+        res.status(409).json({ 
+          error: 'Duplicate entry',
+          message: 'A customer with this information already exists'
+        });
+      }
+    } else if (err.code === '23502') { // Not null violation
+      res.status(400).json({ 
+        error: 'Missing required field',
+        message: 'Please fill in all required fields'
+      });
+    } else {
+      res.status(500).json({ 
+        error: 'Internal server error',
+        message: 'Failed to create customer. Please try again.'
+      });
+    }
   } finally {
     client.release();
   }

@@ -142,22 +142,60 @@ const AllocationModal: React.FC<AllocationModalProps> = ({
         ...data,
         suggestions: filteredSuggestions
       };
-      
+
       setAllocationData(filteredData);
-      
-      // Initialize allocations with filtered suggestions
-      const initialAllocations: { [key: string]: { [key: number]: number } } = {};
-      const initialSurplus: { [key: string]: number } = {};
-      
-      filteredSuggestions.forEach((suggestion: PartSuggestion) => {
-        initialAllocations[suggestion.part_number] = {};
-        initialSurplus[suggestion.part_number] = suggestion.suggested_surplus;
-        
-        suggestion.allocation_suggestions.forEach((alloc: AllocationSuggestion) => {
-          initialAllocations[suggestion.part_number][alloc.sales_order_id] = alloc.suggested_alloc;
+
+      // Try to load any previously saved allocations and overlay them
+      let initialAllocations: { [key: string]: { [key: number]: number } } = {};
+      let initialSurplus: { [key: string]: number } = {};
+
+      try {
+        const savedRes = await api.get(`/api/purchase-history/${purchaseOrderId}/allocations`);
+        const savedAllocations: Array<{ sales_order_id: number; part_number: string; allocate_qty: number }>
+          = savedRes.data || [];
+
+        const savedMap: { [key: string]: { [key: number]: number } } = {};
+        for (const a of savedAllocations) {
+          const part = String(a.part_number).toUpperCase();
+          if (!savedMap[part]) savedMap[part] = {};
+          savedMap[part][a.sales_order_id] = Number(a.allocate_qty) || 0;
+        }
+
+        // Build allocations using saved values when present, otherwise fall back to suggestions
+        initialAllocations = {};
+        initialSurplus = {};
+
+        filteredSuggestions.forEach((suggestion: PartSuggestion) => {
+          const part = suggestion.part_number;
+          const savedForPart = savedMap[part] || {};
+          const partAlloc: { [key: number]: number } = {};
+
+          suggestion.allocation_suggestions.forEach((alloc: AllocationSuggestion) => {
+            const savedQty = savedForPart[alloc.sales_order_id];
+            partAlloc[alloc.sales_order_id] = typeof savedQty === 'number' ? savedQty : alloc.suggested_alloc;
+          });
+
+          initialAllocations[part] = partAlloc;
+
+          // Surplus = ordered - totalAllocated (recompute to reflect saved values)
+          const totalAllocated = Object.values(partAlloc).reduce((sum, v) => sum + (Number(v) || 0), 0);
+          initialSurplus[part] = Math.max(0, suggestion.quantity_ordered - totalAllocated);
         });
-      });
-      
+
+      } catch (e) {
+        // If fetching saved allocations fails, fall back to suggestions
+        initialAllocations = {};
+        initialSurplus = {};
+        filteredSuggestions.forEach((suggestion: PartSuggestion) => {
+          initialAllocations[suggestion.part_number] = {};
+          suggestion.allocation_suggestions.forEach((alloc: AllocationSuggestion) => {
+            initialAllocations[suggestion.part_number][alloc.sales_order_id] = alloc.suggested_alloc;
+          });
+          const totalAllocated = Object.values(initialAllocations[suggestion.part_number]).reduce((sum, v) => sum + (Number(v) || 0), 0);
+          initialSurplus[suggestion.part_number] = Math.max(0, suggestion.quantity_ordered - totalAllocated);
+        });
+      }
+
       setAllocations(initialAllocations);
       setSurplusPerPart(initialSurplus);
       setErrors([]);
