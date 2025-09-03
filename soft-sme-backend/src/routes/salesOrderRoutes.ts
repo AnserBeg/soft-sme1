@@ -1907,6 +1907,18 @@ router.get('/:id/export-status', async (req: Request, res: Response) => {
 // Get all parts to order (individual and aggregated)
 router.get('/parts-to-order/all', async (req: Request, res: Response) => {
   try {
+    // First, clean up orphaned entries in aggregated_parts_to_order
+    // Remove parts that don't have corresponding sales order entries
+    await pool.query(`
+      DELETE FROM aggregated_parts_to_order 
+      WHERE part_number NOT IN (
+        SELECT DISTINCT part_number 
+        FROM sales_order_parts_to_order sopt
+        JOIN salesorderhistory soh ON sopt.sales_order_id = soh.sales_order_id
+        WHERE soh.status = 'Open' AND sopt.quantity_needed > 0
+      )
+    `);
+
     // Get individual parts to order from sales_order_parts_to_order table
     const individualResult = await pool.query(`
       SELECT 
@@ -2086,6 +2098,23 @@ router.post('/parts-to-order/add', async (req: Request, res: Response) => {
       `, [part.part_number]);
       console.log(`Removed part ${part.part_number} from aggregated_parts_to_order due to zero quantity`);
     } else {
+      // Check if this part has any associated sales orders before adding to aggregated table
+      const salesOrderCheck = await pool.query(`
+        SELECT COUNT(*) as count
+        FROM sales_order_parts_to_order sopt
+        JOIN salesorderhistory soh ON sopt.sales_order_id = soh.sales_order_id
+        WHERE sopt.part_number = $1 AND soh.status = 'Open' AND sopt.quantity_needed > 0
+      `, [part.part_number]);
+
+      const hasSalesOrders = parseInt(salesOrderCheck.rows[0].count) > 0;
+      
+      if (!hasSalesOrders) {
+        return res.status(400).json({ 
+          error: 'Cannot add part to order without associated sales orders',
+          message: 'Parts can only be added to the order list if they are associated with open sales orders. Please add this part to a sales order first.'
+        });
+      }
+
       // Insert or update aggregated parts to order
       await pool.query(`
         INSERT INTO aggregated_parts_to_order (part_number, part_description, total_quantity_needed, unit, unit_price, total_line_amount, min_required_quantity)

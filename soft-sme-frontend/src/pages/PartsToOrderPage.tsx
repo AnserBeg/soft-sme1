@@ -14,13 +14,22 @@ import {
   Collapse,
   Chip,
   Alert,
-  CircularProgress
+  CircularProgress,
+  Checkbox,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  TextField,
+  FormControlLabel,
+  Grid
 } from '@mui/material';
 import {
   ExpandMore as ExpandMoreIcon,
   ExpandLess as ExpandLessIcon,
   Refresh as RefreshIcon,
-  ShoppingCart as ShoppingCartIcon
+  ShoppingCart as ShoppingCartIcon,
+  AddShoppingCart as AddShoppingCartIcon
 } from '@mui/icons-material';
 import { toast } from 'react-toastify';
 import { useNavigate } from 'react-router-dom';
@@ -55,6 +64,9 @@ const PartsToOrderPage: React.FC = () => {
   const [creatingPO, setCreatingPO] = useState(false);
   const [aggregatedParts, setAggregatedParts] = useState<AggregatedPart[]>([]);
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
+  const [selectedParts, setSelectedParts] = useState<Set<string>>(new Set());
+  const [createPOModalOpen, setCreatePOModalOpen] = useState(false);
+  const [selectedPartsForPO, setSelectedPartsForPO] = useState<AggregatedPart[]>([]);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -137,6 +149,77 @@ const PartsToOrderPage: React.FC = () => {
     fetchData();
   };
 
+  const handleSelectPart = (partNumber: string) => {
+    setSelectedParts(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(partNumber)) {
+        newSet.delete(partNumber);
+      } else {
+        newSet.add(partNumber);
+      }
+      return newSet;
+    });
+  };
+
+  const handleSelectAllParts = () => {
+    if (selectedParts.size === aggregatedParts.length) {
+      setSelectedParts(new Set());
+    } else {
+      setSelectedParts(new Set(aggregatedParts.map(part => part.part_number)));
+    }
+  };
+
+  const handleOpenCreatePOModal = () => {
+    if (selectedParts.size === 0) {
+      toast.warning('Please select at least one part to create a purchase order');
+      return;
+    }
+    
+    const selectedPartsData = aggregatedParts.filter(part => selectedParts.has(part.part_number));
+    setSelectedPartsForPO(selectedPartsData);
+    setCreatePOModalOpen(true);
+  };
+
+  const handleCloseCreatePOModal = () => {
+    setCreatePOModalOpen(false);
+    setSelectedPartsForPO([]);
+  };
+
+  const handleCreatePOFromModal = async () => {
+    if (selectedPartsForPO.length === 0) {
+      toast.warning('No parts selected for purchase order');
+      return;
+    }
+
+    setCreatingPO(true);
+    try {
+      const response = await api.post('/api/purchase-orders/auto-create-from-parts-to-order', {
+        parts: selectedPartsForPO
+      });
+      
+      if (response.data.success) {
+        toast.success(`Purchase order created successfully! PO Number: ${response.data.purchase_order_number}`);
+        if (response.data.purchase_orders && response.data.purchase_orders.length === 1) {
+          const purchaseOrderId = response.data.purchase_orders[0].purchase_id;
+          handleCloseCreatePOModal();
+          setSelectedParts(new Set());
+          navigate(`/open-purchase-orders/${purchaseOrderId}`);
+        } else {
+          handleCloseCreatePOModal();
+          setSelectedParts(new Set());
+          fetchData();
+        }
+      } else {
+        toast.error(response.data.message || 'Failed to create purchase order');
+      }
+    } catch (error: any) {
+      console.error('Error creating purchase order:', error);
+      toast.error(error.response?.data?.error || 'Failed to create purchase order');
+    } finally {
+      setCreatingPO(false);
+    }
+  };
+
   const handleCreatePurchaseOrder = async (partNumber?: string) => {
     let partsToOrder = aggregatedParts;
     if (partNumber) {
@@ -192,13 +275,26 @@ const PartsToOrderPage: React.FC = () => {
         <Typography variant="h3" component="h1">
           Parts to Order
         </Typography>
-        <Button
-          variant="outlined"
-          startIcon={<RefreshIcon />}
-          onClick={handleRefresh}
-        >
-          Refresh
-        </Button>
+        <Box display="flex" gap={2}>
+          {selectedParts.size > 0 && (
+            <Button
+              variant="contained"
+              color="primary"
+              startIcon={<AddShoppingCartIcon />}
+              onClick={handleOpenCreatePOModal}
+              disabled={creatingPO}
+            >
+              Create PO ({selectedParts.size})
+            </Button>
+          )}
+          <Button
+            variant="outlined"
+            startIcon={<RefreshIcon />}
+            onClick={handleRefresh}
+          >
+            Refresh
+          </Button>
+        </Box>
       </Box>
 
       {aggregatedParts.length === 0 ? (
@@ -210,6 +306,13 @@ const PartsToOrderPage: React.FC = () => {
           <Table size="medium">
             <TableHead>
               <TableRow>
+                <TableCell padding="checkbox">
+                  <Checkbox
+                    indeterminate={selectedParts.size > 0 && selectedParts.size < aggregatedParts.length}
+                    checked={aggregatedParts.length > 0 && selectedParts.size === aggregatedParts.length}
+                    onChange={handleSelectAllParts}
+                  />
+                </TableCell>
                 <TableCell>
                   <Typography variant="h6" fontWeight="bold">
                     
@@ -256,6 +359,12 @@ const PartsToOrderPage: React.FC = () => {
               {aggregatedParts.map((part) => (
                 <React.Fragment key={part.part_number}>
                   <TableRow>
+                    <TableCell padding="checkbox">
+                      <Checkbox
+                        checked={selectedParts.has(part.part_number)}
+                        onChange={() => handleSelectPart(part.part_number)}
+                      />
+                    </TableCell>
                     <TableCell>
                       <IconButton
                         size="small"
@@ -308,7 +417,7 @@ const PartsToOrderPage: React.FC = () => {
                     </TableCell>
                   </TableRow>
                   <TableRow>
-                    <TableCell style={{ paddingBottom: 0, paddingTop: 0 }} colSpan={8}>
+                    <TableCell style={{ paddingBottom: 0, paddingTop: 0 }} colSpan={9}>
                       <Collapse in={expandedRows.has(part.part_number)} timeout="auto" unmountOnExit>
                         <Box sx={{ margin: 1 }}>
                           <Typography variant="h5" gutterBottom component="div">
@@ -386,6 +495,92 @@ const PartsToOrderPage: React.FC = () => {
           </Table>
         </TableContainer>
       )}
+
+      {/* Create PO Modal */}
+      <Dialog 
+        open={createPOModalOpen} 
+        onClose={handleCloseCreatePOModal}
+        maxWidth="md"
+        fullWidth
+      >
+        <DialogTitle>
+          Create Purchase Order
+        </DialogTitle>
+        <DialogContent>
+          <Typography variant="body1" sx={{ mb: 2 }}>
+            Selected parts for purchase order:
+          </Typography>
+          <TableContainer component={Paper} variant="outlined">
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell>Part Number</TableCell>
+                  <TableCell>Description</TableCell>
+                  <TableCell align="center">Quantity</TableCell>
+                  <TableCell align="center">Unit</TableCell>
+                  <TableCell align="center">Unit Price</TableCell>
+                  <TableCell align="center">Total</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {selectedPartsForPO.map((part) => (
+                  <TableRow key={part.part_number}>
+                    <TableCell>
+                      <Typography variant="body2" fontWeight="medium">
+                        {part.part_number}
+                      </Typography>
+                    </TableCell>
+                    <TableCell>
+                      <Typography variant="body2">
+                        {part.part_description}
+                      </Typography>
+                    </TableCell>
+                    <TableCell align="center">
+                      <Typography variant="body2">
+                        {Number(part.total_quantity_needed) || 0}
+                      </Typography>
+                    </TableCell>
+                    <TableCell align="center">
+                      <Typography variant="body2">
+                        {part.unit}
+                      </Typography>
+                    </TableCell>
+                    <TableCell align="center">
+                      <Typography variant="body2">
+                        ${(Number(part.unit_price) || 0).toFixed(2)}
+                      </Typography>
+                    </TableCell>
+                    <TableCell align="center">
+                      <Typography variant="body2" fontWeight="medium">
+                        ${(Number(part.total_line_amount) || 0).toFixed(2)}
+                      </Typography>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+          <Box sx={{ mt: 2, p: 2, backgroundColor: 'grey.50', borderRadius: 1 }}>
+            <Typography variant="h6" align="right">
+              Total Amount: ${selectedPartsForPO.reduce((sum, part) => sum + (Number(part.total_line_amount) || 0), 0).toFixed(2)}
+            </Typography>
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCloseCreatePOModal} disabled={creatingPO}>
+            Cancel
+          </Button>
+          <Button 
+            onClick={handleCreatePOFromModal} 
+            variant="contained" 
+            color="primary"
+            disabled={creatingPO}
+            startIcon={creatingPO ? <CircularProgress size={20} /> : <ShoppingCartIcon />}
+          >
+            {creatingPO ? 'Creating...' : 'Create Purchase Order'}
+          </Button>
+        </DialogActions>
+      </Dialog>
 
     </Box>
   );
