@@ -18,7 +18,7 @@ import api from '../api/axios';
 import { getPartVendors, getPartVendorsById, createPartVendor, createPartVendorById, updatePartVendor, updatePartVendorById, deletePartVendor, deletePartVendorById, InventoryVendorLink } from '../services/inventoryService';
 import CategorySelect from './CategorySelect';
 import { useAuth } from '../contexts/AuthContext';
-import { useDebounce } from '../hooks/useDebounce';
+// Removed debounced PN fetching for unsaved parts
 
 export interface PartFormValues {
   part_id?: number;
@@ -54,7 +54,7 @@ const UnifiedPartDialog: React.FC<UnifiedPartDialogProps> = ({
   open,
   onClose,
   onSave,
-  initialPart = {},
+  initialPart,
   isEditMode = false,
   title,
 }) => {
@@ -68,7 +68,7 @@ const UnifiedPartDialog: React.FC<UnifiedPartDialogProps> = ({
     reorder_point: '',
     part_type: 'stock',
     category: 'Uncategorized',
-    ...initialPart,
+    ...(initialPart || {}),
   });
 
   const [errors, setErrors] = useState<Partial<Record<keyof PartFormValues, string>>>({});
@@ -77,7 +77,7 @@ const UnifiedPartDialog: React.FC<UnifiedPartDialogProps> = ({
   
   
 
-  // Reset form when dialog opens/closes
+  // Reset form when dialog opens or when a meaningful identifier of the initial part changes
   useEffect(() => {
     if (open) {
       setFormData({
@@ -94,7 +94,7 @@ const UnifiedPartDialog: React.FC<UnifiedPartDialogProps> = ({
       setErrors({});
       setIsSubmitting(false);
     }
-  }, [open, initialPart]); // Depend on both 'open' and 'initialPart' to ensure part_id is set
+  }, [open, initialPart?.part_id, initialPart?.part_number]);
 
   // Focus part number field when dialog opens
   useEffect(() => {
@@ -289,7 +289,7 @@ const UnifiedPartDialog: React.FC<UnifiedPartDialogProps> = ({
   const [newVendorDesc, setNewVendorDesc] = useState<string>('');
   const [newPreferred, setNewPreferred] = useState<boolean>(false);
 
-  const canManageVendors = !!(formData.part_number && String(formData.part_number).trim().length > 0);
+  const canManageVendors = !!formData.part_id;
 
   useEffect(() => {
     if (!open) return;
@@ -302,34 +302,19 @@ const UnifiedPartDialog: React.FC<UnifiedPartDialogProps> = ({
     })();
   }, [open]);
 
-  const debouncedPN = useDebounce(String(formData.part_number || '').trim().toUpperCase(), 300);
   useEffect(() => {
     if (!open) return;
-    // Use part_id if available, otherwise fall back to debounced part_number
     const partId = formData.part_id;
-    const pn = debouncedPN;
-    if (!pn && !partId) { setVendorLinks([]); return; }
-    const isEditingExistingPart = isEditMode && initialPart?.part_id;
-    const originalPartId = initialPart?.part_id;
+    if (!partId) { setVendorLinks([]); return; }
     (async () => {
       try {
-        let links;
-        if (partId) {
-          links = await getPartVendorsById(partId);
-        } else {
-          links = await getPartVendors(pn);
-        }
+        const links = await getPartVendorsById(partId);
         setVendorLinks(links || []);
-      } catch (error) {
-        if (isEditingExistingPart && originalPartId && partId !== originalPartId) {
-          try {
-            const originalLinks = await getPartVendorsById(originalPartId);
-            setVendorLinks(originalLinks || []);
-          } catch {}
-        }
+      } catch {
+        setVendorLinks([]);
       }
     })();
-  }, [open, debouncedPN, formData.part_id, isEditMode, initialPart?.part_id]);
+  }, [open, formData.part_id]);
 
   const handleAddVendorLink = async () => {
     const pn = String(formData.part_number || '').trim().toUpperCase();

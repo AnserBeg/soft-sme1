@@ -88,6 +88,7 @@ const LandingPage: React.FC = () => {
       title: "Human Resources",
       items: [
         { title: 'Employees', description: 'Manage employee accounts and roles', icon: <GroupIcon sx={{ fontSize: 40, color: 'primary.main' }} />, path: '/employees' },
+        { title: 'Profile Documents', description: 'Manage and track employee document access and read status', icon: <AssignmentIcon sx={{ fontSize: 40, color: 'primary.main' }} />, path: '/profile-documents' },
         { title: 'Leave Management', description: 'Manage employee leave requests and approvals', icon: <CalendarIcon sx={{ fontSize: 40, color: 'primary.main' }} />, path: '/leave-management' },
         { title: 'Mobile User Access', description: 'Manage mobile user access to profiles', icon: <PeopleIcon sx={{ fontSize: 40, color: 'primary.main' }} />, path: '/mobile-user-access' }
       ]

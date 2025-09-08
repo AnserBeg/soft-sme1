@@ -24,6 +24,7 @@ import globalSettingsRouter from './routes/globalSettingsRoutes';
 import attendanceRouter from './routes/attendanceRoutes';
 import aiAssistantRouter from './routes/aiAssistantRoutes';
 import emailRouter from './routes/emailRoutes';
+import profileDocumentRouter from './routes/profileDocumentRoutes';
 
 import chatRouter from './routes/chatRoutes';
 
@@ -172,6 +173,9 @@ console.log('Registered leave management routes');
 
 app.use('/api/attendance', authMiddleware, attendanceRouter);
 console.log('Registered attendance routes');
+
+app.use('/api/profile-documents', profileDocumentRouter);
+console.log('Registered profile document routes');
 
 app.use('/api/settings', authMiddleware, globalSettingsRouter);
 console.log('Registered global settings routes');

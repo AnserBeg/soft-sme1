@@ -36,6 +36,7 @@ import {
   AccountBalance as AccountBalanceIcon,
   Person as PersonIcon,
   Email as EmailIcon,
+  Description as DescriptionIcon,
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import ChatBubble from './ChatBubble';
@@ -102,6 +103,7 @@ const Layout: React.FC = () => {
 
     { type: 'header', text: 'Human Resources' },
     { text: 'Employees', icon: <GroupIcon />, path: '/employees' },
+    { text: 'Profile Documents', icon: <DescriptionIcon />, path: '/profile-documents' },
     { text: 'Leave Management', icon: <CalendarIcon />, path: '/leave-management' },
     { text: 'Mobile User Access', icon: <PeopleIcon />, path: '/mobile-user-access' },
 

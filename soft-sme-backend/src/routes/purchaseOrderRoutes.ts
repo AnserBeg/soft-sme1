@@ -909,7 +909,8 @@ router.post('/', async (req: Request, res: Response) => {
 
   // Trim string fields
   const trimmedBillNumber = bill_number ? bill_number.trim() : '';
-  const trimmedLineItems = lineItems.map((item: any) => ({
+  const itemsArray = Array.isArray(lineItems) ? lineItems : [];
+  const trimmedLineItems = itemsArray.map((item: any) => ({
     ...item,
     part_number: item.part_number ? item.part_number.trim() : '',
     part_description: item.part_description ? item.part_description.trim() : '',
@@ -920,9 +921,7 @@ router.post('/', async (req: Request, res: Response) => {
   if (!vendor_id) {
     return res.status(400).json({ error: 'vendor_id is required' });
   }
-  if (!lineItems || !Array.isArray(lineItems) || lineItems.length === 0) {
-    return res.status(400).json({ error: 'lineItems array is required and must not be empty' });
-  }
+  // Allow creation without line items (header-only PO). lineItems may be empty.
 
   const client = await pool.connect();
 
@@ -1026,7 +1025,7 @@ router.post('/', async (req: Request, res: Response) => {
 
     const purchase_id = purchaseResult.rows[0].purchase_id;
 
-    for (const item of lineItems) {
+    for (const item of itemsArray) {
       // Use line_total if available, otherwise calculate it
       const line_total = item.line_total || (item.quantity || 0) * (item.unit_cost || 0);
       const gst_amount = line_total * (effectiveGstRate / 100);

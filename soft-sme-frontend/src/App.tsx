@@ -24,6 +24,7 @@ import QuoteEditorPage from './pages/QuoteEditorPage';
 // import SalesOrderPage from './pages/SalesOrderPage';
 
 import EmployeeManagementPage from './pages/EmployeeManagementPage';
+import ProfileDocumentsPage from './pages/ProfileDocumentsPage';
 import MarginSchedulePage from './pages/MarginSchedulePage';
 import OpenSalesOrdersPage from './pages/OpenSalesOrdersPage';
 // import SalesOrderDetailPage from './pages/SalesOrderDetailPage';
@@ -142,6 +143,7 @@ const AppRoutes: React.FC = () => {
         
         {/* Employee Management */}
         <Route path="employees" element={<EmployeeManagementPage />} />
+        <Route path="profile-documents" element={<ProfileDocumentsPage />} />
         
         {/* Time Tracking */}
         <Route path="time-tracking" element={<TimeTrackingPage />} />

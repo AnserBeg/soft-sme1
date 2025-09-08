@@ -282,16 +282,8 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
         setVendors(mappedVendors);
         setInventoryItems(inventoryRes.data);
         
-        // Initialize with empty line item for creation
-        setLineItems([{
-          part_number: '',
-          part_description: '',
-          quantity: '',
-          unit: UNIT_OPTIONS[0],
-          unit_cost: '',
-          line_amount: 0,
-          quantity_to_order: 0
-        }]);
+        // Allow creation with zero line items
+        setLineItems([]);
         
         // Fetch aggregate quantities for creation mode (with error handling)
         try {
@@ -811,7 +803,8 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
 
     // Use robust validation for line items
     const robustErrors = validatePurchaseOrder(robustLineItems, vendor, isClosing);
-    if (robustErrors.lineItems) {
+    // Only apply line item errors when there are items; allow zero items during creation
+    if (robustErrors.lineItems && lineItems.length > 0) {
       tempErrors.lineItems = robustErrors.lineItems;
     }
 
@@ -1413,6 +1406,46 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
   const [vendorEmail, setVendorEmail] = useState<string>('');
   const [exportLoading, setExportLoading] = useState(false);
 
+  // Allocations modal state (read-only display for closed POs)
+  const [isAllocationsModalOpen, setIsAllocationsModalOpen] = useState(false);
+  const [allocations, setAllocations] = useState<Array<{ allocation_id: number; purchase_id: number; sales_order_id: number; part_number: string; part_description?: string; allocate_qty: number; created_at?: string }>>([]);
+  const [allocationsLoading, setAllocationsLoading] = useState(false);
+  const [allocationsError, setAllocationsError] = useState<string | null>(null);
+  const [salesOrderNumbers, setSalesOrderNumbers] = useState<Record<number, string>>({});
+
+  const openAllocationsModal = async () => {
+    if (!purchaseOrder?.purchase_id) return;
+    setAllocationsLoading(true);
+    setAllocationsError(null);
+    try {
+      const res = await api.get(`/api/purchase-history/${purchaseOrder.purchase_id}/allocations`);
+      setAllocations(res.data || []);
+      // Fetch sales order numbers for unique IDs
+      const uniqueSoIds = Array.from(new Set((res.data || []).map((a: any) => a.sales_order_id).filter(Boolean)));
+      if (uniqueSoIds.length > 0) {
+        try {
+          const results = await Promise.all(uniqueSoIds.map((soId: number) => api.get(`/api/sales-orders/${soId}`)));
+          const map: Record<number, string> = {};
+          results.forEach((resp: any, idx: number) => {
+            const id = uniqueSoIds[idx];
+            const number = resp.data?.salesOrder?.sales_order_number || resp.data?.salesOrder?.sales_number || '';
+            if (number) map[id] = number;
+          });
+          setSalesOrderNumbers(map);
+        } catch (subErr) {
+          console.warn('Unable to fetch one or more sales order numbers:', subErr);
+        }
+      }
+      setIsAllocationsModalOpen(true);
+    } catch (e: any) {
+      console.error('Error fetching allocations:', e);
+      setAllocationsError('Failed to load allocations.');
+      setIsAllocationsModalOpen(true);
+    } finally {
+      setAllocationsLoading(false);
+    }
+  };
+
   // Add state for new vendor modal fields
   const [isAddVendorModalOpen, setIsAddVendorModalOpen] = useState(false);
   const [newVendorName, setNewVendorName] = useState('');
@@ -1799,7 +1832,81 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
           {(user?.access_role === 'Admin' || user?.access_role === 'Sales and Purchase') && (
             <Button variant="contained" color="primary" onClick={handleReopenPO}>Reopen PO</Button>
           )}
+          {/* View Allocations (read-only) */}
+          <Button variant="outlined" color="primary" onClick={openAllocationsModal}>View Allocations</Button>
         </Box>
+        {/* Allocations Modal (read-only) */}
+        <Dialog open={isAllocationsModalOpen} onClose={() => setIsAllocationsModalOpen(false)} maxWidth="md" fullWidth>
+          <DialogTitle>Allocations</DialogTitle>
+          <DialogContent dividers>
+            {allocationsLoading && (
+              <Box display="flex" justifyContent="center" alignItems="center" py={4}>
+                <CircularProgress />
+              </Box>
+            )}
+            {!allocationsLoading && allocationsError && (
+              <Alert severity="error">{allocationsError}</Alert>
+            )}
+            {!allocationsLoading && !allocationsError && (
+              (() => {
+                if (!allocations || allocations.length === 0) {
+                  return <Typography variant="body2">No allocations were saved for this purchase order.</Typography>;
+                }
+                // Group by part number
+                const grouped = allocations.reduce((acc: Record<string, typeof allocations>, a) => {
+                  const key = (a.part_number || '').toString();
+                  if (!acc[key]) acc[key] = [] as any;
+                  acc[key].push(a);
+                  return acc;
+                }, {} as Record<string, typeof allocations>);
+                const partNumbers = Object.keys(grouped).sort();
+                return (
+                  <Stack spacing={3}>
+                    {partNumbers.map((pn) => {
+                      const rows = grouped[pn];
+                      const description = rows.find(r => r.part_description)?.part_description || '';
+                      const totalAllocated = rows.reduce((s, r) => s + (Number(r.allocate_qty) || 0), 0);
+                      return (
+                        <Box key={pn}>
+                          <Typography variant="subtitle1" sx={{ fontWeight: 'bold' }}>
+                            {pn} {description ? `- ${description}` : ''}
+                          </Typography>
+                          <TableContainer component={Paper} sx={{ mt: 1 }}>
+                            <Table size="small">
+                              <TableHead>
+                                <TableRow>
+                                  <TableCell>Sales Order</TableCell>
+                                  <TableCell>Sales Order Number</TableCell>
+                                  <TableCell align="right">Allocated Qty</TableCell>
+                                </TableRow>
+                              </TableHead>
+                              <TableBody>
+                                {rows.map(r => (
+                                  <TableRow key={r.allocation_id}>
+                                    <TableCell>#{r.sales_order_id}</TableCell>
+                                    <TableCell>{salesOrderNumbers[r.sales_order_id] ? `SO-${salesOrderNumbers[r.sales_order_id]}` : '-'}</TableCell>
+                                    <TableCell align="right">{Number(r.allocate_qty || 0).toFixed(2)}</TableCell>
+                                  </TableRow>
+                                ))}
+                                <TableRow>
+                                  <TableCell sx={{ fontWeight: 600 }}>Total</TableCell>
+                                  <TableCell align="right" sx={{ fontWeight: 600 }}>{totalAllocated.toFixed(2)}</TableCell>
+                                </TableRow>
+                              </TableBody>
+                            </Table>
+                          </TableContainer>
+                        </Box>
+                      );
+                    })}
+                  </Stack>
+                );
+              })()
+            )}
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setIsAllocationsModalOpen(false)}>Close</Button>
+          </DialogActions>
+        </Dialog>
       </Box>
     );
   };
