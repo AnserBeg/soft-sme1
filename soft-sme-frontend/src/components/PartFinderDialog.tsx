@@ -18,7 +18,10 @@ import {
 import SearchIcon from '@mui/icons-material/Search';
 import StarBorderIcon from '@mui/icons-material/StarBorder';
 import StarIcon from '@mui/icons-material/Star';
+
+import { fetchFacetSuggestions, postClick, postShow } from '../api/tokens';
 import VoiceSearchButton from './VoiceSearchButton';
+import api from '../api/axios';
 
 export interface PartLite {
   part_number: string;
@@ -36,8 +39,7 @@ interface PartFinderDialogProps {
   inventoryItems: PartLite[];
 }
 
-const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
-const DIGITS = '0123456789'.split('');
+
 
 function storageKey(kind: 'recents' | 'favorites', salesOrderId: number, context: FinderContext) {
   return `so:${salesOrderId}:${kind}:${context}`;
@@ -76,15 +78,16 @@ export default function PartFinderDialog(props: PartFinderDialogProps) {
   const { open, onClose, onSelect, salesOrderId, context, inventoryItems } = props;
 
   // UI state
-  const [prefix, setPrefix] = useState<string>('');
   const [query, setQuery] = useState<string>('');
   const [selectedTokens, setSelectedTokens] = useState<string[]>([]);
   const [favorites, setFavorites] = useState<string[]>([]);
   const [recents, setRecents] = useState<string[]>([]);
   const [soUsage, setSoUsage] = useState<UsageMap>({});
   const [globalUsage, setGlobalUsage] = useState<UsageMap>({});
-  const [voiceSearchTerms, setVoiceSearchTerms] = useState<string[]>([]);
-  const [voiceSearchStrategy, setVoiceSearchStrategy] = useState<{searchInPartNumbers: boolean, searchInDescriptions: boolean} | null>(null);
+  
+  // New faceted search state
+  const [facetData, setFacetData] = useState<any>(null);
+  const [loadingFacets, setLoadingFacets] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -92,101 +95,239 @@ export default function PartFinderDialog(props: PartFinderDialogProps) {
     setRecents(readList('recents', salesOrderId, context));
     setSoUsage(readUsageSO(salesOrderId, context));
     setGlobalUsage(readUsageGlobal());
+    setQuery('');
+    setSelectedTokens([]);
   }, [open, salesOrderId, context]);
 
-  // Items that match current selections (prefix + selected tokens + voice search terms)
-  const candidateItems = useMemo(() => {
-    const p = prefix.toUpperCase();
-    const tokens = new Set(selectedTokens.map(t => t.toUpperCase()));
-    const voiceTokens = new Set(voiceSearchTerms.map(t => t.toUpperCase()));
-    const q = query.trim().toUpperCase();
-    return inventoryItems.filter(it => {
-      const num = (it.part_number || '').toUpperCase();
-      const desc = (it.part_description || '').toUpperCase();
-      if (p && !num.startsWith(p)) return false;
-      if (q && !(num.includes(q) || desc.includes(q))) return false;
-      for (const t of tokens) {
-        if (!(num.includes(t) || desc.includes(t))) return false;
-      }
-      // Apply voice search terms with strategy
-      if (voiceSearchTerms.length > 0 && voiceSearchStrategy) {
-        let voiceMatch = false;
-        for (const t of voiceTokens) {
-          if (voiceSearchStrategy.searchInPartNumbers && num.includes(t)) {
-            voiceMatch = true;
-            break;
-          }
-          if (voiceSearchStrategy.searchInDescriptions && desc.includes(t)) {
-            voiceMatch = true;
-            break;
+  // Fetch facet data when dialog opens or tokens change
+  useEffect(() => {
+    if (!open) return;
+    
+    const fetchFacets = async () => {
+      setLoadingFacets(true);
+      try {
+        // Only fetch facet suggestions when no tokens are selected
+        if (selectedTokens.length === 0) {
+          const data = await fetchFacetSuggestions([]);
+          setFacetData(data);
+          
+          // Record token shows for analytics
+          if (data.suggestions) {
+            const allTokens = Object.values(data.suggestions).flat().map((t: any) => ({
+              token_type: 'GENERIC',
+              token_value: t.value
+            }));
+            await postShow(allTokens);
           }
         }
-        if (!voiceMatch) return false;
+      } catch (error) {
+        console.error('Error fetching facets:', error);
+      } finally {
+        setLoadingFacets(false);
       }
-      return true;
-    });
-  }, [inventoryItems, prefix, selectedTokens, query, voiceSearchTerms, voiceSearchStrategy]);
+    };
 
-  // Dynamic description/dimension tokens derived from candidates
-  const dynamicTokens = useMemo(() => {
-    const counts: Record<string, number> = {};
-    const selectedSet = new Set(selectedTokens.map(t => t.toUpperCase()));
-    const favoriteSet = new Set(favorites);
-    const recentSet = new Set(recents);
-    const synonymMap: Record<string, string> = { SS:'STAINLESS', STAIN:'STAINLESS', STAINLESS:'STAINLESS', AL:'ALUMINUM', ALUM:'ALUMINUM', GALV:'GALVANIZED', GALVANIZED:'GALVANIZED', SQ:'SQUARE', RECT:'RECTANGULAR', TUBE:'TUBING' };
-    const shapeSet = new Set(['TUBING','PIPE','ANGLE','BAR','FLAT','BEAM','CHANNEL','SHEET','PLATE','ROUND','SQUARE','RECTANGULAR']);
+    fetchFacets();
+  }, [open, selectedTokens]);
 
-    const normalizeToken = (w: string) => synonymMap[w] || w;
-    const add = (t: string, w: number) => { const tok = t.trim(); if (!tok || selectedSet.has(tok)) return; counts[tok] = (counts[tok] || 0) + w; };
-    const makeDecimal = (f: string) => { const [a,b] = f.split('/').map(Number); if(!a||!b) return null; return (a/b).toFixed(4).replace(/0+$/,'').replace(/\.$/,''); };
-    const parseDims = (pn: string) => { const out: string[] = []; if(!pn) return out; let s = pn.toUpperCase().replace(/[\s-]+/g,'').replace(/×/g,'X').replace(/[()]/g,''); const fr = s.match(/\d+\/\d+/g)||[]; if(s.includes('X')){ const seg=s.split('X'); if(seg.length>=2&&seg.length<=4){ out.push(seg.slice(0,2).join('X')); out.push(seg.join('X')); } } fr.forEach(f=>{ out.push(f); const dec=makeDecimal(f); if(dec) out.push(dec); }); (s.match(/(\d+)GA/g)||[]).forEach(g=>out.push(g)); (s.match(/SCH\s*\d+/g)||[]).forEach(m=>out.push(m.replace(/\s+/g,''))); (s.match(/OD\d+(?:\.\d+)?/g)||[]).forEach(v=>out.push(v)); (s.match(/ID\d+(?:\.\d+)?/g)||[]).forEach(v=>out.push(v)); (s.match(/\d+(?:\.\d+)?/g)||[]).slice(0,3).forEach(d=>out.push(d)); return Array.from(new Set(out)); };
-
-    for (const it of candidateItems) {
-      const wordsRaw = String(it.part_description || '').toUpperCase().split(/[^A-Z0-9]+/).filter(w=>w.length>=2 && !selectedSet.has(w));
-      const words = wordsRaw.map(normalizeToken);
-      const usageSo = soUsage[it.part_number]?.count || 0;
-      const usageGlobal = globalUsage[it.part_number]?.count || 0;
-      const lastSo = soUsage[it.part_number]?.last || 0;
-      const now = Date.now();
-      const days = lastSo ? (now-lastSo)/(1000*60*60*24) : 365;
-      const recencyBoost = days<=7?1:days<=30?0.5:0;
-      let base = 1 + usageSo*0.5 + usageGlobal*0.25 + recencyBoost;
-      if (favoriteSet.has(it.part_number)) base += 3;
-      if (recentSet.has(it.part_number)) base += 1;
-      const q = query.trim().toUpperCase();
-      const num = (it.part_number||'').toUpperCase();
-      const desc = (it.part_description||'').toUpperCase();
-      const itemBoost = q && (num.startsWith(q) || desc.includes(q)) ? 0.5 : 0;
-
-      // Material/shape tokens
-      const ms: string[] = [];
-      words.forEach(w=>{ if(shapeSet.has(w)) ms.push(w); add(w, base*(1+itemBoost+(q&&w.includes(q)?0.5:0))); });
-      // Bigrams (shape+material combos)
-      const uniq = Array.from(new Set(words));
-      uniq.forEach(a=>uniq.forEach(b=>{ if(a!==b && (shapeSet.has(a)||shapeSet.has(b))) add(`${a} ${b}`, base*1.2); }));
-      // Dimension tokens from part number
-      const dims = parseDims(num);
-      dims.forEach(d=>add(d, base*1.3));
-      // Cross tokens
-      if (dims[0]) ms.slice(0,2).forEach(m=>add(`${m} ${dims[0]}`, base*1.5));
+  // Search for parts when tokens are selected
+  useEffect(() => {
+    console.log('🔍 Search useEffect triggered:', { open, selectedTokensLength: selectedTokens.length });
+    
+    if (!open || selectedTokens.length === 0) {
+      console.log('🔍 Skipping search - dialog not open or no tokens selected');
+      return;
     }
-    return Object.entries(counts).sort((a,b)=>b[1]-a[1]).slice(0,24).map(([w])=>w);
-  }, [candidateItems, selectedTokens, favorites, recents, soUsage, globalUsage, query]);
+    
+    const searchParts = async () => {
+      console.log('🔍 Starting search for parts with tokens:', selectedTokens);
+      setLoadingFacets(true);
+      
+      try {
+        const response = await api.post('/api/voice-search/search-by-tokens', { tokens: selectedTokens });
+        
+        console.log('🔍 Search response received:', response);
+        
+        if (response.status !== 200) {
+          throw new Error(`Search failed: ${response.status}`);
+        }
+        
+        const data = response.data;
+        console.log('🔍 Search results data:', data);
+        console.log('🔍 Number of parts found:', data.parts?.length || 0);
+        
+        // Update facet data with search results
+        const newFacetData = {
+          parts: data.parts || [],
+          suggestions: generateSuggestionsFromParts(data.parts || [])
+        };
+        
+        console.log('🔍 Setting new facet data:', newFacetData);
+        setFacetData(newFacetData);
+        
+      } catch (error) {
+        console.error('❌ Error searching parts:', error);
+        // Fallback to empty results
+        setFacetData({
+          parts: [],
+          suggestions: generateSuggestionsFromParts([])
+        });
+      } finally {
+        setLoadingFacets(false);
+      }
+    };
+
+    searchParts();
+  }, [open, selectedTokens]);
+
+  // Items from faceted search backend
+  const candidateItems = useMemo(() => {
+    console.log('🔍 Building candidate items from facet data:', facetData);
+    
+    // Use facet data from backend if available
+    if (facetData?.parts && facetData.parts.length > 0) {
+      console.log('✅ Using facet data parts:', facetData.parts.length);
+      return facetData.parts.map((p: any) => ({
+        part_number: p.part_number,
+        part_description: p.part_description
+      }));
+    }
+    
+    // Fallback to empty array if no facet data
+    console.log('⚠️ No facet data parts, returning empty array');
+    return [];
+  }, [facetData]);
+
+  // Get tokens from facet data instead of old dynamic generation
+  const facetTokens = useMemo(() => {
+    console.log('🔍 Building facet tokens from facet data:', facetData);
+    
+    if (!facetData?.suggestions) {
+      console.log('⚠️ No facet suggestions available');
+      return [];
+    }
+    
+    const allTokens: Array<{type: string, value: string, count: number}> = [];
+    Object.entries(facetData.suggestions).forEach(([type, tokens]: [string, any]) => {
+      tokens.forEach((token: any) => {
+        allTokens.push({
+          type,
+          value: token.value,
+          count: token.count
+        });
+      });
+    });
+    
+    // Sort by count, remove duplicates, and return top tokens
+    const uniqueTokens = allTokens
+      .sort((a, b) => b.count - a.count)
+      .filter((token, index, self) => 
+        index === self.findIndex(t => t.value === token.value)
+      )
+      .slice(0, 24)
+      .map(t => t.value);
+    
+    console.log('✅ Generated facet tokens:', uniqueTokens.length);
+    return uniqueTokens;
+  }, [facetData]);
 
   // Apply filters
   const filtered = candidateItems;
 
-  const topResults = useMemo(() => filtered.slice(0, 200), [filtered]);
+  const topResults = useMemo(() => {
+    console.log('🔍 Calculating top results from filtered items:', filtered.length);
+    const results = filtered.slice(0, 200);
+    console.log('🔍 Top results count:', results.length);
+    return results;
+  }, [filtered]);
 
-  const toggleToken = (t: string) => {
+  const toggleToken = async (t: string) => {
     setSelectedTokens(prev => prev.includes(t) ? prev.filter(x => x !== t) : [...prev, t]);
+    
+    // Record token click for analytics
+    try {
+      await postClick(t);
+    } catch (error) {
+      console.error('Error recording token click:', error);
+    }
   };
 
   const clearAll = () => { 
-    setPrefix(''); 
     setSelectedTokens([]); 
-    setVoiceSearchTerms([]);
-    setVoiceSearchStrategy(null);
+  };
+
+  // Generate token suggestions from parts
+  const generateSuggestionsFromParts = (parts: any[]) => {
+    if (!parts || parts.length === 0) return {};
+    
+    const suggestions: Record<string, Array<{value: string, count: number}>> = {
+      'MATERIALS': [],
+      'TYPES': [],
+      'DIMENSIONS': [],
+      'SPECIFICATIONS': []
+    };
+    
+    const materialTokens = new Set<string>();
+    const typeTokens = new Set<string>();
+    const dimensionTokens = new Set<string>();
+    const specTokens = new Set<string>();
+    
+    parts.forEach(part => {
+      // Extract tokens from part numbers
+      if (part.part_number) {
+        const tokens = part.part_number.split(/[^A-Z0-9]+/).filter(t => t.length >= 2);
+        tokens.forEach(token => {
+          if (/^\d+$/.test(token)) {
+            dimensionTokens.add(token);
+          } else if (token.includes('X') || token.includes('GA') || token.includes('SCH')) {
+            dimensionTokens.add(token);
+          } else {
+            specTokens.add(token);
+          }
+        });
+      }
+      
+      // Extract tokens from descriptions
+      if (part.part_description) {
+        const words = part.part_description.toUpperCase().split(/[^A-Z0-9]+/).filter(w => w.length >= 2);
+        words.forEach(word => {
+          if (['STEEL', 'ALUMINUM', 'AL', 'STAINLESS', 'SS', 'GALVANIZED', 'GALV'].includes(word)) {
+            materialTokens.add(word);
+          } else if (['TUBE', 'TUBING', 'PIPE', 'ANGLE', 'BAR', 'PLATE', 'SHEET', 'ROUND', 'SQUARE'].includes(word)) {
+            typeTokens.add(word);
+          } else if (word.length >= 2) {
+            specTokens.add(word);
+          }
+        });
+      }
+    });
+    
+    // Convert sets to arrays with counts
+    suggestions.MATERIALS = Array.from(materialTokens).map(value => ({ value, count: 1 }));
+    suggestions.TYPES = Array.from(typeTokens).map(value => ({ value, count: 1 }));
+    suggestions.DIMENSIONS = Array.from(dimensionTokens).map(value => ({ value, count: 1 }));
+    suggestions.SPECIFICATIONS = Array.from(specTokens).map(value => ({ value, count: 1 }));
+    
+    return suggestions;
+  };
+
+  // Handle voice search terms
+  const handleVoiceSearchTerms = (terms: string[], strategy: {searchInPartNumbers: boolean, searchInDescriptions: boolean}) => {
+    console.log('Voice search terms received:', terms, strategy);
+    
+    // Add the extracted terms to selected tokens
+    setSelectedTokens(prev => {
+      const newTokens = [...prev];
+      terms.forEach(term => {
+        if (!newTokens.includes(term)) {
+          newTokens.push(term);
+        }
+      });
+      return newTokens;
+    });
+    
+    // Clear the text query since we're using voice search
+    setQuery('');
   };
 
   const isFav = (partNumber: string) => favorites.includes(partNumber);
@@ -196,10 +337,7 @@ export default function PartFinderDialog(props: PartFinderDialogProps) {
       writeList('favorites', salesOrderId, context, next);
       // fire-and-forget server update
       try {
-        fetch(`/api/part-finder/${salesOrderId}/favorite`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ part_number: partNumber, context, value: !prev.includes(partNumber) })
-        }).catch(() => {});
+        api.post(`/part-finder/${salesOrderId}/favorite`, { part_number: partNumber, context, value: !prev.includes(partNumber) });
       } catch {}
       return next;
     });
@@ -232,10 +370,7 @@ export default function PartFinderDialog(props: PartFinderDialogProps) {
     onSelect(part);
     // notify server (usage)
     try {
-      fetch(`/api/part-finder/${salesOrderId}/use`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ part_number: part.part_number, context })
-      }).catch(() => {});
+      api.post(`/part-finder/${salesOrderId}/use`, { part_number: part.part_number, context });
     } catch {}
   };
 
@@ -254,13 +389,7 @@ export default function PartFinderDialog(props: PartFinderDialogProps) {
                 <InputAdornment position="start"><SearchIcon /></InputAdornment>
               ) }}
             />
-            <VoiceSearchButton
-              onSearchTerms={(terms, strategy) => {
-                setVoiceSearchTerms(terms);
-                setVoiceSearchStrategy(strategy);
-              }}
-              disabled={false}
-            />
+            <VoiceSearchButton onSearchTerms={handleVoiceSearchTerms} />
           </Box>
         </Box>
         {/** Larger, touch-friendly chip style */}
@@ -274,67 +403,26 @@ export default function PartFinderDialog(props: PartFinderDialogProps) {
         
         {/* Active filters */}
         <Box display="flex" alignItems="center" gap={1} flexWrap="wrap" mb={2}>
-          {!!prefix && (
-            <Chip label={`Prefix: ${prefix}`} color="primary" onDelete={() => setPrefix('')} 
-              sx={{ height: 40, borderRadius: 2, '& .MuiChip-label': { px: 2, py: 1, fontSize: 16, fontWeight: 600 } }}
-            />
-          )}
           {selectedTokens.map(t => (
             <Chip key={t} label={t} color="secondary" onDelete={() => toggleToken(t)}
               sx={{ height: 38, borderRadius: 2, '& .MuiChip-label': { px: 2, py: 1, fontSize: 15, fontWeight: 600 } }}
             />
           ))}
-                     {voiceSearchTerms.length > 0 && (
-             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-               <Typography variant="caption" color="text.secondary">Voice:</Typography>
-               {voiceSearchTerms.map(t => (
-                 <Chip key={t} label={t} color="success" variant="outlined" size="small"
-                   sx={{ height: 32, '& .MuiChip-label': { px: 1.5, py: 0.5, fontSize: 12 } }}
-                 />
-               ))}
-               {voiceSearchStrategy && (
-                 <Typography variant="caption" color="text.secondary" sx={{ ml: 1 }}>
-                   ({voiceSearchStrategy.searchInPartNumbers ? 'Part#' : ''}
-                   {voiceSearchStrategy.searchInPartNumbers && voiceSearchStrategy.searchInDescriptions ? ' + ' : ''}
-                   {voiceSearchStrategy.searchInDescriptions ? 'Desc' : ''})
-                 </Typography>
-               )}
-             </Box>
-           )}
-          {(!!prefix || selectedTokens.length > 0 || voiceSearchTerms.length > 0) && (
+          {selectedTokens.length > 0 && (
             <Button onClick={clearAll}>Clear All</Button>
           )}
         </Box>
 
-        {/* Quick selectors */}
-        <Box display="flex" gap={2} mb={2} flexWrap="wrap">
-          <Box>
-            <Typography variant="subtitle2" gutterBottom>Part # Starts With</Typography>
+        {/* Faceted search tokens */}
+        <Box mb={2}>
+          <Typography variant="subtitle2" gutterBottom>
+            Available Tokens {loadingFacets ? '(Loading...)' : ''}
+          </Typography>
+          {loadingFacets ? (
+            <Typography variant="body2" color="text.secondary">Loading tokens...</Typography>
+          ) : facetTokens.length > 0 ? (
             <Box display="flex" flexWrap="wrap" gap={1.5}>
-              {LETTERS.map(ch => (
-                <Chip
-                  key={ch}
-                  label={ch}
-                  variant={prefix.startsWith(ch) ? 'filled' : 'outlined'}
-                  onClick={() => setPrefix(ch)}
-                  sx={{ height: 44, borderRadius: 2, '& .MuiChip-label': { px: 2.25, py: 1.25, fontSize: 18, fontWeight: 700 } }}
-                />
-              ))}
-              {DIGITS.map(ch => (
-                <Chip
-                  key={ch}
-                  label={ch}
-                  variant={prefix.startsWith(ch) ? 'filled' : 'outlined'}
-                  onClick={() => setPrefix(ch)}
-                  sx={{ height: 44, borderRadius: 2, '& .MuiChip-label': { px: 2.25, py: 1.25, fontSize: 18, fontWeight: 700 } }}
-                />
-              ))}
-            </Box>
-          </Box>
-          <Box>
-            <Typography variant="subtitle2" gutterBottom>Description Tokens</Typography>
-            <Box display="flex" flexWrap="wrap" gap={1.5}>
-              {dynamicTokens.map(tok => (
+              {facetTokens.map(tok => (
                 <Chip
                   key={tok}
                   label={tok}
@@ -345,7 +433,11 @@ export default function PartFinderDialog(props: PartFinderDialogProps) {
                 />
               ))}
             </Box>
-          </Box>
+          ) : (
+            <Typography variant="body2" color="text.secondary">
+              No tokens available. {facetData ? `Facet data: ${JSON.stringify(facetData).substring(0, 100)}...` : 'No facet data loaded.'}
+            </Typography>
+          )}
         </Box>
 
         <Divider sx={{ my: 2 }} />

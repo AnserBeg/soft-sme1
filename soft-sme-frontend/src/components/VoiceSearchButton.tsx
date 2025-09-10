@@ -165,10 +165,30 @@ const VoiceSearchButton: React.FC<VoiceSearchButtonProps> = ({
       setIsProcessing(true);
       setTranscript('');
       
+      console.log('🎤 Processing voice input:', userInput);
+      
       // Interpret the query using AI
+      console.log('🤖 Calling AI interpretation service...');
       const interpretedQuery = await voiceSearchService.interpretTextQuery(userInput);
       
+      console.log('✅ AI interpretation result:', interpretedQuery);
+      
+      if (!interpretedQuery.extractedTerms || interpretedQuery.extractedTerms.length === 0) {
+        console.warn('⚠️ No extracted terms from AI, using fallback');
+        // Fallback: use the original input but clean it up
+        const cleanedTerms = userInput
+          .replace(/^(i want|give me|need|looking for|search for)/i, '')
+          .trim()
+          .split(/\s+/)
+          .filter(word => word.length > 1);
+        
+        interpretedQuery.extractedTerms = cleanedTerms;
+        interpretedQuery.searchInPartNumbers = true;
+        interpretedQuery.searchInDescriptions = true;
+      }
+      
       // Pass the search terms and strategy to parent component
+      console.log('📤 Sending search terms to parent:', interpretedQuery.extractedTerms);
       onSearchTerms(interpretedQuery.extractedTerms, {
         searchInPartNumbers: interpretedQuery.searchInPartNumbers,
         searchInDescriptions: interpretedQuery.searchInDescriptions
@@ -177,8 +197,21 @@ const VoiceSearchButton: React.FC<VoiceSearchButtonProps> = ({
       toast.success(`Voice search: "${userInput}" → ${interpretedQuery.extractedTerms.join(', ')}`);
       
     } catch (error) {
-      console.error('Error processing voice input:', error);
+      console.error('❌ Error processing voice input:', error);
       toast.error('Failed to process voice input. Please try again.');
+      
+      // Fallback: use cleaned original input
+      const cleanedTerms = userInput
+        .replace(/^(i want|give me|need|looking for|search for)/i, '')
+        .trim()
+        .split(/\s+/)
+        .filter(word => word.length > 1);
+      
+      console.log('🔄 Using fallback terms:', cleanedTerms);
+      onSearchTerms(cleanedTerms, {
+        searchInPartNumbers: true,
+        searchInDescriptions: true
+      });
     } finally {
       setIsProcessing(false);
     }

@@ -187,10 +187,6 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
 
   const [success, setSuccess] = useState<string | null>(null);
 
-  const [initialSignature, setInitialSignature] = useState<string>('');
-  const [isDataFullyLoaded, setIsDataFullyLoaded] = useState(false);
-  const [isSaving, setIsSaving] = useState(false);
-
   const fetchAggregateQuantities = async () => {
     try {
       console.log('Fetching aggregate quantities...');
@@ -294,7 +290,6 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
         }
         
         setIsInitialLoad(false);
-        setIsDataFullyLoaded(true); // Mark data as fully loaded for creation mode
         console.log('✅ Creation mode initialization complete');
         return;
       } catch (error: any) {
@@ -397,7 +392,6 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
       
       // Mark initial load as complete
       setIsInitialLoad(false);
-      setIsDataFullyLoaded(true); // Mark data as fully loaded for edit mode
     } catch (error) {
       console.error('Error fetching data:', error);
       if (error instanceof AxiosError && error.response?.data?.message) {
@@ -474,12 +468,13 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
         })
     );
   }, []);
-  
+
+  const [initialSignature, setInitialSignature] = useState<string>('');
   useEffect(() => {
     // Initialize baseline only once after data loads
-    if (!isCreationMode && !isInitialLoad && purchaseOrder && initialSignature === '' && isDataFullyLoaded) {
+    if (!isCreationMode && !isInitialLoad && purchaseOrder && initialSignature === '') {
       console.log('[PO Detail] Setting initial signature for dirty tracking');
-      const signature = JSON.stringify({
+      setInitialSignature(JSON.stringify({
         vendor: vendor ? { id: vendor.id, label: vendor.label } : null,
         billNumber: billNumber.trim(),
         date: date?.toISOString(),
@@ -508,10 +503,9 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
         original_quantities: purchaseOrder.original_quantities || null,
         adjusted_quantities: purchaseOrder.adjusted_quantities || null,
         vendor_pricing_notes: purchaseOrder.vendor_pricing_notes || null
-      });
-      setInitialSignature(signature);
+      }));
     }
-  }, [isCreationMode, isInitialLoad, purchaseOrder, isDataFullyLoaded, initialSignature]);
+  }, [isCreationMode, isInitialLoad, purchaseOrder, vendor, billNumber, date, lineItems]);
 
   const currentSignature = useMemo(() => JSON.stringify({ 
     vendor: vendor ? { id: vendor.id, label: vendor.label } : null,
@@ -544,7 +538,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
     vendor_pricing_notes: purchaseOrder?.vendor_pricing_notes || null
   }), [vendor, billNumber, date, lineItems, purchaseOrder]);
 
-  const isDirty = Boolean(initialSignature) && initialSignature !== currentSignature && !isSaving;
+  const isDirty = Boolean(initialSignature) && initialSignature !== currentSignature;
   
   // Debug logging for UnsavedChangesGuard
   useEffect(() => {
@@ -832,7 +826,6 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
       }
     }
 
-    setIsSaving(true);
     try {
       if (isCreationMode) {
         // Create new purchase order
@@ -895,7 +888,6 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
         
         // Navigate to the newly created purchase order
         const newPurchaseId = response.data.purchase_id;
-        // Allow immediate navigation after save
         (window as any).__unsavedGuardAllowNext = true;
         navigate(`/open-purchase-orders/${newPurchaseId}`);
       } else {
@@ -951,10 +943,6 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
         console.log('Sending to backend (handleSave):', updatedPurchaseOrder);
         const response = await api.put(`/api/purchase-orders/${id}`, updatedPurchaseOrder);
         setSuccess('Purchase Order updated successfully!');
-        // Allow immediate navigation after save with a small delay to ensure state updates
-        setTimeout(() => {
-          (window as any).__unsavedGuardAllowNext = true;
-        }, 100);
         setInitialSignature(JSON.stringify({ 
           vendor, 
           billNumber, 
@@ -995,7 +983,6 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
         toast.error('Error saving Purchase Order. Please try again.');
       }
     } finally {
-      setIsSaving(false);
       (window as any).__poCreateInFlight = false;
     }
   };

@@ -136,13 +136,25 @@ class VoiceSearchService {
 
   async interpretTextQuery(textQuery: string): Promise<PartSearchQuery> {
     try {
-          const response = await api.post('/api/voice-search/interpret-query', {
-      query: textQuery
-    });
+      console.log('📡 Making API call to /api/voice-search/interpret-query with query:', textQuery);
+      
+      const response = await api.post('/api/voice-search/interpret-query', {
+        query: textQuery
+      });
+
+      console.log('📥 Raw API response:', response);
+      console.log('📥 Response data:', response.data);
+      console.log('📥 Response status:', response.status);
 
       return response.data;
     } catch (error) {
-      console.error('Error interpreting text query:', error);
+      console.error('❌ Error interpreting text query:', error);
+      console.error('❌ Error details:', {
+        message: error.message,
+        response: error.response?.data,
+        status: error.response?.status
+      });
+      
       // Fallback: return the original query as search terms
       return {
         query: textQuery,

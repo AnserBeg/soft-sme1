@@ -89,7 +89,7 @@ router.post('/vendor-call/webhook', async (req: Request, res: Response) => {
         if (sess?.transcript) {
           const { GoogleGenerativeAI } = require('@google/generative-ai');
           const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY);
-          const model = genAI.getGenerativeModel({ model: process.env.GEMINI_SUMMARY_MODEL || 'gemini-1.5-flash' });
+          const model = genAI.getGenerativeModel({ model: process.env.AI_MODEL || 'gemini-2.5-flash' });
           const prompt = `You are an assistant for a truck and trailer parts shop. Summarize the call transcript. Extract: vendor email (if any), pickup time/window (if any), list of parts with quantities and any notes. Return strict JSON with keys: {"email":string|null,"pickup_time":string|null,"parts":[{"part_number":string,"quantity":number,"notes":string|null}],"summary":string}`;
           const resp = await model.generateContent([{ text: prompt }, { text: sess.transcript }]);
           const text = resp.response.text();

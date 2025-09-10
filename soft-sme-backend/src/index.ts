@@ -43,6 +43,7 @@ import voiceSearchRoutes from './routes/voiceSearchRoutes';
 import aiAssistantService from './services/aiAssistantService';
 import partFinderRoutes from './routes/partFinderRoutes';
 import inventoryVendorRoutes from './routes/inventoryVendorRoutes';
+import { tokensRouter } from './routes/tokensRoutes';
 
 // Add error handling around chatRouter import
 let chatRouter: any;
@@ -195,8 +196,11 @@ if (process.env.ENABLE_VENDOR_CALLING !== 'false') {
     app.use('/api/voice', voiceStreamRoutes);
 
 // Voice search routes (always available)
-app.use('/api/voice-search', authMiddleware, voiceSearchRoutes);
+app.use('/api/voice-search', voiceSearchRoutes);
 console.log('Registered voice search routes');
+
+app.use('/api', tokensRouter);
+console.log('Registered tokens routes');
     
     // Add WebSocket endpoint directly to the main app
     (app as any).ws('/api/voice/stream', (ws: any, req: any) => {

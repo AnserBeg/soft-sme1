@@ -155,7 +155,6 @@ const QuoteEditorPage: React.FC = () => {
   // Unsaved changes guard: normalized signature structure
   const [initialSignature, setInitialSignature] = useState<string>('');
   const [isDataLoaded, setIsDataLoaded] = useState(false);
-  const [isSaving, setIsSaving] = useState(false);
   
   const getNormalizedSignature = useCallback(() => ({
     customer: selectedCustomer?.id || quote?.customer_id || null,
@@ -177,21 +176,9 @@ const QuoteEditorPage: React.FC = () => {
       console.log('[QuoteEditor] Initial signature set:', signature);
     }
   }, [isDataLoaded, initialSignature, getNormalizedSignature]);
-
+  
   const currentSignature = useMemo(() => JSON.stringify(getNormalizedSignature()), [getNormalizedSignature]);
-  const isDirty = Boolean(initialSignature) && initialSignature !== currentSignature && !isSaving;
-
-  // Debug logging for signature comparison
-  useEffect(() => {
-    if (initialSignature) {
-      console.log('[QuoteEditor] Signature comparison:', {
-        isDirty,
-        initialSignature: initialSignature.slice(0, 100) + '...',
-        currentSignature: currentSignature.slice(0, 100) + '...',
-        signaturesMatch: initialSignature === currentSignature
-      });
-    }
-  }, [isDirty, initialSignature, currentSignature]);
+  const isDirty = Boolean(initialSignature) && initialSignature !== currentSignature;
 
   // load lists
   useEffect(() => {
@@ -305,7 +292,6 @@ const QuoteEditorPage: React.FC = () => {
     }
 
     setLoading(true);
-    setIsSaving(true);
     try {
       const payload = {
         customer_id: selectedCustomer.id,
@@ -322,14 +308,6 @@ const QuoteEditorPage: React.FC = () => {
       if (isEditMode && quote) {
         await api.put(`/api/quotes/${quote.quote_id}`, payload);
         setSuccess('Quote updated successfully');
-        // Reset initial signature after successful save - use a more stable approach
-        const newSignature = JSON.stringify(getNormalizedSignature());
-        setInitialSignature(newSignature);
-        console.log('[QuoteEditor] Signature reset after save:', newSignature.slice(0, 100) + '...');
-        // Allow immediate navigation after save with a small delay to ensure state updates
-        setTimeout(() => {
-          (window as any).__unsavedGuardAllowNext = true;
-        }, 100);
       } else {
         // Prevent duplicate submission
         if ((window as any).__quoteCreateInFlight) {
@@ -379,7 +357,6 @@ const QuoteEditorPage: React.FC = () => {
       setError(msg);
     } finally {
       setLoading(false);
-      setIsSaving(false);
       (window as any).__quoteCreateInFlight = false;
     }
   };

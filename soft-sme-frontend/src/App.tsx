@@ -46,6 +46,7 @@ import PartsToOrderPage from './pages/PartsToOrderPage';
 import MobileUserAccessPage from './pages/MobileUserAccessPage';
 import UserEmailSettingsPage from './pages/UserEmailSettingsPage';
 import EmailTemplatesPage from './pages/EmailTemplatesPage';
+import FacetedSearchPage from './pages/FacetedSearchPage';
 import { useEffect, useState } from 'react';
 import { syncPending, getPendingCount } from './services/offlineSync';
 import { ToastContainer } from 'react-toastify';
@@ -190,6 +191,9 @@ const AppRoutes: React.FC = () => {
         
         {/* Email Templates */}
         <Route path="email-templates" element={<EmailTemplatesPage />} />
+        
+        {/* Faceted Search */}
+        <Route path="faceted-search" element={<FacetedSearchPage />} />
       </Route>
 
       {/* Catch all route */}

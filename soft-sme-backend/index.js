@@ -128,6 +128,7 @@ const customerRoutes = require('./dist/routes/customerRoutes').default;
 const vendorRoutes = require('./dist/routes/vendorRoutes').default;
 const productRoutes = require('./dist/routes/productRoutes').default;
 const categoryRoutes = require('./dist/routes/categoryRoutes').default;
+const tokensRoutes = require('./dist/routes/tokensRoutes').tokensRouter;
 
 app.use('/api/business-profile', businessProfileRouter);
 app.use('/api/time-tracking', timeTrackingRouter);
@@ -143,6 +144,7 @@ app.use('/api/customers', customerRoutes);
 app.use('/api/vendors', vendorRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/categories', categoryRoutes);
+app.use('/api', tokensRoutes);
 
 // API endpoint to get all employees for a company (Admin Only)
 // Note: This route is now handled by modular employeeRoutes

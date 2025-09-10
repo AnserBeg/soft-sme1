@@ -90,7 +90,7 @@ router.get('/health', async (req: Request, res: Response) => {
 router.get('/config', authMiddleware, async (req: Request, res: Response) => {
   try {
     res.json({
-      model: process.env.AI_MODEL || 'gemini-1.5-flash',
+      model: process.env.AI_MODEL || 'gemini-2.5-flash',
       maxTokens: parseInt(process.env.AI_MAX_TOKENS || '1000'),
       temperature: parseFloat(process.env.AI_TEMPERATURE || '0.7'),
       timestamp: new Date().toISOString()
