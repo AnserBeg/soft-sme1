@@ -37,7 +37,7 @@ const VoiceSearchButton: React.FC<VoiceSearchButtonProps> = ({
   
   // Speech recognition
   const recognitionRef = useRef<any | null>(null);
-  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const initializeSpeechRecognition = () => {
     const isElectron = typeof window !== 'undefined' && window.process && window.process.type;

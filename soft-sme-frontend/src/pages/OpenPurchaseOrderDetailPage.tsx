@@ -1429,7 +1429,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
           results.forEach((resp: any, idx: number) => {
             const id = uniqueSoIds[idx];
             const number = resp.data?.salesOrder?.sales_order_number || resp.data?.salesOrder?.sales_number || '';
-            if (number) map[id] = number;
+            if (number) map[id as string] = number;
           });
           setSalesOrderNumbers(map);
         } catch (subErr) {

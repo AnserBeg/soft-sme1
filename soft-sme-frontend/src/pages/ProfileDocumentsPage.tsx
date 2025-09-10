@@ -162,7 +162,7 @@ const ProfileDocumentsPage: React.FC = () => {
       
       const finalDocuments = Object.values(groupedDocuments);
       console.log('Grouped documents:', finalDocuments);
-      setDocuments(finalDocuments);
+      setDocuments(finalDocuments as ProfileDocument[]);
     } catch (error: any) {
       console.error('Error fetching all documents:', error);
       toast.error('Failed to fetch documents');
