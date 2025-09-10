@@ -10,7 +10,7 @@ require('dotenv').config({ path: './.env' });
 const aiDbPool = new Pool({
   host: process.env.DB_HOST || 'localhost',
   port: parseInt(process.env.DB_PORT || '5432'),
-  database: process.env.DB_NAME || 'soft_sme_db',
+  database: process.env.DB_DATABASE || 'soft_sme_db',
   user: 'ai_assistant',
   password: 'ai_secure_password_2024',
   max: 5,

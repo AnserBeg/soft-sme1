@@ -245,7 +245,7 @@ router.post('/interpret-query', async (req, res) => {
     IMPORTANT: For measurements, include multiple format variations in extractedTerms.
     For descriptions, choose the most relevant tokens from the available list.
     `;
-
+    
     const result = await model.generateContent(prompt + `\n\nUser Query: "${query}"`);
     const response = await result.response;
     const text = response.text();
@@ -256,14 +256,14 @@ router.post('/interpret-query', async (req, res) => {
       parsedResponse = JSON.parse(text);
     } catch (parseError) {
       console.error('Failed to parse AI response:', text);
-      // Fallback if JSON parsing fails
-      parsedResponse = {
-        query: query,
-        searchInPartNumbers: true,
-        searchInDescriptions: true,
-        extractedTerms: [query.toUpperCase()],
-        reasoning: 'Fallback processing due to AI response parsing error'
-      };
+        // Fallback if JSON parsing fails
+        parsedResponse = {
+          query: query,
+          searchInPartNumbers: true,
+          searchInDescriptions: true,
+          extractedTerms: [query.toUpperCase()],
+          reasoning: 'Fallback processing due to AI response parsing error'
+        };
     }
 
     // Ensure we have the required fields

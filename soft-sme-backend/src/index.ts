@@ -7,8 +7,10 @@ import expressWs from 'express-ws';
 import { pool } from './db';
 import { authMiddleware } from './middleware/authMiddleware';
 
-// Load environment variables from backend-local .env
-dotenv.config({ path: path.resolve(__dirname, '../.env') });
+// Load environment variables - only load from .env file in development
+if (process.env.NODE_ENV !== 'production') {
+  dotenv.config({ path: path.resolve(__dirname, '../.env') });
+}
 
 // Import routes
 import authRoutes from './routes/authRoutes';
@@ -399,6 +401,12 @@ console.log('Registered database check route at /api/db-check');
 pool.query('SELECT NOW()', (err, res) => {
   if (err) {
     console.error('Error connecting to the database:', err);
+    console.error('Environment variables check:');
+    console.error('DB_HOST:', process.env.DB_HOST);
+    console.error('DB_PORT:', process.env.DB_PORT);
+    console.error('DB_DATABASE:', process.env.DB_DATABASE);
+    console.error('DB_USER:', process.env.DB_USER);
+    console.error('NODE_ENV:', process.env.NODE_ENV);
     process.exit(1);
   }
   console.log('Database connected successfully');
