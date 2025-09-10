@@ -71,6 +71,8 @@ const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost:8080',
   'https://softsme.phoenixtrailers.ca',
+  'https://soft-sme1.onrender.com',
+  'https://soft-sme-frontend.onrender.com',
   process.env.CORS_ORIGIN,
 ].filter(Boolean);
 
