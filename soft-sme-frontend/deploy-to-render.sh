@@ -65,3 +65,4 @@ echo "🌐 Your frontend will be available at: https://soft-sme-frontend.onrende
 echo "🔗 Backend API: https://soft-sme-backend.onrender.com"
 echo ""
 echo "✨ Deployment preparation complete!"
+

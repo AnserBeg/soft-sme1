@@ -686,13 +686,10 @@ function ShiftSummaryCard({ shift, entries, expanded, onExpand, setEditEntry, se
   const shiftDuration = shift.duration !== null && shift.duration !== undefined ? Number(shift.duration) : 0;
   // Use profile name from shift data, fallback to lookup in profiles array
   const profileName = shift.profile_name || profiles.find(p => p.id === shift.profile_id)?.name || `Profile ${shift.profile_id}`;
-  // Group by sales order
-  const soMap: { [so: string]: number } = {};
+  // Calculate total booked time from individual entries
   let booked = 0;
   entries.forEach(e => {
-    const so = e.sales_order_number || 'Unknown';
     const dur = typeof e.duration === 'number' ? e.duration : Number(e.duration) || 0;
-    soMap[so] = (soMap[so] || 0) + dur;
     booked += dur;
   });
   const idle = Math.max(0, shiftDuration - booked);
@@ -719,10 +716,19 @@ function ShiftSummaryCard({ shift, entries, expanded, onExpand, setEditEntry, se
         </Typography>
         {showBreakdown && (
           <Box sx={{ mt: 1, ml: 2 }}>
-            {Object.entries(soMap).map(([so, hrs]) => (
-              <Typography key={so} variant="body2" sx={{ fontSize: '1.1rem' }}>• {so} {Number(hrs).toFixed(3)} hrs</Typography>
-            ))}
-            <Typography variant="body2" sx={{ fontSize: '1.1rem' }}>• Idle {idle.toFixed(3)} hrs</Typography>
+            {entries.map((entry, index) => {
+              const dur = typeof entry.duration === 'number' ? entry.duration : Number(entry.duration) || 0;
+              const clockIn = new Date(entry.clock_in);
+              const clockOut = entry.clock_out ? new Date(entry.clock_out) : null;
+              return (
+                <Typography key={entry.id || index} variant="body2" sx={{ fontSize: '1.1rem' }}>
+                  • {entry.sales_order_number}: {clockIn.toLocaleTimeString()} → {clockOut ? clockOut.toLocaleTimeString() : '-'} ({dur.toFixed(3)} hrs)
+                </Typography>
+              );
+            })}
+            {idle > 0 && (
+              <Typography variant="body2" sx={{ fontSize: '1.1rem' }}>• Idle: {idle.toFixed(3)} hrs</Typography>
+            )}
           </Box>
         )}
         {showBreakdown && expanded && <TimeEntriesTable entries={entries} setEditEntry={setEditEntry} setEditClockIn={setEditClockIn} setEditClockOut={setEditClockOut} />}

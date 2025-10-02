@@ -1524,7 +1524,8 @@ router.put('/:id', async (req, res) => {
     if (status === 'Open' && oldStatus === 'Closed') {
       console.log(`PO ${id} transitioning to Open. Checking inventory constraints...`);
       
-      // Check if reopening would cause negative quantities
+      // Collect any violations to report and block reopen if found
+      const reopenViolations: Array<{ part_number: string; current_quantity: number; po_quantity: number; resulting_quantity: number }> = [];
       for (const item of lineItems) {
         if (item.part_number) {
           const normalizedPartNumber = item.part_number.toString().trim().toUpperCase();
@@ -1542,12 +1543,12 @@ router.put('/:id', async (req, res) => {
             if (part.part_type === 'stock') {
               const currentQuantity = parseFloat(part.quantity_on_hand) || 0;
               const resultingQuantity = currentQuantity - poQuantity;
-              
               if (resultingQuantity < 0) {
-                await client.query('ROLLBACK');
-                return res.status(400).json({ 
-                  error: 'Insufficient inventory',
-                  message: `Cannot reopen purchase order. Part ${normalizedPartNumber} would have negative quantity: Current: ${currentQuantity}, PO Quantity: ${poQuantity}, Would result in: ${resultingQuantity}`
+                reopenViolations.push({
+                  part_number: normalizedPartNumber,
+                  current_quantity: currentQuantity,
+                  po_quantity: poQuantity,
+                  resulting_quantity: resultingQuantity
                 });
               }
             }
@@ -1555,6 +1556,16 @@ router.put('/:id', async (req, res) => {
         }
       }
       
+      if (reopenViolations.length > 0) {
+        console.error(`❌ Reopen validation failed for PO ${id}:`, reopenViolations);
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          error: 'Insufficient inventory',
+          message: 'Cannot reopen purchase order because one or more stock items would go negative.',
+          details: reopenViolations
+        });
+      }
+
       console.log(`✅ Inventory validation passed for reopening PO ${id}`);
     }
 
@@ -1569,19 +1580,19 @@ router.put('/:id', async (req, res) => {
            const numericQuantity = parseFloat(item.quantity) || 0;
            
            // Check if this part is a stock item before subtracting
-      const existingPartResult = await client.query(
-         `SELECT part_id, part_number, part_type FROM "inventory" 
-         WHERE REPLACE(REPLACE(UPPER(part_number), '-', ''), ' ', '') = REPLACE(REPLACE(UPPER($1), '-', ''), ' ', '')`,
-        [normalizedPartNumber]
-      );
+     const existingPartResult = await client.query(
+        `SELECT part_id, part_number, part_type FROM "inventory" 
+        WHERE REPLACE(REPLACE(UPPER(part_number), '-', ''), ' ', '') = REPLACE(REPLACE(UPPER($1), '-', ''), ' ', '')`,
+       [normalizedPartNumber]
+     );
            
-                 if (existingPartResult.rows.length > 0 && existingPartResult.rows[0].part_type === 'stock') {
-        const existingPartId: number = existingPartResult.rows[0].part_id;
-             console.log(`Reverting inventory for stock part: '${normalizedPartNumber}' (quantity: ${numericQuantity})`);
-             await client.query(
-                `UPDATE "inventory" SET quantity_on_hand = CAST((COALESCE(NULLIF(quantity_on_hand, 'NA')::NUMERIC, 0) - $1::NUMERIC) AS VARCHAR(20)) WHERE part_id = $2`,
-         [numericQuantity, existingPartId]
-             );
+                if (existingPartResult.rows.length > 0 && existingPartResult.rows[0].part_type === 'stock') {
+       const existingPartId: number = existingPartResult.rows[0].part_id;
+            console.log(`Reverting inventory for stock part: '${normalizedPartNumber}' (quantity: ${numericQuantity})`);
+            await client.query(
+               `UPDATE "inventory" SET quantity_on_hand = CAST((COALESCE(NULLIF(quantity_on_hand, 'NA')::NUMERIC, 0) - $1::NUMERIC) AS VARCHAR(20)) WHERE part_id = $2`,
+        [numericQuantity, existingPartId]
+            );
            } else {
              console.log(`Skipping inventory revert for supply part: '${normalizedPartNumber}'`);
            }
