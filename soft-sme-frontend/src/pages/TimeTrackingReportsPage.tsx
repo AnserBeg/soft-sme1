@@ -89,6 +89,7 @@ const TimeTrackingReportsPage: React.FC = () => {
   const [editEntry, setEditEntry] = useState<TimeEntryReport | null>(null);
   const [editClockIn, setEditClockIn] = useState('');
   const [editClockOut, setEditClockOut] = useState('');
+  const [editEntryError, setEditEntryError] = useState<string | null>(null);
   const [shifts, setShifts] = useState<any[]>([]);
   const [shiftEntries, setShiftEntries] = useState<{ [shiftId: number]: any[] }>({});
   const [unscheduledEntries, setUnscheduledEntries] = useState<any[]>([]);
@@ -244,16 +245,21 @@ const TimeTrackingReportsPage: React.FC = () => {
 
   const handleSaveEditEntry = async () => {
     if (!editEntry) return;
+    setEditEntryError(null);
+    setError(null);
     try {
       const clockInISO = toUTCISOString(editClockIn);
       const clockOutISO = toUTCISOString(editClockOut);
       const updated = await updateTimeEntry(editEntry.id, clockInISO, clockOutISO);
       setReports(reports.map(entry => entry.id === editEntry.id ? { ...entry, clock_in: updated.clock_in, clock_out: updated.clock_out, duration: updated.duration } : entry));
+      setEditEntryError(null);
       setEditEntry(null);
       setError(null);
     } catch (err: any) {
       const apiMessage = err?.response?.data?.message || err?.response?.data?.error;
-      setError(apiMessage || 'Failed to update time entry. Please try again.');
+      const message = apiMessage || 'Failed to update time entry. Please try again.';
+      setEditEntryError(message);
+      setError(message);
       console.error('Error updating time entry:', err);
     }
   };
@@ -469,6 +475,8 @@ const TimeTrackingReportsPage: React.FC = () => {
                                 variant="text"
                                 startIcon={<EditIcon />}
                                 onClick={() => {
+                                  setEditEntryError(null);
+                                  setError(null);
                                   setEditEntry(report);
                                   setEditClockIn(toLocalInputValue(report.clock_in));
                                   setEditClockOut(toLocalInputValue(report.clock_out));
@@ -551,6 +559,8 @@ const TimeTrackingReportsPage: React.FC = () => {
                   profiles={profiles}
                   setEditShift={setEditShift}
                   showBreakdown={showBreakdown}
+                  setEditEntryError={setEditEntryError}
+                  setError={setError}
                 />
               ))}
               {unscheduledEntries.length > 0 && (
@@ -559,7 +569,7 @@ const TimeTrackingReportsPage: React.FC = () => {
                     <Typography variant="subtitle1" fontWeight={700} color="#a21caf" sx={{ fontSize: '1.2rem' }}>
                       Unscheduled Entries
                     </Typography>
-                    <TimeEntriesTable entries={unscheduledEntries} setEditEntry={setEditEntry} setEditClockIn={setEditClockIn} setEditClockOut={setEditClockOut} />
+                    <TimeEntriesTable entries={unscheduledEntries} setEditEntry={setEditEntry} setEditClockIn={setEditClockIn} setEditClockOut={setEditClockOut} setEditEntryError={setEditEntryError} setError={setError} />
                   </Box>
                 </Paper>
               )}
@@ -569,9 +579,14 @@ const TimeTrackingReportsPage: React.FC = () => {
       </Grid>
 
       {/* Edit Entry Dialog */}
-      <Dialog open={!!editEntry} onClose={() => setEditEntry(null)}>
+      <Dialog open={!!editEntry} onClose={() => { setEditEntry(null); setEditEntryError(null); }}>
         <DialogTitle>Edit Time Entry</DialogTitle>
         <DialogContent>
+          {editEntryError && (
+            <Alert severity="error" sx={{ mb: 2 }}>
+              {editEntryError}
+            </Alert>
+          )}
           <TextField
             label="Clock In"
             type="datetime-local"
@@ -589,7 +604,7 @@ const TimeTrackingReportsPage: React.FC = () => {
           />
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setEditEntry(null)}>Cancel</Button>
+          <Button onClick={() => { setEditEntry(null); setEditEntryError(null); }}>Cancel</Button>
           <Button onClick={handleSaveEditEntry} variant="contained" startIcon={<SaveIcon />}>Save</Button>
         </DialogActions>
       </Dialog>
@@ -655,7 +670,7 @@ function triggerDownload(blob: Blob, filename: string) {
   document.body.removeChild(a);
 }
 
-function ShiftSummaryCard({ shift, entries, expanded, onExpand, setEditEntry, setEditClockIn, setEditClockOut, profiles, setEditShift, showBreakdown }: { shift: any, entries: any[], expanded: boolean, onExpand: () => void, setEditEntry: any, setEditClockIn: any, setEditClockOut: any, profiles: any[], setEditShift: any, showBreakdown: boolean }) {
+function ShiftSummaryCard({ shift, entries, expanded, onExpand, setEditEntry, setEditClockIn, setEditClockOut, profiles, setEditShift, showBreakdown, setEditEntryError, setError }: { shift: any, entries: any[], expanded: boolean, onExpand: () => void, setEditEntry: any, setEditClockIn: any, setEditClockOut: any, profiles: any[], setEditShift: any, showBreakdown: boolean, setEditEntryError: any, setError: any }) {
   const shiftIn = new Date(shift.clock_in);
   const shiftOut = shift.clock_out ? new Date(shift.clock_out) : null;
   // Use stored duration from database (which includes break deductions) instead of calculating raw duration
@@ -707,12 +722,12 @@ function ShiftSummaryCard({ shift, entries, expanded, onExpand, setEditEntry, se
             )}
           </Box>
         )}
-        {showBreakdown && expanded && <TimeEntriesTable entries={entries} setEditEntry={setEditEntry} setEditClockIn={setEditClockIn} setEditClockOut={setEditClockOut} />}
+        {showBreakdown && expanded && <TimeEntriesTable entries={entries} setEditEntry={setEditEntry} setEditClockIn={setEditClockIn} setEditClockOut={setEditClockOut} setEditEntryError={setEditEntryError} setError={setError} />}
       </Box>
     </Paper>
   );
 }
-function TimeEntriesTable({ entries, setEditEntry, setEditClockIn, setEditClockOut }: { entries: any[], setEditEntry: any, setEditClockIn: any, setEditClockOut: any }) {
+function TimeEntriesTable({ entries, setEditEntry, setEditClockIn, setEditClockOut, setEditEntryError, setError }: { entries: any[], setEditEntry: any, setEditClockIn: any, setEditClockOut: any, setEditEntryError: any, setError: any }) {
   return (
     <TableContainer sx={{ mt: 1, mb: 1 }}>
       <Table size="small">
@@ -738,6 +753,8 @@ function TimeEntriesTable({ entries, setEditEntry, setEditClockIn, setEditClockO
                     variant="text"
                     startIcon={<EditIcon />}
                     onClick={() => {
+                      setEditEntryError(null);
+                      setError(null);
                       setEditEntry(entry);
                       setEditClockIn(toLocalInputValue(entry.clock_in));
                       setEditClockOut(toLocalInputValue(entry.clock_out));
