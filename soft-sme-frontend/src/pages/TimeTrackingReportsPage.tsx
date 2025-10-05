@@ -37,7 +37,8 @@ import {
   Profile,
   SalesOrder,
   TimeEntryReport,
-  updateTimeEntry
+  updateTimeEntry,
+  createTimeEntry
 } from '../services/timeTrackingService';
 import { getShiftsInRange, updateShift } from '../services/attendanceService';
 import api from '../api/axios';
@@ -99,6 +100,12 @@ const TimeTrackingReportsPage: React.FC = () => {
   const [editShiftClockOut, setEditShiftClockOut] = useState('');
   const [savingShift, setSavingShift] = useState(false);
   const [showBreakdown, setShowBreakdown] = useState(true);
+  const [addEntryOpen, setAddEntryOpen] = useState(false);
+  const [addEntryShift, setAddEntryShift] = useState<any | null>(null);
+  const [addEntrySalesOrder, setAddEntrySalesOrder] = useState<number | ''>('');
+  const [addEntryClockIn, setAddEntryClockIn] = useState('');
+  const [addEntryClockOut, setAddEntryClockOut] = useState('');
+  const [addingEntry, setAddingEntry] = useState(false);
 
   useEffect(() => {
     fetchData();
@@ -266,6 +273,52 @@ const TimeTrackingReportsPage: React.FC = () => {
     }
   };
 
+  const handleOpenAddEntry = (shift: any) => {
+    setAddEntryShift(shift);
+    setAddEntryOpen(true);
+    setAddEntrySalesOrder(selectedSO !== '' ? selectedSO : '');
+    setAddEntryClockIn(shift.clock_in ? toLocalInputValue(shift.clock_in) : '');
+    setAddEntryClockOut(shift.clock_out ? toLocalInputValue(shift.clock_out) : '');
+    setError(null);
+  };
+
+  const handleCloseAddEntry = () => {
+    setAddEntryOpen(false);
+    setAddEntryShift(null);
+    setAddEntryClockIn('');
+    setAddEntryClockOut('');
+    setAddEntrySalesOrder(selectedSO !== '' ? selectedSO : '');
+    setAddingEntry(false);
+  };
+
+  const handleSaveAddEntry = async () => {
+    if (!addEntryShift || addEntrySalesOrder === '' || !addEntryClockIn || !addEntryClockOut) {
+      return;
+    }
+
+    const clockInISO = toUTCISOString(addEntryClockIn);
+    const clockOutISO = toUTCISOString(addEntryClockOut);
+
+    if (!clockInISO || !clockOutISO) {
+      return;
+    }
+
+    setAddingEntry(true);
+    setError(null);
+
+    try {
+      await createTimeEntry(addEntryShift.profile_id, Number(addEntrySalesOrder), clockInISO, clockOutISO);
+      handleCloseAddEntry();
+      await handleGenerateReport();
+    } catch (err: any) {
+      const message = (err?.response?.data?.message) || (err?.response?.data?.error) || 'Failed to create time entry. Please try again.';
+      setError(message);
+      console.error('Error creating manual time entry:', err);
+    } finally {
+      setAddingEntry(false);
+    }
+  };
+
   useEffect(() => {
     if (editShift) {
       setEditShiftClockIn(editShift.clock_in ? toLocalInputValue(editShift.clock_in) : '');
@@ -280,6 +333,19 @@ const TimeTrackingReportsPage: React.FC = () => {
       </Box>
     );
   }
+
+  const addEntryClockInDate = addEntryClockIn ? new Date(addEntryClockIn) : null;
+  const addEntryClockOutDate = addEntryClockOut ? new Date(addEntryClockOut) : null;
+  const canSaveAddEntry = Boolean(
+    addEntryShift &&
+    addEntrySalesOrder !== '' &&
+    addEntryClockInDate &&
+    addEntryClockOutDate &&
+    addEntryClockOutDate.getTime() > addEntryClockInDate.getTime()
+  );
+  const addEntryProfileName = addEntryShift
+    ? (addEntryShift.profile_name || profiles.find(p => p.id === addEntryShift.profile_id)?.name || `Profile ${addEntryShift.profile_id}`)
+    : '';
 
   // Compute total shift duration, idle time, regular, and overtime per profile
   const profileShiftStats: { [profileId: number]: { hours: number, idle: number, regular: number, overtime: number } } = {};
@@ -555,6 +621,7 @@ const TimeTrackingReportsPage: React.FC = () => {
                   entries={shiftEntries[shift.id] || []}
                   expanded={expandedShift === shift.id}
                   onExpand={() => setExpandedShift(expandedShift === shift.id ? null : shift.id)}
+                  onAddEntry={handleOpenAddEntry}
                   setEditEntry={setEditEntry}
                   setEditClockIn={setEditClockIn}
                   setEditClockOut={setEditClockOut}
@@ -579,6 +646,61 @@ const TimeTrackingReportsPage: React.FC = () => {
           )}
         </Grid>
       </Grid>
+
+      {/* Add Entry Dialog */}
+      <Dialog open={addEntryOpen} onClose={handleCloseAddEntry}>
+        <DialogTitle>Add Time Entry</DialogTitle>
+        <DialogContent>
+          {addEntryShift && (
+            <Typography variant="body2" sx={{ mb: 2 }}>
+              {`Profile: ${addEntryProfileName} | Shift Date: ${new Date(addEntryShift.clock_in).toLocaleDateString()}`}
+            </Typography>
+          )}
+          <FormControl fullWidth sx={{ mb: 2 }}>
+            <InputLabel id="add-entry-sales-order-label">Sales Order</InputLabel>
+            <Select
+              labelId="add-entry-sales-order-label"
+              value={addEntrySalesOrder}
+              label="Sales Order"
+              displayEmpty
+              onChange={(e) => {
+                const value = e.target.value;
+                setAddEntrySalesOrder(value === '' ? '' : Number(value));
+              }}
+            >
+              <MenuItem value="" disabled>
+                <em>Select a Sales Order</em>
+              </MenuItem>
+              {salesOrders.map((so) => (
+                <MenuItem key={so.id} value={so.id}>
+                  {so.number}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+          <TextField
+            label="Clock In"
+            type="datetime-local"
+            value={addEntryClockIn}
+            onChange={e => setAddEntryClockIn(e.target.value)}
+            fullWidth
+            sx={{ mb: 2 }}
+          />
+          <TextField
+            label="Clock Out"
+            type="datetime-local"
+            value={addEntryClockOut}
+            onChange={e => setAddEntryClockOut(e.target.value)}
+            fullWidth
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCloseAddEntry} disabled={addingEntry}>Cancel</Button>
+          <Button onClick={handleSaveAddEntry} variant="contained" disabled={!canSaveAddEntry || addingEntry}>
+            Save
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       {/* Edit Entry Dialog */}
       <Dialog open={!!editEntry} onClose={() => { setEditEntry(null); setEditEntryError(null); }}>
@@ -672,7 +794,7 @@ function triggerDownload(blob: Blob, filename: string) {
   document.body.removeChild(a);
 }
 
-function ShiftSummaryCard({ shift, entries, expanded, onExpand, setEditEntry, setEditClockIn, setEditClockOut, profiles, setEditShift, showBreakdown, setEditEntryError, setError }: { shift: any, entries: any[], expanded: boolean, onExpand: () => void, setEditEntry: any, setEditClockIn: any, setEditClockOut: any, profiles: any[], setEditShift: any, showBreakdown: boolean, setEditEntryError: any, setError: any }) {
+function ShiftSummaryCard({ shift, entries, expanded, onExpand, onAddEntry, setEditEntry, setEditClockIn, setEditClockOut, profiles, setEditShift, showBreakdown, setEditEntryError, setError }: { shift: any, entries: any[], expanded: boolean, onExpand: () => void, onAddEntry: (shift: any) => void, setEditEntry: any, setEditClockIn: any, setEditClockOut: any, profiles: any[], setEditShift: any, showBreakdown: boolean, setEditEntryError: any, setError: any }) {
   const shiftIn = new Date(shift.clock_in);
   const shiftOut = shift.clock_out ? new Date(shift.clock_out) : null;
   // Use stored duration from database (which includes break deductions) instead of calculating raw duration
@@ -695,13 +817,16 @@ function ShiftSummaryCard({ shift, entries, expanded, onExpand, setEditEntry, se
           </Typography>
           <Box display="flex" gap={1}>
             {showBreakdown && (
-              <Button variant="contained" color="primary" size="small" onClick={onExpand} sx={{ ml: 2 }}>
+              <Button variant="contained" color="primary" size="small" onClick={onExpand}>
                 {expanded ? 'Hide Entries' : 'Show Entries'}
               </Button>
             )}
-                         <Button variant="contained" color="primary" size="small" onClick={() => setEditShift(shift)}>
-               Edit Shift
-             </Button>
+            <Button variant="outlined" color="primary" size="small" onClick={() => onAddEntry(shift)}>
+              Add Entry
+            </Button>
+            <Button variant="contained" color="primary" size="small" onClick={() => setEditShift(shift)}>
+              Edit Shift
+            </Button>
           </Box>
         </Box>
         <Typography variant="body1" sx={{ mt: 1, fontSize: '1.1rem' }}>

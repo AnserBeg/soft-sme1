@@ -390,6 +390,226 @@ router.post('/time-entries/:id/clock-out', async (req: Request, res: Response) =
 });
 
 // Edit a time entry (clock_in and clock_out)
+
+// Manually create a completed time entry
+router.post('/time-entries/manual', async (req: Request, res: Response) => {
+  const { profile_id, sales_order_id, clock_in, clock_out } = req.body || {};
+
+  const profileId = Number(profile_id);
+  const salesOrderId = Number(sales_order_id);
+
+  if (!Number.isFinite(profileId) || profileId <= 0 || !Number.isFinite(salesOrderId) || salesOrderId <= 0 || !clock_in || !clock_out) {
+    return res.status(400).json({
+      error: 'Missing Required Fields',
+      message: 'Profile, sales order, clock in, and clock out are required.'
+    });
+  }
+
+  try {
+    const clockInTime = new Date(clock_in);
+    const clockOutTime = new Date(clock_out);
+
+    if (Number.isNaN(clockInTime.getTime()) || Number.isNaN(clockOutTime.getTime())) {
+      return res.status(400).json({
+        error: 'Validation Error',
+        message: 'Clock in or clock out time is invalid.'
+      });
+    }
+
+    if (clockOutTime.getTime() <= clockInTime.getTime()) {
+      return res.status(400).json({
+        error: 'Invalid Time Range',
+        message: 'Clock out must be after clock in.'
+      });
+    }
+
+    const clockInIso = clockInTime.toISOString();
+    const clockOutIso = clockOutTime.toISOString();
+
+    const attendanceShiftRes = await pool.query(
+      `SELECT id, clock_in, clock_out
+       FROM attendance_shifts
+       WHERE profile_id = $1
+         AND clock_in <= $2::timestamptz
+         AND (clock_out IS NULL OR clock_out >= $3::timestamptz)
+       ORDER BY clock_in DESC
+       LIMIT 1`,
+      [profileId, clockInIso, clockOutIso]
+    );
+
+    if (attendanceShiftRes.rows.length === 0) {
+      const nearestShiftRes = await pool.query(
+        `SELECT id, clock_in, clock_out
+         FROM attendance_shifts
+         WHERE profile_id = $1
+         ORDER BY ABS(EXTRACT(EPOCH FROM (clock_in - $2::timestamptz))) ASC
+         LIMIT 1`,
+        [profileId, clockInIso]
+      );
+
+      const attendanceErrorPayload: {
+        error: string;
+        message: string;
+        closest_shift?: unknown;
+      } = {
+        error: 'Outside Attendance Shift',
+        message: 'The user was not clocked into attendance during that time.'
+      };
+
+      if (nearestShiftRes.rows.length > 0) {
+        attendanceErrorPayload.closest_shift = nearestShiftRes.rows[0];
+      }
+
+      return res.status(400).json(attendanceErrorPayload);
+    }
+
+    const overlapRes = await pool.query(
+      `SELECT id, clock_in, clock_out, sales_order_id
+       FROM time_entries
+       WHERE profile_id = $1
+         AND tstzrange(clock_in, COALESCE(clock_out, 'infinity'::timestamptz), '[)')
+             && tstzrange($2::timestamptz, $3::timestamptz, '[)')`,
+      [profileId, clockInIso, clockOutIso]
+    );
+
+    if (overlapRes.rows.length > 0) {
+      return res.status(400).json({
+        error: 'Overlapping Time Entry',
+        message: 'The user was already clocked in during that time.',
+        conflicts: overlapRes.rows
+      });
+    }
+
+    const breakStartRes = await pool.query("SELECT value FROM global_settings WHERE key = 'daily_break_start'");
+    const breakEndRes = await pool.query("SELECT value FROM global_settings WHERE key = 'daily_break_end'");
+    const dailyBreakStart = breakStartRes.rows.length > 0 ? breakStartRes.rows[0].value : null;
+    const dailyBreakEnd = breakEndRes.rows.length > 0 ? breakEndRes.rows[0].value : null;
+
+    const effectiveDuration = calculateEffectiveDuration(clockInTime, clockOutTime, dailyBreakStart, dailyBreakEnd);
+
+    const unitPriceRes = await pool.query("SELECT value FROM global_settings WHERE key = 'labour_rate'");
+    const unitPrice = unitPriceRes.rows.length > 0 ? parseFloat(unitPriceRes.rows[0].value) : 0;
+
+    const insertRes = await pool.query(
+      `INSERT INTO time_entries (profile_id, sales_order_id, clock_in, clock_out, duration, unit_price)
+       VALUES ($1, $2, $3::timestamptz, $4::timestamptz, $5, $6)
+       RETURNING id`,
+      [profileId, salesOrderId, clockInIso, clockOutIso, effectiveDuration, unitPrice]
+    );
+
+    const newEntryId = insertRes.rows[0].id;
+
+    const newEntryRes = await pool.query(
+      `SELECT
+        te.id, te.profile_id, p.name as profile_name, te.sales_order_id, soh.sales_order_number,
+        soh.product_name, te.clock_in, te.clock_out, te.duration, te.unit_price
+       FROM time_entries te
+       JOIN profiles p ON te.profile_id = p.id
+       JOIN salesorderhistory soh ON te.sales_order_id = soh.sales_order_id
+       WHERE te.id = $1`,
+      [newEntryId]
+    );
+
+    if (newEntryRes.rows.length === 0) {
+      return res.status(500).json({ error: 'Failed to load new time entry' });
+    }
+
+    const soId = salesOrderId;
+
+    const sumRes = await pool.query(
+      `SELECT SUM(duration) as total_hours
+       FROM time_entries WHERE sales_order_id = $1 AND clock_out IS NOT NULL`,
+      [soId]
+    );
+    const totalHours = parseFloat(sumRes.rows[0].total_hours) || 0;
+
+    const labourRateRes = await pool.query("SELECT value FROM global_settings WHERE key = 'labour_rate'");
+    const labourRate = labourRateRes.rows.length > 0 ? parseFloat(labourRateRes.rows[0].value) : 60;
+    const totalCost = totalHours * labourRate;
+
+    const overheadRateRes = await pool.query("SELECT value FROM global_settings WHERE key = 'overhead_rate'");
+    const overheadRate = overheadRateRes.rows.length > 0 ? parseFloat(overheadRateRes.rows[0].value) : 0;
+    const totalOverheadCost = totalHours * overheadRate;
+
+    const labourRes = await pool.query(
+      `SELECT sales_order_line_item_id FROM salesorderlineitems WHERE sales_order_id = $1 AND part_number = 'LABOUR'`,
+      [soId]
+    );
+    if (labourRes.rows.length > 0) {
+      await pool.query(
+        `UPDATE salesorderlineitems SET part_description = $1, quantity_sold = $2, unit = $3, unit_price = $4, line_amount = $5 WHERE sales_order_id = $6 AND part_number = 'LABOUR'`,
+        ['Labour Hours', totalHours, 'hr', labourRate, totalCost, soId]
+      );
+    } else {
+      await pool.query(
+        `INSERT INTO salesorderlineitems (sales_order_id, part_number, part_description, quantity_sold, unit, unit_price, line_amount)
+         VALUES ($1, 'LABOUR', $2, $3, $4, $5, $6)` ,
+        [soId, 'Labour Hours', totalHours, 'hr', labourRate, totalCost]
+      );
+    }
+
+    const overheadRes = await pool.query(
+      `SELECT sales_order_line_item_id FROM salesorderlineitems WHERE sales_order_id = $1 AND part_number = 'OVERHEAD'`,
+      [soId]
+    );
+    if (overheadRes.rows.length > 0) {
+      await pool.query(
+        `UPDATE salesorderlineitems SET part_description = $1, quantity_sold = $2, unit = $3, unit_price = $4, line_amount = $5 WHERE sales_order_id = $6 AND part_number = 'OVERHEAD'`,
+        ['Overhead Hours', totalHours, 'hr', overheadRate, totalOverheadCost, soId]
+      );
+    } else {
+      await pool.query(
+        `INSERT INTO salesorderlineitems (sales_order_id, part_number, part_description, quantity_sold, unit, unit_price, line_amount)
+         VALUES ($1, 'OVERHEAD', $2, $3, $4, $5, $6)` ,
+        [soId, 'Overhead Hours', totalHours, 'hr', overheadRate, totalOverheadCost]
+      );
+    }
+
+    const labourLineAmount = totalHours * labourRate;
+    if (labourLineAmount > 0) {
+      const supplyRateRes = await pool.query('SELECT value FROM global_settings WHERE key = $1', ['supply_rate']);
+      const supplyRate = supplyRateRes.rows.length > 0 ? parseFloat(supplyRateRes.rows[0].value) : 0;
+
+      if (supplyRate > 0) {
+        const supplyAmount = labourLineAmount * (supplyRate / 100);
+
+        const existingSupplyResult = await pool.query(
+          'SELECT sales_order_line_item_id FROM salesorderlineitems WHERE sales_order_id = $1 AND part_number = $2',
+          [soId, 'SUPPLY']
+        );
+
+        if (existingSupplyResult.rows.length > 0) {
+          await pool.query(
+            `UPDATE salesorderlineitems 
+             SET line_amount = $1, unit_price = $2, updated_at = NOW() 
+             WHERE sales_order_id = $3 AND part_number = $4`,
+            [supplyAmount, supplyAmount, soId, 'SUPPLY']
+          );
+        } else {
+          await pool.query(
+            `INSERT INTO salesorderlineitems 
+             (sales_order_id, part_number, part_description, quantity_sold, unit, unit_price, line_amount) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+            [soId, 'SUPPLY', 'Supply', 1, 'Each', supplyAmount, supplyAmount]
+          );
+        }
+      }
+    }
+
+    try {
+      await salesOrderService.recalculateAndUpdateSummary(soId);
+    } catch (error) {
+      console.warn('Failed to recalculate totals for sales order after manual time entry creation:', error);
+    }
+
+    return res.status(201).json(newEntryRes.rows[0]);
+  } catch (err) {
+    console.error('Error creating manual time entry:', err);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+
 router.put('/time-entries/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
   let { clock_in, clock_out } = req.body;

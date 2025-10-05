@@ -155,6 +155,16 @@ export const updateTimeEntry = async (id: number, clock_in: string, clock_out: s
   return response.data;
 };
 
+export const createTimeEntry = async (profileId: number, salesOrderId: number, clockInISO: string, clockOutISO: string): Promise<TimeEntry> => {
+  const response = await api.post('/api/time-tracking/time-entries/manual', {
+    profile_id: profileId,
+    sales_order_id: salesOrderId,
+    clock_in: clockInISO,
+    clock_out: clockOutISO
+  });
+  return response.data;
+};
+
 // Report endpoints
 export const getTimeEntryReport = async (
   from: string,
