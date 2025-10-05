@@ -58,6 +58,18 @@ function toUTCISOString(localValue: string) {
   return local.toISOString();
 }
 
+function normalizeToLocalMidnight(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function formatDateAtLocalMidnight(date: Date) {
+  const normalized = normalizeToLocalMidnight(date);
+  const year = normalized.getFullYear();
+  const month = String(normalized.getMonth() + 1).padStart(2, '0');
+  const day = String(normalized.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 const TimeTrackingReportsPage: React.FC = () => {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [salesOrders, setSalesOrders] = useState<SalesOrder[]>([]);
@@ -116,11 +128,10 @@ const TimeTrackingReportsPage: React.FC = () => {
     }
     try {
       setLoading(true);
-      const fromDateStr = fromDate.toISOString().split('T')[0];
-      // Add 1 day to toDate for exclusive upper bound
-      const toDateObj = new Date(toDate);
-      toDateObj.setDate(toDateObj.getDate() + 1);
-      const toDateStr = toDateObj.toISOString().split('T')[0];
+      const startDate = normalizeToLocalMidnight(fromDate);
+      const endDateExclusive = new Date(toDate.getFullYear(), toDate.getMonth(), toDate.getDate() + 1);
+      const fromDateStr = formatDateAtLocalMidnight(startDate);
+      const toDateStr = formatDateAtLocalMidnight(endDateExclusive);
       console.log('Requesting shifts for:', fromDateStr, toDateStr);
       
       // Fetch time entries for the selected sales order
@@ -147,10 +158,10 @@ const TimeTrackingReportsPage: React.FC = () => {
         
         // Fetch all time entries for each date in range for shift grouping
         const allEntries: any[] = [];
-        let cur = new Date(fromDateStr);
-        const end = new Date(toDateStr);
+        let cur = new Date(startDate);
+        const end = new Date(endDateExclusive);
         while (cur < end) {
-          const dateStr = cur.toISOString().split('T')[0];
+          const dateStr = formatDateAtLocalMidnight(cur);
           const params: any = { date: dateStr };
           if (selectedProfile) params.profile_id = selectedProfile;
           const entries = await api.get('/api/time-tracking/time-entries', { params });
@@ -209,9 +220,14 @@ const TimeTrackingReportsPage: React.FC = () => {
       return;
     }
     try {
+      const startDate = normalizeToLocalMidnight(fromDate);
+      const endDateExclusive = new Date(toDate.getFullYear(), toDate.getMonth(), toDate.getDate() + 1);
+      const fromDateStr = formatDateAtLocalMidnight(startDate);
+      const toDateStr = formatDateAtLocalMidnight(endDateExclusive);
+
       const blob = await exportTimeEntryReport(
-        fromDate.toISOString().split('T')[0],
-        toDate.toISOString().split('T')[0],
+        fromDateStr,
+        toDateStr,
         selectedProfile || undefined,
         selectedSO || undefined, // Include sales order filter
         format
