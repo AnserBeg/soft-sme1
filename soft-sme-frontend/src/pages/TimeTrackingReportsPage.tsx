@@ -166,8 +166,13 @@ const TimeTrackingReportsPage: React.FC = () => {
       // Only fetch shifts if no specific sales order is selected (for shift-based view)
       if (!selectedSO) {
         const fetchedShifts = await getShiftsInRange(selectedProfile ? selectedProfile : undefined, fromDateStr, toDateStr);
-        console.log('Fetched shifts:', fetchedShifts);
-        setShifts(fetchedShifts);
+        const normalizedShifts = fetchedShifts.map(shift => ({
+          ...shift,
+          id: Number(shift.id),
+          profile_id: Number(shift.profile_id)
+        }));
+        console.log('Fetched shifts:', normalizedShifts);
+        setShifts(normalizedShifts);
         
         // Fetch all time entries for each date in range for shift grouping
         const allEntries: any[] = [];
@@ -185,12 +190,22 @@ const TimeTrackingReportsPage: React.FC = () => {
         // Group entries by shift
         const shiftEntryMap: { [shiftId: number]: any[] } = {};
         const unscheduled: any[] = [];
-        fetchedShifts.forEach(shift => { shiftEntryMap[shift.id] = []; });
+        normalizedShifts.forEach(shift => {
+          const shiftId = Number(shift.id);
+          if (Number.isNaN(shiftId)) {
+            return;
+          }
+          shiftEntryMap[shiftId] = [];
+        });
         allEntries.forEach(entry => {
           const entryIn = new Date(entry.clock_in).getTime();
           const entryProfileId = Number(entry.profile_id);
           let found = false;
-          for (const shift of fetchedShifts) {
+          for (const shift of normalizedShifts) {
+            const shiftId = Number(shift.id);
+            if (Number.isNaN(shiftId)) {
+              continue;
+            }
             const shiftIn = new Date(shift.clock_in).getTime();
             const shiftOut = shift.clock_out ? new Date(shift.clock_out).getTime() : null;
             const shiftProfileId = Number(shift.profile_id);
@@ -202,7 +217,7 @@ const TimeTrackingReportsPage: React.FC = () => {
               entryIn >= shiftIn &&
               entryIn < shiftOut
             ) {
-              shiftEntryMap[shift.id].push(entry);
+              shiftEntryMap[shiftId].push(entry);
               found = true;
               break;
             }
@@ -354,11 +369,19 @@ const TimeTrackingReportsPage: React.FC = () => {
   const profileShiftStats: { [profileId: number]: { hours: number, idle: number, regular: number, overtime: number } } = {};
   shifts.forEach(shift => {
     if (shift.clock_in && shift.clock_out) {
+      const shiftId = Number(shift.id);
+      if (Number.isNaN(shiftId)) {
+        return;
+      }
+      const profileId = Number(shift.profile_id);
+      if (Number.isNaN(profileId)) {
+        return;
+      }
       const inTime = new Date(shift.clock_in).getTime();
       const outTime = new Date(shift.clock_out).getTime();
       const dur = Math.max(0, (outTime - inTime) / (1000 * 60 * 60));
       // Find all entries for this shift
-      const entries = (shiftEntries[shift.id] || []);
+      const entries = shiftEntries[shiftId] || [];
       let booked = 0;
       entries.forEach(e => {
         const entryDur = typeof e.duration === 'number' ? e.duration : Number(e.duration) || 0;
@@ -370,11 +393,11 @@ const TimeTrackingReportsPage: React.FC = () => {
       const regularHoursShift = Math.min(dur, 8);
       const overtimeHoursShift = Math.max(0, dur - 8);
 
-      if (!profileShiftStats[shift.profile_id]) profileShiftStats[shift.profile_id] = { hours: 0, idle: 0, regular: 0, overtime: 0 };
-      profileShiftStats[shift.profile_id].hours += dur;
-      profileShiftStats[shift.profile_id].idle += idle;
-      profileShiftStats[shift.profile_id].regular += regularHoursShift;
-      profileShiftStats[shift.profile_id].overtime += overtimeHoursShift;
+      if (!profileShiftStats[profileId]) profileShiftStats[profileId] = { hours: 0, idle: 0, regular: 0, overtime: 0 };
+      profileShiftStats[profileId].hours += dur;
+      profileShiftStats[profileId].idle += idle;
+      profileShiftStats[profileId].regular += regularHoursShift;
+      profileShiftStats[profileId].overtime += overtimeHoursShift;
     }
   });
 
@@ -630,24 +653,30 @@ const TimeTrackingReportsPage: React.FC = () => {
               {shifts.length === 0 && !loading && (
                 <Alert severity="info" sx={{ mb: 2 }}>No shifts found</Alert>
               )}
-              {shifts.map(shift => (
-                <ShiftSummaryCard
-                  key={shift.id}
-                  shift={shift}
-                  entries={shiftEntries[shift.id] || []}
-                  expanded={expandedShift === shift.id}
-                  onExpand={() => setExpandedShift(expandedShift === shift.id ? null : shift.id)}
-                  onAddEntry={handleOpenAddEntry}
-                  setEditEntry={setEditEntry}
-                  setEditClockIn={setEditClockIn}
-                  setEditClockOut={setEditClockOut}
-                  profiles={profiles}
-                  setEditShift={setEditShift}
-                  showBreakdown={showBreakdown}
-                  setEditEntryError={setEditEntryError}
-                  setError={setError}
-                />
-              ))}
+              {shifts.map(shift => {
+                const shiftId = Number(shift.id);
+                if (Number.isNaN(shiftId)) {
+                  return null;
+                }
+                return (
+                  <ShiftSummaryCard
+                    key={shiftId}
+                    shift={shift}
+                    entries={shiftEntries[shiftId] || []}
+                    expanded={expandedShift === shiftId}
+                    onExpand={() => setExpandedShift(expandedShift === shiftId ? null : shiftId)}
+                    onAddEntry={handleOpenAddEntry}
+                    setEditEntry={setEditEntry}
+                    setEditClockIn={setEditClockIn}
+                    setEditClockOut={setEditClockOut}
+                    profiles={profiles}
+                    setEditShift={setEditShift}
+                    showBreakdown={showBreakdown}
+                    setEditEntryError={setEditEntryError}
+                    setError={setError}
+                  />
+                );
+              })}
               {unscheduledEntries.length > 0 && (
                 <Paper elevation={3} sx={{ mb: 2, borderLeft: '6px solid #a21caf', background: '#f3e8ff' }}>
                   <Box p={2}>
@@ -762,10 +791,13 @@ const TimeTrackingReportsPage: React.FC = () => {
               onChange={(e) => setAddShiftProfile(e.target.value as number | '')}
               displayEmpty
               renderValue={(value) => {
-                if (value === '') {
+                if (value === undefined || value === null) {
                   return <em>Select Profile</em>;
                 }
-                const profile = profiles.find((p) => p.id === (value as number));
+                if (typeof value === 'string' && value === '') {
+                  return <em>Select Profile</em>;
+                }
+                const profile = profiles.find((p) => p.id === Number(value));
                 return profile ? profile.name : String(value);
               }}
             >
