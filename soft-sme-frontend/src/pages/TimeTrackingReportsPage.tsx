@@ -546,56 +546,6 @@ const TimeTrackingReportsPage: React.FC = () => {
                   </Box>
                 </Paper>
               )}
-              {/* Only render the default table in the default UI if there are rows */}
-              {reports.length > 0 && (
-                <TableContainer>
-                  <Table>
-                    <TableHead>
-                      <TableRow>
-                        <TableCell sx={{ fontSize: '1.1rem' }}>Profile</TableCell>
-                        <TableCell sx={{ fontSize: '1.1rem' }}>Sales Order</TableCell>
-                        <TableCell sx={{ fontSize: '1.1rem' }}>Date</TableCell>
-                        <TableCell sx={{ fontSize: '1.1rem' }}>Clock In</TableCell>
-                        <TableCell sx={{ fontSize: '1.1rem' }}>Clock Out</TableCell>
-                        <TableCell sx={{ fontSize: '1.1rem' }}>Duration</TableCell>
-                        <TableCell sx={{ fontSize: '1.1rem' }}>Actions</TableCell>
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      {reports.map((report) => (
-                        <TableRow key={report.id}>
-                          <TableCell sx={{ fontSize: '1.1rem' }}>{report.profile_name}</TableCell>
-                          <TableCell sx={{ fontSize: '1.1rem' }}>{report.sales_order_number}</TableCell>
-                          <TableCell sx={{ fontSize: '1.1rem' }}>{new Date(report.date).toLocaleDateString()}</TableCell>
-                          <TableCell sx={{ fontSize: '1.1rem' }}>{new Date(report.clock_in).toLocaleTimeString()}</TableCell>
-                          <TableCell sx={{ fontSize: '1.1rem' }}>{report.clock_out ? new Date(report.clock_out).toLocaleTimeString() : '-'}</TableCell>
-                          <TableCell sx={{ fontSize: '1.1rem' }}>
-                            {report.duration !== null && report.duration !== undefined && !isNaN(Number(report.duration))
-                              ? `${Number(report.duration).toFixed(3)} hrs`
-                              : '-'}
-                          </TableCell>
-                          <TableCell sx={{ fontSize: '1.1rem' }}>
-                            {report.clock_out && (
-                              <Button
-                                variant="text"
-                                startIcon={<EditIcon />}
-                                onClick={() => {
-                                  setEditEntry(report);
-                                  setEditClockIn(toLocalInputValue(report.clock_in));
-                                  setEditClockOut(toLocalInputValue(report.clock_out));
-                                }}
-                                sx={{ ml: 1 }}
-                              >
-                                Edit
-                              </Button>
-                            )}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </TableContainer>
-              )}
             </Paper>
           )}
         </Grid>
