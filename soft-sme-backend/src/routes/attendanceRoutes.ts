@@ -196,8 +196,8 @@ router.post('/manual', async (req: Request, res: Response) => {
     const duration = calculateEffectiveDuration(clockInDate, clockOutDate, dailyBreakStart, dailyBreakEnd);
 
     const insertRes = await pool.query(
-      `INSERT INTO attendance_shifts (profile_id, clock_in, clock_out, duration, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, NOW(), NOW())
+      `INSERT INTO attendance_shifts (profile_id, clock_in, clock_out, duration, updated_at)
+       VALUES ($1, $2, $3, $4, NOW())
        RETURNING id`,
       [profileId, clockInDate.toISOString(), clockOutDate.toISOString(), duration]
     );
