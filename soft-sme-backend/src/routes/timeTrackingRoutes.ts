@@ -394,9 +394,70 @@ router.put('/time-entries/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
   let { clock_in, clock_out } = req.body;
   try {
+    const existingEntryRes = await pool.query('SELECT profile_id FROM time_entries WHERE id = $1', [id]);
+    if (existingEntryRes.rows.length === 0) {
+      return res.status(404).json({ error: 'Time entry not found' });
+    }
+    const profileId = existingEntryRes.rows[0].profile_id;
+
     // Convert empty strings to null
     if (!clock_in || clock_in === '') clock_in = null;
     if (!clock_out || clock_out === '') clock_out = null;
+
+    if (!clock_in) {
+      return res.status(400).json({
+        error: 'Validation Error',
+        message: 'Clock in time is required.'
+      });
+    }
+
+    const clockInTime = new Date(clock_in);
+    if (Number.isNaN(clockInTime.getTime())) {
+      return res.status(400).json({
+        error: 'Validation Error',
+        message: 'Clock in time is invalid.'
+      });
+    }
+
+    let clockOutTime: Date | null = null;
+    if (clock_out) {
+      clockOutTime = new Date(clock_out);
+      if (Number.isNaN(clockOutTime.getTime())) {
+        return res.status(400).json({
+          error: 'Validation Error',
+          message: 'Clock out time is invalid.'
+        });
+      }
+
+      if (clockOutTime.getTime() <= clockInTime.getTime()) {
+        return res.status(400).json({
+          error: 'Invalid Time Range',
+          message: 'Clock out time must be after clock in time.'
+        });
+      }
+
+      clock_out = clockOutTime.toISOString();
+    }
+
+    clock_in = clockInTime.toISOString();
+
+    const overlapRes = await pool.query(
+      `SELECT id, clock_in, clock_out
+       FROM time_entries
+       WHERE profile_id = $1
+         AND id <> $2
+         AND tstzrange(clock_in, COALESCE(clock_out, 'infinity'::timestamptz), '[)')
+             && tstzrange($3::timestamptz, COALESCE($4::timestamptz, 'infinity'::timestamptz), '[)')`,
+      [profileId, id, clock_in, clock_out]
+    );
+
+    if (overlapRes.rows.length > 0) {
+      return res.status(400).json({
+        error: 'Overlapping Time Entry',
+        message: 'The user was already clocked in during that time.',
+        conflicts: overlapRes.rows
+      });
+    }
 
     // Get daily break times
     const breakStartRes = await pool.query("SELECT value FROM global_settings WHERE key = 'daily_break_start'");
@@ -405,9 +466,7 @@ router.put('/time-entries/:id', async (req: Request, res: Response) => {
     const dailyBreakEnd = breakEndRes.rows.length > 0 ? breakEndRes.rows[0].value : null;
 
     let effectiveDuration = null;
-    if (clock_in && clock_out) {
-      const clockInTime = new Date(clock_in);
-      const clockOutTime = new Date(clock_out);
+    if (clockOutTime) {
       effectiveDuration = calculateEffectiveDuration(clockInTime, clockOutTime, dailyBreakStart, dailyBreakEnd);
     }
 

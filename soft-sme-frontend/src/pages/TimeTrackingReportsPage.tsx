@@ -251,8 +251,9 @@ const TimeTrackingReportsPage: React.FC = () => {
       setReports(reports.map(entry => entry.id === editEntry.id ? { ...entry, clock_in: updated.clock_in, clock_out: updated.clock_out, duration: updated.duration } : entry));
       setEditEntry(null);
       setError(null);
-    } catch (err) {
-      setError('Failed to update time entry. Please try again.');
+    } catch (err: any) {
+      const apiMessage = err?.response?.data?.message || err?.response?.data?.error;
+      setError(apiMessage || 'Failed to update time entry. Please try again.');
       console.error('Error updating time entry:', err);
     }
   };
