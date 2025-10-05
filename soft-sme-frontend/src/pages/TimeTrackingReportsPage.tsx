@@ -40,7 +40,7 @@ import {
   updateTimeEntry,
   createTimeEntry
 } from '../services/timeTrackingService';
-import { getShiftsInRange, updateShift } from '../services/attendanceService';
+import { getShiftsInRange, updateShift, createShift } from '../services/attendanceService';
 import api from '../api/axios';
 import { Edit as EditIcon, Save as SaveIcon } from '@mui/icons-material';
 
@@ -106,6 +106,11 @@ const TimeTrackingReportsPage: React.FC = () => {
   const [addEntryClockIn, setAddEntryClockIn] = useState('');
   const [addEntryClockOut, setAddEntryClockOut] = useState('');
   const [addingEntry, setAddingEntry] = useState(false);
+  const [addShiftOpen, setAddShiftOpen] = useState(false);
+  const [addShiftProfile, setAddShiftProfile] = useState<number | ''>('');
+  const [addShiftClockIn, setAddShiftClockIn] = useState('');
+  const [addShiftClockOut, setAddShiftClockOut] = useState('');
+  const [savingNewShift, setSavingNewShift] = useState(false);
 
   useEffect(() => {
     fetchData();
@@ -466,6 +471,19 @@ const TimeTrackingReportsPage: React.FC = () => {
             <Box display="flex" justifyContent="center" gap={2} mt={2}>
               <Button
                 variant="contained"
+                color="secondary"
+                onClick={() => {
+                  setAddShiftProfile(selectedProfile === '' ? '' : selectedProfile);
+                  setAddShiftClockIn('');
+                  setAddShiftClockOut('');
+                  setError(null);
+                  setAddShiftOpen(true);
+                }}
+              >
+                Add Shift
+              </Button>
+              <Button
+                variant="contained"
                 color="primary"
                 onClick={handleGenerateReport}
               >
@@ -731,6 +749,96 @@ const TimeTrackingReportsPage: React.FC = () => {
         </DialogActions>
       </Dialog>
 
+      {/* Add Shift Dialog */}
+      <Dialog open={addShiftOpen} onClose={() => { if (!savingNewShift) { setAddShiftOpen(false); } }}>
+        <DialogTitle>Add Shift</DialogTitle>
+        <DialogContent>
+          <FormControl fullWidth sx={{ mb: 2 }}>
+            <InputLabel id="add-shift-profile-label">Profile</InputLabel>
+            <Select
+              labelId="add-shift-profile-label"
+              value={addShiftProfile}
+              label="Profile"
+              onChange={(e) => setAddShiftProfile(e.target.value as number | '')}
+              displayEmpty
+              renderValue={(value) => {
+                if (value === '') {
+                  return <em>Select Profile</em>;
+                }
+                const profile = profiles.find((p) => p.id === (value as number));
+                return profile ? profile.name : String(value);
+              }}
+            >
+              <MenuItem value="">
+                <em>Select Profile</em>
+              </MenuItem>
+              {profiles.map((profile) => (
+                <MenuItem key={profile.id} value={profile.id}>
+                  {profile.name}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+          <TextField
+            label="Clock In"
+            type="datetime-local"
+            value={addShiftClockIn}
+            onChange={(e) => setAddShiftClockIn(e.target.value)}
+            fullWidth
+            sx={{ mb: 2 }}
+            InputLabelProps={{ shrink: true }}
+          />
+          <TextField
+            label="Clock Out"
+            type="datetime-local"
+            value={addShiftClockOut}
+            onChange={(e) => setAddShiftClockOut(e.target.value)}
+            fullWidth
+            InputLabelProps={{ shrink: true }}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => { if (!savingNewShift) { setAddShiftOpen(false); } }}>Cancel</Button>
+          <Button
+            onClick={async () => {
+              if (addShiftProfile === '' || !addShiftClockIn || !addShiftClockOut) {
+                return;
+              }
+              const clockInISO = toUTCISOString(addShiftClockIn);
+              const clockOutISO = toUTCISOString(addShiftClockOut);
+              if (!clockInISO || !clockOutISO) {
+                setError('Please provide valid shift times.');
+                return;
+              }
+              setSavingNewShift(true);
+              try {
+                await createShift(addShiftProfile as number, clockInISO, clockOutISO);
+                setAddShiftOpen(false);
+                setAddShiftClockIn('');
+                setAddShiftClockOut('');
+                setError(null);
+                await handleGenerateReport();
+              } catch (err: any) {
+                const message = err?.response?.data?.message || err?.response?.data?.error || 'Failed to create shift.';
+                setError(message);
+              } finally {
+                setSavingNewShift(false);
+              }
+            }}
+            variant="contained"
+            color="primary"
+            disabled={
+              savingNewShift ||
+              addShiftProfile === '' ||
+              !addShiftClockIn ||
+              !addShiftClockOut
+            }
+          >
+            Save
+          </Button>
+        </DialogActions>
+      </Dialog>
+
       {/* Edit Shift Dialog */}
       <Dialog open={!!editShift} onClose={() => setEditShift(null)}>
         <DialogTitle>Edit Shift</DialogTitle>
@@ -762,9 +870,10 @@ const TimeTrackingReportsPage: React.FC = () => {
                 setEditShift(null);
                 setSavingShift(false);
                 await handleGenerateReport();
-              } catch (err) {
+              } catch (err: any) {
                 setSavingShift(false);
-                alert('Failed to update shift.');
+                const message = err?.response?.data?.message || err?.response?.data?.error || 'Failed to update shift.';
+                setError(message);
               }
             }}
             variant="contained"

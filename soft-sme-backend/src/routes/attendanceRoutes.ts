@@ -1,6 +1,15 @@
 import express, { Request, Response } from 'express';
 import { pool } from '../db';
 
+async function getDailyBreakTimes() {
+  const [breakStartRes, breakEndRes] = await Promise.all([
+    pool.query("SELECT value FROM global_settings WHERE key = 'daily_break_start'"),
+    pool.query("SELECT value FROM global_settings WHERE key = 'daily_break_end'")
+  ]);
+  const dailyBreakStart = breakStartRes.rows.length > 0 ? breakStartRes.rows[0].value : null;
+  const dailyBreakEnd = breakEndRes.rows.length > 0 ? breakEndRes.rows[0].value : null;
+  return { dailyBreakStart, dailyBreakEnd };
+}
 // Helper function to calculate effective duration, excluding daily break times
 function calculateEffectiveDuration(clockIn: Date, clockOut: Date, breakStartStr: string | null, breakEndStr: string | null): number {
   let durationMs = clockOut.getTime() - clockIn.getTime();
@@ -128,6 +137,90 @@ router.post('/clock-in', async (req: Request, res: Response) => {
   }
 });
 
+// Manual shift creation
+router.post('/manual', async (req: Request, res: Response) => {
+  const { profile_id, clock_in, clock_out } = req.body;
+  const profileId = Number(profile_id);
+
+  if (!profile_id || Number.isNaN(profileId)) {
+    return res.status(400).json({
+      error: 'Validation Error',
+      message: 'A valid profile_id is required.',
+    });
+  }
+
+  if (!clock_in || !clock_out) {
+    return res.status(400).json({
+      error: 'Validation Error',
+      message: 'clock_in and clock_out are required.',
+    });
+  }
+
+  const clockInDate = new Date(clock_in);
+  const clockOutDate = new Date(clock_out);
+
+  if (Number.isNaN(clockInDate.getTime()) || Number.isNaN(clockOutDate.getTime())) {
+    return res.status(400).json({
+      error: 'Validation Error',
+      message: 'clock_in and clock_out must be valid ISO timestamps.',
+    });
+  }
+
+  if (clockInDate >= clockOutDate) {
+    return res.status(400).json({
+      error: 'Invalid Range',
+      message: 'clock_out must be later than clock_in.',
+    });
+  }
+
+  try {
+    const { dailyBreakStart, dailyBreakEnd } = await getDailyBreakTimes();
+
+    const overlapRes = await pool.query(
+      `SELECT 1
+       FROM attendance_shifts
+       WHERE profile_id = $1
+         AND tstzrange(clock_in, COALESCE(clock_out, 'infinity'), '[)')
+             && tstzrange($2::timestamptz, $3::timestamptz, '[)')
+       LIMIT 1`,
+      [profileId, clockInDate.toISOString(), clockOutDate.toISOString()]
+    );
+
+    if (overlapRes.rows.length > 0) {
+      return res.status(400).json({
+        error: 'Shift Overlap',
+        message: 'This shift overlaps another shift for the selected profile.',
+      });
+    }
+
+    const duration = calculateEffectiveDuration(clockInDate, clockOutDate, dailyBreakStart, dailyBreakEnd);
+
+    const insertRes = await pool.query(
+      `INSERT INTO attendance_shifts (profile_id, clock_in, clock_out, duration, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, NOW(), NOW())
+       RETURNING id`,
+      [profileId, clockInDate.toISOString(), clockOutDate.toISOString(), duration]
+    );
+
+    const insertedId = insertRes.rows[0].id;
+
+    const shiftRes = await pool.query(
+      `SELECT s.*, p.name as profile_name, p.email as profile_email
+       FROM attendance_shifts s
+       LEFT JOIN profiles p ON s.profile_id = p.id
+       WHERE s.id = $1`,
+      [insertedId]
+    );
+
+    return res.status(201).json(shiftRes.rows[0]);
+  } catch (err) {
+    console.error('attendanceRoutes: Error creating manual shift:', err);
+    return res.status(500).json({
+      error: 'Internal Server Error',
+      message: 'Unable to create manual shift.',
+    });
+  }
+});
 // Clock out
 router.post('/clock-out', async (req: Request, res: Response) => {
   const { shift_id } = req.body;
@@ -249,49 +342,151 @@ router.post('/clock-out', async (req: Request, res: Response) => {
 // Edit shift (admin)
 router.put('/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
-  let { clock_in, clock_out } = req.body; // Use let for reassigning
+  const { clock_in, clock_out } = req.body;
 
   try {
-    // Convert empty strings to null for clock_in and clock_out if they are optional
-    if (clock_in === '') clock_in = null;
-    if (clock_out === '') clock_out = null;
-
-    // Get daily break times
-    const breakStartRes = await pool.query("SELECT value FROM global_settings WHERE key = 'daily_break_start'");
-    const breakEndRes = await pool.query("SELECT value FROM global_settings WHERE key = 'daily_break_end'");
-    const dailyBreakStart = breakStartRes.rows.length > 0 ? breakStartRes.rows[0].value : null;
-    const dailyBreakEnd = breakEndRes.rows.length > 0 ? breakEndRes.rows[0].value : null;
-
-    console.log('Edit Shift Debug:');
-    console.log('  clock_in (raw):', req.body.clock_in);
-    console.log('  clock_out (raw):', req.body.clock_out);
-    console.log('  clock_in (processed):', clock_in);
-    console.log('  clock_out (processed):', clock_out);
-    console.log('  dailyBreakStart:', dailyBreakStart);
-    console.log('  dailyBreakEnd:', dailyBreakEnd);
-
-    let effectiveDuration = null;
-    if (clock_in && clock_out) {
-      const clockInTime = new Date(clock_in);
-      const clockOutTime = new Date(clock_out);
-      effectiveDuration = calculateEffectiveDuration(clockInTime, clockOutTime, dailyBreakStart, dailyBreakEnd);
+    const shiftRes = await pool.query('SELECT * FROM attendance_shifts WHERE id = $1', [id]);
+    if (shiftRes.rows.length === 0) {
+      return res.status(404).json({
+        error: 'Shift Not Found',
+        message: 'Shift not found.',
+      });
     }
-    console.log('  effectiveDuration:', effectiveDuration);
 
-    const result = await pool.query(
-      'UPDATE attendance_shifts SET clock_in = $1, clock_out = $2, duration = $3, updated_at = NOW() WHERE id = $4 RETURNING *',
-      [clock_in, clock_out, effectiveDuration, id]
+    const shift = shiftRes.rows[0];
+    const profileId = Number(shift.profile_id);
+
+    if (!clock_in) {
+      return res.status(400).json({
+        error: 'Validation Error',
+        message: 'clock_in is required.',
+      });
+    }
+
+    const newClockInDate = new Date(clock_in);
+    if (Number.isNaN(newClockInDate.getTime())) {
+      return res.status(400).json({
+        error: 'Validation Error',
+        message: 'clock_in must be a valid ISO timestamp.',
+      });
+    }
+
+    let newClockOutDate: Date | null = null;
+    if (clock_out !== null && clock_out !== undefined && clock_out !== '') {
+      newClockOutDate = new Date(clock_out);
+      if (Number.isNaN(newClockOutDate.getTime())) {
+        return res.status(400).json({
+          error: 'Validation Error',
+          message: 'clock_out must be a valid ISO timestamp.',
+        });
+      }
+
+      if (newClockInDate >= newClockOutDate) {
+        return res.status(400).json({
+          error: 'Invalid Range',
+          message: 'clock_out must be later than clock_in.',
+        });
+      }
+    }
+
+    const overlapRes = await pool.query(
+      `SELECT 1
+       FROM attendance_shifts
+       WHERE profile_id = $1
+         AND id <> $2
+         AND tstzrange(clock_in, COALESCE(clock_out, 'infinity'), '[)')
+             && tstzrange($3::timestamptz, COALESCE($4::timestamptz, 'infinity'), '[)')
+       LIMIT 1`,
+      [profileId, id, newClockInDate.toISOString(), newClockOutDate ? newClockOutDate.toISOString() : null]
     );
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Shift not found' });
+
+    if (overlapRes.rows.length > 0) {
+      return res.status(400).json({
+        error: 'Shift Overlap',
+        message: 'This shift overlaps another shift for the selected profile.',
+      });
     }
-    res.json(result.rows[0]);
+
+    const originalClockIn = new Date(shift.clock_in);
+    const originalClockOut = shift.clock_out ? new Date(shift.clock_out) : null;
+
+    const timeEntryParams: any[] = [profileId, originalClockIn.toISOString()];
+    let timeEntryQuery = `
+      SELECT id, clock_in, clock_out
+      FROM time_entries
+      WHERE profile_id = $1
+        AND clock_in >= $2
+    `;
+    if (originalClockOut) {
+      timeEntryQuery += ' AND clock_in < $3';
+      timeEntryParams.push(originalClockOut.toISOString());
+    }
+    const timeEntriesRes = await pool.query(timeEntryQuery, timeEntryParams);
+
+    for (const entry of timeEntriesRes.rows) {
+      const entryClockIn = new Date(entry.clock_in);
+      if (entryClockIn < newClockInDate) {
+        return res.status(400).json({
+          error: 'Shift Outside Time Entries',
+          message: 'Adjust the sales-order entries before shortening this shift.',
+        });
+      }
+
+      if (newClockOutDate) {
+        if (!entry.clock_out) {
+          return res.status(400).json({
+            error: 'Shift Outside Time Entries',
+            message: 'Adjust the sales-order entries before shortening this shift.',
+          });
+        }
+        const entryClockOut = new Date(entry.clock_out);
+        if (entryClockOut > newClockOutDate) {
+          return res.status(400).json({
+            error: 'Shift Outside Time Entries',
+            message: 'Adjust the sales-order entries before shortening this shift.',
+          });
+        }
+      }
+    }
+
+    let duration: number | null = null;
+    if (newClockOutDate) {
+      const { dailyBreakStart, dailyBreakEnd } = await getDailyBreakTimes();
+      duration = calculateEffectiveDuration(newClockInDate, newClockOutDate, dailyBreakStart, dailyBreakEnd);
+    }
+
+    const updateRes = await pool.query(
+      `UPDATE attendance_shifts
+       SET clock_in = $1, clock_out = $2, duration = $3, updated_at = NOW()
+       WHERE id = $4
+       RETURNING id`,
+      [newClockInDate.toISOString(), newClockOutDate ? newClockOutDate.toISOString() : null, duration, id]
+    );
+
+    if (updateRes.rows.length === 0) {
+      return res.status(404).json({
+        error: 'Shift Not Found',
+        message: 'Shift not found.',
+      });
+    }
+
+    const updatedShiftRes = await pool.query(
+      `SELECT s.*, p.name as profile_name, p.email as profile_email
+       FROM attendance_shifts s
+       LEFT JOIN profiles p ON s.profile_id = p.id
+       WHERE s.id = $1`,
+      [id]
+    );
+
+    return res.json(updatedShiftRes.rows[0]);
   } catch (err) {
     console.error('attendanceRoutes: Error editing shift:', err);
-    res.status(500).json({ error: 'Internal server error' });
+    return res.status(500).json({
+      error: 'Internal Server Error',
+      message: 'Unable to update shift.',
+    });
   }
 });
-
 // List unclosed shifts (for warnings)
 router.get('/unclosed', async (req: Request, res: Response) => {
   try {
@@ -312,3 +507,4 @@ router.get('/export', async (req: Request, res: Response) => {
 });
 
 export default router;
+

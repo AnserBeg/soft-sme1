@@ -59,11 +59,28 @@ export const clockOutShift = async (shiftId: number) => {
   }
 };
 
+export const createShift = async (profileId: number, clockInISO: string, clockOutISO: string) => {
+  try {
+    const response = await api.post('/api/attendance/manual', {
+      profile_id: profileId,
+      clock_in: clockInISO,
+      clock_out: clockOutISO,
+    });
+    return response.data;
+  } catch (err) {
+    throw err;
+  }
+};
+
 export const updateShift = async (shiftId: number, clockIn: string, clockOut: string) => {
   try {
     const response = await api.put(`/api/attendance/${shiftId}`, { clock_in: clockIn, clock_out: clockOut });
     return response.data;
-  } catch (err) {
+  } catch (err: any) {
+    if (err?.response) {
+      throw err;
+    }
+
     const evt = {
       event_id: uuid(),
       device_id: localStorage.getItem('deviceId') || 'unknown-device',
