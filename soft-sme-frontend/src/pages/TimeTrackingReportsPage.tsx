@@ -263,10 +263,8 @@ const TimeTrackingReportsPage: React.FC = () => {
       setEditEntry(null);
       setError(null);
     } catch (err: any) {
-      const message =
-        err?.response?.data?.message ||
-        err?.response?.data?.error ||
-        'Failed to update time entry. Please try again.';
+      const backendMessage = err?.response?.data?.message ?? err?.response?.data?.error;
+      const message = backendMessage || 'Failed to update time entry. Please try again.';
       setEditEntryError(message);
       setError(message);
       console.error('Error updating time entry:', err);

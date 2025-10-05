@@ -614,11 +614,14 @@ router.put('/time-entries/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
   let { clock_in, clock_out } = req.body;
   try {
-    const existingEntryRes = await pool.query('SELECT profile_id FROM time_entries WHERE id = $1', [id]);
+    const existingEntryRes = await pool.query(
+      'SELECT profile_id, sales_order_id FROM time_entries WHERE id = $1',
+      [id]
+    );
     if (existingEntryRes.rows.length === 0) {
       return res.status(404).json({ error: 'Time entry not found' });
     }
-    const profileId = existingEntryRes.rows[0].profile_id;
+    const { profile_id: profileId, sales_order_id: existingSalesOrderId } = existingEntryRes.rows[0];
 
     // Convert empty strings to null
     if (!clock_in || clock_in === '') clock_in = null;
@@ -660,6 +663,25 @@ router.put('/time-entries/:id', async (req: Request, res: Response) => {
     }
 
     clock_in = clockInTime.toISOString();
+    const effectiveAttendanceEnd = clock_out ?? clock_in;
+
+    const attendanceShiftRes = await pool.query(
+      `SELECT id, clock_in, clock_out
+       FROM attendance_shifts
+       WHERE profile_id = $1
+         AND clock_in <= $2::timestamptz
+         AND (clock_out IS NULL OR clock_out >= $3::timestamptz)
+       ORDER BY clock_in DESC
+       LIMIT 1`,
+      [profileId, clock_in, effectiveAttendanceEnd]
+    );
+
+    if (attendanceShiftRes.rows.length === 0) {
+      return res.status(400).json({
+        error: 'Outside Attendance Shift',
+        message: 'The user was not clocked into attendance during that time.'
+      });
+    }
 
     const overlapRes = await pool.query(
       `SELECT id, clock_in, clock_out
@@ -677,45 +699,6 @@ router.put('/time-entries/:id', async (req: Request, res: Response) => {
         message: 'The user was already clocked in during that time.',
         conflicts: overlapRes.rows
       });
-    }
-
-    const effectiveEnd = clock_out ?? clock_in;
-
-    const attendanceShiftRes = await pool.query(
-      `SELECT id, clock_in, clock_out
-       FROM attendance_shifts
-       WHERE profile_id = $1
-         AND clock_in <= $2::timestamptz
-         AND (clock_out IS NULL OR clock_out >= $3::timestamptz)
-       ORDER BY clock_in DESC
-       LIMIT 1`,
-      [profileId, clock_in, effectiveEnd]
-    );
-
-    if (attendanceShiftRes.rows.length === 0) {
-      const nearestShiftRes = await pool.query(
-        `SELECT id, clock_in, clock_out
-         FROM attendance_shifts
-         WHERE profile_id = $1
-         ORDER BY ABS(EXTRACT(EPOCH FROM (clock_in - $2::timestamptz))) ASC
-         LIMIT 1`,
-        [profileId, clock_in]
-      );
-
-      const attendanceErrorPayload: {
-        error: string;
-        message: string;
-        closest_shift?: unknown;
-      } = {
-        error: 'Outside Attendance Shift',
-        message: 'The user was not clocked into attendance during that time.'
-      };
-
-      if (nearestShiftRes.rows.length > 0) {
-        attendanceErrorPayload.closest_shift = nearestShiftRes.rows[0];
-      }
-
-      return res.status(400).json(attendanceErrorPayload);
     }
 
     // Get daily break times
@@ -743,11 +726,8 @@ router.put('/time-entries/:id', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Time entry not found' });
     }
 
-    // Get the sales order ID for this time entry
-    const salesOrderIdRes = await pool.query('SELECT sales_order_id FROM time_entries WHERE id = $1', [id]);
-    if (salesOrderIdRes.rows.length > 0) {
-      const soId = salesOrderIdRes.rows[0].sales_order_id;
-      
+    const soId = existingSalesOrderId;
+    if (soId) {
       // Recalculate LABOUR and OVERHEAD line items for the sales order
       // Sum all durations for this sales order
       const sumRes = await pool.query(
@@ -1533,4 +1513,3 @@ router.delete('/profiles/:id', async (req: Request, res: Response) => {
 });
 
 export default router; 
-
