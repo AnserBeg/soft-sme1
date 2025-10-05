@@ -164,11 +164,20 @@ const TimeTrackingReportsPage: React.FC = () => {
         fetchedShifts.forEach(shift => { shiftEntryMap[shift.id] = []; });
         allEntries.forEach(entry => {
           const entryIn = new Date(entry.clock_in).getTime();
+          const entryProfileId = Number(entry.profile_id);
           let found = false;
           for (const shift of fetchedShifts) {
             const shiftIn = new Date(shift.clock_in).getTime();
             const shiftOut = shift.clock_out ? new Date(shift.clock_out).getTime() : null;
-            if (shiftOut && entryIn >= shiftIn && entryIn < shiftOut) {
+            const shiftProfileId = Number(shift.profile_id);
+            if (
+              shiftOut &&
+              !Number.isNaN(entryProfileId) &&
+              !Number.isNaN(shiftProfileId) &&
+              entryProfileId === shiftProfileId &&
+              entryIn >= shiftIn &&
+              entryIn < shiftOut
+            ) {
               shiftEntryMap[shift.id].push(entry);
               found = true;
               break;
