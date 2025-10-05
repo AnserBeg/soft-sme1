@@ -165,6 +165,27 @@ router.post('/time-entries/clock-in', async (req: Request, res: Response) => {
       });
     }
 
+    // Check if profile already has an open time entry (prevent overlapping entries)
+    const openTimeEntryCheck = await pool.query(
+      'SELECT * FROM time_entries WHERE profile_id = $1 AND clock_out IS NULL',
+      [profile_id]
+    );
+
+    if (openTimeEntryCheck.rows.length > 0) {
+      const openEntry = openTimeEntryCheck.rows[0];
+      const salesOrderResult = await pool.query(
+        'SELECT sales_order_number FROM salesorderhistory WHERE sales_order_id = $1',
+        [openEntry.sales_order_id]
+      );
+      const currentSO = salesOrderResult.rows[0]?.sales_order_number || 'Unknown';
+      
+      return res.status(400).json({ 
+        error: 'Already Clocked In', 
+        message: `You are already clocked in to sales order ${currentSO}. Please clock out first before clocking into another sales order.`,
+        details: 'You can only be clocked into one sales order at a time.'
+      });
+    }
+
     // Get global labour rate
     const rateRes = await pool.query("SELECT value FROM global_settings WHERE key = 'labour_rate'");
     const unit_price = rateRes.rows.length > 0 ? parseFloat(rateRes.rows[0].value) : 0;
