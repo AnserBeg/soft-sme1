@@ -10,44 +10,134 @@ async function getDailyBreakTimes() {
   const dailyBreakEnd = breakEndRes.rows.length > 0 ? breakEndRes.rows[0].value : null;
   return { dailyBreakStart, dailyBreakEnd };
 }
+const DEFAULT_TIMEZONE = process.env.TIME_TRACKING_TIMEZONE || process.env.TZ || 'UTC';
+
+function normalizeTimeZone(timeZone?: string | null): string {
+  const candidate = (timeZone || '').toString().trim();
+  if (!candidate) {
+    return DEFAULT_TIMEZONE;
+  }
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: candidate });
+    return candidate;
+  } catch {
+    console.warn(`Invalid timezone "${candidate}" supplied. Falling back to ${DEFAULT_TIMEZONE}.`);
+    return DEFAULT_TIMEZONE;
+  }
+}
+
+function getDatePartsInZone(date: Date, timeZone: string): { year: number; month: number; day: number } {
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+
+  const parts = formatter.formatToParts(date);
+  const lookup = parts.reduce<Record<string, string>>((acc, part) => {
+    if (part.type !== 'literal') {
+      acc[part.type] = part.value;
+    }
+    return acc;
+  }, {});
+
+  return {
+    year: Number(lookup.year),
+    month: Number(lookup.month),
+    day: Number(lookup.day),
+  };
+}
+
+function getTimeZoneOffset(date: Date, timeZone: string): number {
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hour12: false,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+
+  const parts = formatter.formatToParts(date);
+  const lookup = parts.reduce<Record<string, string>>((acc, part) => {
+    if (part.type !== 'literal') {
+      acc[part.type] = part.value;
+    }
+    return acc;
+  }, {});
+
+  const utcEquivalent = Date.UTC(
+    Number(lookup.year),
+    Number(lookup.month) - 1,
+    Number(lookup.day),
+    Number(lookup.hour),
+    Number(lookup.minute),
+    Number(lookup.second),
+  );
+
+  return (utcEquivalent - date.getTime()) / (1000 * 60);
+}
+
+function makeZonedDate(baseDate: Date, timeStr: string, timeZone: string): Date {
+  const [rawHour = '0', rawMinute = '0'] = timeStr.split(':');
+  const hours = Number(rawHour);
+  const minutes = Number(rawMinute);
+
+  const { year, month, day } = getDatePartsInZone(baseDate, timeZone);
+  const candidateUtc = new Date(Date.UTC(year, month - 1, day, hours, minutes, 0, 0));
+  const offsetMinutes = getTimeZoneOffset(candidateUtc, timeZone);
+  return new Date(candidateUtc.getTime() - offsetMinutes * 60 * 1000);
+}
+
+function addDays(date: Date, days: number): Date {
+  const result = new Date(date.getTime());
+  result.setUTCDate(result.getUTCDate() + days);
+  return result;
+}
+
 // Helper function to calculate effective duration, excluding daily break times
-function calculateEffectiveDuration(clockIn: Date, clockOut: Date, breakStartStr: string | null, breakEndStr: string | null): number {
+function calculateEffectiveDuration(
+  clockIn: Date,
+  clockOut: Date,
+  breakStartStr: string | null,
+  breakEndStr: string | null,
+  timeZone?: string | null,
+): number {
   let durationMs = clockOut.getTime() - clockIn.getTime();
 
   if (breakStartStr && breakEndStr) {
-    const breakStartParts = breakStartStr.split(':').map(Number);
-    const breakEndParts = breakEndStr.split(':').map(Number);
+    const resolvedTimeZone = normalizeTimeZone(timeZone);
+    const breakStartTime = makeZonedDate(clockIn, breakStartStr, resolvedTimeZone);
+    let breakEndTime = makeZonedDate(clockIn, breakEndStr, resolvedTimeZone);
 
-    const breakStartTime = new Date(clockIn);
-    breakStartTime.setHours(breakStartParts[0], breakStartParts[1], 0, 0);
-
-    const breakEndTime = new Date(clockIn);
-    breakEndTime.setHours(breakEndParts[0], breakEndParts[1], 0, 0);
-
-    // Handle overnight breaks (e.g., 23:00 - 01:00)
-    if (breakEndTime.getTime() < breakStartTime.getTime()) {
-      breakEndTime.setDate(breakEndTime.getDate() + 1);
+    if (breakEndTime.getTime() <= breakStartTime.getTime()) {
+      breakEndTime = makeZonedDate(addDays(clockIn, 1), breakEndStr, resolvedTimeZone);
     }
 
-    // Check if shift spans multiple days
-    const isMultiDayShift = clockOut.getDate() !== clockIn.getDate() || 
-                           clockOut.getMonth() !== clockIn.getMonth() || 
-                           clockOut.getFullYear() !== clockIn.getFullYear();
+    const isMultiDayShift =
+      clockOut.getUTCDate() !== clockIn.getUTCDate() ||
+      clockOut.getUTCMonth() !== clockIn.getUTCMonth() ||
+      clockOut.getUTCFullYear() !== clockIn.getUTCFullYear();
 
     if (isMultiDayShift) {
-      // Multi-day shift - handle breaks for each day
-      const clockInDay = new Date(clockIn.getFullYear(), clockIn.getMonth(), clockIn.getDate());
-      const clockOutDay = new Date(clockOut.getFullYear(), clockOut.getMonth(), clockOut.getDate());
-      const daysDiff = Math.round((clockOutDay.getTime() - clockInDay.getTime()) / (1000 * 60 * 60 * 24));
+      const daysDiff = Math.round(
+        (Date.UTC(clockOut.getUTCFullYear(), clockOut.getUTCMonth(), clockOut.getUTCDate()) -
+          Date.UTC(clockIn.getUTCFullYear(), clockIn.getUTCMonth(), clockIn.getUTCDate())) /
+          (1000 * 60 * 60 * 24),
+      );
 
-      // For each day the shift spans, check for break overlap
       for (let i = 0; i <= daysDiff; i++) {
-        const currentDayBreakStart = new Date(breakStartTime);
-        currentDayBreakStart.setDate(clockIn.getDate() + i);
-        const currentDayBreakEnd = new Date(breakEndTime);
-        currentDayBreakEnd.setDate(clockIn.getDate() + i);
+        const baseDay = addDays(clockIn, i);
+        const currentDayBreakStart = makeZonedDate(baseDay, breakStartStr, resolvedTimeZone);
+        let currentDayBreakEnd = makeZonedDate(baseDay, breakEndStr, resolvedTimeZone);
 
-        // Calculate overlap with work time
+        if (currentDayBreakEnd.getTime() <= currentDayBreakStart.getTime()) {
+          currentDayBreakEnd = makeZonedDate(addDays(baseDay, 1), breakEndStr, resolvedTimeZone);
+        }
+
         const overlapStart = Math.max(clockIn.getTime(), currentDayBreakStart.getTime());
         const overlapEnd = Math.min(clockOut.getTime(), currentDayBreakEnd.getTime());
 
@@ -58,7 +148,6 @@ function calculateEffectiveDuration(clockIn: Date, clockOut: Date, breakStartStr
         }
       }
     } else {
-      // Single day shift
       const overlapStart = Math.max(clockIn.getTime(), breakStartTime.getTime());
       const overlapEnd = Math.min(clockOut.getTime(), breakEndTime.getTime());
 
@@ -70,10 +159,7 @@ function calculateEffectiveDuration(clockIn: Date, clockOut: Date, breakStartStr
     }
   }
 
-  // Convert to hours and ensure non-negative
   const durationHours = Math.max(0, durationMs / (1000 * 60 * 60));
-  
-  // Round to 2 decimal places for consistency
   return Math.round(durationHours * 100) / 100;
 }
 
@@ -174,6 +260,7 @@ router.post('/manual', async (req: Request, res: Response) => {
   }
 
   try {
+    const requestTimeZone = req.headers['x-timezone'] as string | undefined;
     const { dailyBreakStart, dailyBreakEnd } = await getDailyBreakTimes();
 
     const overlapRes = await pool.query(
@@ -193,7 +280,13 @@ router.post('/manual', async (req: Request, res: Response) => {
       });
     }
 
-    const duration = calculateEffectiveDuration(clockInDate, clockOutDate, dailyBreakStart, dailyBreakEnd);
+    const duration = calculateEffectiveDuration(
+      clockInDate,
+      clockOutDate,
+      dailyBreakStart,
+      dailyBreakEnd,
+      requestTimeZone,
+    );
 
     const insertRes = await pool.query(
       `INSERT INTO attendance_shifts (profile_id, clock_in, clock_out, duration, updated_at)
@@ -225,6 +318,7 @@ router.post('/manual', async (req: Request, res: Response) => {
 router.post('/clock-out', async (req: Request, res: Response) => {
   const { shift_id } = req.body;
   try {
+    const requestTimeZone = req.headers['x-timezone'] as string | undefined;
     // Get daily break times
     const breakStartRes = await pool.query("SELECT value FROM global_settings WHERE key = 'daily_break_start'");
     const breakEndRes = await pool.query("SELECT value FROM global_settings WHERE key = 'daily_break_end'");
@@ -246,7 +340,13 @@ router.post('/clock-out', async (req: Request, res: Response) => {
     console.log('  dailyBreakStart:', dailyBreakStart);
     console.log('  dailyBreakEnd:', dailyBreakEnd);
 
-    const effectiveDuration = calculateEffectiveDuration(clockInTime, clockOutTime, dailyBreakStart, dailyBreakEnd);
+    const effectiveDuration = calculateEffectiveDuration(
+      clockInTime,
+      clockOutTime,
+      dailyBreakStart,
+      dailyBreakEnd,
+      requestTimeZone,
+    );
     console.log('  effectiveDuration:', effectiveDuration);
 
     const result = await pool.query(
@@ -269,7 +369,13 @@ router.post('/clock-out', async (req: Request, res: Response) => {
       const timeEntryClockOutTime = new Date();
       const timeEntryRes = await pool.query('SELECT clock_in FROM time_entries WHERE id = $1', [timeEntryId]);
       const timeEntryClockInTime = new Date(timeEntryRes.rows[0].clock_in);
-      const timeEntryEffectiveDuration = calculateEffectiveDuration(timeEntryClockInTime, timeEntryClockOutTime, dailyBreakStart, dailyBreakEnd);
+      const timeEntryEffectiveDuration = calculateEffectiveDuration(
+        timeEntryClockInTime,
+        timeEntryClockOutTime,
+        dailyBreakStart,
+        dailyBreakEnd,
+        requestTimeZone,
+      );
 
       await pool.query(
         'UPDATE time_entries SET clock_out = $1, duration = $2 WHERE id = $3',
@@ -345,6 +451,7 @@ router.put('/:id', async (req: Request, res: Response) => {
   const { clock_in, clock_out } = req.body;
 
   try {
+    const requestTimeZone = req.headers['x-timezone'] as string | undefined;
     const shiftRes = await pool.query('SELECT * FROM attendance_shifts WHERE id = $1', [id]);
     if (shiftRes.rows.length === 0) {
       return res.status(404).json({
@@ -452,7 +559,13 @@ router.put('/:id', async (req: Request, res: Response) => {
     let duration: number | null = null;
     if (newClockOutDate) {
       const { dailyBreakStart, dailyBreakEnd } = await getDailyBreakTimes();
-      duration = calculateEffectiveDuration(newClockInDate, newClockOutDate, dailyBreakStart, dailyBreakEnd);
+      duration = calculateEffectiveDuration(
+        newClockInDate,
+        newClockOutDate,
+        dailyBreakStart,
+        dailyBreakEnd,
+        requestTimeZone,
+      );
     }
 
     const updateRes = await pool.query(

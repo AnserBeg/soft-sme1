@@ -25,6 +25,7 @@ import categoryRoutes from './routes/categoryRoutes';
 import quoteRoutes from './routes/quoteRoutes';
 import salesOrderRoutes from './routes/salesOrderRoutes';
 import purchaseOrderRoutes from './routes/purchaseOrderRoutes';
+import purchaseOrderOcrRoutes from './routes/purchaseOrderOcrRoutes';
 import employeeRoutes from './routes/employeeRoutes';
 import timeTrackingRoutes from './routes/timeTrackingRoutes';
 import leaveManagementRoutes from './routes/leaveManagementRoutes';
@@ -38,6 +39,7 @@ import overheadRoutes from './routes/overheadRoutes';
 import aiAssistantRoutes from './routes/aiAssistantRoutes';
 import emailRoutes from './routes/emailRoutes';
 import profileDocumentRoutes from './routes/profileDocumentRoutes';
+import messagingRoutes from './routes/messagingRoutes';
 import agentV2Routes from './routes/agentV2Routes';
 import voiceRoutes from './routes/voiceRoutes';
 import voiceStreamRoutes from './routes/voiceStreamRoutes';
@@ -80,7 +82,14 @@ const corsOptions: cors.CorsOptions = {
   origin: true, // Allow all origins - disable CORS restrictions
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'x-device-id'],
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'X-Requested-With',
+    'x-device-id',
+    'x-timezone',
+    'X-Timezone',
+  ],
   optionsSuccessStatus: 204,
 };
 
@@ -134,6 +143,9 @@ console.log('Registered sales order routes');
 app.use('/api/purchase-orders', authMiddleware, purchaseOrderRoutes);
 console.log('Registered purchase order routes');
 
+app.use('/api/purchase-orders/ocr', authMiddleware, purchaseOrderOcrRoutes);
+console.log('Registered purchase order OCR routes');
+
 app.use('/api/employees', authMiddleware, employeeRoutes);
 console.log('Registered employee routes');
 
@@ -183,6 +195,9 @@ console.log('Registered email routes');
 // Profile document routes
 app.use('/api/profile-documents', profileDocumentRoutes);
 console.log('Registered profile document routes');
+
+app.use('/api/messaging', authMiddleware, messagingRoutes);
+console.log('Registered messaging routes');
 
 // Agent V2 routes (feature-flagged)
 if (process.env.AI_ASSISTANT_V2 !== 'false') {
