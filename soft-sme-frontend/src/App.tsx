@@ -2,6 +2,7 @@ import React from 'react';
 import { HashRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { ThemeProvider, CssBaseline } from '@mui/material';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { MessagingProvider } from './contexts/MessagingContext';
 import theme from './theme';
 import { LocalizationProvider } from '@mui/x-date-pickers';
 import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
@@ -19,7 +20,7 @@ import InventoryPage from './pages/InventoryPage';
 import SupplyPage from './pages/SupplyPage';
 import QuotePage from './pages/QuotePage';
 import QuoteEditorPage from './pages/QuoteEditorPage';
-
+import MessagingPage from './pages/MessagingPage';
 
 // import SalesOrderPage from './pages/SalesOrderPage';
 
@@ -196,6 +197,9 @@ const AppRoutes: React.FC = () => {
         
         {/* Email Templates */}
         <Route path="email-templates" element={<EmailTemplatesPage />} />
+
+        {/* Messaging */}
+        <Route path="messaging" element={<MessagingPage />} />
       </Route>
 
       {/* Catch all route */}
@@ -239,12 +243,14 @@ const App: React.FC = () => {
     <ThemeProvider theme={theme}>
       <CssBaseline />
       <AuthProvider>
-        <LocalizationProvider dateAdapter={AdapterDayjs}>
-          <Router>
-            <AppRoutes />
-          </Router>
-          <ToastContainer position="top-right" autoClose={3000} newestOnTop={false} closeOnClick pauseOnFocusLoss draggable pauseOnHover theme="colored" />
-        </LocalizationProvider>
+        <MessagingProvider>
+          <LocalizationProvider dateAdapter={AdapterDayjs}>
+            <Router>
+              <AppRoutes />
+            </Router>
+            <ToastContainer position="top-right" autoClose={3000} newestOnTop={false} closeOnClick pauseOnFocusLoss draggable pauseOnHover theme="colored" />
+          </LocalizationProvider>
+        </MessagingProvider>
       </AuthProvider>
     </ThemeProvider>
   );

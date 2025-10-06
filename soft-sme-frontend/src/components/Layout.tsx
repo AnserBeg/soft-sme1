@@ -37,6 +37,7 @@ import {
   Person as PersonIcon,
   Email as EmailIcon,
   Description as DescriptionIcon,
+  Chat as ChatIcon,
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import ChatBubble from './ChatBubble';
@@ -107,6 +108,9 @@ const Layout: React.FC = () => {
     { text: 'Leave Management', icon: <CalendarIcon />, path: '/leave-management' },
     { text: 'Mobile User Access', icon: <PeopleIcon />, path: '/mobile-user-access' },
 
+    { type: 'header', text: 'Communication' },
+    { text: 'Messaging', icon: <ChatIcon />, path: '/messaging' },
+
     { type: 'header', text: 'Settings' },
     { text: 'Business Profile', icon: <BusinessIcon />, path: '/business-profile' },
     { text: 'Accounting', icon: <AttachMoneyIcon />, path: '/qbo-account-mapping' },
@@ -124,6 +128,8 @@ const Layout: React.FC = () => {
         { text: 'Time Tracking', icon: <TimelineIcon />, path: '/time-tracking' },
         { type: 'header', text: 'Human Resources' },
         { text: 'Leave Management', icon: <CalendarIcon />, path: '/leave-management' },
+        { type: 'header', text: 'Communication' },
+        { text: 'Messaging', icon: <ChatIcon />, path: '/messaging' },
         { type: 'header', text: 'Sales' },
         { text: 'Sales Orders', icon: <ReceiptIcon />, path: '/open-sales-orders' },
       ];
@@ -143,6 +149,8 @@ const Layout: React.FC = () => {
         { type: 'header', text: 'Inventory' },
         { text: 'Stock', icon: <InventoryIcon />, path: '/inventory' },
         { text: 'Supply', icon: <InventoryIcon />, path: '/supply' },
+        { type: 'header', text: 'Communication' },
+        { text: 'Messaging', icon: <ChatIcon />, path: '/messaging' },
         { type: 'header', text: 'Settings' },
         { text: 'Email Settings', icon: <EmailIcon />, path: '/email-settings' },
       ];
