@@ -10,6 +10,19 @@ export class PDFService {
     this.pool = pool;
   }
 
+  private formatCurrency(value: number | string | null | undefined): string {
+    const amount = Number(value ?? 0);
+    if (!Number.isFinite(amount)) {
+      return '$0.00';
+    }
+    return amount.toLocaleString('en-US', {
+      style: 'currency',
+      currency: 'USD',
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    });
+  }
+
   // Generate professional purchase order PDF (same as download)
   async generatePurchaseOrderPDF(purchaseOrderId: number): Promise<Buffer> {
     return new Promise(async (resolve, reject) => {
@@ -419,7 +432,11 @@ export class PDFService {
 
         // --- Pricing Section ---
         doc.font('Helvetica-Bold').fontSize(12).fillColor('#000000').text('Estimated Price', 50, y);
-        doc.font('Helvetica-Bold').fontSize(13).fillColor('#000000').text(parseFloat(quote.estimated_cost).toFixed(2), 480, y, { align: 'right', width: 70 });
+        doc
+          .font('Helvetica-Bold')
+          .fontSize(13)
+          .fillColor('#000000')
+          .text(this.formatCurrency(quote.estimated_cost), 480, y, { align: 'right', width: 70 });
 
         // --- Terms and Conditions ---
         y += 40;
