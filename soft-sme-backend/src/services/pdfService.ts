@@ -15,12 +15,15 @@ export class PDFService {
     if (!Number.isFinite(amount)) {
       return '$0.00';
     }
-    return amount.toLocaleString('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2
-    });
+
+    const isNegative = amount < 0;
+    const absoluteValue = Math.abs(amount);
+    const fixed = absoluteValue.toFixed(2);
+    const [wholePart, decimalPart] = fixed.split('.');
+    const withSeparators = wholePart.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    const signPrefix = isNegative ? '-$' : '$';
+
+    return `${signPrefix}${withSeparators}.${decimalPart}`;
   }
 
   // Generate professional purchase order PDF (same as download)
