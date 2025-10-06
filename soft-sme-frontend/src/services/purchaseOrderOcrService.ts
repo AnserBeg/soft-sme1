@@ -45,7 +45,7 @@ export const uploadPurchaseOrderDocument = async (file: File): Promise<PurchaseO
   const formData = new FormData();
   formData.append('document', file);
 
-  const response = await api.post<PurchaseOrderOcrResponse>('/purchase-orders/ocr/upload', formData, {
+  const response = await api.post<PurchaseOrderOcrResponse>('/api/purchase-orders/ocr/upload', formData, {
     headers: {
       'Content-Type': 'multipart/form-data',
     },
