@@ -717,7 +717,15 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
     doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Customer PO #:', 320, y);
     doc.font('Helvetica').fontSize(11).fillColor('#000000').text(salesOrder.customer_po_number || 'N/A', 450, y);
     y += 16;
-    // Second line: Product and Sales Date
+    // Second line: Source Quote # (if available)
+    doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Source Quote #:', 50, y);
+    doc
+      .font('Helvetica')
+      .fontSize(11)
+      .fillColor('#000000')
+      .text(salesOrder.source_quote_number || 'N/A', 170, y);
+    y += 16;
+    // Third line: Product and Sales Date
     doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Product:', 50, y);
     doc.font('Helvetica').fontSize(11).fillColor('#000000').text(salesOrder.product_name || 'N/A', 170, y);
     doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Sales Date:', 320, y);
