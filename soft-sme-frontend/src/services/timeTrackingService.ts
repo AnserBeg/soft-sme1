@@ -155,6 +155,10 @@ export const updateTimeEntry = async (id: number, clock_in: string, clock_out: s
   return response.data;
 };
 
+export const deleteTimeEntry = async (id: number): Promise<void> => {
+  await api.delete(`/api/time-tracking/time-entries/${id}`);
+};
+
 export const createTimeEntry = async (profileId: number, salesOrderId: number, clockInISO: string, clockOutISO: string): Promise<TimeEntry> => {
   const response = await api.post('/api/time-tracking/time-entries/manual', {
     profile_id: profileId,

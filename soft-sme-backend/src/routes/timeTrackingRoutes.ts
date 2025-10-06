@@ -74,6 +74,109 @@ function calculateEffectiveDuration(clockIn: Date, clockOut: Date, breakStartStr
 const router = express.Router();
 const salesOrderService = new SalesOrderService(pool);
 
+async function recalcSalesOrderLabourOverheadAndSupply(soId: number) {
+  try {
+    const sumRes = await pool.query(
+      `SELECT COALESCE(SUM(duration), 0) as total_hours
+       FROM time_entries
+       WHERE sales_order_id = $1 AND clock_out IS NOT NULL`,
+      [soId]
+    );
+    const totalHours = parseFloat(sumRes.rows[0]?.total_hours) || 0;
+
+    const labourRateRes = await pool.query("SELECT value FROM global_settings WHERE key = 'labour_rate'");
+    const labourRate = labourRateRes.rows.length > 0 ? parseFloat(labourRateRes.rows[0].value) : 60;
+    const labourTotal = totalHours * labourRate;
+
+    const overheadRateRes = await pool.query("SELECT value FROM global_settings WHERE key = 'overhead_rate'");
+    const overheadRate = overheadRateRes.rows.length > 0 ? parseFloat(overheadRateRes.rows[0].value) : 0;
+    const overheadTotal = totalHours * overheadRate;
+
+    const labourRes = await pool.query(
+      `SELECT sales_order_line_item_id FROM salesorderlineitems WHERE sales_order_id = $1 AND part_number = 'LABOUR'`,
+      [soId]
+    );
+
+    if (labourRes.rows.length > 0) {
+      await pool.query(
+        `UPDATE salesorderlineitems
+         SET part_description = $1, quantity_sold = $2, unit = $3, unit_price = $4, line_amount = $5
+         WHERE sales_order_id = $6 AND part_number = 'LABOUR'`,
+        ['Labour Hours', totalHours, 'hr', labourRate, labourTotal, soId]
+      );
+    } else {
+      await pool.query(
+        `INSERT INTO salesorderlineitems (sales_order_id, part_number, part_description, quantity_sold, unit, unit_price, line_amount)
+         VALUES ($1, 'LABOUR', $2, $3, $4, $5, $6)`,
+        [soId, 'Labour Hours', totalHours, 'hr', labourRate, labourTotal]
+      );
+    }
+
+    const overheadRes = await pool.query(
+      `SELECT sales_order_line_item_id FROM salesorderlineitems WHERE sales_order_id = $1 AND part_number = 'OVERHEAD'`,
+      [soId]
+    );
+
+    if (overheadRes.rows.length > 0) {
+      await pool.query(
+        `UPDATE salesorderlineitems
+         SET part_description = $1, quantity_sold = $2, unit = $3, unit_price = $4, line_amount = $5
+         WHERE sales_order_id = $6 AND part_number = 'OVERHEAD'`,
+        ['Overhead Hours', totalHours, 'hr', overheadRate, overheadTotal, soId]
+      );
+    } else {
+      await pool.query(
+        `INSERT INTO salesorderlineitems (sales_order_id, part_number, part_description, quantity_sold, unit, unit_price, line_amount)
+         VALUES ($1, 'OVERHEAD', $2, $3, $4, $5, $6)`,
+        [soId, 'Overhead Hours', totalHours, 'hr', overheadRate, overheadTotal]
+      );
+    }
+
+    const labourLineAmount = labourTotal;
+    const supplyRateRes = await pool.query('SELECT value FROM global_settings WHERE key = $1', ['supply_rate']);
+    const supplyRate = supplyRateRes.rows.length > 0 ? parseFloat(supplyRateRes.rows[0].value) : 0;
+    const existingSupplyResult = await pool.query(
+      'SELECT sales_order_line_item_id FROM salesorderlineitems WHERE sales_order_id = $1 AND part_number = $2',
+      [soId, 'SUPPLY']
+    );
+
+    if (supplyRate > 0 && labourLineAmount > 0) {
+      const supplyAmount = labourLineAmount * (supplyRate / 100);
+
+      if (existingSupplyResult.rows.length > 0) {
+        await pool.query(
+          `UPDATE salesorderlineitems
+           SET line_amount = $1, unit_price = $2, updated_at = NOW()
+           WHERE sales_order_id = $3 AND part_number = $4`,
+          [supplyAmount, supplyAmount, soId, 'SUPPLY']
+        );
+      } else {
+        await pool.query(
+          `INSERT INTO salesorderlineitems
+             (sales_order_id, part_number, part_description, quantity_sold, unit, unit_price, line_amount)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [soId, 'SUPPLY', 'Supply', 1, 'Each', supplyAmount, supplyAmount]
+        );
+      }
+    } else if (existingSupplyResult.rows.length > 0) {
+      await pool.query(
+        `UPDATE salesorderlineitems
+         SET line_amount = 0, unit_price = 0, updated_at = NOW()
+         WHERE sales_order_id = $1 AND part_number = $2`,
+        [soId, 'SUPPLY']
+      );
+    }
+
+    try {
+      await salesOrderService.recalculateAndUpdateSummary(soId);
+    } catch (error) {
+      console.warn(`⚠️ Failed to recalculate totals for sales order ${soId}:`, error);
+    }
+  } catch (error) {
+    console.error(`Failed to recalculate labour/overhead for sales order ${soId}:`, error);
+  }
+}
+
 // Role-based access middleware
 function mobileTimeTrackerOnly(req: Request, res: Response, next: Function) {
   if (
@@ -269,117 +372,10 @@ router.post('/time-entries/:id/clock-out', async (req: Request, res: Response) =
       [id]
     );
 
-    // Upsert LABOUR and OVERHEAD line items for the sales order
     const salesOrderIdRes = await pool.query('SELECT sales_order_id FROM time_entries WHERE id = $1', [id]);
     if (salesOrderIdRes.rows.length > 0) {
       const soId = salesOrderIdRes.rows[0].sales_order_id;
-      // Sum all durations for this sales order
-      const sumRes = await pool.query(
-        `SELECT SUM(duration) as total_hours
-         FROM time_entries WHERE sales_order_id = $1 AND clock_out IS NULL`,
-        [soId]
-      );
-      const totalHours = parseFloat(sumRes.rows[0].total_hours) || 0;
-      
-      // Get global labour rate (should be $60/hour)
-      const labourRateRes = await pool.query("SELECT value FROM global_settings WHERE key = 'labour_rate'");
-      const labourRate = labourRateRes.rows.length > 0 ? parseFloat(labourRateRes.rows[0].value) : 60;
-      
-      // Get global overhead rate
-      const overheadRateRes = await pool.query("SELECT value FROM global_settings WHERE key = 'overhead_rate'");
-      const overheadRate = overheadRateRes.rows.length > 0 ? parseFloat(overheadRateRes.rows[0].value) : 0;
-
-      // Upsert LABOUR line item
-      const labourRes = await pool.query(
-        `SELECT sales_order_line_item_id FROM salesorderlineitems WHERE sales_order_id = $1 AND part_number = 'LABOUR'`,
-        [soId]
-      );
-      if (labourRes.rows.length > 0) {
-        // Update
-        await pool.query(
-          `UPDATE salesorderlineitems SET part_description = $1, quantity_sold = $2, unit = $3, unit_price = $4, line_amount = $5 WHERE sales_order_id = $6 AND part_number = 'LABOUR'`,
-          ['Labour Hours', totalHours, 'hr', labourRate, totalHours * labourRate, soId]
-        );
-      } else {
-        // Insert
-        await pool.query(
-          `INSERT INTO salesorderlineitems (sales_order_id, part_number, part_description, quantity_sold, unit, unit_price, line_amount)
-           VALUES ($1, 'LABOUR', $2, $3, $4, $5, $6)` ,
-          [soId, 'Labour Hours', totalHours, 'hr', labourRate, totalHours * labourRate]
-        );
-      }
-
-      // Upsert OVERHEAD line item
-      const overheadRes = await pool.query(
-        `SELECT sales_order_line_item_id FROM salesorderlineitems WHERE sales_order_id = $1 AND part_number = 'OVERHEAD'`,
-        [soId]
-      );
-      if (overheadRes.rows.length > 0) {
-        // Update
-        await pool.query(
-          `UPDATE salesorderlineitems SET part_description = $1, quantity_sold = $2, unit = $3, unit_price = $4, line_amount = $5 WHERE sales_order_id = $6 AND part_number = 'OVERHEAD'`,
-          ['Overhead Hours', totalHours, 'hr', overheadRate, totalHours * overheadRate, soId]
-        );
-      } else {
-        // Insert
-        await pool.query(
-          `INSERT INTO salesorderlineitems (sales_order_id, part_number, part_description, quantity_sold, unit, unit_price, line_amount)
-           VALUES ($1, 'OVERHEAD', $2, $3, $4, $5, $6)` ,
-          [soId, 'Overhead Hours', totalHours, 'hr', overheadRate, totalHours * overheadRate]
-        );
-      }
-
-      // Automatically add/update supply line item based on labour amount
-      const labourLineAmount = totalHours * labourRate;
-      if (labourLineAmount > 0) {
-        const supplyRateRes = await pool.query('SELECT value FROM global_settings WHERE key = $1', ['supply_rate']);
-        const supplyRate = supplyRateRes.rows.length > 0 ? parseFloat(supplyRateRes.rows[0].value) : 0;
-        
-        if (supplyRate > 0) {
-          const supplyAmount = labourLineAmount * (supplyRate / 100);
-          
-          // Check if supply line item already exists
-          const existingSupplyResult = await pool.query(
-            'SELECT sales_order_line_item_id FROM salesorderlineitems WHERE sales_order_id = $1 AND part_number = $2',
-            [soId, 'SUPPLY']
-          );
-          
-          if (existingSupplyResult.rows.length > 0) {
-            // Update existing supply line item
-            await pool.query(
-              `UPDATE salesorderlineitems 
-               SET line_amount = $1, unit_price = $2, updated_at = NOW() 
-               WHERE sales_order_id = $3 AND part_number = $4`,
-              [supplyAmount, supplyAmount, soId, 'SUPPLY']
-            );
-            console.log(`Updated SUPPLY line item for SO ${soId}: amount=${supplyAmount}, rate=${supplyRate}%`);
-          } else {
-            // Create new supply line item
-            await pool.query(
-              `INSERT INTO salesorderlineitems 
-               (sales_order_id, part_number, part_description, quantity_sold, unit, unit_price, line_amount) 
-               VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-              [soId, 'SUPPLY', 'Supply', 1, 'Each', supplyAmount, supplyAmount]
-            );
-            console.log(`Created SUPPLY line item for SO ${soId}: amount=${supplyAmount}, rate=${supplyRate}%`);
-          }
-        }
-      }
-    }
-
-    // Automatically recalculate sales order totals to reflect the updated LABOUR/OVERHEAD/SUPPLY line items
-    // This ensures that summary stats (subtotal, GST, total) are updated to reflect
-    // the newly recorded time, including any LABOUR/OVERHEAD/SUPPLY calculations
-    if (salesOrderIdRes.rows.length > 0) {
-      const soId = salesOrderIdRes.rows[0].sales_order_id;
-      try {
-        console.log(`🔄 Recalculating sales order ${soId} totals after clock-out...`);
-        await salesOrderService.recalculateAndUpdateSummary(soId);
-        console.log(`✅ Sales order ${soId} totals recalculated successfully after clock-out`);
-      } catch (error) {
-        console.warn(`⚠️ Failed to recalculate totals for sales order ${soId} after clock-out:`, error);
-        // Don't fail the clock-out operation if recalculation fails
-      }
+      await recalcSalesOrderLabourOverheadAndSupply(soId);
     }
 
     res.json(updatedEntryRes.rows[0]);
@@ -514,93 +510,7 @@ router.post('/time-entries/manual', async (req: Request, res: Response) => {
       return res.status(500).json({ error: 'Failed to load new time entry' });
     }
 
-    const soId = salesOrderId;
-
-    const sumRes = await pool.query(
-      `SELECT SUM(duration) as total_hours
-       FROM time_entries WHERE sales_order_id = $1 AND clock_out IS NOT NULL`,
-      [soId]
-    );
-    const totalHours = parseFloat(sumRes.rows[0].total_hours) || 0;
-
-    const labourRateRes = await pool.query("SELECT value FROM global_settings WHERE key = 'labour_rate'");
-    const labourRate = labourRateRes.rows.length > 0 ? parseFloat(labourRateRes.rows[0].value) : 60;
-    const totalCost = totalHours * labourRate;
-
-    const overheadRateRes = await pool.query("SELECT value FROM global_settings WHERE key = 'overhead_rate'");
-    const overheadRate = overheadRateRes.rows.length > 0 ? parseFloat(overheadRateRes.rows[0].value) : 0;
-    const totalOverheadCost = totalHours * overheadRate;
-
-    const labourRes = await pool.query(
-      `SELECT sales_order_line_item_id FROM salesorderlineitems WHERE sales_order_id = $1 AND part_number = 'LABOUR'`,
-      [soId]
-    );
-    if (labourRes.rows.length > 0) {
-      await pool.query(
-        `UPDATE salesorderlineitems SET part_description = $1, quantity_sold = $2, unit = $3, unit_price = $4, line_amount = $5 WHERE sales_order_id = $6 AND part_number = 'LABOUR'`,
-        ['Labour Hours', totalHours, 'hr', labourRate, totalCost, soId]
-      );
-    } else {
-      await pool.query(
-        `INSERT INTO salesorderlineitems (sales_order_id, part_number, part_description, quantity_sold, unit, unit_price, line_amount)
-         VALUES ($1, 'LABOUR', $2, $3, $4, $5, $6)` ,
-        [soId, 'Labour Hours', totalHours, 'hr', labourRate, totalCost]
-      );
-    }
-
-    const overheadRes = await pool.query(
-      `SELECT sales_order_line_item_id FROM salesorderlineitems WHERE sales_order_id = $1 AND part_number = 'OVERHEAD'`,
-      [soId]
-    );
-    if (overheadRes.rows.length > 0) {
-      await pool.query(
-        `UPDATE salesorderlineitems SET part_description = $1, quantity_sold = $2, unit = $3, unit_price = $4, line_amount = $5 WHERE sales_order_id = $6 AND part_number = 'OVERHEAD'`,
-        ['Overhead Hours', totalHours, 'hr', overheadRate, totalOverheadCost, soId]
-      );
-    } else {
-      await pool.query(
-        `INSERT INTO salesorderlineitems (sales_order_id, part_number, part_description, quantity_sold, unit, unit_price, line_amount)
-         VALUES ($1, 'OVERHEAD', $2, $3, $4, $5, $6)` ,
-        [soId, 'Overhead Hours', totalHours, 'hr', overheadRate, totalOverheadCost]
-      );
-    }
-
-    const labourLineAmount = totalHours * labourRate;
-    if (labourLineAmount > 0) {
-      const supplyRateRes = await pool.query('SELECT value FROM global_settings WHERE key = $1', ['supply_rate']);
-      const supplyRate = supplyRateRes.rows.length > 0 ? parseFloat(supplyRateRes.rows[0].value) : 0;
-
-      if (supplyRate > 0) {
-        const supplyAmount = labourLineAmount * (supplyRate / 100);
-
-        const existingSupplyResult = await pool.query(
-          'SELECT sales_order_line_item_id FROM salesorderlineitems WHERE sales_order_id = $1 AND part_number = $2',
-          [soId, 'SUPPLY']
-        );
-
-        if (existingSupplyResult.rows.length > 0) {
-          await pool.query(
-            `UPDATE salesorderlineitems 
-             SET line_amount = $1, unit_price = $2, updated_at = NOW() 
-             WHERE sales_order_id = $3 AND part_number = $4`,
-            [supplyAmount, supplyAmount, soId, 'SUPPLY']
-          );
-        } else {
-          await pool.query(
-            `INSERT INTO salesorderlineitems 
-             (sales_order_id, part_number, part_description, quantity_sold, unit, unit_price, line_amount) 
-             VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-            [soId, 'SUPPLY', 'Supply', 1, 'Each', supplyAmount, supplyAmount]
-          );
-        }
-      }
-    }
-
-    try {
-      await salesOrderService.recalculateAndUpdateSummary(soId);
-    } catch (error) {
-      console.warn('Failed to recalculate totals for sales order after manual time entry creation:', error);
-    }
+    await recalcSalesOrderLabourOverheadAndSupply(salesOrderId);
 
     return res.status(201).json(newEntryRes.rows[0]);
   } catch (err) {
@@ -728,119 +638,42 @@ router.put('/time-entries/:id', async (req: Request, res: Response) => {
 
     const soId = existingSalesOrderId;
     if (soId) {
-      // Recalculate LABOUR and OVERHEAD line items for the sales order
-      // Sum all durations for this sales order
-      const sumRes = await pool.query(
-        `SELECT SUM(duration) as total_hours
-         FROM time_entries WHERE sales_order_id = $1 AND clock_out IS NOT NULL`,
-        [soId]
-      );
-      const totalHours = parseFloat(sumRes.rows[0].total_hours) || 0;
-      
-      // Get global labour rate
-      const labourRateRes = await pool.query("SELECT value FROM global_settings WHERE key = 'labour_rate'");
-      const labourRate = labourRateRes.rows.length > 0 ? parseFloat(labourRateRes.rows[0].value) : 60;
-      const totalCost = totalHours * labourRate;
-
-      // Get global overhead rate
-      const overheadRateRes = await pool.query("SELECT value FROM global_settings WHERE key = 'overhead_rate'");
-      const overheadRate = overheadRateRes.rows.length > 0 ? parseFloat(overheadRateRes.rows[0].value) : 0;
-      const totalOverheadCost = totalHours * overheadRate;
-
-      // Upsert LABOUR line item
-      const labourRes = await pool.query(
-        `SELECT sales_order_line_item_id FROM salesorderlineitems WHERE sales_order_id = $1 AND part_number = 'LABOUR'`,
-        [soId]
-      );
-      if (labourRes.rows.length > 0) {
-        // Update
-        await pool.query(
-          `UPDATE salesorderlineitems SET part_description = $1, quantity_sold = $2, unit = $3, unit_price = $4, line_amount = $5 WHERE sales_order_id = $6 AND part_number = 'LABOUR'`,
-          ['Labour Hours', totalHours, 'hr', labourRate, totalCost, soId]
-        );
-      } else {
-        // Insert
-        await pool.query(
-          `INSERT INTO salesorderlineitems (sales_order_id, part_number, part_description, quantity_sold, unit, unit_price, line_amount)
-           VALUES ($1, 'LABOUR', $2, $3, $4, $5, $6)`,
-          [soId, 'Labour Hours', totalHours, 'hr', labourRate, totalCost]
-        );
-      }
-
-      // Upsert OVERHEAD line item
-      const overheadRes = await pool.query(
-        `SELECT sales_order_line_item_id FROM salesorderlineitems WHERE sales_order_id = $1 AND part_number = 'OVERHEAD'`,
-        [soId]
-      );
-      if (overheadRes.rows.length > 0) {
-        // Update
-        await pool.query(
-          `UPDATE salesorderlineitems SET part_description = $1, quantity_sold = $2, unit = $3, unit_price = $4, line_amount = $5 WHERE sales_order_id = $6 AND part_number = 'OVERHEAD'`,
-          ['Overhead Hours', totalHours, 'hr', overheadRate, totalOverheadCost, soId]
-        );
-      } else {
-        // Insert
-        await pool.query(
-          `INSERT INTO salesorderlineitems (sales_order_id, part_number, part_description, quantity_sold, unit, unit_price, line_amount)
-           VALUES ($1, 'OVERHEAD', $2, $3, $4, $5, $6)`,
-          [soId, 'Overhead Hours', totalHours, 'hr', overheadRate, totalOverheadCost]
-        );
-      }
-
-      // Automatically add/update supply line item based on labour amount
-      const labourLineAmount = totalHours * labourRate;
-      if (labourLineAmount > 0) {
-        const supplyRateRes = await pool.query('SELECT value FROM global_settings WHERE key = $1', ['supply_rate']);
-        const supplyRate = supplyRateRes.rows.length > 0 ? parseFloat(supplyRateRes.rows[0].value) : 0;
-        
-        if (supplyRate > 0) {
-          const supplyAmount = labourLineAmount * (supplyRate / 100);
-          
-          // Check if supply line item already exists
-          const existingSupplyResult = await pool.query(
-            'SELECT sales_order_line_item_id FROM salesorderlineitems WHERE sales_order_id = $1 AND part_number = $2',
-            [soId, 'SUPPLY']
-          );
-          
-          if (existingSupplyResult.rows.length > 0) {
-            // Update existing supply line item
-            await pool.query(
-              `UPDATE salesorderlineitems 
-               SET line_amount = $1, unit_price = $2, updated_at = NOW() 
-               WHERE sales_order_id = $3 AND part_number = $4`,
-              [supplyAmount, supplyAmount, soId, 'SUPPLY']
-            );
-            console.log(`Updated SUPPLY line item for SO ${soId}: amount=${supplyAmount}, rate=${supplyRate}%`);
-          } else {
-            // Create new supply line item
-            await pool.query(
-              `INSERT INTO salesorderlineitems 
-               (sales_order_id, part_number, part_description, quantity_sold, unit, unit_price, line_amount) 
-               VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-              [soId, 'SUPPLY', 'Supply', 1, 'Each', supplyAmount, supplyAmount]
-            );
-            console.log(`Created SUPPLY line item for SO ${soId}: amount=${supplyAmount}, rate=${supplyRate}%`);
-          }
-        }
-      }
-
-      // Automatically recalculate sales order totals to reflect the updated LABOUR/OVERHEAD/SUPPLY line items
-      // This ensures that summary stats (subtotal, GST, total) are updated to reflect
-      // the newly edited time, including any LABOUR/OVERHEAD/SUPPLY calculations
-      try {
-        console.log(`🔄 Recalculating sales order ${soId} totals after time entry edit...`);
-        await salesOrderService.recalculateAndUpdateSummary(soId);
-        console.log(`✅ Sales order ${soId} totals recalculated successfully after time entry edit`);
-      } catch (error) {
-        console.warn(`⚠️ Failed to recalculate totals for sales order ${soId} after time entry edit:`, error);
-        // Don't fail the time entry edit operation if recalculation fails
-      }
+      await recalcSalesOrderLabourOverheadAndSupply(soId);
     }
 
     res.json(result.rows[0]);
   } catch (err) {
     console.error('Error editing time entry:', err);
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.delete('/time-entries/:id', async (req: Request, res: Response) => {
+  const { id } = req.params;
+
+  try {
+    const entryRes = await pool.query(
+      `SELECT sales_order_id
+       FROM time_entries
+       WHERE id = $1`,
+      [id]
+    );
+
+    if (entryRes.rows.length === 0) {
+      return res.status(404).json({ error: 'Time entry not found' });
+    }
+
+    await pool.query('DELETE FROM time_entries WHERE id = $1', [id]);
+
+    const soId = entryRes.rows[0].sales_order_id;
+    if (soId) {
+      await recalcSalesOrderLabourOverheadAndSupply(soId);
+    }
+
+    return res.status(204).send();
+  } catch (err) {
+    console.error('Error deleting time entry:', err);
+    return res.status(500).json({ error: 'Internal server error' });
   }
 });
 
