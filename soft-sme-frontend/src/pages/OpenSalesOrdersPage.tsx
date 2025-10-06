@@ -23,9 +23,24 @@ import PrintIcon from '@mui/icons-material/Print';
 import ReplayIcon from '@mui/icons-material/Replay';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ErrorIcon from '@mui/icons-material/Error';
+import CancelIcon from '@mui/icons-material/Cancel';
 import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty';
 import { InputAdornment } from '@mui/material';
 import { parseNumericInput } from '../utils/salesOrderCalculations';
+
+const normalizeInvoiceStatus = (value: any): '' | 'needed' | 'done' => {
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (['needed', 'need', 'required', 'pending'].includes(normalized)) return 'needed';
+    if (['done', 'complete', 'completed', 'sent'].includes(normalized)) return 'done';
+    if (['true', 't', 'yes', 'y', '1', 'on'].includes(normalized)) return 'needed';
+    if (['false', 'f', 'no', 'n', '0', 'off', ''].includes(normalized)) return '';
+  }
+  if (typeof value === 'boolean') {
+    return value ? 'needed' : '';
+  }
+  return '';
+};
 
 const OpenSalesOrdersPage: React.FC = () => {
   const [search, setSearch] = useState('');
@@ -75,7 +90,7 @@ const OpenSalesOrdersPage: React.FC = () => {
         subtotal: Number(order.subtotal) || 0,
         total_gst_amount: Number(order.total_gst_amount) || 0,
         total_amount: Number(order.total_amount) || 0,
-        invoice_required: Boolean(order.invoice_required),
+        invoice_status: normalizeInvoiceStatus(order.invoice_status ?? order.invoice_required),
       }));
       setRows(ordersWithId);
 
@@ -307,13 +322,24 @@ const OpenSalesOrdersPage: React.FC = () => {
       )
     },
     {
-      field: 'invoice_required',
+      field: 'invoice_status',
       headerName: 'Invoice',
       flex: 0.6,
       minWidth: 90,
-      renderCell: (params) => (
-        params.value ? <CheckCircleIcon color="success" titleAccess="Invoice required" /> : null
-      ),
+      valueFormatter: (params) => {
+        if (params.value === 'done') return 'Done';
+        if (params.value === 'needed') return 'Needed';
+        return '';
+      },
+      renderCell: (params) => {
+        if (params.value === 'done') {
+          return <CheckCircleIcon color="success" titleAccess="Invoice done" />;
+        }
+        if (params.value === 'needed') {
+          return <CancelIcon color="error" titleAccess="Invoice needed" />;
+        }
+        return null;
+      },
       sortable: false,
     },
     {
