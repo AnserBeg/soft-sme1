@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Box,
   Container,
@@ -52,6 +52,27 @@ const AttendancePage: React.FC = () => {
   const [newProfile, setNewProfile] = useState({ name: '', email: '' });
 
   const [showUnclosedWarning, setShowUnclosedWarning] = useState(false);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const successTimeoutRef = useRef<number | null>(null);
+
+  const showSuccess = (message: string) => {
+    if (successTimeoutRef.current) {
+      window.clearTimeout(successTimeoutRef.current);
+    }
+    setSuccessMessage(message);
+    successTimeoutRef.current = window.setTimeout(() => {
+      setSuccessMessage(null);
+      successTimeoutRef.current = null;
+    }, 2500);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (successTimeoutRef.current) {
+        window.clearTimeout(successTimeoutRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     fetchData();
@@ -112,6 +133,7 @@ const AttendancePage: React.FC = () => {
       // Reset profile selection without reloading page
       setSelectedProfile('');
       setShifts([]);
+      showSuccess('Successfully clocked in.');
     } catch (err) {
       setError('Failed to clock in. Please try again.');
       console.error('Error clocking in:', err);
@@ -126,6 +148,7 @@ const AttendancePage: React.FC = () => {
       // Reset profile selection without reloading page
       setSelectedProfile('');
       setShifts([]);
+      showSuccess('Successfully clocked out.');
     } catch (err) {
       setError('Failed to clock out. Please try again.');
       console.error('Error clocking out:', err);
@@ -185,6 +208,24 @@ const AttendancePage: React.FC = () => {
           You have an unclosed shift from a previous day. Please clock out before starting a new shift.
         </Alert>
       )}
+      <Dialog
+        open={Boolean(successMessage)}
+        onClose={() => setSuccessMessage(null)}
+        PaperProps={{
+          sx: {
+            px: 6,
+            py: 4,
+            textAlign: 'center'
+          }
+        }}
+      >
+        <DialogTitle sx={{ fontSize: '2rem' }}>Success</DialogTitle>
+        <DialogContent>
+          <Typography variant="h4" component="p">
+            {successMessage}
+          </Typography>
+        </DialogContent>
+      </Dialog>
 
       <Grid container spacing={3}>
         {/* Profile Selection */}
