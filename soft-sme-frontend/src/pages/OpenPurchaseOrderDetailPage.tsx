@@ -22,6 +22,11 @@ import { createFilterOptions } from '@mui/material/Autocomplete';
 import { InputAdornment } from '@mui/material';
 import { getLabourLineItems, LabourLineItem } from '../services/timeTrackingService';
 import { getPartVendors, recordVendorUsage, InventoryVendorLink } from '../services/inventoryService';
+import {
+  uploadPurchaseOrderDocument,
+  PurchaseOrderOcrResponse,
+  PurchaseOrderOcrLineItem,
+} from '../services/purchaseOrderOcrService';
 import UnsavedChangesGuard from '../components/UnsavedChangesGuard';
 import { VoiceService } from '../services/voiceService';
 import { toast } from 'react-toastify';
@@ -151,6 +156,11 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
   const [vendorPartMap, setVendorPartMap] = useState<Record<string, InventoryVendorLink[]>>({});
   const [callSessionId, setCallSessionId] = useState<number | null>(null);
+  const [ocrUploadResult, setOcrUploadResult] = useState<PurchaseOrderOcrResponse | null>(null);
+  const [isOcrUploading, setIsOcrUploading] = useState(false);
+  const [ocrError, setOcrError] = useState<string | null>(null);
+  const [showOcrRawText, setShowOcrRawText] = useState(false);
+  const ocrFileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Add loading state to prevent onInputChange during initial load
   const [isInitialLoad, setIsInitialLoad] = useState(true);
@@ -618,6 +628,103 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
       line_amount: 0,
       quantity_to_order: 0,
     }]));
+  };
+
+  const normalizeOcrLineItemsForForm = (items: PurchaseOrderOcrLineItem[]): PurchaseOrderLineItem[] => {
+    if (!items || items.length === 0) {
+      return [];
+    }
+
+    return items
+      .filter((item) => (item.description && item.description.trim().length > 0) || (item.partNumber && item.partNumber.trim().length > 0))
+      .map((item) => {
+        const quantityValue = item.quantity ?? 0;
+        const unitCostValue = item.unitCost ?? 0;
+        return {
+          part_number: item.partNumber ?? '',
+          part_description: item.description || '',
+          quantity: item.quantity !== null && item.quantity !== undefined ? String(item.quantity) : '',
+          unit: item.unit || UNIT_OPTIONS[0],
+          unit_cost: item.unitCost !== null && item.unitCost !== undefined ? String(item.unitCost) : '',
+          line_amount: calculateLineAmount(quantityValue, unitCostValue),
+          quantity_to_order: 0,
+        };
+      });
+  };
+
+  const handleOcrFileSelected = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+
+    setOcrError(null);
+    setIsOcrUploading(true);
+    setShowOcrRawText(false);
+
+    try {
+      const result = await uploadPurchaseOrderDocument(file);
+      setOcrUploadResult(result);
+      toast.success('OCR extraction completed. Review the detected values before applying them.');
+    } catch (error: any) {
+      console.error('Error processing OCR document:', error);
+      let message = 'Failed to process the document. Please ensure Tesseract is installed on the server.';
+      if (error instanceof AxiosError && error.response?.data?.error) {
+        message = error.response.data.error;
+      } else if (error?.message) {
+        message = error.message;
+      }
+      setOcrError(message);
+      toast.error(message);
+    } finally {
+      setIsOcrUploading(false);
+      if (event.target) {
+        event.target.value = '';
+      }
+    }
+  };
+
+  const handleApplyOcrResult = () => {
+    if (!ocrUploadResult) {
+      return;
+    }
+
+    const { normalized } = ocrUploadResult.ocr;
+
+    if (normalized.vendorName) {
+      const match = vendors.find((v) => v.label.toLowerCase() === normalized.vendorName!.toLowerCase());
+      if (match) {
+        setVendor(match);
+        setVendorInput(match.label);
+      } else {
+        setVendor(null);
+        setVendorInput(normalized.vendorName);
+      }
+    }
+
+    if (normalized.billNumber) {
+      setBillNumber(normalized.billNumber);
+    }
+
+    if (normalized.billDate) {
+      const parsed = dayjs(normalized.billDate);
+      if (parsed.isValid()) {
+        setDate(parsed);
+      }
+    }
+
+    if (typeof normalized.gstRate === 'number' && !Number.isNaN(normalized.gstRate)) {
+      setGlobalGstRate(normalized.gstRate);
+    }
+
+    if (normalized.lineItems?.length) {
+      const mapped = normalizeOcrLineItemsForForm(normalized.lineItems);
+      if (mapped.length > 0) {
+        setLineItems(mapped);
+      }
+    }
+
+    toast.success('OCR data applied. Please review the form before saving.');
   };
 
   // Load vendor mappings for canonical PN if not cached
@@ -2020,6 +2127,167 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
               </Typography>
             </Alert>
           )}
+
+          <Card variant="outlined" sx={{ mb: 3 }}>
+            <CardContent>
+              <Stack
+                direction={{ xs: 'column', sm: 'row' }}
+                spacing={2}
+                alignItems={{ xs: 'stretch', sm: 'center' }}
+              >
+                <Box sx={{ flexGrow: 1 }}>
+                  <Typography variant="h6">Invoice / Packing Slip OCR Prefill</Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    Upload a vendor invoice or packing slip to extract vendor, bill, and line item details using on-server Tesseract OCR.
+                  </Typography>
+                </Box>
+                <input
+                  type="file"
+                  accept="image/*,.pdf"
+                  hidden
+                  ref={ocrFileInputRef}
+                  onChange={handleOcrFileSelected}
+                />
+                <Button
+                  variant="contained"
+                  color="secondary"
+                  startIcon={<CloudUploadIcon />}
+                  onClick={() => ocrFileInputRef.current?.click()}
+                  disabled={isOcrUploading}
+                >
+                  {isOcrUploading ? 'Processing…' : 'Upload Document'}
+                </Button>
+                {isOcrUploading && <CircularProgress size={24} />}
+              </Stack>
+
+              {ocrError && (
+                <Alert severity="error" sx={{ mt: 2 }}>
+                  {ocrError}
+                </Alert>
+              )}
+
+              {ocrUploadResult && (
+                <Box sx={{ mt: 3 }}>
+                  <Stack
+                    direction={{ xs: 'column', md: 'row' }}
+                    spacing={2}
+                    alignItems={{ xs: 'flex-start', md: 'center' }}
+                  >
+                    <Box sx={{ flexGrow: 1 }}>
+                      <Typography variant="subtitle1">Detected Fields</Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        Review the extracted details and apply them to this purchase order.
+                      </Typography>
+                    </Box>
+                    <Stack direction="row" spacing={1}>
+                      <Button variant="contained" color="primary" onClick={handleApplyOcrResult}>
+                        Apply to Form
+                      </Button>
+                      <Button variant="outlined" onClick={() => setShowOcrRawText((prev) => !prev)}>
+                        {showOcrRawText ? 'Hide Raw Text' : 'Show Raw Text'}
+                      </Button>
+                    </Stack>
+                  </Stack>
+
+                  <Grid container spacing={2} sx={{ mt: 1 }}>
+                    <Grid item xs={12} md={6}>
+                      <Typography variant="body2" color="text.secondary">
+                        Vendor
+                      </Typography>
+                      <Typography variant="body1">
+                        {ocrUploadResult.ocr.normalized.vendorName || 'Not detected'}
+                      </Typography>
+                      {ocrUploadResult.ocr.normalized.vendorAddress && (
+                        <Typography variant="body2" color="text.secondary">
+                          {ocrUploadResult.ocr.normalized.vendorAddress}
+                        </Typography>
+                      )}
+                    </Grid>
+                    <Grid item xs={12} md={3}>
+                      <Typography variant="body2" color="text.secondary">
+                        Bill Number
+                      </Typography>
+                      <Typography variant="body1">
+                        {ocrUploadResult.ocr.normalized.billNumber || 'Not detected'}
+                      </Typography>
+                    </Grid>
+                    <Grid item xs={12} md={3}>
+                      <Typography variant="body2" color="text.secondary">
+                        Bill Date
+                      </Typography>
+                      <Typography variant="body1">
+                        {ocrUploadResult.ocr.normalized.billDate || 'Not detected'}
+                      </Typography>
+                    </Grid>
+                  </Grid>
+
+                  {ocrUploadResult.ocr.normalized.lineItems.length > 0 && (
+                    <Box sx={{ mt: 2 }}>
+                      <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                        Sample of detected line items ({ocrUploadResult.ocr.normalized.lineItems.length} total)
+                      </Typography>
+                      <Paper
+                        variant="outlined"
+                        sx={{ maxHeight: 200, overflowY: 'auto', p: 1 }}
+                      >
+                        {ocrUploadResult.ocr.normalized.lineItems.slice(0, 5).map((item, index) => (
+                          <Box key={`${item.rawLine}-${index}`} sx={{ py: 0.5 }}>
+                            <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                              {item.partNumber ? `${item.partNumber} – ` : ''}
+                              {item.description}
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              Qty: {item.quantity ?? 'n/a'} | Unit Cost: {item.unitCost ?? 'n/a'} | Total: {item.totalCost ?? 'n/a'}
+                            </Typography>
+                          </Box>
+                        ))}
+                      </Paper>
+                    </Box>
+                  )}
+
+                  {(ocrUploadResult.ocr.warnings.length > 0 || ocrUploadResult.ocr.notes.length > 0) && (
+                    <Stack direction="row" spacing={1} sx={{ mt: 2, flexWrap: 'wrap' }}>
+                      {ocrUploadResult.ocr.warnings.map((warning, idx) => (
+                        <Chip
+                          key={`ocr-warning-${idx}`}
+                          label={warning}
+                          color="warning"
+                          variant="outlined"
+                          sx={{ mr: 1, mb: 1 }}
+                        />
+                      ))}
+                      {ocrUploadResult.ocr.notes.map((note, idx) => (
+                        <Chip
+                          key={`ocr-note-${idx}`}
+                          label={note}
+                          color="info"
+                          variant="outlined"
+                          sx={{ mr: 1, mb: 1 }}
+                        />
+                      ))}
+                    </Stack>
+                  )}
+
+                  {showOcrRawText && (
+                    <Paper
+                      variant="outlined"
+                      sx={{
+                        mt: 2,
+                        maxHeight: 240,
+                        overflowY: 'auto',
+                        p: 2,
+                        whiteSpace: 'pre-wrap',
+                        fontFamily: 'monospace',
+                        fontSize: '0.85rem',
+                      }}
+                    >
+                      {ocrUploadResult.ocr.rawText || 'No text detected.'}
+                    </Paper>
+                  )}
+                </Box>
+              )}
+            </CardContent>
+          </Card>
 
           <Paper sx={{ p: 3 }}>
             <Grid container spacing={3}> 

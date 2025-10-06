@@ -22,7 +22,7 @@ Make sure your backend code is pushed to GitHub with these files:
 4. Configure the service:
    - **Name**: `soft-sme-backend`
    - **Environment**: `Node`
-   - **Build Command**: `npm install && npm run build`
+   - **Build Command**: `./render-build.sh` (or `npm install --include=dev && npm run build` if you cannot use scripts)
    - **Start Command**: `npm start`
    - **Plan**: Free (or choose paid plan)
 
@@ -77,6 +77,7 @@ After deployment, you may need to run database migrations:
 - Check that all dependencies are in `package.json`
 - Verify TypeScript compilation works locally
 - Check build logs in Render dashboard
+- Confirm `apt.txt` exists in the service root so Render installs `tesseract-ocr`, `tesseract-ocr-eng`, and `poppler-utils`
 
 ### Database Connection Issues
 - Verify database environment variables are set correctly
