@@ -121,6 +121,13 @@ const OpenPurchaseOrdersPage: React.FC = () => {
   const columns: GridColDef[] = [
     { field: 'purchase_number', headerName: 'Purchase #', flex: 1, minWidth: 120, valueFormatter: (params) => params.value ? String(params.value).replace('PO-', '') : '' },
     { field: 'vendor_name', headerName: 'Vendor', flex: 1.3, minWidth: 150 },
+    {
+      field: 'created_at',
+      headerName: 'Created On',
+      flex: 0.9,
+      minWidth: 130,
+      valueFormatter: (params) => params.value ? new Date(params.value as string).toLocaleDateString() : '',
+    },
     { field: 'bill_number', headerName: 'Bill #', flex: 0.9, minWidth: 100 },
     { field: 'subtotal', headerName: 'Subtotal', flex: 0.8, minWidth: 100, valueFormatter: (params) => params.value != null && !isNaN(Number(params.value)) ? `$${Number(params.value).toFixed(2)}` : '$0.00' },
     { field: 'gst_rate', headerName: 'GST Rate (%)', flex: 0.7, minWidth: 80, valueFormatter: (params) => params.value != null && !isNaN(Number(params.value)) ? `${Number(params.value).toFixed(2)}%` : '5.00%' },
