@@ -47,6 +47,7 @@ import PartsToOrderPage from './pages/PartsToOrderPage';
 import MobileUserAccessPage from './pages/MobileUserAccessPage';
 import UserEmailSettingsPage from './pages/UserEmailSettingsPage';
 import EmailTemplatesPage from './pages/EmailTemplatesPage';
+import TasksDashboardPage from './pages/TasksDashboardPage';
 import { useEffect, useState } from 'react';
 import { syncPending, getPendingCount } from './services/offlineSync';
 import { ToastContainer } from 'react-toastify';
@@ -81,6 +82,7 @@ const PrivateRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => 
       '/inventory',
       '/supply',
       '/email-settings',
+      '/tasks',
     ];
     // Allow paths that start with /open-sales-orders/, /open-purchase-orders/, /purchase-order/ (for detail pages)
     if (
@@ -185,6 +187,9 @@ const AppRoutes: React.FC = () => {
         
         {/* Parts to Order */}
         <Route path="parts-to-order" element={<PartsToOrderPage />} />
+
+        {/* Tasks */}
+        <Route path="tasks" element={<TasksDashboardPage />} />
         
         {/* System Management */}
         <Route path="backup-management" element={<BackupManagementPage />} />
