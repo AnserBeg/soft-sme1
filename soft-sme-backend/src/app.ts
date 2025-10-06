@@ -29,6 +29,7 @@ import taskRouter from './routes/taskRoutes';
 import messagingRouter from './routes/messagingRoutes';
 
 import chatRouter from './routes/chatRoutes';
+import taskRouter from './routes/taskRoutes';
 
 // Load environment variables from backend-local .env
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
@@ -194,6 +195,9 @@ console.log('Registered global settings routes');
 
 app.use('/api/chat', authMiddleware, chatRouter);
 console.log('Registered chat routes');
+
+app.use('/api/tasks', taskRouter);
+console.log('Registered task routes');
 
 app.use('/api/ai-assistant', aiAssistantRouter);
 console.log('Registered AI assistant routes');

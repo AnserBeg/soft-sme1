@@ -1,285 +1,258 @@
 import express, { Request, Response } from 'express';
 import { pool } from '../db';
+import { authMiddleware } from '../middleware/authMiddleware';
 import {
-  ServiceError,
-  TaskFilters,
-  TaskInput,
-  TaskService,
-  TaskStatus,
-  TaskUpdate,
-} from '../services/TaskService';
+  TaskMessageService,
+  TaskAccessError,
+  TaskParticipant,
+} from '../services/TaskMessageService';
 
 const router = express.Router();
-const taskService = new TaskService(pool);
-const STATUS_VALUES: TaskStatus[] = ['pending', 'in_progress', 'completed', 'archived'];
+const messageService = new TaskMessageService(pool);
 
-type AuthedRequest = Request & { user?: { id: string; company_id: string } };
+function parseId(value: unknown): number | null {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value === 'string' && value.trim().length > 0) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
 
-const parseBoolean = (value: string | string[] | undefined): boolean | undefined => {
-  if (value === undefined) {
-    return undefined;
-  }
-  const normalized = Array.isArray(value) ? value[0] : value;
-  if (normalized === undefined) {
-    return undefined;
-  }
-  const lower = normalized.toLowerCase();
-  if (['true', '1', 'yes', 'on'].includes(lower)) {
-    return true;
-  }
-  if (['false', '0', 'no', 'off'].includes(lower)) {
+router.use(authMiddleware);
+
+function ensureCompanyAccess(participant: TaskParticipant, companyId: number | null): boolean {
+  if (companyId == null) {
     return false;
   }
-  return undefined;
-};
+  return participant.companyId == null || participant.companyId === companyId;
+}
 
-const parseStatusFilter = (value: string | string[] | undefined): TaskStatus[] | undefined => {
-  if (!value) {
-    return undefined;
-  }
-  const segments = Array.isArray(value) ? value : value.split(',');
-  const statuses: TaskStatus[] = [];
-  for (const segment of segments) {
-    const trimmed = segment.trim();
-    if (!trimmed) {
-      continue;
-    }
-    if (!STATUS_VALUES.includes(trimmed as TaskStatus)) {
-      throw new ServiceError(`Invalid status filter: ${segment}`);
-    }
-    statuses.push(trimmed as TaskStatus);
-  }
-  return statuses.length > 0 ? statuses : undefined;
-};
-
-const ensureAuthContext = (req: AuthedRequest): { companyId: number; userId: number } => {
-  if (!req.user) {
-    throw new ServiceError('Not authenticated', 401);
-  }
-  const companyId = Number(req.user.company_id);
-  const userId = Number(req.user.id);
-  if (Number.isNaN(companyId) || Number.isNaN(userId)) {
-    throw new ServiceError('Invalid authentication context', 400);
-  }
-  return { companyId, userId };
-};
-
-const handleError = (error: unknown, res: Response) => {
-  if (error instanceof ServiceError) {
-    return res.status(error.statusCode).json({ message: error.message });
-  }
-  console.error('taskRoutes error:', error);
-  return res.status(500).json({ message: 'Internal server error' });
-};
-
-router.get('/', async (req: AuthedRequest, res: Response) => {
+router.get('/:taskId/messages', async (req: Request, res: Response) => {
   try {
-    const { companyId } = ensureAuthContext(req);
-    const filters: TaskFilters = {};
-
-    try {
-      filters.status = parseStatusFilter(req.query.status as string | string[] | undefined);
-    } catch (error) {
-      if (error instanceof ServiceError) {
-        return res.status(error.statusCode).json({ message: error.message });
-      }
-      throw error;
-    }
-
-    const assignedTo = req.query.assignedTo as string | undefined;
-    if (assignedTo) {
-      const parsed = Number(assignedTo);
-      if (Number.isNaN(parsed)) {
-        return res.status(400).json({ message: 'Invalid assignedTo filter' });
-      }
-      filters.assignedTo = parsed;
-    }
-
-    const includeCompleted = parseBoolean(req.query.includeCompleted as string | undefined);
-    if (includeCompleted !== undefined) {
-      filters.includeCompleted = includeCompleted;
-    }
-
-    const includeArchived = parseBoolean(req.query.includeArchived as string | undefined);
-    if (includeArchived !== undefined) {
-      filters.includeArchived = includeArchived;
-    }
-
-    if (req.query.dueFrom) {
-      filters.dueFrom = String(req.query.dueFrom);
-    }
-
-    if (req.query.dueTo) {
-      filters.dueTo = String(req.query.dueTo);
-    }
-
-    if (req.query.search) {
-      filters.search = String(req.query.search);
-    }
-
-    const tasks = await taskService.listTasks(companyId, filters);
-    return res.json({ tasks });
-  } catch (error) {
-    return handleError(error, res);
-  }
-});
-
-router.get('/summary', async (req: AuthedRequest, res: Response) => {
-  try {
-    const { companyId } = ensureAuthContext(req);
-    const summary = await taskService.getSummary(companyId);
-    return res.json(summary);
-  } catch (error) {
-    return handleError(error, res);
-  }
-});
-
-router.get('/assignees', async (req: AuthedRequest, res: Response) => {
-  try {
-    const { companyId } = ensureAuthContext(req);
-    const assignees = await taskService.getAssignableUsers(companyId);
-    return res.json({ assignees });
-  } catch (error) {
-    return handleError(error, res);
-  }
-});
-
-router.get('/:id', async (req: AuthedRequest, res: Response) => {
-  try {
-    const { companyId } = ensureAuthContext(req);
-    const taskId = Number(req.params.id);
-    if (Number.isNaN(taskId)) {
+    const taskId = parseId(req.params.taskId);
+    const userId = parseId(req.user?.id);
+    const companyId = parseId(req.user?.company_id);
+    if (!taskId) {
       return res.status(400).json({ message: 'Invalid task id' });
     }
-    const task = await taskService.getTask(companyId, taskId);
-    return res.json(task);
+    if (!userId) {
+      return res.status(400).json({ message: 'Invalid user context' });
+    }
+    if (!companyId) {
+      return res.status(400).json({ message: 'Invalid company context' });
+    }
+
+    const participant = await messageService.ensureParticipant(taskId, userId);
+    if (!ensureCompanyAccess(participant, companyId)) {
+      return res.status(403).json({ message: 'Task belongs to another company' });
+    }
+    const after = req.query.after ? parseId(req.query.after as string) ?? undefined : undefined;
+    const { messages, unreadCount } = await messageService.listMessages(taskId, participant, after);
+
+    res.json({
+      participant,
+      messages,
+      unreadCount,
+      lastSyncedAt: new Date().toISOString(),
+    });
   } catch (error) {
-    return handleError(error, res);
+    if (error instanceof TaskAccessError && error.code === 'NOT_PARTICIPANT') {
+      return res.status(403).json({ message: 'You are not assigned to this task' });
+    }
+    console.error('Error fetching task messages:', error);
+    res.status(500).json({ message: 'Failed to load task messages' });
   }
 });
 
-router.post('/', async (req: AuthedRequest, res: Response) => {
+router.post('/:taskId/messages', async (req: Request, res: Response) => {
   try {
-    const { companyId, userId } = ensureAuthContext(req);
-    const payload = req.body as TaskInput;
-    const task = await taskService.createTask(companyId, userId, payload);
-    return res.status(201).json(task);
-  } catch (error) {
-    return handleError(error, res);
-  }
-});
-
-router.put('/:id', async (req: AuthedRequest, res: Response) => {
-  try {
-    const { companyId } = ensureAuthContext(req);
-    const taskId = Number(req.params.id);
-    if (Number.isNaN(taskId)) {
+    const taskId = parseId(req.params.taskId);
+    const userId = parseId(req.user?.id);
+    const companyId = parseId(req.user?.company_id);
+    if (!taskId) {
       return res.status(400).json({ message: 'Invalid task id' });
     }
-    const updates = req.body as TaskUpdate;
-    const task = await taskService.updateTask(companyId, taskId, updates);
-    return res.json(task);
+    if (!userId) {
+      return res.status(400).json({ message: 'Invalid user context' });
+    }
+    if (!companyId) {
+      return res.status(400).json({ message: 'Invalid company context' });
+    }
+
+    const { content, metadata, attachments } = req.body;
+
+    if (!content || typeof content !== 'string' || content.trim().length === 0) {
+      return res.status(400).json({ message: 'Message content is required' });
+    }
+
+    const participant = await messageService.ensureParticipant(taskId, userId);
+    if (!ensureCompanyAccess(participant, companyId)) {
+      return res.status(403).json({ message: 'Task belongs to another company' });
+    }
+
+    const sanitizedMetadata = metadata && typeof metadata === 'object' ? metadata : {};
+    const sanitizedAttachments = Array.isArray(attachments) ? attachments : [];
+
+    const message = await messageService.createMessage(
+      taskId,
+      participant,
+      content.trim(),
+      sanitizedMetadata,
+      sanitizedAttachments
+    );
+
+    const unreadCount = await messageService.getUnreadCount(taskId, participant.id, message.id);
+
+    res.status(201).json({
+      message,
+      participant: {
+        ...participant,
+        lastReadAt: message.createdAt,
+        lastReadMessageId: message.id,
+      },
+      unreadCount,
+    });
   } catch (error) {
-    return handleError(error, res);
+    if (error instanceof TaskAccessError && error.code === 'NOT_PARTICIPANT') {
+      return res.status(403).json({ message: 'You are not assigned to this task' });
+    }
+    console.error('Error posting task message:', error);
+    res.status(500).json({ message: 'Failed to post message' });
   }
 });
 
-router.patch('/:id/assignments', async (req: AuthedRequest, res: Response) => {
+router.post('/:taskId/messages/mark-read', async (req: Request, res: Response) => {
   try {
-    const { companyId, userId } = ensureAuthContext(req);
-    const taskId = Number(req.params.id);
-    if (Number.isNaN(taskId)) {
+    const taskId = parseId(req.params.taskId);
+    const userId = parseId(req.user?.id);
+    const companyId = parseId(req.user?.company_id);
+    if (!taskId) {
       return res.status(400).json({ message: 'Invalid task id' });
     }
-
-    let assigneeIds: number[] = [];
-    if (Array.isArray(req.body?.assigneeIds)) {
-      assigneeIds = req.body.assigneeIds.map((id: unknown) => Number(id)).filter((id: number) => !Number.isNaN(id));
-    } else if (req.body?.assigneeIds !== undefined && req.body?.assigneeIds !== null) {
-      const parsed = Number(req.body.assigneeIds);
-      if (Number.isNaN(parsed)) {
-        return res.status(400).json({ message: 'Invalid assignee id' });
-      }
-      assigneeIds = [parsed];
+    if (!userId) {
+      return res.status(400).json({ message: 'Invalid user context' });
+    }
+    if (!companyId) {
+      return res.status(400).json({ message: 'Invalid company context' });
     }
 
-    const task = await taskService.updateAssignments(companyId, taskId, assigneeIds, userId);
-    return res.json(task);
+    const { lastMessageId } = req.body ?? {};
+    const lastId = parseId(lastMessageId);
+
+    const participant = await messageService.ensureParticipant(taskId, userId);
+    if (!ensureCompanyAccess(participant, companyId)) {
+      return res.status(403).json({ message: 'Task belongs to another company' });
+    }
+    const markResult = await messageService.markRead(participant, lastId ?? undefined);
+    const unreadCount = await messageService.getUnreadCount(
+      taskId,
+      participant.id,
+      markResult.lastReadMessageId
+    );
+
+    res.json({
+      participant: {
+        ...participant,
+        lastReadAt: markResult.lastReadAt,
+        lastReadMessageId: markResult.lastReadMessageId,
+      },
+      unreadCount,
+    });
   } catch (error) {
-    return handleError(error, res);
+    if (error instanceof TaskAccessError && error.code === 'NOT_PARTICIPANT') {
+      return res.status(403).json({ message: 'You are not assigned to this task' });
+    }
+    console.error('Error marking messages as read:', error);
+    res.status(500).json({ message: 'Failed to update read status' });
   }
 });
 
-router.patch('/:id/due-date', async (req: AuthedRequest, res: Response) => {
+router.get('/:taskId', async (req: Request, res: Response) => {
   try {
-    const { companyId } = ensureAuthContext(req);
-    const taskId = Number(req.params.id);
-    if (Number.isNaN(taskId)) {
+    const taskId = parseId(req.params.taskId);
+    const userId = parseId(req.user?.id);
+    const companyId = parseId(req.user?.company_id);
+    if (!taskId) {
       return res.status(400).json({ message: 'Invalid task id' });
     }
-    const dueDate = req.body?.dueDate ?? null;
-    const task = await taskService.updateDueDate(companyId, taskId, dueDate);
-    return res.json(task);
-  } catch (error) {
-    return handleError(error, res);
-  }
-});
+    if (!userId) {
+      return res.status(400).json({ message: 'Invalid user context' });
+    }
+    if (!companyId) {
+      return res.status(400).json({ message: 'Invalid company context' });
+    }
 
-router.patch('/:id/complete', async (req: AuthedRequest, res: Response) => {
-  try {
-    const { companyId } = ensureAuthContext(req);
-    const taskId = Number(req.params.id);
-    if (Number.isNaN(taskId)) {
-      return res.status(400).json({ message: 'Invalid task id' });
+    const participant = await messageService.ensureParticipant(taskId, userId);
+    if (!ensureCompanyAccess(participant, companyId)) {
+      return res.status(403).json({ message: 'Task belongs to another company' });
     }
-    const completed = Boolean(req.body?.completed);
-    const task = await taskService.toggleCompletion(companyId, taskId, completed);
-    return res.json(task);
-  } catch (error) {
-    return handleError(error, res);
-  }
-});
 
-router.post('/:id/notes', async (req: AuthedRequest, res: Response) => {
-  try {
-    const { companyId, userId } = ensureAuthContext(req);
-    const taskId = Number(req.params.id);
-    if (Number.isNaN(taskId)) {
-      return res.status(400).json({ message: 'Invalid task id' });
-    }
-    const note = req.body?.note;
-    const createdNote = await taskService.addNote(companyId, taskId, userId, note);
-    return res.status(201).json(createdNote);
-  } catch (error) {
-    return handleError(error, res);
-  }
-});
+    const taskResult = await pool.query(
+      `SELECT id, title, description, status, priority, due_date, created_at, updated_at, created_by
+       FROM tasks
+       WHERE id = $1
+         AND company_id = $2`,
+      [taskId, companyId]
+    );
 
-router.get('/:id/notes', async (req: AuthedRequest, res: Response) => {
-  try {
-    const { companyId } = ensureAuthContext(req);
-    const taskId = Number(req.params.id);
-    if (Number.isNaN(taskId)) {
-      return res.status(400).json({ message: 'Invalid task id' });
+    if (taskResult.rowCount === 0) {
+      return res.status(404).json({ message: 'Task not found' });
     }
-    const task = await taskService.getTask(companyId, taskId);
-    return res.json({ notes: task.notes ?? [] });
-  } catch (error) {
-    return handleError(error, res);
-  }
-});
 
-router.delete('/:id', async (req: AuthedRequest, res: Response) => {
-  try {
-    const { companyId } = ensureAuthContext(req);
-    const taskId = Number(req.params.id);
-    if (Number.isNaN(taskId)) {
-      return res.status(400).json({ message: 'Invalid task id' });
-    }
-    await taskService.deleteTask(companyId, taskId);
-    return res.status(204).send();
+    const participantsResult = await pool.query(
+      `SELECT
+         tp.id,
+         tp.user_id,
+         tp.role,
+         tp.is_watcher,
+         tp.joined_at,
+         tp.last_read_at,
+         tp.last_read_message_id,
+         u.name,
+         u.email
+       FROM task_participants tp
+       LEFT JOIN users u ON u.id = tp.user_id
+       WHERE tp.task_id = $1
+       ORDER BY tp.joined_at ASC`,
+      [taskId]
+    );
+
+    const taskRow = taskResult.rows[0];
+
+    res.json({
+      task: {
+        id: Number(taskRow.id),
+        title: taskRow.title,
+        description: taskRow.description,
+        status: taskRow.status,
+        priority: taskRow.priority,
+        dueDate: taskRow.due_date ? new Date(taskRow.due_date).toISOString() : null,
+        createdAt: taskRow.created_at ? new Date(taskRow.created_at).toISOString() : null,
+        updatedAt: taskRow.updated_at ? new Date(taskRow.updated_at).toISOString() : null,
+        createdBy: taskRow.created_by != null ? Number(taskRow.created_by) : null,
+      },
+      participant,
+      participants: participantsResult.rows.map((row) => ({
+        id: Number(row.id),
+        userId: row.user_id != null ? Number(row.user_id) : null,
+        role: row.role,
+        isWatcher: Boolean(row.is_watcher),
+        name: row.name ?? null,
+        email: row.email ?? null,
+        joinedAt: row.joined_at ? new Date(row.joined_at).toISOString() : null,
+        lastReadAt: row.last_read_at ? new Date(row.last_read_at).toISOString() : null,
+        lastReadMessageId: row.last_read_message_id != null ? Number(row.last_read_message_id) : null,
+      })),
+    });
   } catch (error) {
-    return handleError(error, res);
+    if (error instanceof TaskAccessError && error.code === 'NOT_PARTICIPANT') {
+      return res.status(403).json({ message: 'You are not assigned to this task' });
+    }
+    console.error('Error fetching task details:', error);
+    res.status(500).json({ message: 'Failed to load task details' });
   }
 });
 

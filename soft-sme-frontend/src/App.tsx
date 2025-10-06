@@ -47,6 +47,7 @@ import PartsToOrderPage from './pages/PartsToOrderPage';
 import MobileUserAccessPage from './pages/MobileUserAccessPage';
 import UserEmailSettingsPage from './pages/UserEmailSettingsPage';
 import EmailTemplatesPage from './pages/EmailTemplatesPage';
+import TaskDetailPage from './pages/TaskDetailPage';
 import TasksDashboardPage from './pages/TasksDashboardPage';
 import { useEffect, useState } from 'react';
 import { syncPending, getPendingCount } from './services/offlineSync';
@@ -203,6 +204,8 @@ const AppRoutes: React.FC = () => {
         {/* Email Templates */}
         <Route path="email-templates" element={<EmailTemplatesPage />} />
 
+        {/* Tasks */}
+        <Route path="tasks/:id" element={<TaskDetailPage />} />
         {/* Messaging */}
         <Route path="messaging" element={<MessagingPage />} />
       </Route>
