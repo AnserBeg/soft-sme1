@@ -65,7 +65,9 @@ router.post('/', async (req: Request, res: Response) => {
     status,
     terms,
     customer_po_number,
-    vin_number
+    vin_number,
+    vehicle_make,
+    vehicle_model
   } = req.body;
 
   if (!customer_id || !quote_date || !valid_until || !product_name || !estimated_cost) {
@@ -89,9 +91,27 @@ router.post('/', async (req: Request, res: Response) => {
     const result = await client.query(
       `INSERT INTO quotes (
         quote_number, customer_id, quote_date, valid_until, product_name, product_description,
-        estimated_cost, status, sequence_number, terms, customer_po_number, vin_number
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *;`,
-      [formattedQuoteNumber, customer_id, quote_date, valid_until, product_name, product_description, estimated_cost, status || 'Draft', sequenceNumber, terms || null, customer_po_number || null, vin_number || null]
+        estimated_cost, status, sequence_number, terms, customer_po_number, vin_number,
+        vehicle_make, vehicle_model
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
+      ) RETURNING *;`,
+      [
+        formattedQuoteNumber,
+        customer_id,
+        quote_date,
+        valid_until,
+        product_name,
+        product_description,
+        estimated_cost,
+        status || 'Draft',
+        sequenceNumber,
+        terms || null,
+        customer_po_number || null,
+        vin_number || null,
+        vehicle_make || null,
+        vehicle_model || null
+      ]
     );
     await client.query('COMMIT');
     res.status(201).json(result.rows[0]);
@@ -117,7 +137,9 @@ router.put('/:id', async (req: Request, res: Response) => {
     status,
     terms,
     customer_po_number,
-    vin_number
+    vin_number,
+    vehicle_make,
+    vehicle_model
   } = req.body;
 
   if (!customer_id || !quote_date || !valid_until || !product_name || !estimated_cost) {
@@ -141,20 +163,36 @@ router.put('/:id', async (req: Request, res: Response) => {
     }
 
     const result = await client.query(
-      `UPDATE quotes SET 
-        customer_id = $1, 
-        quote_date = $2, 
-        valid_until = $3, 
-        product_name = $4, 
+      `UPDATE quotes SET
+        customer_id = $1,
+        quote_date = $2,
+        valid_until = $3,
+        product_name = $4,
         product_description = $5,
-        estimated_cost = $6, 
+        estimated_cost = $6,
         status = $7,
         terms = $8,
         customer_po_number = $9,
         vin_number = $10,
+        vehicle_make = $11,
+        vehicle_model = $12,
         updated_at = NOW()
-      WHERE quote_id = $11 RETURNING *;`,
-      [customer_id, quote_date, valid_until, product_name, product_description, estimated_cost, status, terms || null, customer_po_number || null, vin_number || null, id]
+      WHERE quote_id = $13 RETURNING *;`,
+      [
+        customer_id,
+        quote_date,
+        valid_until,
+        product_name,
+        product_description,
+        estimated_cost,
+        status,
+        terms || null,
+        customer_po_number || null,
+        vin_number || null,
+        vehicle_make || null,
+        vehicle_model || null,
+        id
+      ]
     );
     
     await client.query('COMMIT');
@@ -217,10 +255,30 @@ router.post('/:id/convert-to-sales-order', async (req: Request, res: Response) =
       `INSERT INTO salesorderhistory (
         sales_order_number, customer_id, sales_date, product_name, product_description,
         estimated_cost, status, quote_id, subtotal, total_gst_amount, total_amount, sequence_number, terms, customer_po_number, vin_number, vehicle_make, vehicle_model, invoice_status, source_quote_number
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) RETURNING *`,
-      [formattedSONumber, quote.customer_id, conversionDate.toISOString().split('T')[0],
-       quote.product_name, quote.product_description, quote.estimated_cost, 'Open', quote.quote_id,
-       0, 0, 0, soSequenceNumber, quote.terms || null, quote.customer_po_number || null, quote.vin_number || null, null, null, null, quote.quote_number || null]
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19
+      ) RETURNING *`,
+      [
+        formattedSONumber,
+        quote.customer_id,
+        conversionDate.toISOString().split('T')[0],
+        quote.product_name,
+        quote.product_description,
+        quote.estimated_cost,
+        'Open',
+        quote.quote_id,
+        0,
+        0,
+        0,
+        soSequenceNumber,
+        quote.terms || null,
+        quote.customer_po_number || null,
+        quote.vin_number || null,
+        quote.vehicle_make || null,
+        quote.vehicle_model || null,
+        null,
+        quote.quote_number || null
+      ]
     );
 
     const salesOrderId = salesOrderResult.rows[0].sales_order_id;
@@ -448,12 +506,22 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
     );
     y += 16;
     // Third line: VIN # (conditional rendering)
-    if (quote.vin_number && quote.vin_number.trim() !== '') {
-      doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('VIN #:', 50, y);
-      doc.font('Helvetica').fontSize(11).fillColor('#000000').text(quote.vin_number, 170, y);
-      y += 16;
-    }
-    y += 8;
+      if (quote.vin_number && quote.vin_number.trim() !== '') {
+        doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('VIN #:', 50, y);
+        doc.font('Helvetica').fontSize(11).fillColor('#000000').text(quote.vin_number, 170, y);
+        y += 16;
+      }
+      if (quote.vehicle_make && quote.vehicle_make.trim() !== '') {
+        doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Make:', 50, y);
+        doc.font('Helvetica').fontSize(11).fillColor('#000000').text(quote.vehicle_make, 170, y);
+        y += 16;
+      }
+      if (quote.vehicle_model && quote.vehicle_model.trim() !== '') {
+        doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Model:', 50, y);
+        doc.font('Helvetica').fontSize(11).fillColor('#000000').text(quote.vehicle_model, 170, y);
+        y += 16;
+      }
+      y += 8;
     // Horizontal line
     doc.moveTo(50, y).lineTo(550, y).strokeColor('#444444').lineWidth(1).stroke();
     y += 14;

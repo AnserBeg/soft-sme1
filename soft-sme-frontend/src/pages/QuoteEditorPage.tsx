@@ -59,6 +59,8 @@ interface Quote {
   terms?: string;
   customer_po_number?: string;
   vin_number?: string;
+  vehicle_make?: string;
+  vehicle_model?: string;
 }
 
 const formatInt = (v: number | string | null | undefined) => {
@@ -125,6 +127,8 @@ const QuoteEditorPage: React.FC = () => {
   const [terms, setTerms] = useState('');
   const [customerPoNumber, setCustomerPoNumber] = useState('');
   const [vinNumber, setVinNumber] = useState('');
+  const [vehicleMake, setVehicleMake] = useState('');
+  const [vehicleModel, setVehicleModel] = useState('');
 
   // ui
   const [loading, setLoading] = useState(false);
@@ -167,7 +171,9 @@ const QuoteEditorPage: React.FC = () => {
     terms: (terms || '').trim(),
     customerPoNumber: (customerPoNumber || '').trim(),
     vinNumber: (vinNumber || '').trim(),
-  }), [selectedCustomer, quote, selectedProduct, quoteDate, validUntil, estimatedCost, productDescription, terms, customerPoNumber, vinNumber]);
+    vehicleMake: (vehicleMake || '').trim(),
+    vehicleModel: (vehicleModel || '').trim(),
+  }), [selectedCustomer, quote, selectedProduct, quoteDate, validUntil, estimatedCost, productDescription, terms, customerPoNumber, vinNumber, vehicleMake, vehicleModel]);
   
   // Set initial signature only once after data is fully loaded
   useEffect(() => {
@@ -222,6 +228,8 @@ const QuoteEditorPage: React.FC = () => {
         setTerms(q.terms || '');
         setCustomerPoNumber(q.customer_po_number || '');
         setVinNumber(q.vin_number || '');
+        setVehicleMake(q.vehicle_make || '');
+        setVehicleModel(q.vehicle_model || '');
         setCustomerInput(q.customer_name || '');
         setProductInput(q.product_name || '');
         setIsDataLoaded(true); // Mark data as loaded
@@ -294,6 +302,8 @@ const QuoteEditorPage: React.FC = () => {
     setTerms('');
     setCustomerPoNumber('');
     setVinNumber('');
+    setVehicleMake('');
+    setVehicleModel('');
     setCustomerInput('');
     setProductInput('');
   };
@@ -317,6 +327,8 @@ const QuoteEditorPage: React.FC = () => {
         terms,
         customer_po_number: customerPoNumber,
         vin_number: vinNumber,
+        vehicle_make: vehicleMake.trim(),
+        vehicle_model: vehicleModel.trim(),
       };
 
       if (isEditMode && quote) {
@@ -358,6 +370,8 @@ const QuoteEditorPage: React.FC = () => {
             terms: payload.terms,
             customer_po_number: payload.customer_po_number,
             vin_number: payload.vin_number,
+            vehicle_make: payload.vehicle_make,
+            vehicle_model: payload.vehicle_model,
           };
           setQuote(newQuote);
           // jump to edit URL for the new quote
@@ -757,6 +771,30 @@ const QuoteEditorPage: React.FC = () => {
                   InputLabelProps={{ sx: labelSx }}
                   error={vinNumber.length > 0 && vinNumber.length !== 17}
                   helperText={vinNumber.length > 0 && vinNumber.length !== 17 ? 'VIN must be 17 characters' : ''}
+                />
+              </Grid>
+
+              {/* Vehicle Make */}
+              <Grid item xs={12} md={6}>
+                <TextField
+                  label="Make"
+                  fullWidth
+                  value={vehicleMake}
+                  onChange={(e) => setVehicleMake(e.target.value)}
+                  sx={input56Sx}
+                  InputLabelProps={{ sx: labelSx }}
+                />
+              </Grid>
+
+              {/* Vehicle Model */}
+              <Grid item xs={12} md={6}>
+                <TextField
+                  label="Model"
+                  fullWidth
+                  value={vehicleModel}
+                  onChange={(e) => setVehicleModel(e.target.value)}
+                  sx={input56Sx}
+                  InputLabelProps={{ sx: labelSx }}
                 />
               </Grid>
 
