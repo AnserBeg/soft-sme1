@@ -39,6 +39,7 @@ import overheadRoutes from './routes/overheadRoutes';
 import aiAssistantRoutes from './routes/aiAssistantRoutes';
 import emailRoutes from './routes/emailRoutes';
 import profileDocumentRoutes from './routes/profileDocumentRoutes';
+import messagingRoutes from './routes/messagingRoutes';
 import agentV2Routes from './routes/agentV2Routes';
 import voiceRoutes from './routes/voiceRoutes';
 import voiceStreamRoutes from './routes/voiceStreamRoutes';
@@ -194,6 +195,9 @@ console.log('Registered email routes');
 // Profile document routes
 app.use('/api/profile-documents', profileDocumentRoutes);
 console.log('Registered profile document routes');
+
+app.use('/api/messaging', authMiddleware, messagingRoutes);
+console.log('Registered messaging routes');
 
 // Agent V2 routes (feature-flagged)
 if (process.env.AI_ASSISTANT_V2 !== 'false') {
