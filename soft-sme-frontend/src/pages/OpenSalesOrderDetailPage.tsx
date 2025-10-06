@@ -4,7 +4,8 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
   Typography, Box, TextField, Button, MenuItem, Stack, Autocomplete, Grid,
   Dialog, DialogTitle, DialogContent, DialogActions, Container, Paper, Alert,
-  Card, CardContent, CircularProgress, InputAdornment, Snackbar
+  Card, CardContent, CircularProgress, InputAdornment, Snackbar, FormControl,
+  FormLabel, ToggleButton, ToggleButtonGroup
 } from '@mui/material';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
@@ -31,6 +32,22 @@ import UnsavedChangesGuard from '../components/UnsavedChangesGuard';
 const UNIT_OPTIONS = ['Each', 'cm', 'ft', 'kg', 'pcs', 'hr', 'L'];
 type PartOption = string | { label: string; isNew?: true; inputValue?: string };
 const DEFAULT_GST_RATE = 5.0;
+
+type InvoiceStatus = '' | 'needed' | 'done';
+
+const normalizeInvoiceStatus = (value: any): InvoiceStatus => {
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (['needed', 'need', 'required', 'pending'].includes(normalized)) return 'needed';
+    if (['done', 'complete', 'completed', 'sent'].includes(normalized)) return 'done';
+    if (['true', 't', 'yes', 'y', '1', 'on'].includes(normalized)) return 'needed';
+    if (['false', 'f', 'no', 'n', '0', 'off', ''].includes(normalized)) return '';
+  }
+  if (typeof value === 'boolean') {
+    return value ? 'needed' : '';
+  }
+  return '';
+};
 
 interface CustomerOption { label: string; id?: number; isNew?: true; }
 interface ProductOption { label: string; id?: number; description?: string; isNew?: true; }
@@ -63,10 +80,15 @@ interface SalesOrder {
   terms: string;
   estimated_cost: number | null;
   status: string;
+  customer_po_number?: string | null;
+  vin_number?: string | null;
   exported_to_qbo?: boolean;
   qbo_invoice_id?: string;
   qbo_export_date?: string;
   qbo_export_status?: string;
+  vehicle_make?: string | null;
+  vehicle_model?: string | null;
+  invoice_status?: InvoiceStatus | null;
 }
 
 interface PartsToOrderItem {
@@ -134,6 +156,9 @@ const SalesOrderDetailPage: React.FC = () => {
   const [terms, setTerms] = useState('');
   const [customerPoNumber, setCustomerPoNumber] = useState('');
   const [vinNumber, setVinNumber] = useState('');
+  const [vehicleMake, setVehicleMake] = useState('');
+  const [vehicleModel, setVehicleModel] = useState('');
+  const [invoiceStatus, setInvoiceStatus] = useState<InvoiceStatus>('');
   const [estimatedCost, setEstimatedCost] = useState<number | null>(null);
   const [sourceQuoteNumber, setSourceQuoteNumber] = useState('');
 
@@ -215,7 +240,10 @@ const SalesOrderDetailPage: React.FC = () => {
     customerPoNumber: (customerPoNumber || '').trim(),
     vinNumber: (vinNumber || '').trim(),
     estimatedCost: estimatedCost != null ? Number(estimatedCost) : null,
-  }), [customer, product, salesDate, terms, customerPoNumber, vinNumber, estimatedCost]);
+    vehicleMake: (vehicleMake || '').trim(),
+    vehicleModel: (vehicleModel || '').trim(),
+    invoiceStatus,
+  }), [customer, product, salesDate, terms, customerPoNumber, vinNumber, estimatedCost, vehicleMake, vehicleModel, invoiceStatus]);
 
   // Set initial signature only once after data is fully loaded
   useEffect(() => {
@@ -436,7 +464,13 @@ const SalesOrderDetailPage: React.FC = () => {
       try {
         const res = await api.get(`/api/sales-orders/${id}`);
         const data = res.data;
-        setSalesOrder(data.salesOrder);
+        const normalizedStatus = normalizeInvoiceStatus(
+          data.salesOrder?.invoice_status ?? data.salesOrder?.invoice_required
+        );
+        setSalesOrder(data.salesOrder ? {
+          ...data.salesOrder,
+          invoice_status: normalizedStatus || null,
+        } : null);
         setSourceQuoteNumber(data.salesOrder?.source_quote_number || '');
 
         const li = (data.lineItems || data.salesOrder?.line_items || []).map((item: any) => ({
@@ -480,6 +514,9 @@ const SalesOrderDetailPage: React.FC = () => {
         setTerms(data.salesOrder?.terms || '');
         setCustomerPoNumber(data.salesOrder?.customer_po_number || '');
         setVinNumber(data.salesOrder?.vin_number || '');
+        setVehicleMake(data.salesOrder?.vehicle_make || '');
+        setVehicleModel(data.salesOrder?.vehicle_model || '');
+        setInvoiceStatus(normalizedStatus);
         
         // hydrate dropdown selections
         const cust = customers.find(c => c.id === data.salesOrder?.customer_id) ||
@@ -850,6 +887,9 @@ const SalesOrderDetailPage: React.FC = () => {
       terms: terms.trim(),
       customer_po_number: customerPoNumber.trim(),
       vin_number: vinNumber.trim(),
+      vehicle_make: vehicleMake.trim(),
+      vehicle_model: vehicleModel.trim(),
+      invoice_status: invoiceStatus || null,
       status: isCreationMode ? 'Open' : (salesOrder?.status || 'Open'),
       estimated_cost: estimatedCost != null ? Number(estimatedCost) : 0,
       lineItems: buildPayloadLineItems(lineItems),
@@ -888,7 +928,7 @@ const SalesOrderDetailPage: React.FC = () => {
           (window as any).__unsavedGuardAllowNext = true;
         }, 100);
         setInitialSignature(JSON.stringify({
-          header: { customer, product, salesDate, terms, customerPoNumber, vinNumber, estimatedCost },
+          header: { customer, product, salesDate, terms, customerPoNumber, vinNumber, estimatedCost, vehicleMake, vehicleModel, invoiceStatus },
           lineItems,
           quantityToOrderItems,
         }));
@@ -899,7 +939,14 @@ const SalesOrderDetailPage: React.FC = () => {
             api.get('/api/inventory')
           ]);
           const data = soRes.data;
-          setSalesOrder(data.salesOrder);
+          const refreshedStatus = normalizeInvoiceStatus(
+            data.salesOrder?.invoice_status ?? data.salesOrder?.invoice_required
+          );
+          setSalesOrder(data.salesOrder ? {
+            ...data.salesOrder,
+            invoice_status: refreshedStatus || null,
+          } : null);
+          setInvoiceStatus(refreshedStatus);
           setSourceQuoteNumber(data.salesOrder?.source_quote_number || '');
  
           const li = (data.lineItems || data.salesOrder?.line_items || []).map((item: any) => ({
@@ -1130,6 +1177,14 @@ const SalesOrderDetailPage: React.FC = () => {
               <Grid item xs={12} sm={6}><b>Customer:</b> {salesOrder.customer_name || 'N/A'}</Grid>
               <Grid item xs={12} sm={6}><b>Sales Date:</b> {salesOrder.sales_date ? new Date(salesOrder.sales_date).toLocaleDateString() : ''}</Grid>
               <Grid item xs={12} sm={6}><b>Status:</b> {salesOrder.status?.toUpperCase() || 'N/A'}</Grid>
+              <Grid item xs={12} sm={6}><b>VIN #:</b> {salesOrder.vin_number || 'N/A'}</Grid>
+              <Grid item xs={12} sm={6}><b>Make:</b> {salesOrder.vehicle_make || 'N/A'}</Grid>
+              <Grid item xs={12} sm={6}><b>Model:</b> {salesOrder.vehicle_model || 'N/A'}</Grid>
+              <Grid item xs={12} sm={6}><b>Invoice:</b> {
+                salesOrder.invoice_status ?
+                  (salesOrder.invoice_status === 'done' ? 'Done' : 'Needed') :
+                  '—'
+              }</Grid>
               <Grid item xs={12}><b>Estimated Price:</b> {formatCurrency(salesOrder.estimated_cost || 0)}</Grid>
               <Grid item xs={12}><b>Product Description:</b> {salesOrder.product_description || 'N/A'}</Grid>
               <Grid item xs={12}><b>Terms:</b> {salesOrder.terms || 'N/A'}</Grid>
@@ -1227,6 +1282,7 @@ const SalesOrderDetailPage: React.FC = () => {
               setCustomer(null); setCustomerInput(''); setSalesDate(dayjs());
               setProduct(null); setProductInput(''); setProductDescription('');
               setTerms(''); setCustomerPoNumber(''); setVinNumber('');
+              setVehicleMake(''); setVehicleModel(''); setInvoiceStatus('');
               setEstimatedCost(null);
               setLineItems([{
                 part_number: '', part_description: '', quantity: '',
@@ -1462,6 +1518,40 @@ const SalesOrderDetailPage: React.FC = () => {
                 error={!!(vinNumber && vinNumber.trim() !== '' && vinNumber.trim().length !== 17)}
                 helperText={(vinNumber && vinNumber.trim() !== '' && vinNumber.trim().length !== 17) ? 'VIN must be 17 characters' : ''}
               />
+            </Grid>
+            <Grid item xs={12} sm={4}>
+              <TextField
+                label="Make"
+                value={vehicleMake}
+                onChange={e => setVehicleMake(e.target.value)}
+                fullWidth
+                placeholder="Optional"
+              />
+            </Grid>
+            <Grid item xs={12} sm={4}>
+              <TextField
+                label="Model"
+                value={vehicleModel}
+                onChange={e => setVehicleModel(e.target.value)}
+                fullWidth
+                placeholder="Optional"
+              />
+            </Grid>
+            <Grid item xs={12} sm={4}>
+              <FormControl component="fieldset" fullWidth>
+                <FormLabel sx={{ mb: 1 }}>Invoice</FormLabel>
+                <ToggleButtonGroup
+                  color="primary"
+                  size="small"
+                  exclusive
+                  value={invoiceStatus}
+                  onChange={(_, value) => setInvoiceStatus((value as InvoiceStatus | null) ?? '')}
+                  aria-label="Invoice status"
+                >
+                  <ToggleButton value="needed" aria-label="Invoice needed">Needed</ToggleButton>
+                  <ToggleButton value="done" aria-label="Invoice done">Done</ToggleButton>
+                </ToggleButtonGroup>
+              </FormControl>
             </Grid>
             <Grid item xs={12} sm={4}>
               <DatePicker
