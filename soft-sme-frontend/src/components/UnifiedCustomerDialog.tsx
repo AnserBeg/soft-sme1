@@ -28,6 +28,7 @@ export interface CustomerFormValues {
   country: string;
   postal_code: string;
   website: string;
+  general_notes: string;
 }
 
 interface UnifiedCustomerDialogProps {
@@ -52,6 +53,7 @@ const defaultCustomer: CustomerFormValues = {
   country: '',
   postal_code: '',
   website: '',
+  general_notes: '',
 };
 
 const UnifiedCustomerDialog: React.FC<UnifiedCustomerDialogProps> = ({
@@ -340,6 +342,17 @@ const UnifiedCustomerDialog: React.FC<UnifiedCustomerDialogProps> = ({
           </Grid>
           <Grid item xs={12}>
             <TextField name="website" label="Website" value={customer.website} onChange={handleInputChange} fullWidth />
+          </Grid>
+          <Grid item xs={12}>
+            <TextField
+              name="general_notes"
+              label="General Notes"
+              value={customer.general_notes}
+              onChange={handleInputChange}
+              fullWidth
+              multiline
+              minRows={4}
+            />
           </Grid>
 
           {isEditMode && customerId && (

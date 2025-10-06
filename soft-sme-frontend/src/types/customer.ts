@@ -14,6 +14,7 @@ export interface Customer {
   postal_code?: string;
   contact_person?: string;
   website?: string;
+  general_notes?: string;
   created_at: string;
   updated_at: string;
-} 
+}

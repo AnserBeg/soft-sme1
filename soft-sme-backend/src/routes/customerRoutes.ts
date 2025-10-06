@@ -8,7 +8,7 @@ const router = express.Router();
 router.get('/', async (req: Request, res: Response) => {
   console.log('customerRoutes: GET / - fetching all customers');
   try {
-    const result = await pool.query('SELECT customer_id, customer_name, street_address, city, province, country, postal_code, contact_person, telephone_number, email, website FROM customermaster');
+    const result = await pool.query('SELECT customer_id, customer_name, street_address, city, province, country, postal_code, contact_person, telephone_number, email, website, general_notes FROM customermaster');
     // Add 'id' field to match frontend expectations
     const customersWithId = result.rows.map(customer => ({
       ...customer,
@@ -26,7 +26,7 @@ router.get('/', async (req: Request, res: Response) => {
 router.get('/export/pdf', async (req: Request, res: Response) => {
   console.log('Customer PDF export endpoint hit');
   try {
-    const result = await pool.query('SELECT customer_id, customer_name, street_address, city, province, country, postal_code, contact_person, telephone_number, email, website FROM customermaster ORDER BY customer_name ASC');
+    const result = await pool.query('SELECT customer_id, customer_name, street_address, city, province, country, postal_code, contact_person, telephone_number, email, website, general_notes FROM customermaster ORDER BY customer_name ASC');
     const customers = result.rows;
 
     const doc = new PDFDocument({ margin: 50 });
@@ -125,7 +125,7 @@ router.get('/:id', async (req: Request, res: Response) => {
 router.post('/', async (req: Request, res: Response) => {
   const client = await pool.connect();
   try {
-    const { customer_name, street_address, city, province, country, postal_code, contact_person, phone_number, email, website } = req.body;
+    const { customer_name, street_address, city, province, country, postal_code, contact_person, phone_number, email, website, general_notes } = req.body;
 
     console.log('Received new customer data:', req.body);
 
@@ -149,8 +149,8 @@ router.post('/', async (req: Request, res: Response) => {
     }
 
     const result = await client.query(
-      'INSERT INTO customermaster (customer_name, street_address, city, province, country, postal_code, contact_person, telephone_number, email, website) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *',
-      [customer_name.trim(), street_address, city, province, country, postal_code, contact_person, phone_number, email, website]
+      'INSERT INTO customermaster (customer_name, street_address, city, province, country, postal_code, contact_person, telephone_number, email, website, general_notes) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *',
+      [customer_name.trim(), street_address, city, province, country, postal_code, contact_person, phone_number, email, website, general_notes]
     );
 
     const newCustomer = result.rows[0];
@@ -199,7 +199,7 @@ router.post('/', async (req: Request, res: Response) => {
 // Update a customer by ID
 router.put('/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
-  const { customer_name, street_address, city, province, country, postal_code, contact_person, phone_number, email, website } = req.body;
+  const { customer_name, street_address, city, province, country, postal_code, contact_person, phone_number, email, website, general_notes } = req.body;
 
   const client = await pool.connect();
 
@@ -218,6 +218,7 @@ router.put('/:id', async (req: Request, res: Response) => {
   if (phone_number !== undefined) { updateFields.push(`telephone_number = $${paramIndex++}`); queryParams.push(phone_number); }
   if (email !== undefined) { updateFields.push(`email = $${paramIndex++}`); queryParams.push(email); }
   if (website !== undefined) { updateFields.push(`website = $${paramIndex++}`); queryParams.push(website); }
+  if (general_notes !== undefined) { updateFields.push(`general_notes = $${paramIndex++}`); queryParams.push(general_notes); }
 
   if (updateFields.length === 0) {
     return res.status(400).json({ error: 'No update fields provided' });
