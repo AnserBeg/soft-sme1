@@ -1324,17 +1324,25 @@ router.put('/:id', async (req, res) => {
 
           // Get manually allocated sales orders for this part
           const manuallyAllocatedSalesOrders = await client.query(
-            `SELECT poa.sales_order_id, poa.allocate_qty as quantity_needed, poa.part_description, 
-                    COALESCE(soli.unit, 'Each') as unit, COALESCE(soli.unit_price, 0) as unit_price
-             FROM purchase_order_allocations poa
-             JOIN salesorderhistory soh ON poa.sales_order_id = soh.sales_order_id
-             LEFT JOIN salesorderlineitems soli ON soh.sales_order_id = soli.sales_order_id AND soli.part_number = poa.part_number
-             WHERE REPLACE(REPLACE(UPPER(poa.part_number), '-', ''), ' ', '') = REPLACE(REPLACE(UPPER($1), '-', ''), ' ', '')
-               AND soh.status = 'Open'
-               AND poa.purchase_id = $2
-             ORDER BY soh.sales_date ASC`,
-            [partNumber, id]
-          );
+  `SELECT 
+      poa.sales_order_id,
+      poa.allocate_qty AS quantity_needed,
+      poa.part_description,
+      COALESCE(soli.unit, inv.unit, 'Each') AS unit,
+      COALESCE(soli.unit_price, inv.last_unit_cost, 0) AS unit_price
+   FROM purchase_order_allocations poa
+   JOIN salesorderhistory soh ON poa.sales_order_id = soh.sales_order_id
+   LEFT JOIN salesorderlineitems soli 
+     ON soh.sales_order_id = soli.sales_order_id 
+    AND REPLACE(REPLACE(UPPER(soli.part_number), '-', ''), ' ', '') = REPLACE(REPLACE(UPPER(poa.part_number), '-', ''), ' ', '')
+   LEFT JOIN inventory inv 
+     ON REPLACE(REPLACE(UPPER(inv.part_number), '-', ''), ' ', '') = REPLACE(REPLACE(UPPER(poa.part_number), '-', ''), ' ', '')
+   WHERE REPLACE(REPLACE(UPPER(poa.part_number), '-', ''), ' ', '') = REPLACE(REPLACE(UPPER($1), '-', ''), ' ', '')
+     AND soh.status = 'Open'
+     AND poa.purchase_id = $2
+   ORDER BY soh.sales_date ASC`,
+  [partNumber, id]
+);
 
           // Combine both sources and remove duplicates
           const allSalesOrdersNeedingPart = [...salesOrdersNeedingPart.rows];
@@ -1387,9 +1395,10 @@ router.put('/:id', async (req, res) => {
               const poDesc = poItem.part_description || '';
               const poPrice = parseFloat(poItem.unit_cost) || 0;
 
-              const insertUnit = salesOrder.unit || poUnit || invUnit || 'Each';
+              const soUnit = (salesOrder.unit && salesOrder.unit.trim() && salesOrder.unit.trim() !== 'Each') ? salesOrder.unit : '';
+              const insertUnit = soUnit || (poUnit && poUnit.trim() && poUnit.trim() !== 'Each' ? poUnit : '') || invUnit || 'Each';
               const insertDesc = salesOrder.part_description || poDesc || invDesc || '';
-              const unitPrice = (parseFloat(salesOrder.unit_price) || 0) || poPrice || invPrice || 0;
+              const unitPrice = (parseFloat(salesOrder.unit_price) || 0) || invPrice || poPrice || 0;
               const lineAmount = allocateQuantity * unitPrice;
               
               await client.query(
@@ -1638,17 +1647,26 @@ router.put('/:id', async (req, res) => {
           `, [partNumber]);
 
           // Get manually allocated sales orders for this part
-          const manuallyAllocatedSalesOrders = await client.query(`
-            SELECT poa.sales_order_id, poa.allocate_qty as quantity_needed, poa.part_description, 
-                    COALESCE(soli.unit, 'Each') as unit, COALESCE(soli.unit_price, 0) as unit_price
-             FROM purchase_order_allocations poa
-             JOIN salesorderhistory soh ON poa.sales_order_id = soh.sales_order_id
-             LEFT JOIN salesorderlineitems soli ON soh.sales_order_id = soli.sales_order_id AND soli.part_number = poa.part_number
-             WHERE REPLACE(REPLACE(UPPER(poa.part_number), '-', ''), ' ', '') = REPLACE(REPLACE(UPPER($1), '-', ''), ' ', '')
-               AND soh.status = 'Open'
-               AND poa.purchase_id = $2
-             ORDER BY soh.sales_date ASC
-          `, [partNumber, id]);
+          const manuallyAllocatedSalesOrders = await client.query(
+  `SELECT 
+      poa.sales_order_id,
+      poa.allocate_qty AS quantity_needed,
+      poa.part_description,
+      COALESCE(soli.unit, inv.unit, 'Each') AS unit,
+      COALESCE(soli.unit_price, inv.last_unit_cost, 0) AS unit_price
+   FROM purchase_order_allocations poa
+   JOIN salesorderhistory soh ON poa.sales_order_id = soh.sales_order_id
+   LEFT JOIN salesorderlineitems soli 
+     ON soh.sales_order_id = soli.sales_order_id 
+    AND REPLACE(REPLACE(UPPER(soli.part_number), '-', ''), ' ', '') = REPLACE(REPLACE(UPPER(poa.part_number), '-', ''), ' ', '')
+   LEFT JOIN inventory inv 
+     ON REPLACE(REPLACE(UPPER(inv.part_number), '-', ''), ' ', '') = REPLACE(REPLACE(UPPER(poa.part_number), '-', ''), ' ', '')
+   WHERE REPLACE(REPLACE(UPPER(poa.part_number), '-', ''), ' ', '') = REPLACE(REPLACE(UPPER($1), '-', ''), ' ', '')
+     AND soh.status = 'Open'
+     AND poa.purchase_id = $2
+   ORDER BY soh.sales_date ASC`,
+  [partNumber, id]
+);
 
           // Combine both sources and remove duplicates
           const allSalesOrdersNeedingPart = [...salesOrdersNeedingPart.rows];
@@ -1704,9 +1722,10 @@ router.put('/:id', async (req, res) => {
               const poDesc = poItem.part_description || '';
               const poPrice = parseFloat(poItem.unit_cost) || 0;
 
-              const insertUnit = salesOrder.unit || poUnit || invUnit || 'Each';
+              const soUnit = (salesOrder.unit && salesOrder.unit.trim() && salesOrder.unit.trim() !== 'Each') ? salesOrder.unit : '';
+              const insertUnit = soUnit || (poUnit && poUnit.trim() && poUnit.trim() !== 'Each' ? poUnit : '') || invUnit || 'Each';
               const insertDesc = salesOrder.part_description || poDesc || invDesc || '';
-              const unitPrice = (parseFloat(salesOrder.unit_price) || 0) || poPrice || invPrice || 0;
+              const unitPrice = (parseFloat(salesOrder.unit_price) || 0) || invPrice || poPrice || 0;
               const lineAmount = allocateQuantity * unitPrice;
               
               await client.query(
