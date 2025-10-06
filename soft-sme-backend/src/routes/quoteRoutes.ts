@@ -216,11 +216,11 @@ router.post('/:id/convert-to-sales-order', async (req: Request, res: Response) =
     const salesOrderResult = await client.query(
       `INSERT INTO salesorderhistory (
         sales_order_number, customer_id, sales_date, product_name, product_description,
-        estimated_cost, status, quote_id, subtotal, total_gst_amount, total_amount, sequence_number, terms, customer_po_number, vin_number, source_quote_number
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING *`,
+        estimated_cost, status, quote_id, subtotal, total_gst_amount, total_amount, sequence_number, terms, customer_po_number, vin_number, vehicle_make, vehicle_model, invoice_required, source_quote_number
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) RETURNING *`,
       [formattedSONumber, quote.customer_id, conversionDate.toISOString().split('T')[0],
        quote.product_name, quote.product_description, quote.estimated_cost, 'Open', quote.quote_id,
-       0, 0, 0, soSequenceNumber, quote.terms || null, quote.customer_po_number || null, quote.vin_number || null, quote.quote_number || null]
+       0, 0, 0, soSequenceNumber, quote.terms || null, quote.customer_po_number || null, quote.vin_number || null, null, null, false, quote.quote_number || null]
     );
 
     const salesOrderId = salesOrderResult.rows[0].sales_order_id;
