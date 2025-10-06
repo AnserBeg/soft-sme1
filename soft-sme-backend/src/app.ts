@@ -25,6 +25,7 @@ import attendanceRouter from './routes/attendanceRoutes';
 import aiAssistantRouter from './routes/aiAssistantRoutes';
 import emailRouter from './routes/emailRoutes';
 import profileDocumentRouter from './routes/profileDocumentRoutes';
+import taskRouter from './routes/taskRoutes';
 
 import chatRouter from './routes/chatRoutes';
 
@@ -188,6 +189,9 @@ console.log('Registered AI assistant routes');
 
 app.use('/api/email', authMiddleware, emailRouter);
 console.log('Registered email routes');
+
+app.use('/api/tasks', authMiddleware, taskRouter);
+console.log('Registered task routes');
 
 // Health check endpoint
 app.get('/health', (req, res) => {
