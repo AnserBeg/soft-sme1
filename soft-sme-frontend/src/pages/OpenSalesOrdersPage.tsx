@@ -75,6 +75,7 @@ const OpenSalesOrdersPage: React.FC = () => {
         subtotal: Number(order.subtotal) || 0,
         total_gst_amount: Number(order.total_gst_amount) || 0,
         total_amount: Number(order.total_amount) || 0,
+        invoice_required: Boolean(order.invoice_required),
       }));
       setRows(ordersWithId);
 
@@ -294,17 +295,26 @@ const OpenSalesOrdersPage: React.FC = () => {
     { field: 'product_name', headerName: 'Product Name', flex: 1, minWidth: 120 },
     { field: 'product_description', headerName: 'Product Description', flex: 1.5, minWidth: 150 },
     { field: 'subtotal', headerName: 'Subtotal', flex: 0.8, minWidth: 100, valueFormatter: (params) => params.value != null && !isNaN(Number(params.value)) ? `$${Number(params.value).toFixed(2)}` : '$0.00' },
-    { field: 'total_gst_amount', headerName: 'GST', flex: 0.7, minWidth: 80, valueFormatter: (params) => params.value != null && !isNaN(Number(params.value)) ? `$${Number(params.value).toFixed(2)}` : '$0.00' },
     { field: 'total_amount', headerName: 'Total', flex: 0.8, minWidth: 100, valueFormatter: (params) => params.value != null && !isNaN(Number(params.value)) ? `$${Number(params.value).toFixed(2)}` : '$0.00' },
-    { field: 'status', headerName: 'Status', flex: 0.8, minWidth: 100, 
+    { field: 'status', headerName: 'Status', flex: 0.8, minWidth: 100,
       renderCell: (params) => (
-        <Chip 
-          label={params.value} 
+        <Chip
+          label={params.value}
           color={params.value === 'Open' ? 'success' : 'error'}
           size="small"
           variant="outlined"
         />
       )
+    },
+    {
+      field: 'invoice_required',
+      headerName: 'Invoice',
+      flex: 0.6,
+      minWidth: 90,
+      renderCell: (params) => (
+        params.value ? <CheckCircleIcon color="success" titleAccess="Invoice required" /> : null
+      ),
+      sortable: false,
     },
     {
       field: 'exported_to_qbo',
