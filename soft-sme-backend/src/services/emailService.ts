@@ -675,8 +675,17 @@ This quote is valid until ${data.validUntil}.
     try {
       const userSettings = await this.getUserEmailSettings(userId);
       console.log('Testing email connection for user:', userId);
-      console.log('User email settings:', userSettings);
-      
+      if (userSettings) {
+        const { email_host: host, email_user: username } = userSettings;
+        console.log('User email settings (sanitized):', {
+          userId,
+          host,
+          username
+        });
+      } else {
+        console.log('No active email settings found for user:', userId);
+      }
+
       const { transporter, fromEmail } = await this.getTransporterForUser(userId);
       console.log('From email address:', fromEmail);
       
