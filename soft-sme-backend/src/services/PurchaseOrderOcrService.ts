@@ -189,7 +189,7 @@ export class PurchaseOrderOcrService {
     } catch (error: any) {
       if (error?.code === 'ENOENT') {
         throw new Error(
-          'Tesseract binary not found. Install tesseract-ocr (apk add tesseract-ocr tesseract-ocr-data-eng) on the server and ensure it is available in PATH.'
+          'Tesseract binary not found. Install tesseract-ocr (apk add tesseract-ocr tesseract-ocr-data-eng or apt-get install tesseract-ocr tesseract-ocr-eng) on the server and ensure it is available in PATH.'
         );
       }
       if (error?.stderr) {
