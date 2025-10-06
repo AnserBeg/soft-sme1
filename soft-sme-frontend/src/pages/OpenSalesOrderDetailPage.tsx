@@ -53,6 +53,7 @@ interface SalesOrder {
   sales_order_number: string;
   customer_id: number;
   customer_name: string;
+  source_quote_number?: string | null;
   subtotal: number | null;
   gst_amount: number | null;
   total_amount: number | null;
@@ -134,6 +135,7 @@ const SalesOrderDetailPage: React.FC = () => {
   const [customerPoNumber, setCustomerPoNumber] = useState('');
   const [vinNumber, setVinNumber] = useState('');
   const [estimatedCost, setEstimatedCost] = useState<number | null>(null);
+  const [sourceQuoteNumber, setSourceQuoteNumber] = useState('');
 
   const [lineItems, setLineItems] = useState<SalesOrderLineItem[]>([]);
 
@@ -413,7 +415,7 @@ const SalesOrderDetailPage: React.FC = () => {
     if (!id || isCreationMode || !isNumericId) {
       if (isCreationMode) {
         // Init one empty row in create mode
-        setLineItems([{
+        setLineItems([{ 
           part_number: '',
           part_description: '',
           quantity: '',
@@ -423,6 +425,7 @@ const SalesOrderDetailPage: React.FC = () => {
           line_amount: 0,
         }]);
         setIsDataFullyLoaded(true); // Mark data as loaded for creation mode
+        setSourceQuoteNumber('');
       }
       return;
     }
@@ -434,7 +437,8 @@ const SalesOrderDetailPage: React.FC = () => {
         const res = await api.get(`/api/sales-orders/${id}`);
         const data = res.data;
         setSalesOrder(data.salesOrder);
-        
+        setSourceQuoteNumber(data.salesOrder?.source_quote_number || '');
+
         const li = (data.lineItems || data.salesOrder?.line_items || []).map((item: any) => ({
           part_number: item.part_number,
           part_description: item.part_description,
@@ -849,6 +853,7 @@ const SalesOrderDetailPage: React.FC = () => {
       status: isCreationMode ? 'Open' : (salesOrder?.status || 'Open'),
       estimated_cost: estimatedCost != null ? Number(estimatedCost) : 0,
       lineItems: buildPayloadLineItems(lineItems),
+      source_quote_number: sourceQuoteNumber?.trim() || null,
     };
 
     setIsSaving(true);
@@ -894,9 +899,9 @@ const SalesOrderDetailPage: React.FC = () => {
             api.get('/api/inventory')
           ]);
           const data = soRes.data;
-          
-
-          
+          setSalesOrder(data.salesOrder);
+          setSourceQuoteNumber(data.salesOrder?.source_quote_number || '');
+ 
           const li = (data.lineItems || data.salesOrder?.line_items || []).map((item: any) => ({
             part_number: item.part_number,
             part_description: item.part_description,
@@ -1376,6 +1381,16 @@ const SalesOrderDetailPage: React.FC = () => {
                   />
                 </Grid>
               )}
+
+            <Grid item xs={12} sm={4}>
+              <TextField
+                label="Source Quote #"
+                value={sourceQuoteNumber || ''}
+                placeholder="Not converted from a quote"
+                fullWidth
+                InputProps={{ readOnly: true }}
+              />
+            </Grid>
 
             <Grid item xs={12} sm={4}>
               <Autocomplete<ProductOption>

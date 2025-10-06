@@ -1,6 +1,6 @@
 import express, { Request, Response } from 'express';
 import { pool } from '../db';
-import { getNextSequenceNumberForYear } from '../utils/sequence';
+import { getNextSalesOrderSequenceNumberForYear } from '../utils/sequence';
 import PDFDocument from 'pdfkit';
 import fs from 'fs';
 import path from 'path';
@@ -328,14 +328,15 @@ router.post('/', async (req: Request, res: Response) => {
     const idRes = await client.query("SELECT nextval('salesorderhistory_sales_order_id_seq')");
     const newSalesOrderId = idRes.rows[0].nextval;
     const currentYear = new Date().getFullYear();
-    const { sequenceNumber, nnnnn } = await getNextSequenceNumberForYear(currentYear);
+    const { sequenceNumber, nnnnn } = await getNextSalesOrderSequenceNumberForYear(currentYear);
     const formattedSONumber = `SO-${currentYear}-${nnnnn.toString().padStart(5, '0')}`;
     const salesOrderQuery = `
-      INSERT INTO salesorderhistory (sales_order_id, sales_order_number, customer_id, sales_date, product_name, product_description, terms, customer_po_number, vin_number, subtotal, total_gst_amount, total_amount, status, estimated_cost, sequence_number)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15);
+      INSERT INTO salesorderhistory (sales_order_id, sales_order_number, customer_id, sales_date, product_name, product_description, terms, customer_po_number, vin_number, subtotal, total_gst_amount, total_amount, status, estimated_cost, sequence_number, quote_id, source_quote_number)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17);
     `;
     const customerIdInt = customer_id !== undefined && customer_id !== null ? parseInt(customer_id, 10) : null;
     const quoteIdInt = req.body.quote_id !== undefined && req.body.quote_id !== null ? parseInt(req.body.quote_id, 10) : null;
+    const sourceQuoteNumber = req.body.source_quote_number || null;
     const estimatedCostNum = estimated_cost !== undefined && estimated_cost !== null ? parseFloat(estimated_cost) : 0;
     const lineItemsParsed = (trimmedLineItems || []).map((item: any) => ({
       ...item,
@@ -359,6 +360,8 @@ router.post('/', async (req: Request, res: Response) => {
       status || 'Open',
       estimatedCostNum,
       sequenceNumber,
+      quoteIdInt,
+      sourceQuoteNumber,
     ];
     await client.query(salesOrderQuery, salesOrderValues);
     // For each line item, upsert all fields
@@ -495,20 +498,28 @@ if (lineItems && lineItems.length > 0) {
     'estimated_cost',
     'sequence_number',
     'customer_po_number',
-    'vin_number'
+    'vin_number',
+    'subtotal',
+    'total_gst_amount',
+    'total_amount',
+    'quote_id',
+    'source_quote_number'
   ];
     // Update sales order header fields if provided
     if (Object.keys(salesOrderData).length > 0) {
-      const updateFields = [];
-      const updateValues = [];
+      const updateFields: string[] = [];
+      const updateValues: any[] = [];
       let paramCount = 1;
       for (const [key, value] of Object.entries(salesOrderData)) {
         if (allowedFields.includes(key) && value !== undefined && value !== null) {
-          let coercedValue = value;
+          let coercedValue: any = value;
           if (key === 'subtotal') coercedValue = parseFloat(salesOrderData.subtotal);
           if (key === 'total_gst_amount') coercedValue = parseFloat(salesOrderData.total_gst_amount);
           if (key === 'total_amount') coercedValue = parseFloat(salesOrderData.total_amount);
           if (key === 'estimated_cost') coercedValue = parseFloat(salesOrderData.estimated_cost);
+          if (key === 'quote_id') {
+            coercedValue = value === null ? null : parseInt(value as any, 10);
+          }
           updateFields.push(`${key} = $${paramCount}`);
           updateValues.push(coercedValue);
           paramCount++;
@@ -706,7 +717,15 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
     doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Customer PO #:', 320, y);
     doc.font('Helvetica').fontSize(11).fillColor('#000000').text(salesOrder.customer_po_number || 'N/A', 450, y);
     y += 16;
-    // Second line: Product and Sales Date
+    // Second line: Source Quote # (if available)
+    doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Source Quote #:', 50, y);
+    doc
+      .font('Helvetica')
+      .fontSize(11)
+      .fillColor('#000000')
+      .text(salesOrder.source_quote_number || 'N/A', 170, y);
+    y += 16;
+    // Third line: Product and Sales Date
     doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Product:', 50, y);
     doc.font('Helvetica').fontSize(11).fillColor('#000000').text(salesOrder.product_name || 'N/A', 170, y);
     doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Sales Date:', 320, y);
