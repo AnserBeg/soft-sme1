@@ -138,6 +138,36 @@ async function createQBOCustomer(customerData: any, accessToken: string, realmId
   }
 }
 
+const parseBoolean = (value: any): boolean => {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value !== 0;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (['true', '1', 'yes', 'y', 'on'].includes(normalized)) return true;
+    if (['false', '0', 'no', 'n', 'off', ''].includes(normalized)) return false;
+  }
+  return Boolean(value);
+};
+
+const normalizeInvoiceStatus = (value: any): 'needed' | 'done' | null => {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized) return null;
+    if (['needed', 'need', 'required', 'pending'].includes(normalized)) return 'needed';
+    if (['done', 'complete', 'completed', 'sent'].includes(normalized)) return 'done';
+    if (['true', 't', 'yes', 'y', '1', 'on'].includes(normalized)) return 'needed';
+    if (['false', 'f', 'no', 'n', '0', 'off'].includes(normalized)) return null;
+  }
+  if (typeof value === 'boolean') {
+    return value ? 'needed' : null;
+  }
+  if (typeof value === 'number') {
+    return value > 0 ? 'needed' : null;
+  }
+  return null;
+};
+
 // Helper function to recalculate aggregated parts to order
 async function recalculateAggregatedPartsToOrder() {
   try {
@@ -286,7 +316,7 @@ router.post('/:id/recalculate', async (req: Request, res: Response) => {
 
 // Create a new sales order
 router.post('/', async (req: Request, res: Response) => {
-  const { customer_id, sales_date, product_name, product_description, terms, customer_po_number, vin_number, status, estimated_cost, lineItems, user_id } = req.body;
+  const { customer_id, sales_date, product_name, product_description, terms, customer_po_number, vin_number, vehicle_make, vehicle_model, invoice_status, invoice_required, status, estimated_cost, lineItems, user_id } = req.body;
 
   // Trim string fields
   const trimmedProductName = product_name ? product_name.trim() : '';
@@ -294,6 +324,9 @@ router.post('/', async (req: Request, res: Response) => {
   const trimmedTerms = terms ? terms.trim() : '';
   const trimmedCustomerPoNumber = customer_po_number ? customer_po_number.trim() : '';
   const trimmedVinNumber = vin_number ? vin_number.trim() : '';
+  const trimmedVehicleMake = vehicle_make ? vehicle_make.trim() : '';
+  const trimmedVehicleModel = vehicle_model ? vehicle_model.trim() : '';
+  const normalizedInvoiceStatus = normalizeInvoiceStatus(invoice_status ?? invoice_required);
   const trimmedLineItems = lineItems.map((item: any) => ({
     ...item,
     part_number: item.part_number ? item.part_number.trim() : '',
@@ -331,8 +364,8 @@ router.post('/', async (req: Request, res: Response) => {
     const { sequenceNumber, nnnnn } = await getNextSalesOrderSequenceNumberForYear(currentYear);
     const formattedSONumber = `SO-${currentYear}-${nnnnn.toString().padStart(5, '0')}`;
     const salesOrderQuery = `
-      INSERT INTO salesorderhistory (sales_order_id, sales_order_number, customer_id, sales_date, product_name, product_description, terms, customer_po_number, vin_number, subtotal, total_gst_amount, total_amount, status, estimated_cost, sequence_number, quote_id, source_quote_number)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17);
+      INSERT INTO salesorderhistory (sales_order_id, sales_order_number, customer_id, sales_date, product_name, product_description, terms, customer_po_number, vin_number, vehicle_make, vehicle_model, invoice_status, subtotal, total_gst_amount, total_amount, status, estimated_cost, sequence_number, quote_id, source_quote_number)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20);
     `;
     const customerIdInt = customer_id !== undefined && customer_id !== null ? parseInt(customer_id, 10) : null;
     const quoteIdInt = req.body.quote_id !== undefined && req.body.quote_id !== null ? parseInt(req.body.quote_id, 10) : null;
@@ -354,6 +387,9 @@ router.post('/', async (req: Request, res: Response) => {
       trimmedTerms,
       trimmedCustomerPoNumber,
       trimmedVinNumber,
+      trimmedVehicleMake,
+      trimmedVehicleModel,
+      normalizedInvoiceStatus,
       0, // subtotal - will be calculated by backend
       0, // total_gst_amount - will be calculated by backend
       0, // total_amount - will be calculated by backend
@@ -454,6 +490,15 @@ router.put('/:id', async (req: Request, res: Response) => {
   if (salesOrderData.terms) salesOrderData.terms = salesOrderData.terms.trim();
   if (salesOrderData.customer_po_number) salesOrderData.customer_po_number = salesOrderData.customer_po_number.trim();
   if (salesOrderData.vin_number) salesOrderData.vin_number = salesOrderData.vin_number.trim();
+  if (salesOrderData.vehicle_make) salesOrderData.vehicle_make = salesOrderData.vehicle_make.trim();
+  if (salesOrderData.vehicle_model) salesOrderData.vehicle_model = salesOrderData.vehicle_model.trim();
+  if (Object.prototype.hasOwnProperty.call(salesOrderData, 'invoice_required')) {
+    salesOrderData.invoice_status = normalizeInvoiceStatus((salesOrderData as any).invoice_required);
+    delete (salesOrderData as any).invoice_required;
+  }
+  if (Object.prototype.hasOwnProperty.call(salesOrderData, 'invoice_status')) {
+    salesOrderData.invoice_status = normalizeInvoiceStatus(salesOrderData.invoice_status);
+  }
 
   // Trim string fields in lineItems
   const trimmedLineItems = lineItems ? lineItems.map((item: any) => ({
@@ -499,6 +544,9 @@ if (lineItems && lineItems.length > 0) {
     'sequence_number',
     'customer_po_number',
     'vin_number',
+    'vehicle_make',
+    'vehicle_model',
+    'invoice_status',
     'subtotal',
     'total_gst_amount',
     'total_amount',
@@ -511,12 +559,13 @@ if (lineItems && lineItems.length > 0) {
       const updateValues: any[] = [];
       let paramCount = 1;
       for (const [key, value] of Object.entries(salesOrderData)) {
-        if (allowedFields.includes(key) && value !== undefined && value !== null) {
+        if (allowedFields.includes(key) && value !== undefined && (value !== null || key === 'invoice_status')) {
           let coercedValue: any = value;
           if (key === 'subtotal') coercedValue = parseFloat(salesOrderData.subtotal);
           if (key === 'total_gst_amount') coercedValue = parseFloat(salesOrderData.total_gst_amount);
           if (key === 'total_amount') coercedValue = parseFloat(salesOrderData.total_amount);
           if (key === 'estimated_cost') coercedValue = parseFloat(salesOrderData.estimated_cost);
+          if (key === 'invoice_status') coercedValue = normalizeInvoiceStatus(value);
           if (key === 'quote_id') {
             coercedValue = value === null ? null : parseInt(value as any, 10);
           }
@@ -734,12 +783,24 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
       450, y
     );
     y += 16;
-    // Third line: VIN # (conditional rendering)
-    if (salesOrder.vin_number && salesOrder.vin_number.trim() !== '') {
-      doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('VIN #:', 50, y);
-      doc.font('Helvetica').fontSize(11).fillColor('#000000').text(salesOrder.vin_number, 170, y);
-      y += 16;
-    }
+    const vinValue = salesOrder.vin_number?.trim() || '';
+    doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('VIN #:', 50, y);
+    doc.font('Helvetica').fontSize(11).fillColor('#000000').text(vinValue || 'N/A', 170, y);
+    doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Invoice:', 320, y);
+    const invoiceLabel = salesOrder.invoice_status === 'done'
+      ? 'Done'
+      : salesOrder.invoice_status === 'needed'
+        ? 'Needed'
+        : '—';
+    doc.font('Helvetica').fontSize(11).fillColor('#000000').text(invoiceLabel, 450, y);
+    y += 16;
+    const makeValue = salesOrder.vehicle_make?.trim() || '';
+    const modelValue = salesOrder.vehicle_model?.trim() || '';
+    doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Make:', 50, y);
+    doc.font('Helvetica').fontSize(11).fillColor('#000000').text(makeValue || 'N/A', 170, y);
+    doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Model:', 320, y);
+    doc.font('Helvetica').fontSize(11).fillColor('#000000').text(modelValue || 'N/A', 450, y);
+    y += 16;
     y += 8;
     // Product Description below
     doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Product Description:', 50, y);
