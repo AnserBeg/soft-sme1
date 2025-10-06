@@ -98,3 +98,7 @@ export const getShiftsInRange = async (profileId: number, from: string, to: stri
   const response = await api.get('/api/attendance', { params: { profile_id: profileId, from, to } });
   return response.data;
 };
+
+export const deleteShift = async (shiftId: number): Promise<void> => {
+  await api.delete(`/api/attendance/${shiftId}`);
+};

@@ -487,6 +487,52 @@ router.put('/:id', async (req: Request, res: Response) => {
     });
   }
 });
+
+router.delete('/:id', async (req: Request, res: Response) => {
+  const { id } = req.params;
+
+  try {
+    const shiftRes = await pool.query(
+      `SELECT id, profile_id, clock_in, clock_out
+       FROM attendance_shifts
+       WHERE id = $1`,
+      [id]
+    );
+
+    if (shiftRes.rows.length === 0) {
+      return res.status(404).json({
+        error: 'Shift Not Found',
+        message: 'Shift not found.',
+      });
+    }
+
+    const shift = shiftRes.rows[0];
+
+    const overlapRes = await pool.query(
+      `SELECT id
+       FROM time_entries
+       WHERE profile_id = $1
+         AND tstzrange(clock_in, COALESCE(clock_out, 'infinity'::timestamptz), '[)')
+             && tstzrange($2::timestamptz, COALESCE($3::timestamptz, 'infinity'::timestamptz), '[)')
+       LIMIT 1`,
+      [shift.profile_id, shift.clock_in, shift.clock_out]
+    );
+
+    if (overlapRes.rows.length > 0) {
+      return res.status(400).json({
+        error: 'Shift Has Time Entries',
+        message: 'Delete or adjust time entries linked to this shift before deleting it.',
+      });
+    }
+
+    await pool.query('DELETE FROM attendance_shifts WHERE id = $1', [id]);
+
+    return res.status(204).send();
+  } catch (err) {
+    console.error('attendanceRoutes: Error deleting shift:', err);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
 // List unclosed shifts (for warnings)
 router.get('/unclosed', async (req: Request, res: Response) => {
   try {

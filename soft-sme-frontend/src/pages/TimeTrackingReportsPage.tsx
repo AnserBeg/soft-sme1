@@ -38,11 +38,12 @@ import {
   SalesOrder,
   TimeEntryReport,
   updateTimeEntry,
-  createTimeEntry
+  createTimeEntry,
+  deleteTimeEntry
 } from '../services/timeTrackingService';
-import { getShiftsInRange, updateShift, createShift } from '../services/attendanceService';
+import { getShiftsInRange, updateShift, createShift, deleteShift as deleteShiftRecord } from '../services/attendanceService';
 import api from '../api/axios';
-import { Edit as EditIcon, Save as SaveIcon } from '@mui/icons-material';
+import { Edit as EditIcon, Save as SaveIcon, Delete as DeleteIcon } from '@mui/icons-material';
 
 // Helper to convert UTC string to local datetime-local input value
 function toLocalInputValue(dateString: string) {
@@ -111,6 +112,12 @@ const TimeTrackingReportsPage: React.FC = () => {
   const [addShiftClockIn, setAddShiftClockIn] = useState('');
   const [addShiftClockOut, setAddShiftClockOut] = useState('');
   const [savingNewShift, setSavingNewShift] = useState(false);
+  const [entryToDelete, setEntryToDelete] = useState<any | null>(null);
+  const [deletingEntry, setDeletingEntry] = useState(false);
+  const [deleteEntryError, setDeleteEntryError] = useState<string | null>(null);
+  const [shiftToDelete, setShiftToDelete] = useState<any | null>(null);
+  const [deletingShift, setDeletingShift] = useState(false);
+  const [deleteShiftError, setDeleteShiftError] = useState<string | null>(null);
 
   useEffect(() => {
     fetchData();
@@ -337,6 +344,68 @@ const TimeTrackingReportsPage: React.FC = () => {
     }
   };
 
+  const handleRequestDeleteEntry = (entry: any) => {
+    setDeleteEntryError(null);
+    setError(null);
+    setEntryToDelete(entry);
+  };
+
+  const handleCloseDeleteEntry = () => {
+    if (deletingEntry) return;
+    setEntryToDelete(null);
+    setDeleteEntryError(null);
+  };
+
+  const handleConfirmDeleteEntry = async () => {
+    if (!entryToDelete) return;
+    const entryId = entryToDelete.id;
+    setDeletingEntry(true);
+    setDeleteEntryError(null);
+    setError(null);
+    try {
+      await deleteTimeEntry(entryId);
+      setEntryToDelete(null);
+      await handleGenerateReport();
+    } catch (err: any) {
+      const message = err?.response?.data?.message || err?.response?.data?.error || 'Failed to delete time entry.';
+      setDeleteEntryError(message);
+      setError(message);
+    } finally {
+      setDeletingEntry(false);
+    }
+  };
+
+  const handleRequestDeleteShift = (shift: any) => {
+    setDeleteShiftError(null);
+    setError(null);
+    setShiftToDelete(shift);
+  };
+
+  const handleCloseDeleteShift = () => {
+    if (deletingShift) return;
+    setShiftToDelete(null);
+    setDeleteShiftError(null);
+  };
+
+  const handleConfirmDeleteShift = async () => {
+    if (!shiftToDelete) return;
+    const shiftId = shiftToDelete.id;
+    setDeletingShift(true);
+    setDeleteShiftError(null);
+    setError(null);
+    try {
+      await deleteShiftRecord(shiftId);
+      setShiftToDelete(null);
+      await handleGenerateReport();
+    } catch (err: any) {
+      const message = err?.response?.data?.message || err?.response?.data?.error || 'Failed to delete shift.';
+      setDeleteShiftError(message);
+      setError(message);
+    } finally {
+      setDeletingShift(false);
+    }
+  };
+
   useEffect(() => {
     if (editShift) {
       setEditShiftClockIn(editShift.clock_in ? toLocalInputValue(editShift.clock_in) : '');
@@ -363,6 +432,9 @@ const TimeTrackingReportsPage: React.FC = () => {
   );
   const addEntryProfileName = addEntryShift
     ? (addEntryShift.profile_name || profiles.find(p => p.id === addEntryShift.profile_id)?.name || `Profile ${addEntryShift.profile_id}`)
+    : '';
+  const deleteShiftProfileName = shiftToDelete
+    ? (shiftToDelete.profile_name || profiles.find(p => p.id === shiftToDelete.profile_id)?.name || `Profile ${shiftToDelete.profile_id}`)
     : '';
 
   // Compute total shift duration, idle time, regular, and overtime per profile
@@ -674,6 +746,8 @@ const TimeTrackingReportsPage: React.FC = () => {
                     showBreakdown={showBreakdown}
                     setEditEntryError={setEditEntryError}
                     setError={setError}
+                    onDeleteShift={handleRequestDeleteShift}
+                    onDeleteEntry={handleRequestDeleteEntry}
                   />
                 );
               })}
@@ -683,7 +757,7 @@ const TimeTrackingReportsPage: React.FC = () => {
                     <Typography variant="subtitle1" fontWeight={700} color="#a21caf" sx={{ fontSize: '1.2rem' }}>
                       Unscheduled Entries
                     </Typography>
-                    <TimeEntriesTable entries={unscheduledEntries} setEditEntry={setEditEntry} setEditClockIn={setEditClockIn} setEditClockOut={setEditClockOut} setEditEntryError={setEditEntryError} setError={setError} />
+                    <TimeEntriesTable entries={unscheduledEntries} setEditEntry={setEditEntry} setEditClockIn={setEditClockIn} setEditClockOut={setEditClockOut} setEditEntryError={setEditEntryError} setError={setError} onDeleteEntry={handleRequestDeleteEntry} />
                   </Box>
                 </Paper>
               )}
@@ -775,6 +849,30 @@ const TimeTrackingReportsPage: React.FC = () => {
         <DialogActions>
           <Button onClick={() => { setEditEntry(null); setEditEntryError(null); }}>Cancel</Button>
           <Button onClick={handleSaveEditEntry} variant="contained" startIcon={<SaveIcon />}>Save</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Delete Entry Dialog */}
+      <Dialog open={!!entryToDelete} onClose={handleCloseDeleteEntry}>
+        <DialogTitle>Delete Time Entry</DialogTitle>
+        <DialogContent>
+          {deleteEntryError && (
+            <Alert severity="error" sx={{ mb: 2 }}>
+              {deleteEntryError}
+            </Alert>
+          )}
+          {entryToDelete && (
+            <Typography variant="body2">
+              Are you sure you want to delete the entry for sales order {entryToDelete.sales_order_number} on{' '}
+              {new Date(entryToDelete.clock_in).toLocaleString()}?
+            </Typography>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCloseDeleteEntry} disabled={deletingEntry}>Cancel</Button>
+          <Button onClick={handleConfirmDeleteEntry} variant="contained" color="error" disabled={deletingEntry}>
+            Delete
+          </Button>
         </DialogActions>
       </Dialog>
 
@@ -916,6 +1014,30 @@ const TimeTrackingReportsPage: React.FC = () => {
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* Delete Shift Dialog */}
+      <Dialog open={!!shiftToDelete} onClose={handleCloseDeleteShift}>
+        <DialogTitle>Delete Shift</DialogTitle>
+        <DialogContent>
+          {deleteShiftError && (
+            <Alert severity="error" sx={{ mb: 2 }}>
+              {deleteShiftError}
+            </Alert>
+          )}
+          {shiftToDelete && (
+            <Typography variant="body2">
+              Are you sure you want to delete the shift for {deleteShiftProfileName} on{' '}
+              {new Date(shiftToDelete.clock_in).toLocaleString()}? Any associated time entries must be removed first.
+            </Typography>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCloseDeleteShift} disabled={deletingShift}>Cancel</Button>
+          <Button onClick={handleConfirmDeleteShift} variant="contained" color="error" disabled={deletingShift}>
+            Delete
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Container>
   );
 };
@@ -933,7 +1055,7 @@ function triggerDownload(blob: Blob, filename: string) {
   document.body.removeChild(a);
 }
 
-function ShiftSummaryCard({ shift, entries, expanded, onExpand, onAddEntry, setEditEntry, setEditClockIn, setEditClockOut, profiles, setEditShift, showBreakdown, setEditEntryError, setError }: { shift: any, entries: any[], expanded: boolean, onExpand: () => void, onAddEntry: (shift: any) => void, setEditEntry: any, setEditClockIn: any, setEditClockOut: any, profiles: any[], setEditShift: any, showBreakdown: boolean, setEditEntryError: any, setError: any }) {
+function ShiftSummaryCard({ shift, entries, expanded, onExpand, onAddEntry, setEditEntry, setEditClockIn, setEditClockOut, profiles, setEditShift, showBreakdown, setEditEntryError, setError, onDeleteShift, onDeleteEntry }: { shift: any, entries: any[], expanded: boolean, onExpand: () => void, onAddEntry: (shift: any) => void, setEditEntry: any, setEditClockIn: any, setEditClockOut: any, profiles: any[], setEditShift: any, showBreakdown: boolean, setEditEntryError: any, setError: any, onDeleteShift: (shift: any) => void, onDeleteEntry: (entry: any) => void }) {
   const shiftIn = new Date(shift.clock_in);
   const shiftOut = shift.clock_out ? new Date(shift.clock_out) : null;
   // Use stored duration from database (which includes break deductions) instead of calculating raw duration
@@ -966,6 +1088,9 @@ function ShiftSummaryCard({ shift, entries, expanded, onExpand, onAddEntry, setE
             <Button variant="contained" color="primary" size="small" onClick={() => setEditShift(shift)}>
               Edit Shift
             </Button>
+            <Button variant="outlined" color="error" size="small" onClick={() => onDeleteShift(shift)} startIcon={<DeleteIcon />}>
+              Delete Shift
+            </Button>
           </Box>
         </Box>
         <Typography variant="body1" sx={{ mt: 1, fontSize: '1.1rem' }}>
@@ -988,12 +1113,12 @@ function ShiftSummaryCard({ shift, entries, expanded, onExpand, onAddEntry, setE
             )}
           </Box>
         )}
-        {showBreakdown && expanded && <TimeEntriesTable entries={entries} setEditEntry={setEditEntry} setEditClockIn={setEditClockIn} setEditClockOut={setEditClockOut} setEditEntryError={setEditEntryError} setError={setError} />}
+        {showBreakdown && expanded && <TimeEntriesTable entries={entries} setEditEntry={setEditEntry} setEditClockIn={setEditClockIn} setEditClockOut={setEditClockOut} setEditEntryError={setEditEntryError} setError={setError} onDeleteEntry={onDeleteEntry} />}
       </Box>
     </Paper>
   );
 }
-function TimeEntriesTable({ entries, setEditEntry, setEditClockIn, setEditClockOut, setEditEntryError, setError }: { entries: any[], setEditEntry: any, setEditClockIn: any, setEditClockOut: any, setEditEntryError: any, setError: any }) {
+function TimeEntriesTable({ entries, setEditEntry, setEditClockIn, setEditClockOut, setEditEntryError, setError, onDeleteEntry }: { entries: any[], setEditEntry: any, setEditClockIn: any, setEditClockOut: any, setEditEntryError: any, setError: any, onDeleteEntry?: (entry: any) => void }) {
   return (
     <TableContainer sx={{ mt: 1, mb: 1 }}>
       <Table size="small">
@@ -1028,6 +1153,17 @@ function TimeEntriesTable({ entries, setEditEntry, setEditClockIn, setEditClockO
                     sx={{ ml: 1 }}
                   >
                     Edit
+                  </Button>
+                )}
+                {onDeleteEntry && (
+                  <Button
+                    variant="text"
+                    color="error"
+                    startIcon={<DeleteIcon />}
+                    onClick={() => onDeleteEntry(entry)}
+                    sx={{ ml: entry.clock_out ? 1 : 0 }}
+                  >
+                    Delete
                   </Button>
                 )}
               </TableCell>
