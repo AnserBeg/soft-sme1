@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Box,
   Container,
@@ -50,6 +50,27 @@ const TimeTrackingPage: React.FC = () => {
   const [selectedSO, setSelectedSO] = useState<number | ''>('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const successTimeoutRef = useRef<number | null>(null);
+
+  const showSuccess = (message: string) => {
+    if (successTimeoutRef.current) {
+      window.clearTimeout(successTimeoutRef.current);
+    }
+    setSuccessMessage(message);
+    successTimeoutRef.current = window.setTimeout(() => {
+      setSuccessMessage(null);
+      successTimeoutRef.current = null;
+    }, 2500);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (successTimeoutRef.current) {
+        window.clearTimeout(successTimeoutRef.current);
+      }
+    };
+  }, []);
 
   
 
@@ -147,6 +168,7 @@ const TimeTrackingPage: React.FC = () => {
       setSelectedSO('');
       setTimeEntries([]);
       setError(null);
+      showSuccess('Successfully clocked in.');
     } catch (err: any) {
       if (err.response && err.response.data && err.response.data.error.includes('attendance')) {
         setError('You must clock in for attendance before you can clock in for a sales order.');
@@ -168,6 +190,7 @@ const TimeTrackingPage: React.FC = () => {
       setSelectedSO('');
       setTimeEntries([]);
       setError(null);
+      showSuccess('Successfully clocked out.');
     } catch (err) {
       setError('Failed to clock out. Please try again.');
       console.error('Error clocking out:', err);
@@ -201,6 +224,24 @@ const TimeTrackingPage: React.FC = () => {
           {error}
         </Alert>
       )}
+      <Dialog
+        open={Boolean(successMessage)}
+        onClose={() => setSuccessMessage(null)}
+        PaperProps={{
+          sx: {
+            px: 6,
+            py: 4,
+            textAlign: 'center'
+          }
+        }}
+      >
+        <DialogTitle sx={{ fontSize: '2rem' }}>Success</DialogTitle>
+        <DialogContent>
+          <Typography variant="h4" component="p">
+            {successMessage}
+          </Typography>
+        </DialogContent>
+      </Dialog>
 
       <Grid container spacing={3}>
         {/* Profile Selection */}
