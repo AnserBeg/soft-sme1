@@ -75,13 +75,19 @@ const PrivateRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => 
       '/',
       '/open-sales-orders',
       '/open-purchase-orders',
+      '/purchase-order',
       '/parts-to-order',
       '/inventory',
       '/supply',
       '/email-settings',
     ];
-    // Allow paths that start with /open-sales-orders/, /open-purchase-orders/ (for detail pages)
-    if (!allowed.includes(path) && !path.startsWith('/open-sales-orders/') && !path.startsWith('/open-purchase-orders/')) {
+    // Allow paths that start with /open-sales-orders/, /open-purchase-orders/, /purchase-order/ (for detail pages)
+    if (
+      !allowed.includes(path) &&
+      !path.startsWith('/open-sales-orders/') &&
+      !path.startsWith('/open-purchase-orders/') &&
+      !path.startsWith('/purchase-order/')
+    ) {
       return <Navigate to="/" replace />;
     }
   }
