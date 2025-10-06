@@ -1,6 +1,6 @@
 import express, { Request, Response } from 'express';
 import { pool } from '../db';
-import { getNextSequenceNumberForYear } from '../utils/sequence';
+import { getNextQuoteSequenceNumberForYear, getNextSalesOrderSequenceNumberForYear } from '../utils/sequence';
 import PDFDocument from 'pdfkit';
 import fs from 'fs';
 import path from 'path';
@@ -83,7 +83,7 @@ router.post('/', async (req: Request, res: Response) => {
     }
 
     const currentYear = new Date().getFullYear();
-    const { sequenceNumber, nnnnn } = await getNextSequenceNumberForYear(currentYear);
+    const { sequenceNumber, nnnnn } = await getNextQuoteSequenceNumberForYear(currentYear);
     const formattedQuoteNumber = `QO-${currentYear}-${nnnnn.toString().padStart(5, '0')}`;
 
     const result = await client.query(
@@ -207,21 +207,20 @@ router.post('/:id/convert-to-sales-order', async (req: Request, res: Response) =
 
     const quote = quoteResult.rows[0];
 
-    // Use the quote's sequence_number and format as SO-YYYY-NNNNN
-    const sequenceNumber = quote.sequence_number;
-    const soYear = sequenceNumber.substring(0, 4);
-    const soSeq = sequenceNumber.substring(4);
-    const formattedSONumber = `SO-${soYear}-${soSeq}`;
+    const conversionDate = new Date();
+    const conversionYear = conversionDate.getFullYear();
+    const { sequenceNumber: soSequenceNumber, nnnnn: soSeq } = await getNextSalesOrderSequenceNumberForYear(conversionYear);
+    const formattedSONumber = `SO-${conversionYear}-${soSeq.toString().padStart(5, '0')}`;
 
     // Create sales order in salesorderhistory
     const salesOrderResult = await client.query(
       `INSERT INTO salesorderhistory (
         sales_order_number, customer_id, sales_date, product_name, product_description,
-        estimated_cost, status, quote_id, subtotal, total_gst_amount, total_amount, sequence_number, terms, customer_po_number, vin_number
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING *`,
-      [formattedSONumber, quote.customer_id, new Date().toISOString().split('T')[0], 
+        estimated_cost, status, quote_id, subtotal, total_gst_amount, total_amount, sequence_number, terms, customer_po_number, vin_number, source_quote_number
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING *`,
+      [formattedSONumber, quote.customer_id, conversionDate.toISOString().split('T')[0],
        quote.product_name, quote.product_description, quote.estimated_cost, 'Open', quote.quote_id,
-       0, 0, 0, sequenceNumber, quote.terms || null, quote.customer_po_number || null, quote.vin_number || null]
+       0, 0, 0, soSequenceNumber, quote.terms || null, quote.customer_po_number || null, quote.vin_number || null, quote.quote_number || null]
     );
 
     const salesOrderId = salesOrderResult.rows[0].sales_order_id;

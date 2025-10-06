@@ -38,17 +38,41 @@ export class AgentToolsV2 {
       await client.query('BEGIN');
       const now = new Date();
       const year = now.getFullYear();
-      const seqRes = await client.query(`SELECT COALESCE(MAX(sequence_number),0)+1 as seq FROM salesorderhistory WHERE EXTRACT(YEAR FROM sales_date)= $1`, [year]);
-      const seq = parseInt(seqRes.rows[0].seq) || 1;
+      const seqRes = await client.query(
+        `SELECT MAX(CAST(SUBSTRING(CAST(sequence_number AS TEXT), 5, 5) AS INTEGER)) AS max_seq
+         FROM salesorderhistory
+         WHERE sequence_number IS NOT NULL
+           AND CAST(sequence_number AS TEXT) LIKE $1`,
+        [`${year}%`]
+      );
+      const seq = (parseInt(seqRes.rows[0]?.max_seq, 10) || 0) + 1;
+      const sequenceNumber = `${year}${String(seq).padStart(5, '0')}`;
       const soNum = `SO-${year}-${String(seq).padStart(5, '0')}`;
       const header = payload.header || {};
       const subtotal = Number(header.subtotal || 0);
-      const gst = Number(header.total_gst_amount || (subtotal * 0.05));
-      const total = Number(header.total_amount || (subtotal + gst));
+      const gst = Number(header.total_gst_amount || subtotal * 0.05);
+      const total = Number(header.total_amount || subtotal + gst);
       const insert = await client.query(
-        `INSERT INTO salesorderhistory (sales_order_number, customer_id, sales_date, product_name, product_description, terms, customer_po_number, vin_number, subtotal, total_gst_amount, total_amount, status, estimated_cost, sequence_number)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING sales_order_id` ,
-        [soNum, header.customer_id || null, header.sales_date || now, header.product_name || '', header.product_description || '', header.terms || '', header.customer_po_number || '', header.vin_number || '', subtotal, gst, total, header.status || 'Open', Number(header.estimated_cost || 0), seq]
+        `INSERT INTO salesorderhistory (sales_order_number, customer_id, sales_date, product_name, product_description, terms, customer_po_number, vin_number, subtotal, total_gst_amount, total_amount, status, estimated_cost, sequence_number, quote_id, source_quote_number)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING sales_order_id`,
+        [
+          soNum,
+          header.customer_id || null,
+          header.sales_date || now,
+          header.product_name || '',
+          header.product_description || '',
+          header.terms || '',
+          header.customer_po_number || '',
+          header.vin_number || '',
+          subtotal,
+          gst,
+          total,
+          header.status || 'Open',
+          Number(header.estimated_cost || 0),
+          sequenceNumber,
+          header.quote_id !== undefined && header.quote_id !== null ? Number(header.quote_id) : null,
+          header.source_quote_number || null,
+        ]
       );
       const soId = insert.rows[0].sales_order_id;
       const lines = Array.isArray(payload.lineItems) ? payload.lineItems : [];
@@ -64,14 +88,16 @@ export class AgentToolsV2 {
       await client.query('ROLLBACK');
       await this.audit(sessionId, 'createSalesOrder', payload, { error: e.message }, false);
       throw e;
-    } finally { client.release(); }
+    } finally {
+      client.release();
+    }
   }
 
   async updateSalesOrder(sessionId: number, salesOrderId: number, patch: any) {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
-      const allowed = ['customer_id','sales_date','product_name','product_description','terms','subtotal','total_gst_amount','total_amount','status','estimated_cost','sequence_number','customer_po_number','vin_number'];
+      const allowed = ['customer_id','sales_date','product_name','product_description','terms','subtotal','total_gst_amount','total_amount','status','estimated_cost','sequence_number','customer_po_number','vin_number','quote_id','source_quote_number'];
       const header = patch.header || {};
       if (Object.keys(header).length) {
         const fields:string[]=[]; const values:any[]=[]; let i=1;
@@ -297,7 +323,9 @@ export class AgentToolsV2 {
       subtotal: quote.estimated_cost,
       total_gst_amount: Number(quote.estimated_cost||0)*0.05,
       total_amount: Number(quote.estimated_cost||0)*1.05,
-      status: 'Open'
+      status: 'Open',
+      quote_id: quote.quote_id,
+      source_quote_number: quote.quote_number
     }, lineItems: [] });
     await this.audit(sessionId,'convertQuoteToSO',{quoteId},so,true);
     return so;
