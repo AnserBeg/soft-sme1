@@ -5,6 +5,20 @@ import PDFDocument from 'pdfkit';
 import fs from 'fs';
 import path from 'path';
 
+const formatCurrency = (value: number | string | null | undefined): string => {
+  const amount = Number(value ?? 0);
+  if (!Number.isFinite(amount)) {
+    return '$0.00';
+  }
+
+  const isNegative = amount < 0;
+  const absoluteValue = Math.abs(amount);
+  const [wholePart, decimalPart] = absoluteValue.toFixed(2).split('.');
+  const withSeparators = wholePart.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+
+  return `${isNegative ? '-$' : '$'}${withSeparators}.${decimalPart}`;
+};
+
 const router = express.Router();
 
 // Get all quotes'
@@ -360,7 +374,7 @@ router.get('/export/pdf', async (req: Request, res: Response) => {
       x += columnWidths[1];
       doc.text(quote.product_name || '', x, y, { width: columnWidths[2] });
       x += columnWidths[2];
-      doc.text(`$${(quote.estimated_cost || 0).toFixed(2)}`, x, y, { width: columnWidths[3] });
+      doc.text(formatCurrency(quote.estimated_cost), x, y, { width: columnWidths[3] });
       x += columnWidths[3];
       
       const quoteDate = quote.quote_date ? new Date(quote.quote_date).toLocaleDateString() : '';
@@ -543,7 +557,11 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
 
     // --- Pricing Section ---
     doc.font('Helvetica-Bold').fontSize(12).fillColor('#000000').text('Estimated Price', 50, y);
-    doc.font('Helvetica-Bold').fontSize(13).fillColor('#000000').text(parseFloat(quote.estimated_cost).toFixed(2), 480, y, { align: 'right', width: 70 });
+    doc
+      .font('Helvetica-Bold')
+      .fontSize(13)
+      .fillColor('#000000')
+      .text(formatCurrency(quote.estimated_cost), 480, y, { align: 'right', width: 70 });
 
     // --- Terms and Conditions ---
     y += 40;

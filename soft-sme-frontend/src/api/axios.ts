@@ -21,7 +21,16 @@ api.interceptors.request.use(
     if (deviceId) {
       config.headers['x-device-id'] = deviceId;
     }
-    
+
+    try {
+      const timeZone = typeof Intl !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().timeZone : undefined;
+      if (timeZone) {
+        config.headers['x-timezone'] = timeZone;
+      }
+    } catch {
+      // Ignore timezone resolution errors and skip header when unavailable
+    }
+
     return config;
   },
   (error) => {

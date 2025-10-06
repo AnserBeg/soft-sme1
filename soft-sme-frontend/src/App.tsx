@@ -2,6 +2,7 @@ import React from 'react';
 import { HashRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { ThemeProvider, CssBaseline } from '@mui/material';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { MessagingProvider } from './contexts/MessagingContext';
 import theme from './theme';
 import { LocalizationProvider } from '@mui/x-date-pickers';
 import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
@@ -19,7 +20,7 @@ import InventoryPage from './pages/InventoryPage';
 import SupplyPage from './pages/SupplyPage';
 import QuotePage from './pages/QuotePage';
 import QuoteEditorPage from './pages/QuoteEditorPage';
-
+import MessagingPage from './pages/MessagingPage';
 
 // import SalesOrderPage from './pages/SalesOrderPage';
 
@@ -47,6 +48,7 @@ import MobileUserAccessPage from './pages/MobileUserAccessPage';
 import UserEmailSettingsPage from './pages/UserEmailSettingsPage';
 import EmailTemplatesPage from './pages/EmailTemplatesPage';
 import TaskDetailPage from './pages/TaskDetailPage';
+import TasksDashboardPage from './pages/TasksDashboardPage';
 import { useEffect, useState } from 'react';
 import { syncPending, getPendingCount } from './services/offlineSync';
 import { ToastContainer } from 'react-toastify';
@@ -81,6 +83,7 @@ const PrivateRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => 
       '/inventory',
       '/supply',
       '/email-settings',
+      '/tasks',
     ];
     // Allow paths that start with /open-sales-orders/, /open-purchase-orders/, /purchase-order/ (for detail pages)
     if (
@@ -185,6 +188,9 @@ const AppRoutes: React.FC = () => {
         
         {/* Parts to Order */}
         <Route path="parts-to-order" element={<PartsToOrderPage />} />
+
+        {/* Tasks */}
+        <Route path="tasks" element={<TasksDashboardPage />} />
         
         {/* System Management */}
         <Route path="backup-management" element={<BackupManagementPage />} />
@@ -200,6 +206,8 @@ const AppRoutes: React.FC = () => {
 
         {/* Tasks */}
         <Route path="tasks/:id" element={<TaskDetailPage />} />
+        {/* Messaging */}
+        <Route path="messaging" element={<MessagingPage />} />
       </Route>
 
       {/* Catch all route */}
@@ -243,12 +251,14 @@ const App: React.FC = () => {
     <ThemeProvider theme={theme}>
       <CssBaseline />
       <AuthProvider>
-        <LocalizationProvider dateAdapter={AdapterDayjs}>
-          <Router>
-            <AppRoutes />
-          </Router>
-          <ToastContainer position="top-right" autoClose={3000} newestOnTop={false} closeOnClick pauseOnFocusLoss draggable pauseOnHover theme="colored" />
-        </LocalizationProvider>
+        <MessagingProvider>
+          <LocalizationProvider dateAdapter={AdapterDayjs}>
+            <Router>
+              <AppRoutes />
+            </Router>
+            <ToastContainer position="top-right" autoClose={3000} newestOnTop={false} closeOnClick pauseOnFocusLoss draggable pauseOnHover theme="colored" />
+          </LocalizationProvider>
+        </MessagingProvider>
       </AuthProvider>
     </ThemeProvider>
   );

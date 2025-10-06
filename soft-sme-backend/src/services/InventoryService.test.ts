@@ -1,7 +1,14 @@
 import { Pool } from 'pg';
 import { InventoryService } from './InventoryService';
 
-describe('InventoryService', () => {
+const describeIfDb = process.env.TEST_DATABASE_URL ? describe : describe.skip;
+
+if (!process.env.TEST_DATABASE_URL) {
+  // eslint-disable-next-line no-console
+  console.warn('Skipping InventoryService integration tests because TEST_DATABASE_URL is not set.');
+}
+
+describeIfDb('InventoryService', () => {
   let pool: Pool;
   let service: InventoryService;
 

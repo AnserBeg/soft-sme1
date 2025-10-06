@@ -1,3 +1,20 @@
+# Team Messaging Overview
+
+The Soft SME frontend now includes a dedicated **Messaging** workspace that surfaces both direct messages and group chats. The messaging panel keeps state in a shared React context, performs optimistic updates when you send messages, and polls the server every 10 seconds to stay in sync with new activity.
+
+## Starting a conversation
+1. Open the **Messaging** page from the sidebar.
+2. Use the **New** button to pick one teammate for a direct chat or multiple teammates for a group conversation.
+3. Provide a group name when more than one participant is selected, then click **Start**.
+4. Existing one-on-one conversations are reused automatically; you will jump straight into the history if a thread already exists.
+
+## Working in a thread
+- Messages you send appear instantly while the backend request completes. Any failures are highlighted so you can retry.
+- History refreshes automatically every 10 seconds for the active conversation, in addition to manual fetches when you switch threads.
+- Participant details and last-message timestamps are shown in the conversation list to help you triage discussions quickly.
+
+---
+
 # Getting Started with Create React App
 
 This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
