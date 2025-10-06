@@ -77,7 +77,7 @@ After deployment, you may need to run database migrations:
 - Check that all dependencies are in `package.json`
 - Verify TypeScript compilation works locally
 - Check build logs in Render dashboard
-- Confirm `apt.txt` exists in the service root so Render installs `tesseract-ocr`, `tesseract-ocr-eng`, and `poppler-utils`
+- Confirm `apt.txt` exists at the repository root so Render installs `tesseract-ocr`, `tesseract-ocr-eng`, and `poppler-utils`
 
 ### Database Connection Issues
 - Verify database environment variables are set correctly
