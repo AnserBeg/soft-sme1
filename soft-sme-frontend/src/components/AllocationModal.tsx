@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Dialog,
   DialogTitle,
@@ -18,9 +18,15 @@ import {
   Alert,
   CircularProgress,
   Chip,
-  Divider,
   Collapse,
-  IconButton
+  IconButton,
+  Checkbox,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  FormControlLabel,
+  Stack
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
@@ -78,6 +84,8 @@ const AllocationModal: React.FC<AllocationModalProps> = ({
   const [surplusPerPart, setSurplusPerPart] = useState<{ [key: string]: number }>({});
   const [expandedParts, setExpandedParts] = useState<{ [key: string]: boolean }>({});
   const [supplyParts, setSupplyParts] = useState<Set<string>>(new Set());
+  const [selectedParts, setSelectedParts] = useState<Set<string>>(new Set());
+  const [bulkSalesOrderId, setBulkSalesOrderId] = useState<number | ''>('');
 
   const [errors, setErrors] = useState<string[]>([]);
 
@@ -90,6 +98,8 @@ const AllocationModal: React.FC<AllocationModalProps> = ({
       setExpandedParts({});
       setSupplyParts(new Set());
       setErrors([]);
+      setSelectedParts(new Set());
+      setBulkSalesOrderId('');
       fetchAllocationSuggestions();
     }
   }, [open, purchaseOrderId]);
@@ -198,6 +208,7 @@ const AllocationModal: React.FC<AllocationModalProps> = ({
 
       setAllocations(initialAllocations);
       setSurplusPerPart(initialSurplus);
+      setSelectedParts(new Set());
       setErrors([]);
     } catch (error: any) {
       console.error('Error fetching allocation suggestions:', error);
@@ -381,10 +392,96 @@ const AllocationModal: React.FC<AllocationModalProps> = ({
 
   const handleAutoAllocateAll = () => {
     if (!allocationData) return;
-    
+
     allocationData.suggestions.forEach(suggestion => {
       handleAutoAllocate(suggestion.part_number);
     });
+  };
+
+  const togglePartSelection = (partNumber: string, isSelected: boolean) => {
+    setSelectedParts(prev => {
+      const updated = new Set(prev);
+      if (isSelected) {
+        updated.add(partNumber);
+      } else {
+        updated.delete(partNumber);
+      }
+      return updated;
+    });
+  };
+
+  const handleSelectAllParts = (selectAll: boolean) => {
+    if (!allocationData) {
+      setSelectedParts(new Set());
+      return;
+    }
+
+    if (selectAll) {
+      setSelectedParts(new Set(allocationData.suggestions.map(s => s.part_number)));
+    } else {
+      setSelectedParts(new Set());
+    }
+  };
+
+  const salesOrderOptions = useMemo(() => {
+    if (!allocationData) return [] as Array<{ id: number; label: string; customer: string }>;
+
+    const map = new Map<number, { id: number; label: string; customer: string }>();
+
+    allocationData.suggestions.forEach(suggestion => {
+      suggestion.allocation_suggestions.forEach(alloc => {
+        if (!map.has(alloc.sales_order_id)) {
+          map.set(alloc.sales_order_id, {
+            id: alloc.sales_order_id,
+            label: alloc.sales_order_number,
+            customer: alloc.customer_name
+          });
+        }
+      });
+    });
+
+    return Array.from(map.values()).sort((a, b) => a.label.localeCompare(b.label));
+  }, [allocationData]);
+
+  const handleBulkAllocate = () => {
+    if (!allocationData) return;
+
+    const selectedPartsArray = Array.from(selectedParts);
+
+    if (selectedPartsArray.length === 0) {
+      toast.error('Select at least one part to allocate.');
+      return;
+    }
+
+    if (bulkSalesOrderId === '') {
+      toast.error('Select a sales order to allocate the selected parts.');
+      return;
+    }
+
+    const updatedAllocations: { [key: string]: { [key: number]: number } } = { ...allocations };
+    const updatedSurplus: { [key: string]: number } = { ...surplusPerPart };
+
+    selectedPartsArray.forEach(partNumber => {
+      const suggestion = allocationData.suggestions.find(s => s.part_number === partNumber);
+      if (!suggestion) return;
+
+      const partAllocations: { [key: number]: number } = {};
+
+      suggestion.allocation_suggestions.forEach(alloc => {
+        partAllocations[alloc.sales_order_id] = alloc.sales_order_id === bulkSalesOrderId
+          ? suggestion.quantity_ordered
+          : 0;
+      });
+
+      updatedAllocations[partNumber] = partAllocations;
+
+      const totalAllocated = Object.values(partAllocations).reduce((sum, val) => sum + (Number(val) || 0), 0);
+      updatedSurplus[partNumber] = Math.max(0, suggestion.quantity_ordered - totalAllocated);
+    });
+
+    setAllocations(updatedAllocations);
+    setSurplusPerPart(updatedSurplus);
+    toast.success('Selected parts allocated to the chosen sales order.');
   };
 
   // Remove handleSurplusChange since surplus is now calculated automatically
@@ -597,6 +694,60 @@ const AllocationModal: React.FC<AllocationModalProps> = ({
           </Alert>
         )}
 
+        {allocationData && allocationData.suggestions.length > 0 && (
+          <Paper sx={{ mb: 3, p: 2 }} variant="outlined">
+            <Stack
+              direction={{ xs: 'column', md: 'row' }}
+              spacing={2}
+              alignItems={{ xs: 'flex-start', md: 'center' }}
+            >
+              <Box display="flex" alignItems="center" gap={1}>
+                <FormControlLabel
+                  control={
+                    <Checkbox
+                      checked={selectedParts.size === allocationData.suggestions.length && allocationData.suggestions.length > 0}
+                      indeterminate={selectedParts.size > 0 && selectedParts.size < allocationData.suggestions.length}
+                      onChange={(e) => handleSelectAllParts(e.target.checked)}
+                    />
+                  }
+                  label="Select all parts"
+                />
+                <Typography variant="body2" color="text.secondary">
+                  {selectedParts.size} selected
+                </Typography>
+              </Box>
+
+              <FormControl size="small" sx={{ minWidth: 220 }}>
+                <InputLabel id="bulk-sales-order-label">Sales Order</InputLabel>
+                <Select
+                  labelId="bulk-sales-order-label"
+                  label="Sales Order"
+                  value={bulkSalesOrderId}
+                  onChange={(e) => setBulkSalesOrderId(e.target.value as number | '')}
+                  displayEmpty
+                >
+                  <MenuItem value="">
+                    <em>Select sales order</em>
+                  </MenuItem>
+                  {salesOrderOptions.map(option => (
+                    <MenuItem key={option.id} value={option.id}>
+                      {option.label} — {option.customer}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+
+              <Button
+                variant="contained"
+                onClick={handleBulkAllocate}
+                disabled={selectedParts.size === 0 || bulkSalesOrderId === ''}
+              >
+                Allocate selected parts to sales order
+              </Button>
+            </Stack>
+          </Paper>
+        )}
+
         {allocationData?.suggestions.length === 0 ? (
           <Alert severity="info" sx={{ mb: 2 }}>
             <Typography variant="body1">
@@ -609,6 +760,11 @@ const AllocationModal: React.FC<AllocationModalProps> = ({
               {/* Main Part Row */}
               <Box display="flex" justifyContent="space-between" alignItems="center">
                 <Box display="flex" alignItems="center" gap={1}>
+                  <Checkbox
+                    checked={selectedParts.has(suggestion.part_number)}
+                    onChange={(e) => togglePartSelection(suggestion.part_number, e.target.checked)}
+                    inputProps={{ 'aria-label': `Select part ${suggestion.part_number}` }}
+                  />
                   <IconButton
                     size="small"
                     onClick={() => togglePartExpansion(suggestion.part_number)}
