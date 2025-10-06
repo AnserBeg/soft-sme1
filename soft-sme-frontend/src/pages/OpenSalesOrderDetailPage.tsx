@@ -2,10 +2,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
-  Typography, Box, TextField, Button, MenuItem, Stack, Autocomplete, Grid,
+  Typography, Box, TextField, Button, Stack, Autocomplete, Grid,
   Dialog, DialogTitle, DialogContent, DialogActions, Container, Paper, Alert,
-  Card, CardContent, CircularProgress, InputAdornment, Snackbar, Checkbox,
-  FormControlLabel
+  Card, CardContent, CircularProgress, InputAdornment, Snackbar, FormControl,
+  FormLabel, ToggleButton, ToggleButtonGroup
 } from '@mui/material';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
@@ -16,6 +16,8 @@ import DoneAllIcon from '@mui/icons-material/DoneAll';
 import DownloadIcon from '@mui/icons-material/Download';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import CancelIcon from '@mui/icons-material/Cancel';
 import { toast } from 'react-toastify';
 import api from '../api/axios';
 import { useAuth } from '../contexts/AuthContext';
@@ -32,6 +34,22 @@ import UnsavedChangesGuard from '../components/UnsavedChangesGuard';
 const UNIT_OPTIONS = ['Each', 'cm', 'ft', 'kg', 'pcs', 'hr', 'L'];
 type PartOption = string | { label: string; isNew?: true; inputValue?: string };
 const DEFAULT_GST_RATE = 5.0;
+
+type InvoiceStatus = '' | 'needed' | 'done';
+
+const normalizeInvoiceStatus = (value: any): InvoiceStatus => {
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (['needed', 'need', 'required', 'pending'].includes(normalized)) return 'needed';
+    if (['done', 'complete', 'completed', 'sent'].includes(normalized)) return 'done';
+    if (['true', 't', 'yes', 'y', '1', 'on'].includes(normalized)) return 'needed';
+    if (['false', 'f', 'no', 'n', '0', 'off', ''].includes(normalized)) return '';
+  }
+  if (typeof value === 'boolean') {
+    return value ? 'needed' : '';
+  }
+  return '';
+};
 
 interface CustomerOption { label: string; id?: number; isNew?: true; }
 interface ProductOption { label: string; id?: number; description?: string; isNew?: true; }
@@ -72,7 +90,7 @@ interface SalesOrder {
   qbo_export_status?: string;
   vehicle_make?: string | null;
   vehicle_model?: string | null;
-  invoice_required?: boolean | null;
+  invoice_status?: InvoiceStatus | null;
 }
 
 interface PartsToOrderItem {
@@ -142,7 +160,11 @@ const SalesOrderDetailPage: React.FC = () => {
   const [vinNumber, setVinNumber] = useState('');
   const [vehicleMake, setVehicleMake] = useState('');
   const [vehicleModel, setVehicleModel] = useState('');
-  const [invoiceRequired, setInvoiceRequired] = useState(false);
+  const [invoiceStatus, setInvoiceStatus] = useState<InvoiceStatus>('');
+
+  const handleInvoiceStatusToggle = useCallback((_: React.MouseEvent<HTMLElement>, value: InvoiceStatus | null) => {
+    setInvoiceStatus(value ?? '');
+  }, []);
   const [estimatedCost, setEstimatedCost] = useState<number | null>(null);
   const [sourceQuoteNumber, setSourceQuoteNumber] = useState('');
 
@@ -226,8 +248,8 @@ const SalesOrderDetailPage: React.FC = () => {
     estimatedCost: estimatedCost != null ? Number(estimatedCost) : null,
     vehicleMake: (vehicleMake || '').trim(),
     vehicleModel: (vehicleModel || '').trim(),
-    invoiceRequired: Boolean(invoiceRequired),
-  }), [customer, product, salesDate, terms, customerPoNumber, vinNumber, estimatedCost, vehicleMake, vehicleModel, invoiceRequired]);
+    invoiceStatus,
+  }), [customer, product, salesDate, terms, customerPoNumber, vinNumber, estimatedCost, vehicleMake, vehicleModel, invoiceStatus]);
 
   // Set initial signature only once after data is fully loaded
   useEffect(() => {
@@ -448,7 +470,13 @@ const SalesOrderDetailPage: React.FC = () => {
       try {
         const res = await api.get(`/api/sales-orders/${id}`);
         const data = res.data;
-        setSalesOrder(data.salesOrder);
+        const normalizedStatus = normalizeInvoiceStatus(
+          data.salesOrder?.invoice_status ?? data.salesOrder?.invoice_required
+        );
+        setSalesOrder(data.salesOrder ? {
+          ...data.salesOrder,
+          invoice_status: normalizedStatus || null,
+        } : null);
         setSourceQuoteNumber(data.salesOrder?.source_quote_number || '');
 
         const li = (data.lineItems || data.salesOrder?.line_items || []).map((item: any) => ({
@@ -494,7 +522,7 @@ const SalesOrderDetailPage: React.FC = () => {
         setVinNumber(data.salesOrder?.vin_number || '');
         setVehicleMake(data.salesOrder?.vehicle_make || '');
         setVehicleModel(data.salesOrder?.vehicle_model || '');
-        setInvoiceRequired(Boolean(data.salesOrder?.invoice_required));
+        setInvoiceStatus(normalizedStatus);
         
         // hydrate dropdown selections
         const cust = customers.find(c => c.id === data.salesOrder?.customer_id) ||
@@ -867,7 +895,7 @@ const SalesOrderDetailPage: React.FC = () => {
       vin_number: vinNumber.trim(),
       vehicle_make: vehicleMake.trim(),
       vehicle_model: vehicleModel.trim(),
-      invoice_required: Boolean(invoiceRequired),
+      invoice_status: invoiceStatus || null,
       status: isCreationMode ? 'Open' : (salesOrder?.status || 'Open'),
       estimated_cost: estimatedCost != null ? Number(estimatedCost) : 0,
       lineItems: buildPayloadLineItems(lineItems),
@@ -906,7 +934,7 @@ const SalesOrderDetailPage: React.FC = () => {
           (window as any).__unsavedGuardAllowNext = true;
         }, 100);
         setInitialSignature(JSON.stringify({
-          header: { customer, product, salesDate, terms, customerPoNumber, vinNumber, estimatedCost, vehicleMake, vehicleModel, invoiceRequired },
+          header: { customer, product, salesDate, terms, customerPoNumber, vinNumber, estimatedCost, vehicleMake, vehicleModel, invoiceStatus },
           lineItems,
           quantityToOrderItems,
         }));
@@ -917,7 +945,14 @@ const SalesOrderDetailPage: React.FC = () => {
             api.get('/api/inventory')
           ]);
           const data = soRes.data;
-          setSalesOrder(data.salesOrder);
+          const refreshedStatus = normalizeInvoiceStatus(
+            data.salesOrder?.invoice_status ?? data.salesOrder?.invoice_required
+          );
+          setSalesOrder(data.salesOrder ? {
+            ...data.salesOrder,
+            invoice_status: refreshedStatus || null,
+          } : null);
+          setInvoiceStatus(refreshedStatus);
           setSourceQuoteNumber(data.salesOrder?.source_quote_number || '');
  
           const li = (data.lineItems || data.salesOrder?.line_items || []).map((item: any) => ({
@@ -1151,7 +1186,20 @@ const SalesOrderDetailPage: React.FC = () => {
               <Grid item xs={12} sm={6}><b>VIN #:</b> {salesOrder.vin_number || 'N/A'}</Grid>
               <Grid item xs={12} sm={6}><b>Make:</b> {salesOrder.vehicle_make || 'N/A'}</Grid>
               <Grid item xs={12} sm={6}><b>Model:</b> {salesOrder.vehicle_model || 'N/A'}</Grid>
-              <Grid item xs={12} sm={6}><b>Invoice:</b> {salesOrder.invoice_required ? 'Yes' : 'No'}</Grid>
+              <Grid item xs={12} sm={6}>
+                <b>Invoice:</b>{' '}
+                {salesOrder.invoice_status === 'done' && (
+                  <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
+                    <CheckCircleIcon color="success" fontSize="small" /> Done
+                  </Box>
+                )}
+                {salesOrder.invoice_status === 'needed' && (
+                  <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
+                    <CancelIcon color="error" fontSize="small" /> Needed
+                  </Box>
+                )}
+                {!salesOrder.invoice_status && '—'}
+              </Grid>
               <Grid item xs={12}><b>Estimated Price:</b> {formatCurrency(salesOrder.estimated_cost || 0)}</Grid>
               <Grid item xs={12}><b>Product Description:</b> {salesOrder.product_description || 'N/A'}</Grid>
               <Grid item xs={12}><b>Terms:</b> {salesOrder.terms || 'N/A'}</Grid>
@@ -1249,7 +1297,7 @@ const SalesOrderDetailPage: React.FC = () => {
               setCustomer(null); setCustomerInput(''); setSalesDate(dayjs());
               setProduct(null); setProductInput(''); setProductDescription('');
               setTerms(''); setCustomerPoNumber(''); setVinNumber('');
-              setVehicleMake(''); setVehicleModel(''); setInvoiceRequired(false);
+              setVehicleMake(''); setVehicleModel(''); setInvoiceStatus('');
               setEstimatedCost(null);
               setLineItems([{
                 part_number: '', part_description: '', quantity: '',
@@ -1504,16 +1552,53 @@ const SalesOrderDetailPage: React.FC = () => {
                 placeholder="Optional"
               />
             </Grid>
-            <Grid item xs={12} sm={4} display="flex" alignItems="center">
-              <FormControlLabel
-                control={(
-                  <Checkbox
-                    checked={invoiceRequired}
-                    onChange={(_, checked) => setInvoiceRequired(checked)}
-                  />
-                )}
-                label="Invoice"
-              />
+            <Grid item xs={12} sm={4}>
+              <FormControl component="fieldset" fullWidth>
+                <FormLabel sx={{ mb: 1 }}>Invoice</FormLabel>
+                <ToggleButtonGroup
+                  value={invoiceStatus || null}
+                  exclusive
+                  fullWidth
+                  size="small"
+                  color="standard"
+                  aria-label="Invoice status"
+                  onChange={handleInvoiceStatusToggle}
+                  sx={{
+                    '& .MuiToggleButtonGroup-grouped': {
+                      textTransform: 'none',
+                      flex: 1,
+                      gap: 0,
+                    },
+                    '& .MuiToggleButtonGroup-grouped:not(:first-of-type)': {
+                      marginLeft: 0,
+                    },
+                    '& .MuiToggleButtonGroup-grouped.Mui-selected': {
+                      color: '#fff',
+                    },
+                    '& .MuiToggleButtonGroup-grouped.Mui-selected.MuiToggleButton-colorError': {
+                      bgcolor: (theme) => theme.palette.error.main,
+                      '&:hover': {
+                        bgcolor: (theme) => theme.palette.error.dark,
+                      },
+                    },
+                    '& .MuiToggleButtonGroup-grouped.Mui-selected.MuiToggleButton-colorSuccess': {
+                      bgcolor: (theme) => theme.palette.success.main,
+                      '&:hover': {
+                        bgcolor: (theme) => theme.palette.success.dark,
+                      },
+                    },
+                  }}
+                >
+                  <ToggleButton value="needed" color="error">
+                    <CancelIcon fontSize="small" sx={{ mr: 1 }} />
+                    Needed
+                  </ToggleButton>
+                  <ToggleButton value="done" color="success">
+                    <CheckCircleIcon fontSize="small" sx={{ mr: 1 }} />
+                    Done
+                  </ToggleButton>
+                </ToggleButtonGroup>
+              </FormControl>
             </Grid>
             <Grid item xs={12} sm={4}>
               <DatePicker
