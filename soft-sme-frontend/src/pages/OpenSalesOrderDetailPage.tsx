@@ -4,7 +4,8 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
   Typography, Box, TextField, Button, MenuItem, Stack, Autocomplete, Grid,
   Dialog, DialogTitle, DialogContent, DialogActions, Container, Paper, Alert,
-  Card, CardContent, CircularProgress, InputAdornment, Snackbar
+  Card, CardContent, CircularProgress, InputAdornment, Snackbar, Checkbox,
+  FormControlLabel
 } from '@mui/material';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
@@ -63,10 +64,15 @@ interface SalesOrder {
   terms: string;
   estimated_cost: number | null;
   status: string;
+  customer_po_number?: string | null;
+  vin_number?: string | null;
   exported_to_qbo?: boolean;
   qbo_invoice_id?: string;
   qbo_export_date?: string;
   qbo_export_status?: string;
+  vehicle_make?: string | null;
+  vehicle_model?: string | null;
+  invoice_required?: boolean | null;
 }
 
 interface PartsToOrderItem {
@@ -134,6 +140,9 @@ const SalesOrderDetailPage: React.FC = () => {
   const [terms, setTerms] = useState('');
   const [customerPoNumber, setCustomerPoNumber] = useState('');
   const [vinNumber, setVinNumber] = useState('');
+  const [vehicleMake, setVehicleMake] = useState('');
+  const [vehicleModel, setVehicleModel] = useState('');
+  const [invoiceRequired, setInvoiceRequired] = useState(false);
   const [estimatedCost, setEstimatedCost] = useState<number | null>(null);
   const [sourceQuoteNumber, setSourceQuoteNumber] = useState('');
 
@@ -215,7 +224,10 @@ const SalesOrderDetailPage: React.FC = () => {
     customerPoNumber: (customerPoNumber || '').trim(),
     vinNumber: (vinNumber || '').trim(),
     estimatedCost: estimatedCost != null ? Number(estimatedCost) : null,
-  }), [customer, product, salesDate, terms, customerPoNumber, vinNumber, estimatedCost]);
+    vehicleMake: (vehicleMake || '').trim(),
+    vehicleModel: (vehicleModel || '').trim(),
+    invoiceRequired: Boolean(invoiceRequired),
+  }), [customer, product, salesDate, terms, customerPoNumber, vinNumber, estimatedCost, vehicleMake, vehicleModel, invoiceRequired]);
 
   // Set initial signature only once after data is fully loaded
   useEffect(() => {
@@ -480,6 +492,9 @@ const SalesOrderDetailPage: React.FC = () => {
         setTerms(data.salesOrder?.terms || '');
         setCustomerPoNumber(data.salesOrder?.customer_po_number || '');
         setVinNumber(data.salesOrder?.vin_number || '');
+        setVehicleMake(data.salesOrder?.vehicle_make || '');
+        setVehicleModel(data.salesOrder?.vehicle_model || '');
+        setInvoiceRequired(Boolean(data.salesOrder?.invoice_required));
         
         // hydrate dropdown selections
         const cust = customers.find(c => c.id === data.salesOrder?.customer_id) ||
@@ -850,6 +865,9 @@ const SalesOrderDetailPage: React.FC = () => {
       terms: terms.trim(),
       customer_po_number: customerPoNumber.trim(),
       vin_number: vinNumber.trim(),
+      vehicle_make: vehicleMake.trim(),
+      vehicle_model: vehicleModel.trim(),
+      invoice_required: Boolean(invoiceRequired),
       status: isCreationMode ? 'Open' : (salesOrder?.status || 'Open'),
       estimated_cost: estimatedCost != null ? Number(estimatedCost) : 0,
       lineItems: buildPayloadLineItems(lineItems),
@@ -888,7 +906,7 @@ const SalesOrderDetailPage: React.FC = () => {
           (window as any).__unsavedGuardAllowNext = true;
         }, 100);
         setInitialSignature(JSON.stringify({
-          header: { customer, product, salesDate, terms, customerPoNumber, vinNumber, estimatedCost },
+          header: { customer, product, salesDate, terms, customerPoNumber, vinNumber, estimatedCost, vehicleMake, vehicleModel, invoiceRequired },
           lineItems,
           quantityToOrderItems,
         }));
@@ -1130,6 +1148,10 @@ const SalesOrderDetailPage: React.FC = () => {
               <Grid item xs={12} sm={6}><b>Customer:</b> {salesOrder.customer_name || 'N/A'}</Grid>
               <Grid item xs={12} sm={6}><b>Sales Date:</b> {salesOrder.sales_date ? new Date(salesOrder.sales_date).toLocaleDateString() : ''}</Grid>
               <Grid item xs={12} sm={6}><b>Status:</b> {salesOrder.status?.toUpperCase() || 'N/A'}</Grid>
+              <Grid item xs={12} sm={6}><b>VIN #:</b> {salesOrder.vin_number || 'N/A'}</Grid>
+              <Grid item xs={12} sm={6}><b>Make:</b> {salesOrder.vehicle_make || 'N/A'}</Grid>
+              <Grid item xs={12} sm={6}><b>Model:</b> {salesOrder.vehicle_model || 'N/A'}</Grid>
+              <Grid item xs={12} sm={6}><b>Invoice:</b> {salesOrder.invoice_required ? 'Yes' : 'No'}</Grid>
               <Grid item xs={12}><b>Estimated Price:</b> {formatCurrency(salesOrder.estimated_cost || 0)}</Grid>
               <Grid item xs={12}><b>Product Description:</b> {salesOrder.product_description || 'N/A'}</Grid>
               <Grid item xs={12}><b>Terms:</b> {salesOrder.terms || 'N/A'}</Grid>
@@ -1227,6 +1249,7 @@ const SalesOrderDetailPage: React.FC = () => {
               setCustomer(null); setCustomerInput(''); setSalesDate(dayjs());
               setProduct(null); setProductInput(''); setProductDescription('');
               setTerms(''); setCustomerPoNumber(''); setVinNumber('');
+              setVehicleMake(''); setVehicleModel(''); setInvoiceRequired(false);
               setEstimatedCost(null);
               setLineItems([{
                 part_number: '', part_description: '', quantity: '',
@@ -1461,6 +1484,35 @@ const SalesOrderDetailPage: React.FC = () => {
                 placeholder="Optional"
                 error={!!(vinNumber && vinNumber.trim() !== '' && vinNumber.trim().length !== 17)}
                 helperText={(vinNumber && vinNumber.trim() !== '' && vinNumber.trim().length !== 17) ? 'VIN must be 17 characters' : ''}
+              />
+            </Grid>
+            <Grid item xs={12} sm={4}>
+              <TextField
+                label="Make"
+                value={vehicleMake}
+                onChange={e => setVehicleMake(e.target.value)}
+                fullWidth
+                placeholder="Optional"
+              />
+            </Grid>
+            <Grid item xs={12} sm={4}>
+              <TextField
+                label="Model"
+                value={vehicleModel}
+                onChange={e => setVehicleModel(e.target.value)}
+                fullWidth
+                placeholder="Optional"
+              />
+            </Grid>
+            <Grid item xs={12} sm={4} display="flex" alignItems="center">
+              <FormControlLabel
+                control={(
+                  <Checkbox
+                    checked={invoiceRequired}
+                    onChange={(_, checked) => setInvoiceRequired(checked)}
+                  />
+                )}
+                label="Invoice"
               />
             </Grid>
             <Grid item xs={12} sm={4}>

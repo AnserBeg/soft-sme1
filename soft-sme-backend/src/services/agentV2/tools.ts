@@ -13,6 +13,17 @@ export class AgentToolsV2 {
     this.pdfService = new PDFService(pool);
   }
 
+  private toBoolean(value: any): boolean {
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'number') return value !== 0;
+    if (typeof value === 'string') {
+      const normalized = value.trim().toLowerCase();
+      if (['true', '1', 'yes', 'y', 'on'].includes(normalized)) return true;
+      if (['false', '0', 'no', 'n', 'off', ''].includes(normalized)) return false;
+    }
+    return Boolean(value);
+  }
+
   // Utility to audit tool execution
   private async audit(sessionId: number, tool: string, input: any, output: any, success = true) {
     await this.pool.query(
@@ -53,8 +64,8 @@ export class AgentToolsV2 {
       const gst = Number(header.total_gst_amount || subtotal * 0.05);
       const total = Number(header.total_amount || subtotal + gst);
       const insert = await client.query(
-        `INSERT INTO salesorderhistory (sales_order_number, customer_id, sales_date, product_name, product_description, terms, customer_po_number, vin_number, subtotal, total_gst_amount, total_amount, status, estimated_cost, sequence_number, quote_id, source_quote_number)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING sales_order_id`,
+        `INSERT INTO salesorderhistory (sales_order_number, customer_id, sales_date, product_name, product_description, terms, customer_po_number, vin_number, vehicle_make, vehicle_model, invoice_required, subtotal, total_gst_amount, total_amount, status, estimated_cost, sequence_number, quote_id, source_quote_number)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING sales_order_id`,
         [
           soNum,
           header.customer_id || null,
@@ -64,6 +75,9 @@ export class AgentToolsV2 {
           header.terms || '',
           header.customer_po_number || '',
           header.vin_number || '',
+          header.vehicle_make || '',
+          header.vehicle_model || '',
+          this.toBoolean(header.invoice_required),
           subtotal,
           gst,
           total,
@@ -97,11 +111,17 @@ export class AgentToolsV2 {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
-      const allowed = ['customer_id','sales_date','product_name','product_description','terms','subtotal','total_gst_amount','total_amount','status','estimated_cost','sequence_number','customer_po_number','vin_number','quote_id','source_quote_number'];
+      const allowed = ['customer_id','sales_date','product_name','product_description','terms','subtotal','total_gst_amount','total_amount','status','estimated_cost','sequence_number','customer_po_number','vin_number','vehicle_make','vehicle_model','invoice_required','quote_id','source_quote_number'];
       const header = patch.header || {};
       if (Object.keys(header).length) {
         const fields:string[]=[]; const values:any[]=[]; let i=1;
-        for (const [k,v] of Object.entries(header)) { if (allowed.includes(k) && v!==undefined && v!==null){ fields.push(`${k}=$${i++}`); values.push(v);} }
+        for (const [k,v] of Object.entries(header)) {
+          if (allowed.includes(k) && v!==undefined && v!==null){
+            const valueToUse = k === 'invoice_required' ? this.toBoolean(v) : v;
+            fields.push(`${k}=$${i++}`);
+            values.push(valueToUse);
+          }
+        }
         if (fields.length){ values.push(salesOrderId); await client.query(`UPDATE salesorderhistory SET ${fields.join(', ')}, updated_at = NOW() WHERE sales_order_id = $${i}`, values); }
       }
       if (Array.isArray(patch.lineItems)) {
