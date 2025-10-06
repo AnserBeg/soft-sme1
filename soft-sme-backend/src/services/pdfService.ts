@@ -439,7 +439,7 @@ export class PDFService {
           .font('Helvetica-Bold')
           .fontSize(13)
           .fillColor('#000000')
-          .text(this.formatCurrency(quote.estimated_cost), 480, y, { align: 'right', width: 70 });
+          .text(this.formatCurrency(quote.estimated_cost), 400, y, { align: 'right', width: 150 });
 
         // --- Terms and Conditions ---
         y += 40;
