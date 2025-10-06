@@ -81,7 +81,7 @@ const corsOptions: cors.CorsOptions = {
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'x-device-id'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'x-device-id', 'x-timezone'],
   optionsSuccessStatus: 204,
 };
 
