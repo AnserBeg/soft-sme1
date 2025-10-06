@@ -95,10 +95,13 @@ async def startup_event():
         await ai_agent.initialize()
         logger.info("AI Agent initialized successfully")
         
-        # Ingest documentation
-        logger.info("Ingesting documentation...")
-        await ai_agent.ingest_documentation()
-        logger.info("Documentation ingestion completed")
+        # Ingest documentation when enabled
+        if ai_agent.documentation_enabled:
+            logger.info("Documentation ingestion enabled, starting ingestion...")
+            await ai_agent.ingest_documentation()
+            logger.info("Documentation ingestion completed")
+        else:
+            logger.info("Documentation ingestion skipped (AI_ENABLE_DOCUMENTATION disabled)")
         
     except Exception as e:
         logger.error(f"Failed to initialize AI Agent: {e}")
@@ -261,9 +264,12 @@ async def ingest_documentation(background_tasks: BackgroundTasks):
         if not ai_agent:
             raise HTTPException(status_code=503, detail="AI Agent not initialized")
         
+        if not ai_agent.documentation_enabled:
+            return {"message": "Documentation ingestion is disabled by configuration"}
+
         # Run ingestion in background
         background_tasks.add_task(ai_agent.ingest_documentation)
-        
+
         return {"message": "Documentation ingestion started in background"}
     except Exception as e:
         logger.error(f"Failed to start documentation ingestion: {e}")
