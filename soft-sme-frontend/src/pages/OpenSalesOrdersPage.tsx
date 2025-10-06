@@ -23,7 +23,7 @@ import PrintIcon from '@mui/icons-material/Print';
 import ReplayIcon from '@mui/icons-material/Replay';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ErrorIcon from '@mui/icons-material/Error';
-import PriorityHighIcon from '@mui/icons-material/PriorityHigh';
+import CancelIcon from '@mui/icons-material/Cancel';
 import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty';
 import { InputAdornment } from '@mui/material';
 import { parseNumericInput } from '../utils/salesOrderCalculations';
@@ -336,7 +336,7 @@ const OpenSalesOrdersPage: React.FC = () => {
           return <CheckCircleIcon color="success" titleAccess="Invoice done" />;
         }
         if (params.value === 'needed') {
-          return <PriorityHighIcon color="error" titleAccess="Invoice needed" />;
+          return <CancelIcon color="error" titleAccess="Invoice needed" />;
         }
         return null;
       },

@@ -16,6 +16,8 @@ import DoneAllIcon from '@mui/icons-material/DoneAll';
 import DownloadIcon from '@mui/icons-material/Download';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import CancelIcon from '@mui/icons-material/Cancel';
 import { toast } from 'react-toastify';
 import api from '../api/axios';
 import { useAuth } from '../contexts/AuthContext';
@@ -1180,11 +1182,20 @@ const SalesOrderDetailPage: React.FC = () => {
               <Grid item xs={12} sm={6}><b>VIN #:</b> {salesOrder.vin_number || 'N/A'}</Grid>
               <Grid item xs={12} sm={6}><b>Make:</b> {salesOrder.vehicle_make || 'N/A'}</Grid>
               <Grid item xs={12} sm={6}><b>Model:</b> {salesOrder.vehicle_model || 'N/A'}</Grid>
-              <Grid item xs={12} sm={6}><b>Invoice:</b> {
-                salesOrder.invoice_status ?
-                  (salesOrder.invoice_status === 'done' ? 'Done' : 'Needed') :
-                  '—'
-              }</Grid>
+              <Grid item xs={12} sm={6}>
+                <b>Invoice:</b>{' '}
+                {salesOrder.invoice_status === 'done' && (
+                  <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
+                    <CheckCircleIcon color="success" fontSize="small" /> Done
+                  </Box>
+                )}
+                {salesOrder.invoice_status === 'needed' && (
+                  <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
+                    <CancelIcon color="error" fontSize="small" /> Needed
+                  </Box>
+                )}
+                {!salesOrder.invoice_status && '—'}
+              </Grid>
               <Grid item xs={12}><b>Estimated Price:</b> {formatCurrency(salesOrder.estimated_cost || 0)}</Grid>
               <Grid item xs={12}><b>Product Description:</b> {salesOrder.product_description || 'N/A'}</Grid>
               <Grid item xs={12}><b>Terms:</b> {salesOrder.terms || 'N/A'}</Grid>
