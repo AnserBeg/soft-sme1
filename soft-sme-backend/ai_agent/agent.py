@@ -30,6 +30,7 @@ class SoftSMEAgent:
         self.conversation_manager = ConversationManager()
         self.initialized = False
         self.messages = []  # Add messages list for conversation history
+        self.documentation_enabled = os.getenv("AI_ENABLE_DOCUMENTATION", "true").lower() == "true"
         
         # Statistics
         self.stats = {
@@ -96,8 +97,11 @@ class SoftSMEAgent:
         """Initialize RAG and SQL tools"""
         try:
             # Initialize RAG tool
-            self.rag_tool = DocumentationRAGTool()
-            
+            if self.documentation_enabled:
+                self.rag_tool = DocumentationRAGTool()
+            else:
+                logger.info("Documentation support disabled via AI_ENABLE_DOCUMENTATION")
+
             # Initialize SQL tool
             db_config = {
                 'host': os.getenv('DB_HOST', 'localhost'),
@@ -107,9 +111,9 @@ class SoftSMEAgent:
                 'port': int(os.getenv('DB_PORT', '5432'))
             }
             self.sql_tool = InventorySQLTool(db_config)
-            
+
             # Setup tools
-            self.tools = [self.rag_tool, self.sql_tool]
+            self.tools = [tool for tool in [self.rag_tool, self.sql_tool] if tool is not None]
             
             logger.info("Tools initialized successfully")
             
@@ -141,35 +145,61 @@ class SoftSMEAgent:
                         conversation_context += f"Assistant: {msg.get('text', '')}\n"
             
             # STEP 1: Initial analysis and planning
+            tool_descriptions = []
+            decision_guidelines = []
+            examples = []
+
+            if self.documentation_enabled:
+                tool_descriptions.append("**RAG Tool** - Search system documentation for guidance, procedures, UI details, how-to instructions, button locations, form fields, workflow steps")
+                decision_guidelines.extend([
+                    "If user asks \"HOW to do something\" (buttons, menus, steps, procedures) → use RAG for UI instructions",
+                    "If user asks \"can I edit X\" or \"how can I edit X\" → use RAG for UI instructions",
+                ])
+                examples.extend([
+                    '"how do I create a quote" → RAG (get UI instructions)',
+                    '"can I edit attendance" → RAG (get UI instructions)',
+                    '"how can I edit attendance" → RAG (get UI instructions)',
+                    '"write me an email template" → RAG (for guidance) + LLM knowledge (for content)',
+                ])
+
+            tool_descriptions.append("**SQL Tool** - Query live database for current data, examples, history, existing content, records")
+            tool_descriptions.append("**LLM Knowledge** - Use your own expertise for general guidance, writing help, best practices, general business advice")
+
+            decision_guidelines.extend([
+                'If user asks "give me a list of X" or "show me X" → Consider SQL to get actual data',
+                'If user asks for "examples" or "existing content" → Consider SQL to find real examples',
+                'For general business advice, conceptual questions, or when you have sufficient knowledge → Use LLM knowledge only',
+                'IMPORTANT: Consider conversation context - if the user refers to something from previous messages, use that context',
+            ])
+
+            examples.extend([
+                '"give me a list of customers" → SQL (get actual customer data)',
+                '"what\'s the best business practice" → LLM knowledge only',
+                '"what is inventory management" → LLM knowledge only (conceptual)',
+                '"hello" or "how are you" → LLM knowledge only (conversational)',
+                '"what was the purchase order number" (after discussing a specific part) → SQL (get that specific purchase order)',
+            ])
+
+            available_tools_text = "\n".join(f"- {desc}" for desc in tool_descriptions)
+            decision_guidelines_text = "\n".join(f"- {guideline}" for guideline in decision_guidelines)
+            examples_text = "\n".join(f"- {example}" for example in examples)
+            valid_tools = ["sql", "llm_knowledge"]
+            if self.documentation_enabled:
+                valid_tools.insert(0, "rag")
+            tools_array_text = ", ".join(f'"{tool}"' for tool in valid_tools)
+
             analysis_prompt = f"""You are an expert AI assistant for the Soft-SME inventory management system.
 
 **USER QUESTION:** {message}{conversation_context}
 
 **AVAILABLE TOOLS:**
-1. **RAG Tool** - Search system documentation for guidance, procedures, UI details, how-to instructions, button locations, form fields, workflow steps
-2. **SQL Tool** - Query live database for current data, examples, history, existing content, records
-3. **LLM Knowledge** - Use your own expertise for general guidance, writing help, best practices, general business advice
+{available_tools_text}
 
 **DECISION GUIDELINES:**
-- If user asks "HOW to do something" (buttons, menus, steps, procedures) → ALWAYS use RAG for UI instructions
-- If user asks "can I edit X" or "how can I edit X" → ALWAYS use RAG for UI instructions
-- If user asks "give me a list of X" or "show me X" → Consider SQL to get actual data
-- If user asks for "examples" or "existing content" → Consider SQL to find real examples
-- If user asks for "writing help" or "templates" → Consider RAG for guidance, use LLM knowledge for content creation
-- For general business advice, conceptual questions, or when you have sufficient knowledge → Use LLM knowledge only
-- **IMPORTANT**: Consider conversation context - if the user refers to something from previous messages, use that context
-- **CRITICAL**: If user asks about ANY feature or function of the Soft-SME app → Use RAG to get accurate information
+{decision_guidelines_text}
 
 **EXAMPLES:**
-- "give me a list of customers" → SQL (get actual customer data)
-- "how do I create a quote" → RAG (get UI instructions)
-- "can I edit attendance" → RAG (get UI instructions)
-- "how can I edit attendance" → RAG (get UI instructions)
-- "write me an email template" → RAG (for guidance) + LLM knowledge (for content)
-- "what's the best business practice" → LLM knowledge only
-- "what is inventory management" → LLM knowledge only (conceptual)
-- "hello" or "how are you" → LLM knowledge only (conversational)
-- "what was the purchase order number" (after discussing a specific part) → SQL (get that specific purchase order)
+{examples_text}
 
 **THINKING PROCESS:**
 1. **ANALYZE** what the user is asking for (consider conversation context)
@@ -180,7 +210,7 @@ class SoftSMEAgent:
 **RESPONSE FORMAT:**
 You MUST respond with ONLY a valid JSON object:
 {{
-    "tools_needed": ["rag", "sql", "llm_knowledge"],
+    "tools_needed": [{tools_array_text}],
     "reasoning": "Brief explanation of your plan",
     "first_step": "What tool to use first and why"
 }}
@@ -219,6 +249,8 @@ You MUST respond with ONLY a valid JSON object:
                 first_step = "Using LLM knowledge due to parsing error"
             
             logger.info(f"Analysis: {reasoning}")
+            if not self.documentation_enabled:
+                tools_needed = [tool for tool in tools_needed if tool != "rag"]
             logger.info(f"Tools needed: {tools_needed}")
             logger.info(f"First step: {first_step}")
             
@@ -237,7 +269,7 @@ You MUST respond with ONLY a valid JSON object:
                 logger.info(f"Iteration {iteration + 1}: Using tools {tools_needed}")
                 
                 # Use RAG tool if needed
-                if "rag" in tools_needed and "documentation" not in gathered_info:
+                if self.documentation_enabled and self.rag_tool and "rag" in tools_needed and "documentation" not in gathered_info:
                     try:
                         # Create a more specific query for better RAG results
                         if "edit" in message.lower() or "modify" in message.lower():
@@ -330,6 +362,8 @@ Respond with a JSON object:
                     
                     # Update tools needed for next iteration
                     tools_needed = additional_tools
+                    if not self.documentation_enabled:
+                        tools_needed = [tool for tool in tools_needed if tool != "rag"]
                     if not tools_needed:
                         break
                 else:
@@ -338,6 +372,29 @@ Respond with a JSON object:
                     eval_reasoning = "No data gathered yet"
             
             # STEP 3: Generate final response
+            critical_requirements = []
+            response_format = [
+                "Answer the question directly and completely",
+                "Use information from all available sources",
+                "Be concise but comprehensive",
+                "Include specific details when available",
+                "Provide actionable guidance if applicable",
+                "Use bullet points for lists",
+                "Bold important terms",
+            ]
+
+            if self.documentation_enabled:
+                critical_requirements.extend([
+                    "ONLY use information from the documentation - do not make up UI instructions",
+                    'If documentation says "reports page" - use that exact terminology',
+                    "If documentation doesn't mention a feature - don't say it exists",
+                    "Be precise about UI locations - use exact page names and button names from documentation",
+                ])
+                response_format.append("Only mention UI elements that are explicitly in the documentation")
+
+            critical_requirements_text = "\n".join(f"- {item}" for item in critical_requirements) if critical_requirements else "- Provide accurate information based on available data"
+            response_format_text = "\n".join(f"- {item}" for item in response_format)
+
             response_prompt = f"""{self.system_prompt}
 
 **TASK:** Provide a comprehensive, helpful answer to the user's question.
@@ -355,20 +412,10 @@ Respond with a JSON object:
 5. **ENSURE** the answer is complete and accurate
 
 **CRITICAL REQUIREMENTS:**
-- **ONLY use information from the documentation** - do not make up UI instructions
-- **If documentation says "reports page"** - use that exact terminology
-- **If documentation doesn't mention a feature** - don't say it exists
-- **Be precise about UI locations** - use exact page names and button names from documentation
+{critical_requirements_text}
 
 **RESPONSE FORMAT:**
-- Answer the question directly and completely
-- Use information from all available sources
-- Be concise but comprehensive
-- Include specific details when available
-- Provide actionable guidance if applicable
-- Use bullet points for lists
-- Bold important terms
-- **Only mention UI elements that are explicitly in the documentation**
+{response_format_text}
 
 Provide a helpful, complete answer."""
             
@@ -437,7 +484,10 @@ Provide a helpful, complete answer."""
         try:
             # Get schema info first
             schema_query = f"database schema tables columns structure for query: {message}"
-            schema_info = await self.rag_tool.ainvoke(schema_query)
+            if self.documentation_enabled and self.rag_tool:
+                schema_info = await self.rag_tool.ainvoke(schema_query)
+            else:
+                schema_info = "Documentation lookup disabled."
             
             # Build conversation context for SQL generation
             conversation_context = ""
@@ -511,7 +561,7 @@ Provide a helpful, complete answer."""
             }
             
             # Check RAG tool
-            if self.rag_tool:
+            if self.documentation_enabled and self.rag_tool:
                 try:
                     rag_stats = self.rag_tool.get_stats()
                     health_status["vector_db"] = "healthy"
@@ -520,6 +570,8 @@ Provide a helpful, complete answer."""
                     health_status["vector_db"] = "unhealthy"
                     health_status["details"]["rag_error"] = str(e)
                     health_status["overall"] = False
+            else:
+                health_status["vector_db"] = "disabled"
             
             # Check SQL tool
             if self.sql_tool:
@@ -572,9 +624,11 @@ Provide a helpful, complete answer."""
     async def ingest_documentation(self):
         """Ingest documentation into vector database"""
         try:
-            if self.rag_tool:
+            if self.documentation_enabled and self.rag_tool:
                 await self.rag_tool.ingest_documentation()
                 logger.info("Documentation ingestion completed")
+            else:
+                logger.info("Documentation ingestion skipped because AI_ENABLE_DOCUMENTATION is disabled")
         except Exception as e:
             logger.error(f"Documentation ingestion failed: {e}")
             raise

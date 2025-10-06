@@ -26,8 +26,20 @@ class AIAssistantService {
   private isLocalMode: boolean;
 
   constructor() {
-    this.isLocalMode = process.env.AI_AGENT_MODE === 'local';
-    this.aiEndpoint = process.env.AI_AGENT_ENDPOINT || 'http://localhost:15000';
+    const configuredMode = (process.env.AI_AGENT_MODE || 'local').toLowerCase();
+    this.isLocalMode = configuredMode !== 'remote';
+
+    if (!['local', 'remote'].includes(configuredMode)) {
+      console.warn(
+        `AI_AGENT_MODE "${process.env.AI_AGENT_MODE}" is not recognized. Falling back to local mode.`
+      );
+    }
+
+    this.aiEndpoint = process.env.AI_AGENT_ENDPOINT || 'http://127.0.0.1:15000';
+
+    console.log(
+      `AI Assistant configured for ${this.isLocalMode ? 'local' : 'remote'} mode (endpoint: ${this.aiEndpoint})`
+    );
   }
 
   /**
@@ -64,6 +76,8 @@ class AIAssistantService {
       }
       
       throw new Error('AI Agent failed to start within expected time');
+    } else {
+      console.log('AI Agent configured for remote mode, skipping local startup.');
     }
   }
 
