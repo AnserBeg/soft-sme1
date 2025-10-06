@@ -1,6 +1,12 @@
 # Backend Dockerfile
 FROM node:20-alpine
 
+# Install system dependencies required for OCR (Tesseract and PDF utilities)
+RUN apk add --no-cache \
+    tesseract-ocr \
+    tesseract-ocr-data-eng \
+    poppler-utils
+
 # Set working directory
 WORKDIR /app
 
