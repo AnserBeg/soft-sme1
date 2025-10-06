@@ -41,7 +41,8 @@ const CustomerDetailPage: React.FC = () => {
     country: '',
     postal_code: '',
     contact_person: '',
-    website: ''
+    website: '',
+    general_notes: ''
   });
 
   useEffect(() => {

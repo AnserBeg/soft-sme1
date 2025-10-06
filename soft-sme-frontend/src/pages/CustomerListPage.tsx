@@ -158,6 +158,7 @@ const CustomerListPage: React.FC = () => {
               postal_code: '',
               contact_person: '',
               website: '',
+              general_notes: '',
               created_at: '',
               updated_at: ''
             });
