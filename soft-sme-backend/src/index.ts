@@ -25,6 +25,7 @@ import categoryRoutes from './routes/categoryRoutes';
 import quoteRoutes from './routes/quoteRoutes';
 import salesOrderRoutes from './routes/salesOrderRoutes';
 import purchaseOrderRoutes from './routes/purchaseOrderRoutes';
+import purchaseOrderOcrRoutes from './routes/purchaseOrderOcrRoutes';
 import employeeRoutes from './routes/employeeRoutes';
 import timeTrackingRoutes from './routes/timeTrackingRoutes';
 import leaveManagementRoutes from './routes/leaveManagementRoutes';
@@ -133,6 +134,9 @@ console.log('Registered sales order routes');
 
 app.use('/api/purchase-orders', authMiddleware, purchaseOrderRoutes);
 console.log('Registered purchase order routes');
+
+app.use('/api/purchase-orders/ocr', authMiddleware, purchaseOrderOcrRoutes);
+console.log('Registered purchase order OCR routes');
 
 app.use('/api/employees', authMiddleware, employeeRoutes);
 console.log('Registered employee routes');
