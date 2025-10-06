@@ -20,10 +20,16 @@ export function Navbar() {
             {session ? (
               <>
                 <Link
-                  href="./dashboard"
+                  href="/dashboard"
                   className="text-gray-600 hover:text-gray-900"
                 >
                   Dashboard
+                </Link>
+                <Link
+                  href="/tasks"
+                  className="text-gray-600 hover:text-gray-900"
+                >
+                  Tasks
                 </Link>
                 <button
                   onClick={() => signOut()}
