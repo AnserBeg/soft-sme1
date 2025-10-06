@@ -435,11 +435,12 @@ export class PDFService {
 
         // --- Pricing Section ---
         doc.font('Helvetica-Bold').fontSize(12).fillColor('#000000').text('Estimated Price', 50, y);
-        doc
-          .font('Helvetica-Bold')
-          .fontSize(13)
-          .fillColor('#000000')
-          .text(this.formatCurrency(quote.estimated_cost), 400, y, { align: 'right', width: 150 });
+        doc.font('Helvetica-Bold').fontSize(13).fillColor('#000000');
+        const estimatedPriceText = this.formatCurrency(quote.estimated_cost);
+        const priceTextWidth = doc.widthOfString(estimatedPriceText);
+        const rightEdge = doc.page.width - doc.page.margins.right;
+        const priceX = Math.max(doc.page.margins.left, rightEdge - priceTextWidth);
+        doc.text(estimatedPriceText, priceX, y, { lineBreak: false });
 
         // --- Terms and Conditions ---
         y += 40;
