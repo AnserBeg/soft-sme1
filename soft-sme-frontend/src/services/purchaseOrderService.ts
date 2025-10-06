@@ -12,6 +12,7 @@ export interface PurchaseOrder {
   total_gst_amount: number;
   total_amount: number;
   status: string;
+  created_at?: string;
   exported_to_qbo?: boolean;
   qbo_exported_at?: string | null;
   qbo_export_status?: string | null;

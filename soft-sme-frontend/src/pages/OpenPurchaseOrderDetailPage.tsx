@@ -71,6 +71,8 @@ interface PurchaseOrderData {
   subtotal: number;
   total_gst_amount: number;
   status: string;
+  created_at?: string;
+  updated_at?: string;
   lineItems: PurchaseOrderLineItem[];
   global_gst_rate: number;
   pickup_time?: string;
@@ -1782,6 +1784,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
               <Grid item xs={12} sm={6}><b>Purchase Order #:</b> {purchaseOrder.purchase_number}</Grid>
               <Grid item xs={12} sm={6}><b>Vendor:</b> {purchaseOrder.vendor_name || 'N/A'}</Grid>
               <Grid item xs={12} sm={6}><b>Purchase Date:</b> {purchaseOrder.purchase_date ? new Date(purchaseOrder.purchase_date).toLocaleDateString() : ''}</Grid>
+              <Grid item xs={12} sm={6}><b>Created On:</b> {purchaseOrder.created_at ? new Date(purchaseOrder.created_at).toLocaleDateString() : 'N/A'}</Grid>
               <Grid item xs={12} sm={6}><b>Status:</b> {purchaseOrder.status?.toUpperCase() || 'N/A'}</Grid>
               <Grid item xs={12} sm={6}><b>Bill Number:</b> {purchaseOrder.bill_number || 'N/A'}</Grid>
               <Grid item xs={12} sm={6}><b>GST Rate:</b> {(purchaseOrder.global_gst_rate || 5).toFixed(2)}%</Grid>
@@ -1945,40 +1948,47 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
                 {isCreationMode ? 'Create New Purchase Order' : `Edit Purchase Order: ${purchaseOrder?.purchase_number}`}
               </Typography>
               {!isCreationMode && purchaseOrder && (
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mt: 1 }}>
-                  <Chip
-                    label={purchaseOrder.order_placed ? 'Order Placed' : 'Order Not Placed'}
-                    color={purchaseOrder.order_placed ? 'success' : 'warning'}
-                    variant="outlined"
-                    size="small"
-                  />
-                  <Chip
-                    label={`Vendor: ${purchaseOrder.vendor_confirmation_status || 'pending'}`}
-                    color={
-                      purchaseOrder.vendor_confirmation_status === 'confirmed' ? 'success' :
-                      purchaseOrder.vendor_confirmation_status === 'partial' ? 'warning' :
-                      purchaseOrder.vendor_confirmation_status === 'unavailable' ? 'error' : 'default'
-                    }
-                    variant="outlined"
-                    size="small"
-                  />
-                  {purchaseOrder.pricing_updated && (
+                <>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mt: 1 }}>
                     <Chip
-                      label="Pricing Updated"
-                      color="info"
+                      label={purchaseOrder.order_placed ? 'Order Placed' : 'Order Not Placed'}
+                      color={purchaseOrder.order_placed ? 'success' : 'warning'}
                       variant="outlined"
                       size="small"
                     />
-                  )}
-                  {purchaseOrder.quantity_adjusted && (
                     <Chip
-                      label="Quantities Adjusted"
-                      color="secondary"
+                      label={`Vendor: ${purchaseOrder.vendor_confirmation_status || 'pending'}`}
+                      color={
+                        purchaseOrder.vendor_confirmation_status === 'confirmed' ? 'success' :
+                        purchaseOrder.vendor_confirmation_status === 'partial' ? 'warning' :
+                        purchaseOrder.vendor_confirmation_status === 'unavailable' ? 'error' : 'default'
+                      }
                       variant="outlined"
                       size="small"
                     />
+                    {purchaseOrder.pricing_updated && (
+                      <Chip
+                        label="Pricing Updated"
+                        color="info"
+                        variant="outlined"
+                        size="small"
+                      />
+                    )}
+                    {purchaseOrder.quantity_adjusted && (
+                      <Chip
+                        label="Quantities Adjusted"
+                        color="secondary"
+                        variant="outlined"
+                        size="small"
+                      />
+                    )}
+                  </Box>
+                  {purchaseOrder.created_at && (
+                    <Typography variant="subtitle1" color="text.secondary" sx={{ mt: 1 }}>
+                      Created On: {new Date(purchaseOrder.created_at).toLocaleDateString()}
+                    </Typography>
                   )}
-                </Box>
+                </>
               )}
             </Box>
             <Stack direction="row" spacing={1}> 
