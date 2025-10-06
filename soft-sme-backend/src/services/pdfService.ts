@@ -387,6 +387,16 @@ export class PDFService {
           doc.font('Helvetica').fontSize(11).fillColor('#000000').text(quote.vin_number, 170, y);
           y += 16;
         }
+        if (quote.vehicle_make && quote.vehicle_make.trim() !== '') {
+          doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Make:', 50, y);
+          doc.font('Helvetica').fontSize(11).fillColor('#000000').text(quote.vehicle_make, 170, y);
+          y += 16;
+        }
+        if (quote.vehicle_model && quote.vehicle_model.trim() !== '') {
+          doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Model:', 50, y);
+          doc.font('Helvetica').fontSize(11).fillColor('#000000').text(quote.vehicle_model, 170, y);
+          y += 16;
+        }
         y += 8;
         // Horizontal line
         doc.moveTo(50, y).lineTo(550, y).strokeColor('#444444').lineWidth(1).stroke();

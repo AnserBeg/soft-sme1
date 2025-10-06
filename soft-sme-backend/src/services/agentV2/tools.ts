@@ -325,15 +325,34 @@ export class AgentToolsV2 {
 
   // Quotes
   async createQuote(sessionId: number, payload: any) {
-    const res = await this.pool.query(`INSERT INTO quotes (customer_id, quote_number, quote_date, valid_until, product_name, product_description, estimated_cost, status, terms, customer_po_number, vin_number) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING quote_id`,
-      [payload.customer_id||null, payload.quote_number||null, payload.quote_date||new Date(), payload.valid_until||new Date(), payload.product_name||'', payload.product_description||'', Number(payload.estimated_cost||0), payload.status||'Open', payload.terms||'', payload.customer_po_number||'', payload.vin_number||'']);
+    const res = await this.pool.query(
+      `INSERT INTO quotes (
+        customer_id, quote_number, quote_date, valid_until, product_name, product_description,
+        estimated_cost, status, terms, customer_po_number, vin_number, vehicle_make, vehicle_model
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING quote_id`,
+      [
+        payload.customer_id || null,
+        payload.quote_number || null,
+        payload.quote_date || new Date(),
+        payload.valid_until || new Date(),
+        payload.product_name || '',
+        payload.product_description || '',
+        Number(payload.estimated_cost || 0),
+        payload.status || 'Open',
+        payload.terms || '',
+        payload.customer_po_number || '',
+        payload.vin_number || '',
+        payload.vehicle_make || '',
+        payload.vehicle_model || ''
+      ]
+    );
     const out = { quote_id: res.rows[0].quote_id };
     await this.audit(sessionId,'createQuote',payload,out,true);
     return out;
   }
 
   async updateQuote(sessionId: number, quoteId: number, patch: any) {
-    const allowed=['customer_id','quote_date','valid_until','product_name','product_description','estimated_cost','status','terms','customer_po_number','vin_number'];
+    const allowed=['customer_id','quote_date','valid_until','product_name','product_description','estimated_cost','status','terms','customer_po_number','vin_number','vehicle_make','vehicle_model'];
     const fields:string[]=[]; const vals:any[]=[]; let i=1;
     for (const [k,v] of Object.entries(patch)) { if (allowed.includes(k) && v!==undefined && v!==null){ fields.push(`${k}=$${i++}`); vals.push(v);} }
     if (fields.length){ vals.push(quoteId); await this.pool.query(`UPDATE quotes SET ${fields.join(', ')}, updated_at = NOW() WHERE quote_id = $${i}`, vals); }
@@ -363,6 +382,8 @@ export class AgentToolsV2 {
       terms: quote.terms,
       customer_po_number: quote.customer_po_number,
       vin_number: quote.vin_number,
+      vehicle_make: quote.vehicle_make,
+      vehicle_model: quote.vehicle_model,
       subtotal: quote.estimated_cost,
       total_gst_amount: Number(quote.estimated_cost||0)*0.05,
       total_amount: Number(quote.estimated_cost||0)*1.05,

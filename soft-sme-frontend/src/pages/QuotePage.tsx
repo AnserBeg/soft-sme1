@@ -43,6 +43,8 @@ interface Quote {
   terms?: string;
   customer_po_number?: string;
   vin_number?: string;
+  vehicle_make?: string;
+  vehicle_model?: string;
 }
 
 const formatInt = (v: number | string | null | undefined) => {
@@ -92,6 +94,8 @@ const QuotePage: React.FC = () => {
       'Quote #': q.quote_number,
       Customer: q.customer_name,
       Product: q.product_name,
+      Make: q.vehicle_make || '',
+      Model: q.vehicle_model || '',
       'Est. Price': formatInt(q.estimated_cost),
       'Quote Date': q.quote_date ? format(new Date(q.quote_date), 'MM/dd/yyyy') : '',
       'Valid Until': q.valid_until ? format(new Date(q.valid_until), 'MM/dd/yyyy') : '',
@@ -115,7 +119,9 @@ const QuotePage: React.FC = () => {
         (q) =>
           q.quote_number?.toLowerCase?.().includes(searchTerm.toLowerCase()) ||
           q.customer_name?.toLowerCase?.().includes(searchTerm.toLowerCase()) ||
-          q.product_name?.toLowerCase?.().includes(searchTerm.toLowerCase())
+          q.product_name?.toLowerCase?.().includes(searchTerm.toLowerCase()) ||
+          q.vehicle_make?.toLowerCase?.().includes(searchTerm.toLowerCase()) ||
+          q.vehicle_model?.toLowerCase?.().includes(searchTerm.toLowerCase())
       ),
     [quotes, searchTerm]
   );
@@ -126,6 +132,8 @@ const QuotePage: React.FC = () => {
     { field: 'quote_number', headerName: 'Quote #', flex: 1.05, minWidth: 150, valueFormatter: (params) => params.value ? String(params.value).replace('QO-', '') : '' },
     { field: 'customer_name', headerName: 'Customer', flex: 1.2, minWidth: 170 },
     { field: 'product_name', headerName: 'Product', flex: 1.1, minWidth: 160 },
+    { field: 'vehicle_make', headerName: 'Make', flex: 0.9, minWidth: 130 },
+    { field: 'vehicle_model', headerName: 'Model', flex: 0.9, minWidth: 130 },
     {
       field: 'estimated_cost',
       headerName: 'Est. Price',
