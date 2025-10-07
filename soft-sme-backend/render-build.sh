@@ -28,6 +28,21 @@ EOF
     exit 1
   fi
 
+  if [[ ${EUID:-$(id -u)} -ne 0 ]]; then
+    if command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
+      USE_SUDO=1
+    else
+      cat <<'EOF'
+ERROR: Tesseract is missing and the build is running without root privileges.
+Render normally installs the packages listed in soft-sme-backend/apt.txt
+before executing the build command. Please confirm the service root is set to
+soft-sme-backend (or otherwise ensure Render provisions the apt packages) and
+redeploy.
+EOF
+      exit 1
+    fi
+  fi
+
   echo "Tesseract not found; installing packages from apt.txt..."
 
   export DEBIAN_FRONTEND=noninteractive
@@ -39,11 +54,34 @@ EOF
   APT_OPTS=(
     "-o" "Dir::Cache=${APT_CACHE_DIR}"
     "-o" "Dir::State=${APT_STATE_DIR}"
-    "-o" "Dir::State::status=/var/lib/dpkg/status"
+    "-o" "Dir::State::status=${APT_STATE_DIR}/status"
   )
 
-  apt-get update "${APT_OPTS[@]}"
-  apt-get install -y --no-install-recommends "${APT_OPTS[@]}" "${APT_PACKAGES[@]}"
+  run_apt() {
+    if [[ ${USE_SUDO:-0} -eq 1 ]]; then
+      sudo -E apt-get "${APT_OPTS[@]}" "$@"
+    else
+      apt-get "${APT_OPTS[@]}" "$@"
+    fi
+  }
+
+  if ! run_apt update; then
+    cat <<'EOF'
+ERROR: Failed to update apt indices while attempting to install OCR packages.
+Please inspect the build logs above for details.
+EOF
+    exit 1
+  fi
+
+  if ! run_apt install -y --no-install-recommends "${APT_PACKAGES[@]}"; then
+    cat <<'EOF'
+ERROR: apt-get could not install the OCR packages from apt.txt.
+Review the errors above. If the failure is due to missing permissions, ensure
+Render installs the packages automatically by keeping apt.txt in the service
+root (soft-sme-backend) and redeploying.
+EOF
+    exit 1
+  fi
 fi
 
 npm install --include=dev
