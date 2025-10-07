@@ -158,12 +158,50 @@ else
   log "No apt.txt file detected. Skipping apt package installation"
 fi
 
+export npm_config_production="false"
+export NODE_ENV="${NODE_ENV:-development}"
+
+cleanup_npmrc() {
+  if [[ -z "${TEMP_NPMRC:-}" ]]; then
+    return
+  fi
+
+  if [[ -f "${TEMP_NPMRC}" ]]; then
+    rm -f "${TEMP_NPMRC}"
+  fi
+
+  if [[ "${ORIGINAL_USERCONFIG_SET}" -eq 1 ]]; then
+    export npm_config_userconfig="${ORIGINAL_USERCONFIG}"
+  else
+    unset npm_config_userconfig || true
+  fi
+}
+
+ORIGINAL_USERCONFIG=""
+ORIGINAL_USERCONFIG_SET=0
+if [[ -v npm_config_userconfig ]]; then
+  ORIGINAL_USERCONFIG_SET=1
+  ORIGINAL_USERCONFIG="${npm_config_userconfig}"
+fi
+
+TEMP_NPMRC=""
+if command -v node >/dev/null 2>&1; then
+  NODE_BIN="$(command -v node)"
+  NODE_ROOT="$(cd "$(dirname "${NODE_BIN}")/.." && pwd)"
+  if [[ -d "${NODE_ROOT}/include/node" ]]; then
+    TEMP_NPMRC="${SCRIPT_DIR}/.render-build-npmrc"
+    printf 'nodedir=%s\n' "${NODE_ROOT}" >"${TEMP_NPMRC}"
+    export npm_config_userconfig="${TEMP_NPMRC}"
+    trap cleanup_npmrc EXIT
+  fi
+fi
+
 if [[ -f package-lock.json ]]; then
   log "Installing npm dependencies with npm ci"
-  npm ci
+  npm ci --include=dev
 else
   log "No package-lock.json found. Falling back to npm install"
-  npm install
+  npm install --include=dev
 fi
 
 log "Building TypeScript sources"
