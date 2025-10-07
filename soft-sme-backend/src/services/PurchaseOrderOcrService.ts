@@ -53,8 +53,9 @@ export interface PurchaseOrderOcrNormalizedData {
 }
 
 export interface PurchaseOrderOcrResponse {
-  uploadId: string;
-  file: {
+  source: 'ocr' | 'ai';
+  uploadId?: string;
+  file?: {
     originalName: string;
     storedName: string;
     mimeType: string;
@@ -172,9 +173,18 @@ export class PurchaseOrderOcrService {
     const extraction = await this.extractText(file.path, file.mimetype);
     const normalization = this.normalizeText(extraction.text, extraction.rows);
 
-    const warnings = [...extraction.warnings, ...normalization.warnings];
+    const aiModule = await import('./PurchaseOrderAiReviewService');
+    const aiResult = await aiModule.PurchaseOrderAiReviewService.reviewRawText(extraction.text);
+
+    const warningSet = new Set<string>([
+      ...extraction.warnings,
+      ...normalization.warnings,
+      ...aiResult.warnings,
+    ]);
+    const warnings = Array.from(warningSet);
 
     const response: PurchaseOrderOcrResponse = {
+      source: 'ai',
       uploadId: crypto.randomUUID(),
       file: {
         originalName: file.originalname,
@@ -186,9 +196,9 @@ export class PurchaseOrderOcrService {
       },
       ocr: {
         rawText: extraction.text,
-        normalized: normalization.normalized,
+        normalized: aiResult.normalized,
         warnings,
-        notes: normalization.notes,
+        notes: [...normalization.notes, ...aiResult.notes],
         processingTimeMs: Date.now() - startTime,
       },
     };
@@ -1131,6 +1141,10 @@ export class PurchaseOrderOcrService {
   }
 
   private async persistResult(file: Express.Multer.File, result: PurchaseOrderOcrResponse): Promise<void> {
+    if (!result.file) {
+      return;
+    }
+
     const metadata = {
       ...result,
       file: {
