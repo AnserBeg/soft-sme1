@@ -195,7 +195,7 @@ const LandingPage: React.FC = () => {
           summary={taskSummary}
           loading={taskSummaryLoading}
           onRefresh={loadTaskSummary}
-          onViewTasks={() => navigate('/tasks')}
+          onViewTasks={() => navigate('/')}
         />
       </Box>
 
