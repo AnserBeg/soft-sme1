@@ -2,7 +2,8 @@ import express, { Request, Response } from 'express';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
-import { PurchaseOrderOcrService } from '../services/PurchaseOrderOcrService';
+import { PurchaseOrderOcrService, PurchaseOrderOcrResponse } from '../services/PurchaseOrderOcrService';
+import { PurchaseOrderAiReviewService } from '../services/PurchaseOrderAiReviewService';
 
 const router = express.Router();
 
@@ -72,19 +73,58 @@ router.post('/upload', (req: Request, res: Response) => {
       const result = await ocrService.processDocument(file);
 
       console.log(
-        'purchaseOrderOcrRoutes: OCR processed successfully',
+        'purchaseOrderOcrRoutes: AI review processed successfully',
         JSON.stringify({ uploadId: result.uploadId, file: result.file }, null, 2)
       );
 
       return res.json(result);
     } catch (error: any) {
-      console.error('purchaseOrderOcrRoutes: Failed to process document', error);
+      console.error('purchaseOrderOcrRoutes: Failed to process document with AI review', error);
       return res.status(500).json({
-        error: 'Failed to process document with OCR.',
+        error: 'Failed to analyze the document with AI.',
         details: error?.message,
       });
     }
   });
+});
+
+router.post('/ai-review', async (req: Request, res: Response) => {
+  const start = Date.now();
+  const rawText = (req.body?.rawText ?? '').toString();
+
+  if (!rawText || rawText.trim().length === 0) {
+    return res.status(400).json({ error: 'Raw text is required.' });
+  }
+
+  try {
+    const userId = req.user?.id ? Number(req.user.id) : undefined;
+    const aiResult = await PurchaseOrderAiReviewService.reviewRawText(rawText, {
+      userId: Number.isNaN(userId) ? undefined : userId,
+    });
+
+    const response: PurchaseOrderOcrResponse = {
+      source: 'ai',
+      ocr: {
+        rawText,
+        normalized: aiResult.normalized,
+        warnings: aiResult.warnings,
+        notes: aiResult.notes,
+        processingTimeMs: Date.now() - start,
+      },
+    };
+
+    console.log('purchaseOrderOcrRoutes: AI review completed');
+
+    return res.json(response);
+  } catch (error: any) {
+    console.error('purchaseOrderOcrRoutes: AI review failed', error);
+    const status = error?.message === 'Gemini API key not configured' ? 500 : 502;
+    const message = error?.message || 'Failed to analyze raw text with AI.';
+    return res.status(status).json({
+      error: 'Failed to analyze raw text with AI.',
+      details: message,
+    });
+  }
 });
 
 export default router;
