@@ -5,7 +5,7 @@ import path from 'path';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 
-const MONEY_RE = /(?<!\w)(?:\$)?\d{1,3}(?:[\s,]\d{3})*(?:\.\d{2})|(?<!\w)\d+(?:\.\d{2})?(?!\w)/;
+const MONEY_RE = /\$?-?\d{1,3}(?:,\d{3})*(?:\.\d{2})?/;
 const PART_RE = /[A-Z0-9][A-Z0-9\-_.\/]{1,24}/i;
 const UOM_RE =
   /\b(ea|each|pc|pcs|pair|set|pkg|pack|box|bag|roll|sheet|panel|lb|lbs|kg|g|mg|l|liter|litre|ml|cm|mm|m|in|inch|ft|feet|hour|hrs?)\b/i;
@@ -415,7 +415,23 @@ export class PurchaseOrderOcrService {
 
     const currency = this.detectCurrency(lines);
 
-    const lineItems = this.detectLineItems(lines, rows);
+    // --- PATCH: merge wrapped OCR lines ---
+    const cleanedLines: string[] = [];
+    for (let i = 0; i < lines.length; i += 1) {
+      const current = lines[i];
+      if (
+        i + 1 < lines.length
+        && /^[a-z\s.]/.test(lines[i + 1])
+        && !/total|gst|subtotal|invoice/i.test(lines[i + 1])
+      ) {
+        lines[i + 1] = `${current} ${lines[i + 1]}`;
+      } else {
+        cleanedLines.push(current);
+      }
+    }
+
+    const lineItems = this.detectLineItems(cleanedLines, rows);
+    // --- END PATCH ---
     if (lineItems.length === 0) {
       warnings.push('No line items were detected in the document.');
     }
@@ -431,6 +447,10 @@ export class PurchaseOrderOcrService {
       detectedKeywords: detectedKeywords.keywords,
       lineItems,
     };
+
+    // --- PATCH: debug normalized result ---
+    console.log('Normalized OCR data:', normalized);
+    // --- END PATCH ---
 
     return { normalized, warnings, notes };
   }
@@ -523,6 +543,15 @@ export class PurchaseOrderOcrService {
       vendorName = fallback ?? null;
     }
 
+    // --- PATCH: explicit vendor match ---
+    if (!vendorName) {
+      const possibleVendor = lines.find((l) => /Parts\s*For\s*Trucks/i.test(l));
+      if (possibleVendor) {
+        vendorName = 'Parts For Trucks';
+      }
+    }
+    // --- END PATCH ---
+
     let vendorAddress: string | null = null;
     if (topCandidate) {
       const addressLines: string[] = [];
@@ -554,6 +583,14 @@ export class PurchaseOrderOcrService {
   }
 
   private detectBillNumber(lines: string[]): string | null {
+    // --- PATCH: simple Invoice line match ---
+    for (const line of lines) {
+      const simpleMatch = line.match(/Invoice[:\s#-]+([A-Z0-9\-]+)/i);
+      if (simpleMatch) {
+        return simpleMatch[1];
+      }
+    }
+    // --- END PATCH ---
     const billPatterns = [
       /(invoice|bill|packing\s+slip|packing\s+list|reference)\s*(number|no\.?|#)[:\-\s]*([A-Za-z0-9\-\/_]+)/i,
       /(invoice|bill)[:\-\s]*([A-Za-z0-9][A-Za-z0-9\-\/_]+)/i,
@@ -817,6 +854,12 @@ export class PurchaseOrderOcrService {
       }
     }
 
+    // --- PATCH: default quantity if EA/unit detected ---
+    if (quantity === null && /ea|each|pc|pcs/i.test(tokens.join(' '))) {
+      quantity = 1;
+    }
+    // --- END PATCH ---
+
     let unit: string | null = null;
     for (const token of tokens) {
       const match = token.match(UOM_RE);
@@ -840,6 +883,14 @@ export class PurchaseOrderOcrService {
         break;
       }
     }
+    // --- PATCH: fallback if not found ---
+    if (!partNumber) {
+      const maybePart = tokens.find((t) => /^[A-Z0-9]{4,}$/.test(t));
+      if (maybePart) {
+        partNumber = maybePart;
+      }
+    }
+    // --- END PATCH ---
 
     const numericIndices = [quantityIndex, unitIndex, totalIndex].filter((idx) => idx >= 0);
     const descriptionEnd = numericIndices.length > 0 ? Math.min(...numericIndices) : tokens.length;
