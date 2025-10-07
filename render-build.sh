@@ -1,13 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cat <<'MSG'
-This project now deploys via the Dockerfile at the repository root.
-Please switch your Render service to the Docker runtime and clear any
-custom build or start commands so Render uses the Docker image instead
-of render-build.sh.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BACKEND_DIR="${SCRIPT_DIR}/soft-sme-backend"
+BACKEND_SCRIPT="${BACKEND_DIR}/render-build.sh"
 
-See render.yaml for an example Docker-based configuration.
+if [[ -x "${BACKEND_SCRIPT}" ]]; then
+  echo "Delegating Render build to ${BACKEND_SCRIPT}" >&2
+  exec "${BACKEND_SCRIPT}"
+fi
+
+cat <<'MSG'
+render-build.sh is intended to be executed from the soft-sme-backend
+subdirectory. The expected build script now lives at
+soft-sme-backend/render-build.sh. Ensure your Render service's root directory
+is set to soft-sme-backend so the build command can find the script.
 MSG
 
 exit 1
