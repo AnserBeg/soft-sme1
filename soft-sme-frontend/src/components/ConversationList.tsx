@@ -23,6 +23,7 @@ interface ConversationListProps {
   onSelect: (conversationId: number) => void;
   onStartConversation: () => void;
   isLoading?: boolean;
+  unreadConversationIds?: number[];
 }
 
 const ConversationList: React.FC<ConversationListProps> = ({
@@ -31,8 +32,11 @@ const ConversationList: React.FC<ConversationListProps> = ({
   onSelect,
   onStartConversation,
   isLoading = false,
+  unreadConversationIds,
 }) => {
   const [query, setQuery] = useState('');
+
+  const unreadIds = useMemo(() => new Set(unreadConversationIds ?? []), [unreadConversationIds]);
 
   const filteredConversations = useMemo(() => {
     const trimmed = query.trim().toLowerCase();
@@ -90,6 +94,7 @@ const ConversationList: React.FC<ConversationListProps> = ({
               const lastMessage = conversation.lastMessage?.content;
               const lastTimestamp = conversation.lastMessageAt || conversation.updatedAt || conversation.createdAt;
               const timeAgo = formatDistanceToNowStrict(new Date(lastTimestamp), { addSuffix: true });
+              const isUnread = unreadIds.has(conversation.id);
 
               return (
                 <React.Fragment key={conversation.id}>
@@ -102,6 +107,7 @@ const ConversationList: React.FC<ConversationListProps> = ({
                       '&.Mui-selected': {
                         backgroundColor: 'action.selected',
                       },
+                      bgcolor: isUnread ? 'action.hover' : undefined,
                       '& .MuiListItemText-secondary': {
                         display: '-webkit-box',
                         overflow: 'hidden',
@@ -118,14 +124,28 @@ const ConversationList: React.FC<ConversationListProps> = ({
                     <ListItemText
                       primary={
                         <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
-                          <Typography variant="subtitle1" noWrap>
+                          <Typography variant="subtitle1" noWrap sx={{ fontWeight: isUnread ? 600 : 500 }}>
                             {conversation.displayName}
                           </Typography>
-                          <Typography variant="caption" color="text.secondary" sx={{ flexShrink: 0 }}>
-                            {timeAgo}
-                          </Typography>
+                          <Stack direction="row" alignItems="center" spacing={1.25} sx={{ flexShrink: 0 }}>
+                            {isUnread && (
+                              <Box
+                                component="span"
+                                sx={{
+                                  width: 8,
+                                  height: 8,
+                                  borderRadius: '50%',
+                                  bgcolor: 'primary.main',
+                                }}
+                              />
+                            )}
+                            <Typography variant="caption" color="text.secondary">
+                              {timeAgo}
+                            </Typography>
+                          </Stack>
                         </Stack>
                       }
+                      secondaryTypographyProps={{ fontWeight: isUnread ? 600 : undefined }}
                       secondary={lastMessage || 'No messages yet'}
                     />
                   </ListItemButton>

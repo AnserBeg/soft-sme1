@@ -7,7 +7,6 @@ import {
   Button,
   Divider,
   CircularProgress,
-  Chip,
   Avatar,
   Tooltip,
   Paper,
@@ -62,53 +61,38 @@ export const ChatBoard: React.FC<ChatBoardProps> = ({ variant = 'drawer', onClos
     width: '100%',
     display: 'flex',
     flexDirection: 'column',
-    borderRadius: isEmbedded ? 4 : 0,
+    borderRadius: isEmbedded ? 3 : 0,
     overflow: 'hidden',
     bgcolor: 'background.paper',
-    boxShadow: isEmbedded ? '0 20px 50px -28px rgba(15, 23, 42, 0.32)' : 'none',
-    border: isEmbedded ? '1px solid' : 'none',
+    boxShadow: isEmbedded ? '0 12px 32px rgba(15, 23, 42, 0.16)' : 'none',
+    border: '1px solid',
     borderColor: isEmbedded ? 'divider' : 'transparent',
-    minHeight: isEmbedded ? { xs: 360, md: 420 } : 'auto',
+    minHeight: isEmbedded ? { xs: 320, md: 380 } : 'auto',
     maxHeight: isEmbedded ? { xs: '60vh', md: 520 } : 'none',
   };
 
   const headerStyles: SxProps<Theme> = {
     px: { xs: 2.5, sm: 3 },
-    py: 2.5,
+    py: 2.25,
     display: 'flex',
     alignItems: { xs: 'flex-start', sm: 'center' },
     flexDirection: { xs: 'column', sm: 'row' },
     gap: { xs: 2, sm: 3 },
     justifyContent: 'space-between',
-    position: 'relative',
     borderBottom: '1px solid',
     borderColor: 'divider',
-    backgroundImage: isEmbedded
-      ? 'linear-gradient(135deg, rgba(123, 104, 238, 0.12) 0%, rgba(33, 150, 243, 0.08) 50%, rgba(0, 200, 140, 0.12) 100%)'
-      : undefined,
-    backgroundColor: isEmbedded ? 'rgba(255,255,255,0.85)' : 'transparent',
-    '&::after': !isEmbedded
-      ? {
-          content: "''",
-          position: 'absolute',
-          inset: 0,
-          background:
-            'linear-gradient(135deg, rgba(123, 104, 238, 0.12) 0%, rgba(33, 150, 243, 0.08) 50%, rgba(0, 200, 140, 0.12) 100%)',
-          opacity: 0.6,
-          zIndex: -1,
-        }
-      : undefined,
+    backgroundColor: (theme) => (isEmbedded ? theme.palette.background.paper : theme.palette.background.default),
   };
 
   const messagesWrapperStyles: SxProps<Theme> = {
     flex: 1,
     overflow: 'auto',
-    px: { xs: 2.25, sm: 3.25 },
-    py: 3,
+    px: { xs: 2.25, sm: 3 },
+    py: 2.5,
     display: 'flex',
     flexDirection: 'column',
-    gap: 2.5,
-    backgroundImage: 'linear-gradient(160deg, rgba(255, 255, 255, 0.9) 0%, rgba(247, 250, 255, 0.85) 100%)',
+    gap: 2,
+    backgroundColor: (theme) => theme.palette.background.default,
   };
 
   const WrapperComponent: React.ElementType = isEmbedded ? Paper : Box;
@@ -120,23 +104,21 @@ export const ChatBoard: React.FC<ChatBoardProps> = ({ variant = 'drawer', onClos
           <Avatar
             sx={{
               bgcolor: 'primary.main',
-              width: 56,
-              height: 56,
-              boxShadow: '0 10px 30px rgba(64, 132, 253, 0.35)',
+              color: 'common.white',
+              width: 48,
+              height: 48,
+              boxShadow: '0 10px 24px rgba(33, 150, 243, 0.28)',
             }}
           >
-            <SmartToyIcon fontSize="medium" />
+            <SmartToyIcon fontSize="small" />
           </Avatar>
           <Box>
-            <Typography variant="h6" sx={{ fontWeight: 800, letterSpacing: -0.2 }}>
+            <Typography variant="h6" sx={{ fontWeight: 700 }}>
               Workspace Copilot
             </Typography>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25, flexWrap: 'wrap' }}>
-              <Chip size="small" label="Live" color="success" sx={{ fontWeight: 700, px: 0.75, borderRadius: '999px' }} />
-              <Typography variant="body2" color="text.secondary">
-                Instantly summarise, draft, and explore your data
-              </Typography>
-            </Box>
+            <Typography variant="body2" color="text.secondary">
+              Ask about anything in your workspace for instant help.
+            </Typography>
           </Box>
         </Box>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25 }}>
@@ -145,13 +127,10 @@ export const ChatBoard: React.FC<ChatBoardProps> = ({ variant = 'drawer', onClos
               onClick={handleScrollToLatest}
               size="small"
               sx={{
-                bgcolor: 'common.white',
+                bgcolor: 'background.paper',
                 border: '1px solid',
                 borderColor: 'divider',
-                boxShadow: '0 8px 18px rgba(15, 23, 42, 0.08)',
-                '&:hover': {
-                  bgcolor: 'grey.50',
-                },
+                '&:hover': { bgcolor: 'grey.50' },
               }}
             >
               <KeyboardDoubleArrowDownIcon fontSize="small" />
@@ -166,7 +145,7 @@ export const ChatBoard: React.FC<ChatBoardProps> = ({ variant = 'drawer', onClos
                 textTransform: 'none',
                 fontWeight: 600,
                 px: 1.75,
-                borderRadius: '999px',
+                borderRadius: 999,
                 borderColor: 'divider',
               }}
             >
@@ -179,12 +158,10 @@ export const ChatBoard: React.FC<ChatBoardProps> = ({ variant = 'drawer', onClos
                 onClick={onClose}
                 size="small"
                 sx={{
-                  bgcolor: 'common.white',
+                  bgcolor: 'background.paper',
                   border: '1px solid',
                   borderColor: 'divider',
-                  '&:hover': {
-                    bgcolor: 'grey.50',
-                  },
+                  '&:hover': { bgcolor: 'grey.50' },
                 }}
               >
                 <CloseIcon fontSize="small" />
@@ -196,33 +173,32 @@ export const ChatBoard: React.FC<ChatBoardProps> = ({ variant = 'drawer', onClos
 
       <Box sx={messagesWrapperStyles}>
         {messages.length === 0 ? (
-          <Box
-            sx={{
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              height: '100%',
-              textAlign: 'center',
-              color: 'text.secondary',
-              gap: 1.5,
-              backgroundColor: 'common.white',
-              borderRadius: 4,
-              border: '1px solid',
-              borderColor: 'divider',
-              boxShadow: '0 18px 45px -24px rgba(15, 23, 42, 0.18)',
-              mx: 'auto',
-              p: 4,
-              maxWidth: 340,
-            }}
-          >
-            <Typography variant="h6" sx={{ fontWeight: 700 }}>
-              Start a fresh conversation
-            </Typography>
-            <Typography variant="body2" sx={{ color: 'text.secondary' }}>
-              Ask about inventory, customers, orders, or time tracking. I will keep every reply crisp and actionable.
-            </Typography>
-          </Box>
+            <Box
+              sx={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                height: '100%',
+                textAlign: 'center',
+                color: 'text.secondary',
+                gap: 1.5,
+                borderRadius: 3,
+                border: '1px dashed',
+                borderColor: 'divider',
+                mx: 'auto',
+                p: 4,
+                maxWidth: 320,
+                bgcolor: 'background.paper',
+              }}
+            >
+              <Typography variant="h6" sx={{ fontWeight: 600 }}>
+                Start a fresh conversation
+              </Typography>
+              <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                Ask about inventory, customers, orders, or time tracking.
+              </Typography>
+            </Box>
         ) : (
           <>
             {messages.map((message) => (
@@ -230,25 +206,18 @@ export const ChatBoard: React.FC<ChatBoardProps> = ({ variant = 'drawer', onClos
             ))}
 
             {isLoading && (
-              <Box
-                sx={{
-                  display: 'flex',
-                  justifyContent: 'flex-start',
-                  mb: 1,
-                }}
-              >
-                <Box
-                  sx={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 1.5,
-                    px: 2.25,
+                <Box sx={{ display: 'flex', justifyContent: 'flex-start', mb: 1 }}>
+                  <Box
+                    sx={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 1.5,
+                    px: 2,
                     py: 1.25,
-                    bgcolor: 'common.white',
-                    borderRadius: 3,
+                    bgcolor: 'background.paper',
+                    borderRadius: 2,
                     border: '1px solid',
                     borderColor: 'divider',
-                    boxShadow: '0 14px 36px -28px rgba(15, 23, 42, 0.4)',
                   }}
                 >
                   <CircularProgress size={16} thickness={5} />
@@ -283,17 +252,14 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ isOpen, onClose }) => {
       onClose={onClose}
       sx={{
         '& .MuiDrawer-paper': {
-          width: { xs: '100%', sm: 420, md: 500 },
+          width: { xs: '100%', sm: 400, md: 460 },
           maxWidth: '100vw',
           height: '100%',
           display: 'flex',
           flexDirection: 'column',
           borderLeft: { sm: '1px solid', xs: 'none' },
           borderColor: 'divider',
-          bgcolor: 'transparent',
-          backgroundImage:
-            'radial-gradient(circle at top left, rgba(64, 132, 253, 0.16), transparent 55%), linear-gradient(180deg, #f7f9fc 0%, #ffffff 35%, #f7f9fc 100%)',
-          backdropFilter: 'blur(12px)',
+          bgcolor: 'background.default',
         },
       }}
     >

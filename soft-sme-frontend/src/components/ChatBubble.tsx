@@ -11,22 +11,33 @@ interface ChatBubbleProps {
 const ChatBubble: React.FC<ChatBubbleProps> = ({ onClick, isOpen, unreadCount = 0 }) => {
   return (
     <Fab
-      color="primary"
-      aria-label="chat"
+      aria-label="Workspace Copilot"
       onClick={onClick}
       sx={{
         position: 'fixed',
-        bottom: 24,
-        right: 24,
-        zIndex: 1000,
-        boxShadow: 3,
+        bottom: { xs: 16, sm: 24 },
+        right: { xs: 16, sm: 24 },
+        zIndex: 1300,
+        bgcolor: (theme) => theme.palette.background.paper,
+        color: (theme) => theme.palette.primary.main,
+        boxShadow: '0 18px 40px rgba(33, 150, 243, 0.25)',
+        border: '1px solid',
+        borderColor: (theme) => theme.palette.divider,
+        transition: 'transform 0.2s ease, box-shadow 0.2s ease',
         '&:hover': {
-          transform: 'scale(1.1)',
-          transition: 'transform 0.2s ease-in-out',
+          transform: 'translateY(-3px)',
+          boxShadow: '0 22px 48px rgba(33, 150, 243, 0.32)',
+          bgcolor: (theme) => theme.palette.primary.main,
+          color: 'common.white',
         },
       }}
     >
-      <Badge badgeContent={unreadCount} color="error" invisible={unreadCount === 0}>
+      <Badge
+        color="error"
+        badgeContent={unreadCount}
+        invisible={unreadCount === 0}
+        sx={{ '& .MuiBadge-badge': { fontWeight: 600 } }}
+      >
         <ChatIcon />
       </Badge>
     </Fab>
