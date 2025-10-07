@@ -16,7 +16,15 @@ const TaskCompletionToggle: React.FC<TaskCompletionToggleProps> = ({ completed, 
   return (
     <Tooltip title={completed ? 'Mark as incomplete' : 'Mark as completed'}>
       <FormControlLabel
-        control={<Switch checked={completed} onChange={handleChange} disabled={disabled} color="success" />}
+        control={
+          <Switch
+            checked={completed}
+            onChange={handleChange}
+            disabled={disabled}
+            color="success"
+            size="small"
+          />
+        }
         label={label ?? (completed ? 'Completed' : 'Mark complete')}
       />
     </Tooltip>

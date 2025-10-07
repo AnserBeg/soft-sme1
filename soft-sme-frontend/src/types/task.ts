@@ -52,7 +52,7 @@ export interface TaskFilters {
 
 export interface TaskPayload {
   title: string;
-  description?: string;
+  description?: string | null;
   dueDate?: string | null;
   status?: TaskStatus;
   assigneeIds?: number[];
@@ -61,7 +61,7 @@ export interface TaskPayload {
 
 export interface TaskUpdatePayload {
   title?: string;
-  description?: string;
+  description?: string | null;
   status?: TaskStatus;
   dueDate?: string | null;
 }

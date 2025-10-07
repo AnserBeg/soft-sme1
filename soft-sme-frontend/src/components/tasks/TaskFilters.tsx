@@ -9,6 +9,7 @@ import {
   ListItemText,
   MenuItem,
   OutlinedInput,
+  Paper,
   Select,
   SelectChangeEvent,
   Stack,
@@ -51,9 +52,22 @@ const TaskFiltersComponent: React.FC<TaskFiltersProps> = ({ filters, assignees, 
   };
 
   return (
-    <Box>
-      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ xs: 'stretch', sm: 'flex-end' }}>
-        <FormControl sx={{ minWidth: 200 }} size="small">
+    <Paper
+      variant="outlined"
+      sx={{
+        p: { xs: 2.5, md: 3 },
+        borderRadius: 3,
+        backgroundColor: 'background.paper',
+      }}
+    >
+      <Stack
+        direction={{ xs: 'column', lg: 'row' }}
+        spacing={2}
+        useFlexGap
+        flexWrap="wrap"
+        alignItems={{ xs: 'stretch', lg: 'flex-end' }}
+      >
+        <FormControl sx={{ minWidth: 180, flex: '1 1 200px' }} size="small">
           <InputLabel id="task-status-label">Status</InputLabel>
           <Select
             labelId="task-status-label"
@@ -76,12 +90,12 @@ const TaskFiltersComponent: React.FC<TaskFiltersProps> = ({ filters, assignees, 
           </Select>
         </FormControl>
 
-        <FormControl sx={{ minWidth: 200 }} size="small">
-          <InputLabel id="task-assigned-label">Assigned To</InputLabel>
+        <FormControl sx={{ minWidth: 180, flex: '1 1 200px' }} size="small">
+          <InputLabel id="task-assigned-label">Assigned to</InputLabel>
           <Select
             labelId="task-assigned-label"
             value={filters.assignedTo ? String(filters.assignedTo) : ''}
-            label="Assigned To"
+            label="Assigned to"
             onChange={handleAssignedChange}
           >
             <MenuItem value="">
@@ -100,6 +114,7 @@ const TaskFiltersComponent: React.FC<TaskFiltersProps> = ({ filters, assignees, 
           size="small"
           value={filters.search ?? ''}
           onChange={handleInputChange('search')}
+          sx={{ flex: '1 1 200px' }}
         />
 
         <TextField
@@ -109,6 +124,7 @@ const TaskFiltersComponent: React.FC<TaskFiltersProps> = ({ filters, assignees, 
           value={filters.dueFrom?.slice(0, 10) ?? ''}
           onChange={handleInputChange('dueFrom')}
           InputLabelProps={{ shrink: true }}
+          sx={{ flex: '1 1 180px' }}
         />
 
         <TextField
@@ -118,25 +134,29 @@ const TaskFiltersComponent: React.FC<TaskFiltersProps> = ({ filters, assignees, 
           value={filters.dueTo?.slice(0, 10) ?? ''}
           onChange={handleInputChange('dueTo')}
           InputLabelProps={{ shrink: true }}
+          sx={{ flex: '1 1 180px' }}
         />
 
-        <FormControlLabel
-          control={<Checkbox checked={filters.includeCompleted ?? false} onChange={handleCheckboxChange('includeCompleted')} />}
-          label="Show completed"
-        />
-
-        <FormControlLabel
-          control={<Checkbox checked={filters.includeArchived ?? false} onChange={handleCheckboxChange('includeArchived')} />}
-          label="Show archived"
-        />
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, flex: '1 1 220px' }}>
+          <FormControlLabel
+            control={<Checkbox checked={filters.includeCompleted ?? false} onChange={handleCheckboxChange('includeCompleted')} />}
+            label="Show completed"
+          />
+          <FormControlLabel
+            control={<Checkbox checked={filters.includeArchived ?? false} onChange={handleCheckboxChange('includeArchived')} />}
+            label="Show archived"
+          />
+        </Box>
 
         {onReset && (
-          <Button variant="text" onClick={onReset} color="secondary">
-            Reset
-          </Button>
+          <Box sx={{ display: 'flex', alignItems: 'center' }}>
+            <Button variant="text" onClick={onReset} color="secondary">
+              Reset
+            </Button>
+          </Box>
         )}
       </Stack>
-    </Box>
+    </Paper>
   );
 };
 

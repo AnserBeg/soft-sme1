@@ -20,7 +20,7 @@ import { Task, TaskAssignee, TaskStatus } from '../../types/task';
 
 export interface TaskFormValues {
   title: string;
-  description?: string;
+  description?: string | null;
   dueDate?: string | null;
   status?: TaskStatus;
   assigneeIds: number[];
@@ -103,14 +103,16 @@ const TaskFormDialog: React.FC<TaskFormDialogProps> = ({
   );
 
   const handleSubmit = async () => {
-    if (!title.trim()) {
+    const trimmedTitle = title.trim();
+    if (!trimmedTitle) {
       setErrors({ title: 'Title is required' });
       return;
     }
 
+    const trimmedDescription = description.trim();
     const payload: TaskFormValues = {
-      title: title.trim(),
-      description: description.trim() || undefined,
+      title: trimmedTitle,
+      description: trimmedDescription.length > 0 ? trimmedDescription : null,
       dueDate: dueDate ? new Date(dueDate).toISOString() : null,
       status,
       assigneeIds: selectedAssignees,
