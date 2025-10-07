@@ -1208,7 +1208,11 @@ router.post('/:id/close-with-allocations', async (req: Request, res: Response) =
     // This ensures that summary stats (subtotal, GST, total) are updated to reflect
     // the newly allocated parts, including any LABOUR/OVERHEAD/SUPPLY calculations
     console.log('🔄 Recalculating sales order totals for affected sales orders...');
-    const affectedSalesOrderIds = new Set(allocations.map((a: any) => a.sales_order_id));
+    const affectedSalesOrderIds = new Set<number>(
+      allocations
+        .map((a: any) => Number(a.sales_order_id))
+        .filter((id): id is number => Number.isFinite(id))
+    );
     
     for (const salesOrderId of affectedSalesOrderIds) {
       try {
