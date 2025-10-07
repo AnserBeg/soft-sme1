@@ -1,5 +1,5 @@
 import React from 'react';
-import { useNavigate, Outlet } from 'react-router-dom';
+import { useNavigate, Outlet, useLocation } from 'react-router-dom';
 import {
   AppBar,
   Box,
@@ -55,6 +55,7 @@ const drawerWidth = 240;
 const Layout: React.FC = () => {
   const [mobileOpen, setMobileOpen] = React.useState(false);
   const navigate = useNavigate();
+  const location = useLocation();
   const { logout, user } = useAuth();
   const { isOpen, toggleChat, closeChat, unreadCount } = useChat();
   const { unreadConversationCount } = useMessaging();
@@ -98,6 +99,13 @@ const Layout: React.FC = () => {
     }),
     [unreadConversationCount]
   );
+
+  const resolveNavigationPath = (targetPath: string): string => {
+    if (targetPath === '/tasks' || targetPath === '/messaging') {
+      return '/';
+    }
+    return targetPath;
+  };
 
   const menuItems = useMemo<MenuEntry[]>(
     () => [
@@ -198,7 +206,10 @@ const Layout: React.FC = () => {
             <ListItem
               key={navItem.path || `${navItem.text}-${idx}`}
               onClick={() => {
-                navigate(navItem.path);
+                const destination = resolveNavigationPath(navItem.path);
+                if (location.pathname !== destination) {
+                  navigate(destination);
+                }
                 setMobileOpen(false);
               }}
               sx={{ cursor: 'pointer' }}
