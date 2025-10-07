@@ -46,7 +46,7 @@ export const getTasks = async (filters?: TaskFilters): Promise<Task[]> => {
 };
 
 export const getTaskById = async (taskId: number): Promise<Task> => {
-  const response = await api.get(`/api/tasks/${taskId}`);
+  const response = await api.get(`/api/tasks/${taskId}/overview`);
   return response.data as Task;
 };
 
