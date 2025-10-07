@@ -1,6 +1,6 @@
 #!/bin/bash
 
-echo "Setting up Soft-SME AI Assistant..."
+echo "Setting up NeuraTask AI Assistant..."
 echo "================================="
 
 echo ""
@@ -34,5 +34,5 @@ echo "You can also start it manually by running: python ai_agent/main.py"
 
 echo ""
 echo "Setup complete!"
-echo "The AI assistant is now integrated into your Soft-SME backend."
+echo "The AI assistant is now integrated into your NeuraTask backend."
 echo "" 

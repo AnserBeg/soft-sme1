@@ -1,7 +1,7 @@
-# Soft SME Database Structure Documentation
+# NeuraTask Database Structure Documentation
 
 ## Overview
-The Soft SME database contains **30 actual tables** with comprehensive business management functionality. The database supports multi-company operations, inventory management, sales/purchase tracking, time tracking, and QuickBooks Online integration.
+The NeuraTask database contains **30 actual tables** with comprehensive business management functionality. The database supports multi-company operations, inventory management, sales/purchase tracking, time tracking, and QuickBooks Online integration.
 
 ## Core Business Tables
 
@@ -141,7 +141,7 @@ The Soft SME database contains **30 actual tables** with comprehensive business 
   - Timestamps: created_at, updated_at
 
 - **qbo_account_mapping** (1 record)
-  - Mapping between Soft SME and QuickBooks accounts
+  - Mapping between NeuraTask and QuickBooks accounts
   - Key fields: company_id, qbo_inventory_account_id, qbo_gst_account_id, qbo_ap_account_id, qbo_ar_account_id
   - Additional mappings for sales, labour, COGS, and expense accounts
 

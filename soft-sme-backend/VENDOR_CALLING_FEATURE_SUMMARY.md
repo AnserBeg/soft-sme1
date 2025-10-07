@@ -1,7 +1,7 @@
 # Vendor Calling Feature Implementation Summary
 
 ## Overview
-This document summarizes the implementation of the "Call Vendor" feature in the SOFT SME system, which allows users to initiate voice calls to vendors with AI assistance.
+This document summarizes the implementation of the "Call Vendor" feature in the NEURATASK system, which allows users to initiate voice calls to vendors with AI assistance.
 
 ## What We've Accomplished
 

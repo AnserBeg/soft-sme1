@@ -1,4 +1,4 @@
-# SOFT SME Sales Order System - Complete Guide
+# NEURATASK Sales Order System - Complete Guide
 
 ## Table of Contents
 1. [Overview](#overview)
@@ -16,7 +16,7 @@
 
 ## Overview
 
-The SOFT SME Sales Order system is a comprehensive solution for creating, managing, and tracking customer sales orders. The system includes customer management, inventory integration, parts to order functionality, and integration with QuickBooks Online. The system enforces strict business rules to ensure data integrity and proper workflow management.
+The NEURATASK Sales Order system is a comprehensive solution for creating, managing, and tracking customer sales orders. The system includes customer management, inventory integration, parts to order functionality, and integration with QuickBooks Online. The system enforces strict business rules to ensure data integrity and proper workflow management.
 
 ## Customer Management
 
@@ -703,4 +703,4 @@ if (isNaN(unitPrice) || unitPrice < 0) {
 - Shows totals and GST calculations
 - Professional formatting for customer communication
 
-This comprehensive guide covers all aspects of the SOFT SME Sales Order system, from basic creation to advanced troubleshooting. The system is designed to enforce strict business rules while providing powerful sales order management capabilities for small to medium-sized businesses. 
+This comprehensive guide covers all aspects of the NEURATASK Sales Order system, from basic creation to advanced troubleshooting. The system is designed to enforce strict business rules while providing powerful sales order management capabilities for small to medium-sized businesses. 

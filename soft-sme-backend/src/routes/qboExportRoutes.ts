@@ -224,7 +224,7 @@ router.post('/export-purchase-order/:poId', async (req, res) => {
       DocNumber: `PO-${purchaseOrder.purchase_id}`,
       TxnDate: purchaseOrder.purchase_date,
       DueDate: purchaseOrder.purchase_date,
-      PrivateNote: `Exported from SoftSME Purchase Order #${purchaseOrder.purchase_id}`
+      PrivateNote: `Exported from NeuraTask Purchase Order #${purchaseOrder.purchase_id}`
     };
 
     console.log('Creating Bill in QuickBooks with data:', JSON.stringify(billData, null, 2));

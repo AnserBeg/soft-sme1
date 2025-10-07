@@ -1,4 +1,4 @@
-// Direct Gemini AI Service for Soft SME
+// Direct Gemini AI Service for NeuraTask
 import dotenv from 'dotenv';
 import path from 'path';
 
@@ -14,7 +14,7 @@ const AI_CONFIG = {
 };
 
 // System prompt for the AI assistant
-const SYSTEM_PROMPT = "You are an expert AI assistant in inventory management in the SOFT SME application";
+const SYSTEM_PROMPT = "You are an expert AI assistant in inventory management in the NEURATASK application";
 
 export class AIService {
   static async sendMessage(message: string, userId?: number): Promise<string> {

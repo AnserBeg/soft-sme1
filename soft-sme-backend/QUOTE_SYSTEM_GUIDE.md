@@ -1,4 +1,4 @@
-# SOFT SME Quote System - Complete Guide
+# NEURATASK Quote System - Complete Guide
 
 ## Table of Contents
 1. [Overview](#overview)
@@ -16,7 +16,7 @@
 
 ## Overview
 
-The SOFT SME Quote system is a comprehensive solution for creating, managing, and tracking customer quotes. The system allows businesses to generate professional quotes for customers, track quote status, and convert approved quotes into sales orders. The system includes customer management, product management, and integration with the sales order workflow.
+The NEURATASK Quote system is a comprehensive solution for creating, managing, and tracking customer quotes. The system allows businesses to generate professional quotes for customers, track quote status, and convert approved quotes into sales orders. The system includes customer management, product management, and integration with the sales order workflow.
 
 ## Customer Management
 
@@ -547,4 +547,4 @@ return Math.round(amount * 100) / 100;
 - Pricing history
 - Product descriptions
 
-This comprehensive guide covers all aspects of the SOFT SME Quote system, from basic creation to advanced conversion features. The system is designed to be user-friendly while providing powerful quote management capabilities for small to medium-sized businesses. 
+This comprehensive guide covers all aspects of the NEURATASK Quote system, from basic creation to advanced conversion features. The system is designed to be user-friendly while providing powerful quote management capabilities for small to medium-sized businesses. 

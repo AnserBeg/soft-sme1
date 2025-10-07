@@ -1,5 +1,5 @@
 @echo off
-echo Starting Soft SME Backend Server...
+echo Starting NeuraTask Backend Server...
 echo.
 
 cd /d "%~dp0soft-sme-backend"

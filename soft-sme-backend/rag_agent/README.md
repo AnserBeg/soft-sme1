@@ -1,6 +1,6 @@
 ## RAG Agent (Self-contained under backend)
 
-This folder contains the Retrieval-Augmented Generation utilities for SOFT SME, colocated with the Node backend to keep deployment self-contained and separate from the legacy Python `ai_agent`.
+This folder contains the Retrieval-Augmented Generation utilities for NEURATASK, colocated with the Node backend to keep deployment self-contained and separate from the legacy Python `ai_agent`.
 
 Files:
 - `rag_documentation_setup.py`: Build and manage the vector database (Chroma by default) under `rag_agent/chroma_db`.

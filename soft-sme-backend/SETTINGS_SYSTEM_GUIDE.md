@@ -1,4 +1,4 @@
-# SOFT SME Settings System - Complete Guide
+# NEURATASK Settings System - Complete Guide
 
 ## Table of Contents
 1. [Overview](#overview)
@@ -15,7 +15,7 @@
 
 ## Overview
 
-The SOFT SME Settings system provides comprehensive configuration management for the entire application. It includes business profile management, QuickBooks Online integration, global system variables, backup management, and session control. These settings influence how the application behaves across all modules and ensure proper business operations.
+The NEURATASK Settings system provides comprehensive configuration management for the entire application. It includes business profile management, QuickBooks Online integration, global system variables, backup management, and session control. These settings influence how the application behaves across all modules and ensure proper business operations.
 
 ## Business Profile Settings
 
@@ -166,7 +166,7 @@ CREATE TABLE qbo_account_mapping (
 3. **Item Creation**: Create or find QBO items for products
 4. **Invoice Creation**: Generate QBO invoice with line items
 5. **Cost Tracking**: Create COGS entries for labour/overhead
-6. **Status Update**: Mark as exported in SOFT SME
+6. **Status Update**: Mark as exported in NEURATASK
 
 **Export Logic:**
 ```typescript
@@ -228,7 +228,7 @@ const invoiceData = {
 **Data Synchronization:**
 - **Customer Sync**: Check/create customers in QBO
 - **Item Sync**: Create QBO items for products
-- **Account Sync**: Map SOFT SME accounts to QBO accounts
+- **Account Sync**: Map NEURATASK accounts to QBO accounts
 - **Transaction Sync**: Export completed transactions
 
 ## Global Variables & System Settings
@@ -951,4 +951,4 @@ const getTimeTrackingRate = (salesOrderRate: number, globalRate: number) => {
 - **Force Logout**: Ability to terminate sessions
 - **Audit Logging**: Track session activity
 
-This comprehensive guide covers all aspects of the SOFT SME Settings system, from basic business profile management to advanced QBO integration and security considerations. The system is designed to provide flexible configuration while maintaining data integrity and security. 
+This comprehensive guide covers all aspects of the NEURATASK Settings system, from basic business profile management to advanced QBO integration and security considerations. The system is designed to provide flexible configuration while maintaining data integrity and security. 

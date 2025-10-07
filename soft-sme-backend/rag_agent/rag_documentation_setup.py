@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-SOFT SME Documentation Vector Database Setup
+NEURATASK Documentation Vector Database Setup
 ============================================
 
 This script sets up a vector database for RAG (Retrieval-Augmented Generation)
-using the SOFT SME documentation files. It supports multiple vector database
+using the NEURATASK documentation files. It supports multiple vector database
 options and provides a simple interface for the AI assistant to query the docs.
 
 Requirements:
@@ -25,7 +25,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class DocumentationVectorDB:
-    """Vector database for SOFT SME documentation"""
+    """Vector database for NEURATASK documentation"""
     
     def __init__(self, db_type: str = "chroma", db_path: str = "./vector_db"):
         """
@@ -81,7 +81,7 @@ class DocumentationVectorDB:
             # Get or create collection
             self.collection = self.db.get_or_create_collection(
                 name="soft_sme_docs",
-                metadata={"description": "SOFT SME Application Documentation"}
+                metadata={"description": "NEURATASK Application Documentation"}
             )
             
             logger.info("ChromaDB initialized successfully")
@@ -477,7 +477,7 @@ def test_search(db: DocumentationVectorDB):
 if __name__ == "__main__":
     import argparse
     
-    parser = argparse.ArgumentParser(description="Set up vector database for SOFT SME documentation")
+    parser = argparse.ArgumentParser(description="Set up vector database for NEURATASK documentation")
     parser.add_argument("--db-type", choices=["chroma", "pinecone", "qdrant"], 
                        default="chroma", help="Vector database type")
     parser.add_argument("--docs-dir", default=".", help="Directory containing documentation files")

@@ -321,7 +321,7 @@ const EmailSettingsPage: React.FC = () => {
         open={emailModalOpen}
         onClose={() => setEmailModalOpen(false)}
         type="custom"
-        defaultSubject="Test Email from Soft SME"
+        defaultSubject="Test Email from NeuraTask"
         defaultMessage="This is a test email to verify your email configuration is working correctly."
       />
     </Box>

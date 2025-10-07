@@ -95,7 +95,7 @@ export const chatService = {
     const lowerMessage = message.toLowerCase();
     
     if (lowerMessage.includes('hello') || lowerMessage.includes('hi')) {
-      return "Hello! I'm your AI assistant for the Soft SME business management system. How can I help you today?";
+      return "Hello! I'm your AI assistant for the NeuraTask business management system. How can I help you today?";
     }
     
     if (lowerMessage.includes('inventory') || lowerMessage.includes('stock')) {
@@ -119,9 +119,9 @@ export const chatService = {
     }
     
     if (lowerMessage.includes('help') || lowerMessage.includes('support')) {
-      return "I'm here to help! You can ask me about any aspect of the Soft SME system - inventory, customers, orders, time tracking, or general navigation. What would you like to know?";
+      return "I'm here to help! You can ask me about any aspect of the NeuraTask system - inventory, customers, orders, time tracking, or general navigation. What would you like to know?";
     }
     
-    return "I'm here to help you with the Soft SME business management system. You can ask me about inventory, customers, purchase orders, sales, time tracking, or any other features. How can I assist you?";
+    return "I'm here to help you with the NeuraTask business management system. You can ask me about inventory, customers, purchase orders, sales, time tracking, or any other features. How can I assist you?";
   }
 }; 

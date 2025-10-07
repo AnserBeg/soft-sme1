@@ -1,4 +1,4 @@
-# SOFT SME Time Tracking System - Complete Guide
+# NEURATASK Time Tracking System - Complete Guide
 
 ## Table of Contents
 1. [Overview](#overview)
@@ -17,7 +17,7 @@
 
 ## Overview
 
-The SOFT SME Time Tracking system is a comprehensive solution for tracking employee time spent on sales orders. The system automatically integrates with sales orders to create LABOUR and OVERHEAD line items, ensuring accurate cost tracking and billing. The system uses global settings for labour and overhead rates, and provides real-time duration updates for active time entries.
+The NEURATASK Time Tracking system is a comprehensive solution for tracking employee time spent on sales orders. The system automatically integrates with sales orders to create LABOUR and OVERHEAD line items, ensuring accurate cost tracking and billing. The system uses global settings for labour and overhead rates, and provides real-time duration updates for active time entries.
 
 ## Time Tracking Logic
 
@@ -854,4 +854,4 @@ if (typeof default_hourly_rate !== 'number' || default_hourly_rate < 0) {
 - Integration with sales order totals
 - Historical time tracking data
 
-This comprehensive guide covers all aspects of the SOFT SME Time Tracking system, from basic clock in/out functionality to advanced integration with sales orders and global settings management. The system is designed to provide accurate time tracking while automatically maintaining cost calculations and sales order integration. 
+This comprehensive guide covers all aspects of the NEURATASK Time Tracking system, from basic clock in/out functionality to advanced integration with sales orders and global settings management. The system is designed to provide accurate time tracking while automatically maintaining cost calculations and sales order integration. 

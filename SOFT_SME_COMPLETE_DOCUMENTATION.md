@@ -1,4 +1,4 @@
-# Soft SME - Complete Application Documentation
+# NeuraTask - Complete Application Documentation
 
 ## Table of Contents
 1. [System Overview](#system-overview)
@@ -19,7 +19,7 @@
 
 ## System Overview
 
-Soft SME is a comprehensive business management system designed for small and medium enterprises (SMEs). It provides integrated solutions for sales, purchasing, inventory management, time tracking, and financial operations.
+NeuraTask is a comprehensive business management system designed for small and medium enterprises (SMEs). It provides integrated solutions for sales, purchasing, inventory management, time tracking, and financial operations.
 
 ### Key Features
 - **Multi-platform Support**: Web, Desktop (Electron), and Mobile (Capacitor)
@@ -1171,7 +1171,7 @@ npx cap open ios
 {
   "build": {
     "appId": "com.soft-sme.app",
-    "productName": "Soft SME",
+    "productName": "NeuraTask",
     "directories": {
       "output": "release"
     },
@@ -1477,4 +1477,4 @@ npm run migrate
 4. **CDN**: Use CDN for static file delivery
 5. **Monitoring**: Implement comprehensive monitoring and alerting
 
-This documentation provides a comprehensive overview of the Soft SME application, covering all aspects from architecture to deployment. It serves as a complete reference for understanding the system's functionality, implementation details, and operational procedures. 
+This documentation provides a comprehensive overview of the NeuraTask application, covering all aspects from architecture to deployment. It serves as a complete reference for understanding the system's functionality, implementation details, and operational procedures. 

@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """
-Simple script to fetch and display customer data from Soft SME database
+Simple script to fetch and display customer data from NeuraTask database
 """
 
 import os
 import sys
-from ai_database_connection_optimized import OptimizedSoftSMEDatabase
+from ai_database_connection_optimized import OptimizedNeuraTaskDatabase
 
 def get_customer_list():
     """Fetch and display customer list"""
-    print("🔍 Fetching customer list from Soft SME database...")
+    print("🔍 Fetching customer list from NeuraTask database...")
     
     # Initialize database connection with correct database name
-    db = OptimizedSoftSMEDatabase(
+    db = OptimizedNeuraTaskDatabase(
         host='localhost',
         port=5432,
         database='soft_sme_db',  # Updated to correct database name
@@ -94,7 +94,7 @@ def get_customer_summary():
     """Get customer summary data"""
     print("\n📊 Fetching customer summary...")
     
-    db = OptimizedSoftSMEDatabase(
+    db = OptimizedNeuraTaskDatabase(
         host='localhost',
         port=5432,
         database='soft_sme_db',  # Updated to correct database name
@@ -121,7 +121,7 @@ def get_customer_summary():
         db.cleanup()
 
 if __name__ == "__main__":
-    print("🚀 Soft SME Customer Data Fetcher")
+    print("🚀 NeuraTask Customer Data Fetcher")
     print("=" * 50)
     
     # Get full customer list

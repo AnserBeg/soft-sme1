@@ -1,4 +1,4 @@
-# Soft SME Desktop App Setup Summary
+# NeuraTask Desktop App Setup Summary
 
 ## ✅ What's Been Configured
 
@@ -117,7 +117,7 @@ npm run build:desktop:win
 
 ## 🎯 Ready for Production
 
-Your Soft SME application is now configured as a proper desktop app that can be:
+Your NeuraTask application is now configured as a proper desktop app that can be:
 - Installed on multiple devices
 - Connected to a centralized backend
 - Distributed to users as installers

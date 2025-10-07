@@ -1,6 +1,6 @@
-# 🚀 Soft SME Cloud Deployment Guide
+# 🚀 NeuraTask Cloud Deployment Guide
 
-This guide will help you deploy your Soft SME business management application to the cloud.
+This guide will help you deploy your NeuraTask business management application to the cloud.
 
 ## 📋 Prerequisites
 
@@ -282,4 +282,4 @@ For deployment issues:
 3. Test each service individually
 4. Check your cloud provider's documentation
 
-Your Soft SME application is now ready for cloud deployment! 🎉 
+Your NeuraTask application is now ready for cloud deployment! 🎉 

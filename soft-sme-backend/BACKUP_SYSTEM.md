@@ -1,6 +1,6 @@
-# SOFT SME Backup System
+# NEURATASK Backup System
 
-This document describes the comprehensive backup system for the SOFT SME application, which protects your data against loss, corruption, or system failures.
+This document describes the comprehensive backup system for the NEURATASK application, which protects your data against loss, corruption, or system failures.
 
 ## Overview
 

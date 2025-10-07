@@ -1,6 +1,6 @@
 # Team Messaging Overview
 
-The Soft SME frontend now includes a dedicated **Messaging** workspace that surfaces both direct messages and group chats. The messaging panel keeps state in a shared React context, performs optimistic updates when you send messages, and polls the server every 10 seconds to stay in sync with new activity.
+The NeuraTask frontend now includes a dedicated **Messaging** workspace that surfaces both direct messages and group chats. The messaging panel keeps state in a shared React context, performs optimistic updates when you send messages, and polls the server every 10 seconds to stay in sync with new activity.
 
 ## Starting a conversation
 1. Open the **Messaging** page from the sidebar.

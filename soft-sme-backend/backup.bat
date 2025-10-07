@@ -1,6 +1,6 @@
 @echo off
 echo ========================================
-echo SOFT SME BACKUP SYSTEM
+echo NEURATASK BACKUP SYSTEM
 echo ========================================
 echo.
 

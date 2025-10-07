@@ -4,7 +4,7 @@ AI Assistant RAG Integration
 ============================
 
 This script shows how to integrate the vector database with your AI assistant
-to provide context-aware responses based on the SOFT SME documentation.
+to provide context-aware responses based on the NEURATASK documentation.
 
 Usage:
 1. First run: python rag_documentation_setup.py --test
@@ -18,7 +18,7 @@ from rag_documentation_setup import DocumentationVectorDB
 
 
 class AIAssistantRAG:
-    """RAG-enabled AI Assistant for SOFT SME"""
+    """RAG-enabled AI Assistant for NEURATASK"""
     
     def __init__(self, db_type: str = "chroma", db_path: str = "./vector_db"):
         """Initialize the RAG-enabled assistant"""
@@ -67,7 +67,7 @@ class AIAssistantRAG:
             full_context = "\n".join(context_parts)
             
             return f"""
-Based on the SOFT SME documentation, here is relevant information:
+Based on the NEURATASK documentation, here is relevant information:
 
 {full_context}
 
@@ -167,7 +167,7 @@ Please use this information to answer the user's question accurately and compreh
 
 def demo_rag_system():
     """Demonstrate the RAG system functionality"""
-    print("SOFT SME AI Assistant RAG Demo")
+    print("NEURATASK AI Assistant RAG Demo")
     print("=" * 50)
     
     # Initialize the RAG system
@@ -211,7 +211,7 @@ def demo_rag_system():
 
 def interactive_mode():
     """Interactive mode for testing the RAG system"""
-    print("SOFT SME AI Assistant - Interactive Mode")
+    print("NEURATASK AI Assistant - Interactive Mode")
     print("Type 'quit' to exit, 'help' for available commands")
     print("=" * 50)
     
@@ -230,7 +230,7 @@ def interactive_mode():
                 print("  summary - Show documentation summary")
                 print("  stats - Show database statistics")
                 print("  quit - Exit the program")
-                print("\nOr ask any question about the SOFT SME system!")
+                print("\nOr ask any question about the NEURATASK system!")
                 continue
             elif question.lower() == 'summary':
                 summary = rag.get_documentation_summary()
@@ -272,7 +272,7 @@ def interactive_mode():
 if __name__ == "__main__":
     import argparse
     
-    parser = argparse.ArgumentParser(description="SOFT SME AI Assistant RAG Integration")
+    parser = argparse.ArgumentParser(description="NEURATASK AI Assistant RAG Integration")
     parser.add_argument("--demo", action="store_true", help="Run demo mode")
     parser.add_argument("--interactive", action="store_true", help="Run interactive mode")
     parser.add_argument("--question", type=str, help="Ask a specific question")

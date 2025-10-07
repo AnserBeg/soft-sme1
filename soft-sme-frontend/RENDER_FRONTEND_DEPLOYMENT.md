@@ -1,4 +1,4 @@
-# Deploying Soft SME Frontend to Render
+# Deploying NeuraTask Frontend to Render
 
 ## Prerequisites
 - Backend already deployed at: `https://soft-sme-backend.onrender.com`

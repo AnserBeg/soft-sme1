@@ -1,9 +1,9 @@
 #!/bin/bash
 
-# Deploy Soft SME Frontend to Render
+# Deploy NeuraTask Frontend to Render
 # This script helps prepare and deploy the frontend to Render
 
-echo "🚀 Deploying Soft SME Frontend to Render..."
+echo "🚀 Deploying NeuraTask Frontend to Render..."
 
 # Check if we're in the right directory
 if [ ! -f "package.json" ]; then

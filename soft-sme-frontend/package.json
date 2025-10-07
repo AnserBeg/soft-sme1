@@ -67,7 +67,7 @@
   },
   "build": {
     "appId": "com.soft-sme.app",
-    "productName": "Soft SME",
+    "productName": "NeuraTask",
     "directories": {
       "output": "release"
     },
@@ -108,7 +108,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Soft SME"
+      "shortcutName": "NeuraTask"
     }
   }
 }

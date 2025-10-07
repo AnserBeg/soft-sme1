@@ -1,5 +1,5 @@
 @echo off
-echo SOFT SME RAG System Setup
+echo NEURATASK RAG System Setup
 echo =========================
 
 echo.
