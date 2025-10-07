@@ -182,6 +182,24 @@ export class PurchaseOrderAiReviewService {
     });
   }
 
+  private static pickBestCandidate(candidates: any[]): any | null {
+    if (!Array.isArray(candidates) || candidates.length === 0) {
+      return null;
+    }
+
+    const hasStop = candidates.find((candidate) => candidate?.finishReason === 'STOP');
+    if (hasStop) {
+      return hasStop;
+    }
+
+    const nonSafety = candidates.find((candidate) => candidate?.finishReason !== 'SAFETY');
+    if (nonSafety) {
+      return nonSafety;
+    }
+
+    return candidates[0];
+  }
+
   private static extractStructuredContent(parts: any[]): string | Record<string, unknown> | null {
     if (!Array.isArray(parts)) {
       return null;
