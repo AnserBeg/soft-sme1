@@ -31,6 +31,17 @@ import {
 } from '../services/taskService';
 import { Task, TaskAssignee, TaskFilters, TaskSummary } from '../types/task';
 
+const sortIds = (ids: number[]): number[] => [...ids].sort((a, b) => a - b);
+
+const areIdListsEqual = (a: number[], b: number[]): boolean => {
+  if (a.length !== b.length) {
+    return false;
+  }
+  const sortedA = sortIds(a);
+  const sortedB = sortIds(b);
+  return sortedA.every((value, index) => value === sortedB[index]);
+};
+
 const DEFAULT_FILTERS: TaskFilters = {
   includeCompleted: false,
   includeArchived: false,
@@ -144,19 +155,27 @@ const TasksDashboardPage: React.FC = () => {
     try {
       setFormSubmitting(true);
       if (formMode === 'create') {
-        const created = await createTask(values);
+        const created = await createTask({
+          ...values,
+          description: values.description ?? null,
+        });
         toast.success('Task created successfully');
         setFormOpen(false);
         setTaskForForm(null);
         upsertTaskInList(created);
       } else if (formMode === 'edit' && taskForForm) {
-        await updateTask(taskForForm.id, {
+        const updatedTask = await updateTask(taskForForm.id, {
           title: values.title,
-          description: values.description,
+          description: values.description ?? null,
           status: values.status,
           dueDate: values.dueDate ?? null,
         });
-        const updated = await updateTaskAssignments(taskForForm.id, values.assigneeIds);
+        const existingAssignees = taskForForm.assignees?.map((assignee) => assignee.id) ?? [];
+        const shouldUpdateAssignments = !areIdListsEqual(existingAssignees, values.assigneeIds);
+
+        const updated = shouldUpdateAssignments
+          ? await updateTaskAssignments(taskForForm.id, values.assigneeIds)
+          : { ...updatedTask, assignees: taskForForm.assignees };
         toast.success('Task updated successfully');
         setFormOpen(false);
         setTaskForForm(null);
@@ -248,7 +267,16 @@ const TasksDashboardPage: React.FC = () => {
           onRefresh={handleRefresh}
         />
 
-        <Paper sx={{ p: 3, borderRadius: 3, boxShadow: 3 }}>
+        <Paper
+          sx={{
+            p: { xs: 2.5, md: 4 },
+            borderRadius: 3,
+            border: '1px solid',
+            borderColor: 'divider',
+            boxShadow: '0 24px 60px -36px rgba(15, 23, 42, 0.45)',
+            background: 'linear-gradient(145deg, rgba(15, 118, 110, 0.04) 0%, rgba(30, 64, 175, 0.05) 100%)',
+          }}
+        >
           <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} justifyContent="space-between" alignItems={{ xs: 'flex-start', md: 'center' }}>
             <Box>
               <Typography variant="h4" gutterBottom>
