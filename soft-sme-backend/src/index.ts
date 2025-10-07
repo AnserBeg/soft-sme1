@@ -12,6 +12,21 @@ if (process.env.NODE_ENV !== 'production') {
   dotenv.config({ path: path.resolve(__dirname, '../.env') });
 }
 
+const DEFAULT_TESSERACT_BINARY = '/usr/bin/tesseract';
+
+if (!process.env.TESSERACT_CMD && process.env.TESSERACT_PATH) {
+  process.env.TESSERACT_CMD = process.env.TESSERACT_PATH;
+}
+
+if (!process.env.TESSERACT_PATH && process.env.TESSERACT_CMD) {
+  process.env.TESSERACT_PATH = process.env.TESSERACT_CMD;
+}
+
+if (!process.env.TESSERACT_CMD && !process.env.TESSERACT_PATH) {
+  process.env.TESSERACT_CMD = DEFAULT_TESSERACT_BINARY;
+  process.env.TESSERACT_PATH = DEFAULT_TESSERACT_BINARY;
+}
+
 // Import routes
 import authRoutes from './routes/authRoutes';
 import businessProfileRoutes from './routes/businessProfile';
