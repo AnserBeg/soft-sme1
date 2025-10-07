@@ -18,14 +18,12 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import EmailIcon from '@mui/icons-material/Email';
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
-import SmartToyIcon from '@mui/icons-material/SmartToy';
 import { createFilterOptions } from '@mui/material/Autocomplete';
 import { InputAdornment } from '@mui/material';
 import { getLabourLineItems, LabourLineItem } from '../services/timeTrackingService';
 import { getPartVendors, recordVendorUsage, InventoryVendorLink } from '../services/inventoryService';
 import {
   uploadPurchaseOrderDocument,
-  analyzePurchaseOrderRawText,
   PurchaseOrderOcrResponse,
   PurchaseOrderOcrLineItem,
 } from '../services/purchaseOrderOcrService';
@@ -160,24 +158,8 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
   const [callSessionId, setCallSessionId] = useState<number | null>(null);
   const [ocrUploadResult, setOcrUploadResult] = useState<PurchaseOrderOcrResponse | null>(null);
   const [isOcrUploading, setIsOcrUploading] = useState(false);
-  const [aiRawText, setAiRawText] = useState('');
-  const [isAiReviewing, setIsAiReviewing] = useState(false);
-  const [aiReviewError, setAiReviewError] = useState<string | null>(null);
   const [ocrError, setOcrError] = useState<string | null>(null);
-  const [showOcrRawText, setShowOcrRawText] = useState(false);
   const ocrFileInputRef = useRef<HTMLInputElement | null>(null);
-
-  useEffect(() => {
-    if (ocrUploadResult?.ocr?.rawText) {
-      setAiRawText(ocrUploadResult.ocr.rawText);
-    }
-  }, [ocrUploadResult]);
-
-  useEffect(() => {
-    if (aiReviewError && aiRawText.trim().length > 0) {
-      setAiReviewError(null);
-    }
-  }, [aiRawText]);
 
   // Add loading state to prevent onInputChange during initial load
   const [isInitialLoad, setIsInitialLoad] = useState(true);
@@ -677,12 +659,10 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
 
     setOcrError(null);
     setIsOcrUploading(true);
-    setShowOcrRawText(false);
 
     try {
       const result = await uploadPurchaseOrderDocument(file);
       setOcrUploadResult(result);
-      setShowOcrRawText(true);
       toast.success('Gemini analysis completed for the uploaded document. Review the detected values before applying them.');
     } catch (error: any) {
       console.error('Error processing OCR document:', error);
@@ -699,37 +679,6 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
       if (event.target) {
         event.target.value = '';
       }
-    }
-  };
-
-  const handleAnalyzeRawText = async () => {
-    const trimmed = aiRawText.trim();
-    if (!trimmed) {
-      setAiReviewError('Please paste the raw document text before running the Gemini analysis.');
-      return;
-    }
-
-    setAiReviewError(null);
-    setIsAiReviewing(true);
-    setShowOcrRawText(false);
-
-    try {
-      const result = await analyzePurchaseOrderRawText(trimmed);
-      setOcrUploadResult(result);
-      setShowOcrRawText(true);
-      toast.success('Gemini analysis completed. Review the detected values before applying them.');
-    } catch (error: any) {
-      console.error('Error analyzing raw text with Gemini:', error);
-      let message = 'Failed to analyze the text with Gemini. Please try again later.';
-      if (error instanceof AxiosError && error.response?.data?.error) {
-        message = error.response.data.error;
-      } else if (error?.message) {
-        message = error.message;
-      }
-      setAiReviewError(message);
-      toast.error(message);
-    } finally {
-      setIsAiReviewing(false);
     }
   };
 
@@ -2209,41 +2158,6 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
                 {isOcrUploading && <CircularProgress size={24} />}
               </Stack>
 
-              <Box sx={{ mt: 3 }}>
-                <Typography variant="subtitle1">Paste Raw Text for Gemini</Typography>
-                <Typography variant="body2" color="text.secondary">
-                  If OCR fails or is inaccurate, paste the invoice or packing slip text below and let Gemini extract the key
-                  details automatically.
-                </Typography>
-                <TextField
-                  value={aiRawText}
-                  onChange={(event) => setAiRawText(event.target.value)}
-                  placeholder="Paste invoice or packing slip text here…"
-                  multiline
-                  minRows={4}
-                  fullWidth
-                  sx={{ mt: 1 }}
-                  disabled={isAiReviewing}
-                />
-                <Stack direction="row" spacing={1} sx={{ mt: 1 }} alignItems="center">
-                  <Button
-                    variant="contained"
-                    color="secondary"
-                    startIcon={<SmartToyIcon />}
-                    onClick={handleAnalyzeRawText}
-                    disabled={isAiReviewing}
-                  >
-                    {isAiReviewing ? 'Analyzing…' : 'Analyze with Gemini'}
-                  </Button>
-                  {isAiReviewing && <CircularProgress size={24} />}
-                </Stack>
-                {aiReviewError && (
-                  <Alert severity="error" sx={{ mt: 2 }}>
-                    {aiReviewError}
-                  </Alert>
-                )}
-              </Box>
-
               {ocrError && (
                 <Alert severity="error" sx={{ mt: 2 }}>
                   {ocrError}
@@ -2274,9 +2188,6 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
                     <Stack direction="row" spacing={1}>
                       <Button variant="contained" color="primary" onClick={handleApplyOcrResult}>
                         Apply to Form
-                      </Button>
-                      <Button variant="outlined" onClick={() => setShowOcrRawText((prev) => !prev)}>
-                        {showOcrRawText ? 'Hide Raw Text' : 'Show Raw Text'}
                       </Button>
                     </Stack>
                   </Stack>
@@ -2360,22 +2271,6 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
                     </Stack>
                   )}
 
-                  {showOcrRawText && (
-                    <Paper
-                      variant="outlined"
-                      sx={{
-                        mt: 2,
-                        maxHeight: 240,
-                        overflowY: 'auto',
-                        p: 2,
-                        whiteSpace: 'pre-wrap',
-                        fontFamily: 'monospace',
-                        fontSize: '0.85rem',
-                      }}
-                    >
-                      {ocrUploadResult.ocr.rawText || 'No text detected.'}
-                    </Paper>
-                  )}
                 </Box>
               )}
             </CardContent>
