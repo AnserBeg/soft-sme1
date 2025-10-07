@@ -1,3 +1,9 @@
+set -euxo pipefail
+echo "PWD at build:"; pwd
+echo "List PWD:"; ls -la
+echo "Show apt.txt if present:"; [ -f ./apt.txt ] && { echo "--- apt.txt ---"; cat ./apt.txt; echo "--------------"; } || echo "No apt.txt in PWD"
+
+
 #!/usr/bin/env bash
 set -euxo pipefail
 
