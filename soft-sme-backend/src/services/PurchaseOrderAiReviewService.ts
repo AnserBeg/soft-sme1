@@ -117,21 +117,69 @@ export class PurchaseOrderAiReviewService {
     }
 
     const data = await response.json();
-    const candidate = this.pickBestCandidate(data?.candidates);
+    const candidates = this.sortCandidates(data?.candidates);
 
-    if (!candidate) {
+    if (candidates.length === 0) {
       throw new Error('AI response did not include any candidates.');
     }
 
-    const structuredContent = this.extractStructuredContent(candidate?.content?.parts ?? []);
+    const errors: string[] = [];
 
-    if (!structuredContent) {
-      const finishReason = candidate?.finishReason ?? 'unknown';
-      throw new Error(`AI response did not include structured text (finish reason: ${finishReason}).`);
+    for (const candidate of candidates) {
+      const parts = candidate?.content?.parts ?? [];
+      const structuredContent = this.extractStructuredContent(parts);
+
+      if (!structuredContent) {
+        const finishReason = candidate?.finishReason ?? 'unknown';
+        errors.push(`no structured text (finish reason: ${finishReason})`);
+        continue;
+      }
+
+      try {
+        const structured = this.parseStructuredResponse(structuredContent, options);
+        return structured;
+      } catch (error) {
+        const finishReason = candidate?.finishReason ?? 'unknown';
+        const message = error instanceof Error ? error.message : 'unknown error';
+        errors.push(`parse failure (finish reason: ${finishReason}): ${message}`);
+      }
     }
 
-    const structured = this.parseStructuredResponse(structuredContent, options);
-    return structured;
+    throw new Error(`AI response could not be parsed. Attempts: ${errors.join('; ')}`);
+  }
+
+  private static sortCandidates(candidates: any[]): any[] {
+    if (!Array.isArray(candidates)) {
+      return [];
+    }
+
+    const priority = (finishReason: string | undefined): number => {
+      switch (finishReason) {
+        case 'STOP':
+          return 0;
+        case 'MAX_TOKENS':
+          return 1;
+        case 'SAFETY':
+          return 3;
+        default:
+          return 2;
+      }
+    };
+
+    return [...candidates].sort((a, b) => {
+      const aPriority = priority(a?.finishReason);
+      const bPriority = priority(b?.finishReason);
+
+      if (aPriority !== bPriority) {
+        return aPriority - bPriority;
+      }
+
+      // Prefer candidates with more tokens / parts when priorities match.
+      const aParts = Array.isArray(a?.content?.parts) ? a.content.parts.length : 0;
+      const bParts = Array.isArray(b?.content?.parts) ? b.content.parts.length : 0;
+
+      return bParts - aParts;
+    });
   }
 
   private static pickBestCandidate(candidates: any[]): any | null {
