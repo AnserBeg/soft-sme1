@@ -1,7 +1,31 @@
+# ---- user-space tesseract install (no root) ----
 set -euxo pipefail
-echo "PWD at build:"; pwd
-echo "List PWD:"; ls -la
-echo "Show apt.txt if present:"; [ -f ./apt.txt ] && { echo "--- apt.txt ---"; cat ./apt.txt; echo "--------------"; } || echo "No apt.txt in PWD"
+mkdir -p .vendor/debs .vendor/usr
+
+# Find architecture (amd64 on Render)
+ARCH="$(dpkg --print-architecture || echo amd64)"
+
+# Grab minimal runtime deps (versions pinned loosely; these URLs work on bookworm)
+cd .vendor/debs
+curl -L -O http://deb.debian.org/debian/pool/main/t/tesseract/tesseract-ocr_5.3.0-2_${ARCH}.deb
+curl -L -O http://deb.debian.org/debian/pool/main/t/tesseract/libtesseract5_5.3.0-2_${ARCH}.deb
+curl -L -O http://deb.debian.org/debian/pool/main/l/leptonlib/liblept5_1.82.0-3_${ARCH}.deb
+curl -L -O http://deb.debian.org/debian/pool/main/t/tesseract/tesseract-ocr-eng_1%3a4.1.0-2_all.deb
+
+# Extract into .vendor/usr
+for f in *.deb; do dpkg-deb -x "$f" ../usr; done
+cd ../..
+
+# Wire up PATH and libs for build & runtime
+export PATH="$PWD/.vendor/usr/usr/bin:$PATH"
+export LD_LIBRARY_PATH="$PWD/.vendor/usr/usr/lib:$LD_LIBRARY_PATH"
+export TESSDATA_PREFIX="$PWD/.vendor/usr/usr/share/tesseract-ocr/4.00/tessdata"
+# Optional: persist for runtime by writing an env file your app loads, or export again in start script
+
+# Sanity check
+command -v tesseract && tesseract --version || echo "tesseract still not found"
+# ---- end user-space tesseract install ----
+
 
 
 #!/usr/bin/env bash
