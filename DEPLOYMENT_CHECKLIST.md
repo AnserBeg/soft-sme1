@@ -27,10 +27,12 @@ git push origin main
 4. **Connect your GitHub repository**
 5. **Configure the service:**
    - **Name**: `soft-sme-backend`
+   - **Root Directory**: `soft-sme-backend` (ensures Render sees `apt.txt` and installs Tesseract/Poppler before the build)
    - **Environment**: `Node`
-   - **Build Command**: `npm install && npm run build`
+   - **Build Command**: `./render-build.sh` (the script now verifies `apt.txt` is present and that Render installed the OCR tools from it; if not, the build fails with clear instructions)
    - **Start Command**: `npm start`
    - **Plan**: Free (or choose paid plan)
+   - _Render automatically installs the packages listed in `soft-sme-backend/apt.txt`; do not remove or rename this file._
 6. **Click "Create Web Service"**
 
 #### Option B: Blueprint Deployment
