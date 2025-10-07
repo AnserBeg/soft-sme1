@@ -7,9 +7,14 @@ import {
   Button,
   Divider,
   CircularProgress,
+  Chip,
+  Avatar,
+  Tooltip,
 } from '@mui/material';
 import {
   Close as CloseIcon,
+  SmartToy as SmartToyIcon,
+  KeyboardDoubleArrowDown as KeyboardDoubleArrowDownIcon,
 } from '@mui/icons-material';
 import ChatMessage from './ChatMessage';
 import ChatInput from './ChatInput';
@@ -35,6 +40,10 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ isOpen, onClose }) => {
     }
   };
 
+  const handleScrollToLatest = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
   return (
     <Drawer
       anchor="right"
@@ -42,52 +51,117 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ isOpen, onClose }) => {
       onClose={onClose}
       sx={{
         '& .MuiDrawer-paper': {
-          width: { xs: '100%', sm: 400 },
+          width: { xs: '100%', sm: 420, md: 480 },
           maxWidth: '100vw',
           height: '100%',
           display: 'flex',
           flexDirection: 'column',
+          bgcolor: 'background.default',
+          backgroundImage:
+            'linear-gradient(180deg, rgba(245, 247, 250, 0.95) 0%, rgba(255, 255, 255, 0.95) 40%, rgba(245, 247, 250, 0.9) 100%)',
         },
       }}
     >
       {/* Header */}
       <Box
         sx={{
-          p: 2,
+          px: 3,
+          py: 2,
           borderBottom: 1,
           borderColor: 'divider',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          bgcolor: 'primary.main',
-          color: 'white',
+          gap: 2,
+          bgcolor: 'transparent',
+          position: 'relative',
+          '&::after': {
+            content: "''",
+            position: 'absolute',
+            inset: 0,
+            background:
+              'linear-gradient(135deg, rgba(33, 150, 243, 0.12) 0%, rgba(3, 169, 244, 0.08) 55%, rgba(129, 199, 132, 0.12) 100%)',
+            zIndex: -1,
+            borderBottom: '1px solid',
+            borderColor: 'divider',
+          },
         }}
       >
-        <Typography variant="h6" sx={{ fontWeight: 'bold' }}>
-          AI Assistant
-        </Typography>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          <Button
-            variant="outlined"
-            size="small"
-            onClick={handleClearMessages}
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+          <Avatar
             sx={{
-              color: 'white',
-              borderColor: 'white',
-              '&:hover': {
-                borderColor: 'white',
-                bgcolor: 'rgba(255, 255, 255, 0.1)',
-              },
-              textTransform: 'none',
-              fontSize: '0.75rem',
-              px: 1,
-              py: 0.5,
+              bgcolor: 'primary.main',
+              width: 48,
+              height: 48,
+              boxShadow: 3,
             }}
           >
-            Clear Chat
-          </Button>
-          <IconButton color="inherit" onClick={onClose} size="small">
-            <CloseIcon />
+            <SmartToyIcon />
+          </Avatar>
+          <Box>
+            <Typography variant="h6" sx={{ fontWeight: 700 }}>
+              AI Assistant
+            </Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Chip
+                size="small"
+                label="Online"
+                color="success"
+                sx={{ fontWeight: 600, px: 0.5 }}
+              />
+              <Typography variant="caption" color="text.secondary">
+                Ask anything about your workspace
+              </Typography>
+            </Box>
+          </Box>
+        </Box>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <Tooltip title="Jump to latest message">
+            <IconButton
+              color="primary"
+              size="small"
+              onClick={handleScrollToLatest}
+              sx={{
+                bgcolor: 'white',
+                border: 1,
+                borderColor: 'divider',
+                '&:hover': {
+                  bgcolor: 'grey.50',
+                },
+              }}
+            >
+              <KeyboardDoubleArrowDownIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+          <Tooltip title="Clear conversation">
+            <Button
+              variant="outlined"
+              size="small"
+              onClick={handleClearMessages}
+              sx={{
+                textTransform: 'none',
+                fontWeight: 600,
+                px: 1.5,
+                borderRadius: 2,
+              }}
+            >
+              Clear Chat
+            </Button>
+          </Tooltip>
+          <IconButton
+            color="default"
+            onClick={onClose}
+            size="small"
+            sx={{
+              bgcolor: 'white',
+              border: 1,
+              borderColor: 'divider',
+              '&:hover': {
+                bgcolor: 'grey.50',
+              },
+            }}
+          >
+            <CloseIcon fontSize="small" />
           </IconButton>
         </Box>
       </Box>
@@ -97,10 +171,13 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ isOpen, onClose }) => {
         sx={{
           flex: 1,
           overflow: 'auto',
-          p: 2,
+          px: { xs: 2, sm: 3 },
+          py: 3,
           display: 'flex',
           flexDirection: 'column',
-          gap: 1,
+          gap: 2,
+          backgroundImage:
+            'radial-gradient(circle at top, rgba(33, 150, 243, 0.08), transparent 55%)',
         }}
       >
         {messages.length === 0 ? (
@@ -115,13 +192,12 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ isOpen, onClose }) => {
               color: 'text.secondary',
             }}
           >
-            <Typography variant="h6" gutterBottom>
-              Welcome to AI Assistant
+            <Typography variant="h6" gutterBottom sx={{ fontWeight: 600 }}>
+              Welcome to your AI workspace
             </Typography>
-            <Typography variant="body2">
-              I'm here to help you with your business management tasks.
-              <br />
-              Ask me anything about inventory, customers, orders, or time tracking!
+            <Typography variant="body2" sx={{ maxWidth: 320 }}>
+              Ask about inventory, customers, orders, time tracking, or anything else
+              you need. I will keep the conversation tidy and actionable.
             </Typography>
           </Box>
         ) : (
@@ -137,22 +213,25 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ isOpen, onClose }) => {
                   display: 'flex',
                   justifyContent: 'flex-start',
                   mb: 2,
-                  gap: 1,
                 }}
               >
                 <Box
                   sx={{
                     display: 'flex',
                     alignItems: 'center',
-                    gap: 1,
-                    p: 2,
-                    bgcolor: 'grey.100',
-                    borderRadius: 2,
+                    gap: 1.5,
+                    px: 2,
+                    py: 1.25,
+                    bgcolor: 'background.paper',
+                    borderRadius: 3,
+                    border: 1,
+                    borderColor: 'divider',
+                    boxShadow: 2,
                   }}
                 >
-                  <CircularProgress size={16} />
+                  <CircularProgress size={16} thickness={5} />
                   <Typography variant="body2" color="text.secondary">
-                    AI is typing...
+                    AI is drafting a response…
                   </Typography>
                 </Box>
               </Box>
