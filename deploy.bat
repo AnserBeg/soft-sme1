@@ -1,8 +1,8 @@
 @echo off
-REM Soft SME Deployment Script for Windows
+REM NeuraTask Deployment Script for Windows
 REM This script automates the deployment process
 
-echo 🚀 Starting Soft SME Deployment...
+echo 🚀 Starting NeuraTask Deployment...
 
 REM Check if Docker is installed
 docker --version >nul 2>&1

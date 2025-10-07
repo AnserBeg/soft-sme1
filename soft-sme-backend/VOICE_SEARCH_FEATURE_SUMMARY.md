@@ -1,7 +1,7 @@
 # Voice Search Feature Implementation Summary
 
 ## Overview
-This document summarizes the implementation of the voice search feature in the SOFT SME system, which allows users to search for parts using natural language voice commands and text queries interpreted by AI.
+This document summarizes the implementation of the voice search feature in the NEURATASK system, which allows users to search for parts using natural language voice commands and text queries interpreted by AI.
 
 ## What We've Accomplished
 

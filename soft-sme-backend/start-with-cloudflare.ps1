@@ -1,4 +1,4 @@
-Write-Host "Starting Soft SME Backend with Cloudflare Tunnel..." -ForegroundColor Green
+Write-Host "Starting NeuraTask Backend with Cloudflare Tunnel..." -ForegroundColor Green
 Write-Host ""
 
 # Start the backend server in the background

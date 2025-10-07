@@ -1,4 +1,4 @@
-# Cloudflare Tunnel Setup for Soft SME Backend
+# Cloudflare Tunnel Setup for NeuraTask Backend
 
 This guide will help you set up Cloudflare Tunnel to expose your local backend server to the internet.
 

@@ -1,7 +1,7 @@
 {
   "name": "soft-sme-backend",
   "version": "1.0.0",
-  "description": "Backend for Soft SME application",
+  "description": "Backend for NeuraTask application",
   "main": "dist/index.js",
   "scripts": {
     "start": "node dist/index.js",

@@ -6,7 +6,7 @@ export default function Home() {
     <div className="flex flex-col items-center justify-center min-h-[calc(100vh-4rem)]">
       <div className="text-center">
         <h1 className="text-4xl font-bold tracking-tight text-gray-900 sm:text-6xl">
-          Welcome to Soft SME
+          Welcome to NeuraTask
         </h1>
         <p className="mt-6 text-lg leading-8 text-gray-600">
           A modern business management solution designed to help small and medium enterprises

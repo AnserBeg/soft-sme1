@@ -29,7 +29,7 @@ def check_databases(password="123"):
         for db in databases:
             print(f"   - {db[0]}")
         
-        # Check if any look like Soft SME
+        # Check if any look like NeuraTask
         soft_sme_candidates = []
         for db in databases:
             db_name = db[0].lower()
@@ -37,7 +37,7 @@ def check_databases(password="123"):
                 soft_sme_candidates.append(db[0])
         
         if soft_sme_candidates:
-            print(f"\n🎯 Potential Soft SME databases:")
+            print(f"\n🎯 Potential NeuraTask databases:")
             for candidate in soft_sme_candidates:
                 print(f"   - {candidate}")
         
@@ -110,18 +110,18 @@ if __name__ == "__main__":
     databases = check_databases(password)
     
     if databases:
-        print(f"\n🔍 Testing each database for Soft SME tables...")
+        print(f"\n🔍 Testing each database for NeuraTask tables...")
         
         found_soft_sme = False
         for db in databases:
             if test_database_connection(db, password):
                 found_soft_sme = True
-                print(f"\n🎉 Found Soft SME database: '{db}'")
+                print(f"\n🎉 Found NeuraTask database: '{db}'")
                 print(f"You can now run: python setup_database_access.py 123 --database {db}")
                 break
         
         if not found_soft_sme:
-            print("\n❌ No database with Soft SME tables found")
-            print("Please ensure your Soft SME application is properly installed")
+            print("\n❌ No database with NeuraTask tables found")
+            print("Please ensure your NeuraTask application is properly installed")
     else:
         print("\n❌ No databases found or connection failed") 

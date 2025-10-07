@@ -1,4 +1,4 @@
-# AWS Deployment Guide for Soft SME Backend
+# AWS Deployment Guide for NeuraTask Backend
 
 ## Prerequisites
 

@@ -1,8 +1,8 @@
 @echo off
-REM Deploy Soft SME Frontend to Render
+REM Deploy NeuraTask Frontend to Render
 REM This script helps prepare and deploy the frontend to Render
 
-echo 🚀 Deploying Soft SME Frontend to Render...
+echo 🚀 Deploying NeuraTask Frontend to Render...
 
 REM Check if we're in the right directory
 if not exist "package.json" (

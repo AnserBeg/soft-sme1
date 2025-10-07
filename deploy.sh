@@ -1,11 +1,11 @@
 #!/bin/bash
 
-# Soft SME Deployment Script
+# NeuraTask Deployment Script
 # This script automates the deployment process
 
 set -e  # Exit on any error
 
-echo "🚀 Starting Soft SME Deployment..."
+echo "🚀 Starting NeuraTask Deployment..."
 
 # Colors for output
 RED='\033[0;31m'

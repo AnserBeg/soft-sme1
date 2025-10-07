@@ -3,7 +3,7 @@
 Documentation RAG Tool
 =====================
 
-RAG (Retrieval-Augmented Generation) tool for Soft-SME documentation.
+RAG (Retrieval-Augmented Generation) tool for NeuraTask documentation.
 Uses ChromaDB for vector storage and sentence-transformers for embeddings.
 """
 
@@ -20,10 +20,10 @@ import asyncio
 logger = logging.getLogger(__name__)
 
 class DocumentationRAGTool(BaseTool):
-    """RAG tool for Soft-SME documentation"""
+    """RAG tool for NeuraTask documentation"""
     
     name: str = "documentation_search"
-    description: str = "Search Soft-SME documentation for answers to user questions about features, workflows, and system usage"
+    description: str = "Search NeuraTask documentation for answers to user questions about features, workflows, and system usage"
     db_path: str = "./chroma_db"
     client: Any = None
     collection: Any = None
@@ -53,7 +53,7 @@ class DocumentationRAGTool(BaseTool):
             # Get or create collection
             self.collection = self.client.get_or_create_collection(
                 name="soft_sme_docs",
-                metadata={"description": "Soft-SME Application Documentation"}
+                metadata={"description": "NeuraTask Application Documentation"}
             )
             
             # Initialize embedding model

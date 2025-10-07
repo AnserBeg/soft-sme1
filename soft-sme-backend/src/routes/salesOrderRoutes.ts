@@ -1320,7 +1320,7 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
       DocNumber: salesOrder.sales_order_number,
       TxnDate: salesOrder.sales_date,
       DueDate: salesOrder.sales_date,
-      PrivateNote: `Exported from SoftSME Sales Order #${salesOrder.sales_order_number}`,
+      PrivateNote: `Exported from NeuraTask Sales Order #${salesOrder.sales_order_number}`,
       CustomerMemo: {
         value: salesOrder.terms || ''
       },
@@ -1544,7 +1544,7 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
     }
 
     // Note: Inventory quantities are not updated upon export to QuickBooks
-    // The inventory table in SoftSME remains unchanged for stock parts
+    // The inventory table in NeuraTask remains unchanged for stock parts
 
     // 11. Update SO with QBO export info
     await pool.query(
@@ -1913,7 +1913,7 @@ router.post('/:id/export-to-qbo-with-customer', async (req: Request, res: Respon
     }
 
     // Note: Inventory quantities are not updated upon export to QuickBooks
-    // The inventory table in SoftSME remains unchanged for stock parts
+    // The inventory table in NeuraTask remains unchanged for stock parts
 
     // Update SO with QBO export info
     await pool.query(

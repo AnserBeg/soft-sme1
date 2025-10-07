@@ -1,8 +1,8 @@
-# Database Optimization Guide for Large Soft SME Databases
+# Database Optimization Guide for Large NeuraTask Databases
 
 ## Overview
 
-This guide outlines comprehensive optimization strategies implemented to handle large Soft SME databases efficiently. The optimizations focus on reducing query time, minimizing resource usage, and improving overall system performance.
+This guide outlines comprehensive optimization strategies implemented to handle large NeuraTask databases efficiently. The optimizations focus on reducing query time, minimizing resource usage, and improving overall system performance.
 
 ## 🚀 Key Optimization Strategies
 
@@ -17,7 +17,7 @@ This guide outlines comprehensive optimization strategies implemented to handle 
 
 ```python
 # Example configuration
-db = OptimizedSoftSMEDatabase(
+db = OptimizedNeuraTaskDatabase(
     max_connections=5,  # Pool size
     cache_size=100,     # Query cache size
     cache_ttl=300       # Cache time-to-live in seconds
@@ -182,7 +182,7 @@ performance_stats = {
 
 ### Database Connection
 ```python
-OptimizedSoftSMEDatabase(
+OptimizedNeuraTaskDatabase(
     # Connection settings
     host='localhost',
     port=5432,
@@ -208,7 +208,7 @@ OptimizedSoftSMEDatabase(
 
 ### RAG System Configuration
 ```python
-OptimizedSoftSMERAG(
+OptimizedNeuraTaskRAG(
     # AI settings
     gemini_api_key=os.getenv('GEMINI_API_KEY'),
     max_ai_requests_per_minute=30,
@@ -231,7 +231,7 @@ OptimizedSoftSMERAG(
 3. **`test_optimized_database.py`**: Performance testing and validation
 
 ### Key Classes
-- **`OptimizedSoftSMEDatabase`**: Main database connection class
+- **`OptimizedNeuraTaskDatabase`**: Main database connection class
 - **`ConnectionPool`**: Database connection pooling
 - **`QueryCache`**: LRU cache for query results
 - **`SmartQueryAnalyzer`**: Intelligent query analysis
@@ -307,10 +307,10 @@ OptimizedSoftSMERAG(
 ### Configuration Migration
 ```python
 # Old configuration
-db = SoftSMEDatabase()
+db = NeuraTaskDatabase()
 
 # New optimized configuration
-db = OptimizedSoftSMEDatabase(
+db = OptimizedNeuraTaskDatabase(
     max_connections=5,
     cache_size=100,
     cache_ttl=300
@@ -339,4 +339,4 @@ db = OptimizedSoftSMEDatabase(
 
 ---
 
-This optimization guide provides a comprehensive approach to handling large Soft SME databases efficiently. The implemented strategies work together to provide significant performance improvements while maintaining system reliability and data integrity. 
+This optimization guide provides a comprehensive approach to handling large NeuraTask databases efficiently. The implemented strategies work together to provide significant performance improvements while maintaining system reliability and data integrity. 

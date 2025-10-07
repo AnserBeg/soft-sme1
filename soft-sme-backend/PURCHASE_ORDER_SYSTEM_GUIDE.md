@@ -1,4 +1,4 @@
-# SOFT SME Purchase Order System - Complete Guide
+# NEURATASK Purchase Order System - Complete Guide
 
 ## Table of Contents
 1. [Overview](#overview)
@@ -15,7 +15,7 @@
 
 ## Overview
 
-The SOFT SME Purchase Order system is a comprehensive inventory management solution that allows businesses to create, manage, and track purchase orders with vendors. The system includes vendor management, inventory tracking, allocation to sales orders, and integration with QuickBooks Online.
+The NEURATASK Purchase Order system is a comprehensive inventory management solution that allows businesses to create, manage, and track purchase orders with vendors. The system includes vendor management, inventory tracking, allocation to sales orders, and integration with QuickBooks Online.
 
 ## Vendor Management
 
@@ -558,4 +558,4 @@ if (isNaN(unitCost) || unitCost < 0) {
 3. **Audit Trail**: Monitor changes through timestamps
 4. **Error Handling**: Address validation errors promptly
 
-This comprehensive guide covers all aspects of the SOFT SME Purchase Order system, from basic creation to advanced allocation features. The system is designed to be user-friendly while providing powerful inventory management capabilities for small to medium-sized businesses. 
+This comprehensive guide covers all aspects of the NEURATASK Purchase Order system, from basic creation to advanced allocation features. The system is designed to be user-friendly while providing powerful inventory management capabilities for small to medium-sized businesses. 

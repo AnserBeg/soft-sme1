@@ -1,7 +1,7 @@
-# Soft-SME Database Schema Guide
+# NeuraTask Database Schema Guide
 
 ## Overview
-This document provides a comprehensive guide to the Soft-SME database schema, including all tables, columns, relationships, and usage patterns. This information is used by the AI assistant to generate accurate SQL queries and understand data relationships.
+This document provides a comprehensive guide to the NeuraTask database schema, including all tables, columns, relationships, and usage patterns. This information is used by the AI assistant to generate accurate SQL queries and understand data relationships.
 
 ## Core Tables
 

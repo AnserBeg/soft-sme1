@@ -1,7 +1,7 @@
 # Category Field Implementation Summary
 
 ## Overview
-This implementation adds a category field to parts throughout the Soft-SME system, allowing users to organize parts into logical categories and manage those categories independently.
+This implementation adds a category field to parts throughout the NeuraTask system, allowing users to organize parts into logical categories and manage those categories independently.
 
 ## Database Changes
 

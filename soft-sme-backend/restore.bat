@@ -1,6 +1,6 @@
 @echo off
 echo ========================================
-echo SOFT SME RESTORE SYSTEM
+echo NEURATASK RESTORE SYSTEM
 echo ========================================
 echo.
 

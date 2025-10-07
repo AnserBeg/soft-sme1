@@ -1,4 +1,4 @@
-# Deploying Soft SME Backend to Render
+# Deploying NeuraTask Backend to Render
 
 ## Prerequisites
 1. GitHub account with your code repository

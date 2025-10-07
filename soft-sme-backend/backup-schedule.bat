@@ -1,6 +1,6 @@
 @echo off
 echo ========================================
-echo SOFT SME BACKUP SCHEDULER SETUP
+echo NEURATASK BACKUP SCHEDULER SETUP
 echo ========================================
 echo.
 
@@ -29,7 +29,7 @@ set "BACKUP_DIR=%~dp0"
 set "BACKUP_SCRIPT=%BACKUP_DIR%backup.bat"
 
 REM Create the task using schtasks
-schtasks /create /tn "SOFT SME Backup" /tr "%BACKUP_SCRIPT%" /sc daily /st 02:00 /ru "SYSTEM" /f
+schtasks /create /tn "NEURATASK Backup" /tr "%BACKUP_SCRIPT%" /sc daily /st 02:00 /ru "SYSTEM" /f
 
 if errorlevel 1 (
     echo.
@@ -38,7 +38,7 @@ if errorlevel 1 (
     echo Manual setup instructions:
     echo 1. Open Task Scheduler (taskschd.msc)
     echo 2. Create Basic Task
-    echo 3. Name: SOFT SME Backup
+    echo 3. Name: NEURATASK Backup
     echo 4. Trigger: Daily at 2:00 AM
     echo 5. Action: Start a program
     echo 6. Program: %BACKUP_SCRIPT%
@@ -48,13 +48,13 @@ if errorlevel 1 (
 ) else (
     echo.
     echo Scheduled task created successfully!
-    echo Task Name: SOFT SME Backup
+    echo Task Name: NEURATASK Backup
     echo Schedule: Daily at 2:00 AM
     echo Script: %BACKUP_SCRIPT%
     echo.
     echo To modify the schedule:
     echo 1. Open Task Scheduler (taskschd.msc)
-    echo 2. Find "SOFT SME Backup" task
+    echo 2. Find "NEURATASK Backup" task
     echo 3. Right-click and select Properties
     echo 4. Modify the trigger settings
     echo.

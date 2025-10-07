@@ -82,7 +82,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
               color: isUser ? alpha('#ffffff', 0.8) : 'text.secondary',
             }}
           >
-            {isUser ? 'You' : 'Soft SME AI'}
+            {isUser ? 'You' : 'NeuraTask AI'}
           </Typography>
           <Typography
             variant="caption"

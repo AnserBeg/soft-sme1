@@ -1,6 +1,6 @@
 # AI Chat Setup Guide
 
-This guide will help you set up the Gemini AI chat feature for your Soft SME application.
+This guide will help you set up the Gemini AI chat feature for your NeuraTask application.
 
 ## Prerequisites
 

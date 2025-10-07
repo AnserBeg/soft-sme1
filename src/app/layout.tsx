@@ -8,7 +8,7 @@ import { QueryProvider } from "@/providers/QueryProvider";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "Soft SME",
+  title: "NeuraTask",
   description: "A modern business management solution",
 };
 

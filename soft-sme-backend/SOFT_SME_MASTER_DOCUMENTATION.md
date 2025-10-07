@@ -1,8 +1,8 @@
-# SOFT SME Complete Application Documentation
+# NEURATASK Complete Application Documentation
 
 ## Overview
 
-The SOFT SME (Small and Medium Enterprise) application is a comprehensive business management system designed for small to medium-sized businesses. The application provides integrated modules for customer management, inventory control, sales and purchase order processing, time tracking, and accounting integration.
+The NEURATASK (Small and Medium Enterprise) application is a comprehensive business management system designed for small to medium-sized businesses. The application provides integrated modules for customer management, inventory control, sales and purchase order processing, time tracking, and accounting integration.
 
 ## System Architecture
 
@@ -126,7 +126,7 @@ The SOFT SME (Small and Medium Enterprise) application is a comprehensive busine
 
 ### QuickBooks Integration
 - **OAuth2 Authentication**: Secure connection to QuickBooks Online
-- **Account Mapping**: Configurable mapping of SOFT SME accounts to QBO accounts
+- **Account Mapping**: Configurable mapping of NEURATASK accounts to QBO accounts
 - **Export Workflow**: Sales orders and purchase orders can be exported to QBO
 - **Data Synchronization**: Customer and item data synced between systems
 
@@ -313,7 +313,7 @@ The SOFT SME (Small and Medium Enterprise) application is a comprehensive busine
 
 ## Conclusion
 
-The SOFT SME application provides a comprehensive business management solution with integrated modules that work together seamlessly. The system enforces proper business rules while providing flexibility for different business processes. The documentation in the individual system guides provides detailed information about each module's functionality, while this master documentation provides the overall context and integration points.
+The NEURATASK application provides a comprehensive business management solution with integrated modules that work together seamlessly. The system enforces proper business rules while providing flexibility for different business processes. The documentation in the individual system guides provides detailed information about each module's functionality, while this master documentation provides the overall context and integration points.
 
 For detailed information about specific systems, refer to the individual documentation files:
 - `PURCHASE_ORDER_SYSTEM_GUIDE.md`
