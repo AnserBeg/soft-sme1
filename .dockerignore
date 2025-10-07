@@ -1,0 +1,9 @@
+# docker context hygiene
+.git
+**/node_modules
+**/dist
+**/.DS_Store
+**/coverage
+**/.venv
+**/__pycache__
+soft-sme-backend/.vendor
