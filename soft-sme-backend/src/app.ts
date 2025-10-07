@@ -25,6 +25,7 @@ import attendanceRouter from './routes/attendanceRoutes';
 import aiAssistantRouter from './routes/aiAssistantRoutes';
 import emailRouter from './routes/emailRoutes';
 import profileDocumentRouter from './routes/profileDocumentRoutes';
+import taskRouter from './routes/taskRoutes';
 import messagingRouter from './routes/messagingRoutes';
 
 import chatRouter from './routes/chatRoutes';
@@ -82,7 +83,14 @@ const corsOptions: cors.CorsOptions = {
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'x-device-id'],
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'X-Requested-With',
+    'x-device-id',
+    'x-timezone',
+    'X-Timezone',
+  ],
   optionsSuccessStatus: 204,
 };
 
@@ -192,6 +200,9 @@ console.log('Registered AI assistant routes');
 
 app.use('/api/email', authMiddleware, emailRouter);
 console.log('Registered email routes');
+
+app.use('/api/tasks', taskRouter);
+console.log('Registered task routes');
 
 // Health check endpoint
 app.get('/health', (req, res) => {

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Container,
@@ -34,6 +34,9 @@ import {
   Event as CalendarIcon
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
+import TaskSummaryWidget from '../components/tasks/TaskSummaryWidget';
+import { getTaskSummary } from '../services/taskService';
+import { TaskSummary } from '../types/task';
 
 const sectionIcons: Record<string, React.ReactNode> = {
   'Purchasing': <AssignmentIcon sx={{ color: 'primary.main' }} />,
@@ -48,6 +51,24 @@ const LandingPage: React.FC = () => {
   const navigate = useNavigate();
   const theme = useTheme();
   const { user } = useAuth();
+  const [taskSummary, setTaskSummary] = useState<TaskSummary | null>(null);
+  const [taskSummaryLoading, setTaskSummaryLoading] = useState<boolean>(false);
+
+  const loadTaskSummary = useCallback(async () => {
+    setTaskSummaryLoading(true);
+    try {
+      const summary = await getTaskSummary();
+      setTaskSummary(summary);
+    } catch (error) {
+      console.error('Failed to load task summary', error);
+    } finally {
+      setTaskSummaryLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadTaskSummary();
+  }, [loadTaskSummary]);
 
   console.log('[LandingPage] user:', user);
 
@@ -164,6 +185,15 @@ const LandingPage: React.FC = () => {
         <Typography variant="h5" component="h2" gutterBottom sx={{ color: 'inherit', opacity: 0.85 }}>
           Your all-in-one business management solution
         </Typography>
+      </Box>
+
+      <Box sx={{ mb: 6 }}>
+        <TaskSummaryWidget
+          summary={taskSummary}
+          loading={taskSummaryLoading}
+          onRefresh={loadTaskSummary}
+          onViewTasks={() => navigate('/tasks')}
+        />
       </Box>
 
       {filteredSections.map((section, sectionIndex) => (

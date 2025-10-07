@@ -25,6 +25,7 @@ import categoryRoutes from './routes/categoryRoutes';
 import quoteRoutes from './routes/quoteRoutes';
 import salesOrderRoutes from './routes/salesOrderRoutes';
 import purchaseOrderRoutes from './routes/purchaseOrderRoutes';
+import purchaseOrderOcrRoutes from './routes/purchaseOrderOcrRoutes';
 import employeeRoutes from './routes/employeeRoutes';
 import timeTrackingRoutes from './routes/timeTrackingRoutes';
 import leaveManagementRoutes from './routes/leaveManagementRoutes';
@@ -81,7 +82,14 @@ const corsOptions: cors.CorsOptions = {
   origin: true, // Allow all origins - disable CORS restrictions
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'x-device-id'],
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'X-Requested-With',
+    'x-device-id',
+    'x-timezone',
+    'X-Timezone',
+  ],
   optionsSuccessStatus: 204,
 };
 
@@ -134,6 +142,9 @@ console.log('Registered sales order routes');
 
 app.use('/api/purchase-orders', authMiddleware, purchaseOrderRoutes);
 console.log('Registered purchase order routes');
+
+app.use('/api/purchase-orders/ocr', authMiddleware, purchaseOrderOcrRoutes);
+console.log('Registered purchase order OCR routes');
 
 app.use('/api/employees', authMiddleware, employeeRoutes);
 console.log('Registered employee routes');
