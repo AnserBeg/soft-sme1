@@ -1,5 +1,5 @@
 import React from 'react';
-import { Box, Typography, Paper, Avatar } from '@mui/material';
+import { Box, Typography, Paper, Avatar, Stack } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import { Person as PersonIcon, SmartToy as AIIcon } from '@mui/icons-material';
 
@@ -23,88 +23,102 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
   });
 
   return (
-    <Box
-      sx={{
-        display: 'flex',
-        justifyContent: isUser ? 'flex-end' : 'flex-start',
-        mb: 0.5,
-        pr: isUser ? 0 : 4,
-        pl: isUser ? 4 : 0,
-      }}
+    <Stack
+      direction="row"
+      justifyContent={isUser ? 'flex-end' : 'flex-start'}
+      sx={{ width: '100%' }}
+      spacing={1.5}
     >
-      <Box
-        sx={{
-          display: 'flex',
-          alignItems: 'flex-end',
-          flexDirection: isUser ? 'row-reverse' : 'row',
-          gap: 1.5,
-          maxWidth: '100%',
-        }}
-      >
+      {!isUser && (
         <Avatar
           sx={{
-            bgcolor: isUser ? 'secondary.main' : 'primary.main',
-            width: 36,
-            height: 36,
-            boxShadow: 2,
+            bgcolor: 'primary.main',
+            width: 34,
+            height: 34,
+            boxShadow: '0 10px 20px rgba(64, 132, 253, 0.25)',
           }}
         >
-          {isUser ? <PersonIcon fontSize="small" /> : <AIIcon fontSize="small" />}
+          <AIIcon fontSize="small" />
         </Avatar>
+      )}
+
+      <Paper
+        elevation={0}
+        sx={{
+          px: { xs: 2.25, sm: 2.75 },
+          py: { xs: 1.5, sm: 1.75 },
+          maxWidth: { xs: '82%', sm: '72%' },
+          borderRadius: 3,
+          borderTopRightRadius: isUser ? 4 : 3,
+          borderTopLeftRadius: isUser ? 3 : 4,
+          background: (theme) =>
+            isUser
+              ? `linear-gradient(135deg, ${alpha(theme.palette.primary.main, 0.95)} 0%, ${theme.palette.primary.main} 100%)`
+              : 'rgba(255, 255, 255, 0.92)',
+          color: isUser ? 'common.white' : 'text.primary',
+          border: isUser
+            ? 'none'
+            : '1px solid rgba(148, 163, 184, 0.25)',
+          boxShadow: isUser
+            ? '0 18px 32px -24px rgba(64, 132, 253, 0.65)'
+            : '0 12px 28px -22px rgba(15, 23, 42, 0.35)',
+          backdropFilter: isUser ? undefined : 'blur(18px)',
+        }}
+      >
+        <Box
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            mb: 1,
+            gap: 1.5,
+          }}
+        >
+          <Typography
+            variant="overline"
+            sx={{
+              fontWeight: 700,
+              letterSpacing: 1,
+              color: isUser ? alpha('#ffffff', 0.8) : 'text.secondary',
+            }}
+          >
+            {isUser ? 'You' : 'Soft SME AI'}
+          </Typography>
+          <Typography
+            variant="caption"
+            sx={{
+              color: isUser ? alpha('#ffffff', 0.75) : 'text.disabled',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {timestamp}
+          </Typography>
+        </Box>
+
+        <Typography
+          variant="body2"
+          sx={{
+            whiteSpace: 'pre-wrap',
+            lineHeight: 1.7,
+          }}
+        >
+          {message.text}
+        </Typography>
+      </Paper>
 
         <Paper
           elevation={0}
           sx={{
-            position: 'relative',
-            px: 2.5,
-            py: 1.75,
-            maxWidth: { xs: '78%', sm: '70%' },
-            bgcolor: isUser
-              ? 'primary.main'
-              : (theme) => alpha(theme.palette.primary.main, 0.08),
-            color: isUser ? 'common.white' : 'text.primary',
-            borderRadius: '24px',
-            borderBottomRightRadius: isUser ? '12px' : '24px',
-            borderBottomLeftRadius: isUser ? '24px' : '12px',
-            boxShadow: (theme) =>
-              `0 12px 25px -18px ${alpha(theme.palette.primary.main, 0.6)}`,
-            backdropFilter: 'blur(6px)',
+            bgcolor: 'secondary.main',
+            width: 34,
+            height: 34,
+            boxShadow: '0 10px 20px rgba(244, 63, 94, 0.25)',
           }}
         >
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.75 }}>
-            <Typography
-              variant="caption"
-              sx={{
-                fontWeight: 700,
-                textTransform: 'uppercase',
-                letterSpacing: 0.6,
-                opacity: isUser ? 0.9 : 0.7,
-              }}
-            >
-              {isUser ? 'You' : 'Soft SME AI'}
-            </Typography>
-            <Typography
-              variant="caption"
-              sx={{
-                opacity: isUser ? 0.75 : 0.6,
-              }}
-            >
-              {timestamp}
-            </Typography>
-          </Box>
-
-          <Typography
-            variant="body2"
-            sx={{
-              whiteSpace: 'pre-wrap',
-              lineHeight: 1.6,
-            }}
-          >
-            {message.text}
-          </Typography>
-        </Paper>
-      </Box>
-    </Box>
+          <PersonIcon fontSize="small" />
+        </Avatar>
+      )}
+    </Stack>
   );
 };
 
