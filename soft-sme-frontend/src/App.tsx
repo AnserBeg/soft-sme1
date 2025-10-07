@@ -68,11 +68,17 @@ const PrivateRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => 
       return <Navigate to="/attendance" replace />;
     }
     // Only allow /time-tracking, /attendance, /open-sales-orders, and /woker-sales-orders
-    if (path !== '/time-tracking' && path !== '/attendance' && !path.startsWith('/open-sales-orders') && !path.startsWith('/woker-sales-orders')) {
+    if (
+      path !== '/time-tracking' &&
+      path !== '/attendance' &&
+      path !== '/messaging' &&
+      !path.startsWith('/open-sales-orders') &&
+      !path.startsWith('/woker-sales-orders')
+    ) {
       return <Navigate to="/attendance" replace />;
     }
   }
-  
+
   if (user?.access_role === 'Sales and Purchase') {
     const allowed = [
       '/',
@@ -84,6 +90,7 @@ const PrivateRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => 
       '/supply',
       '/email-settings',
       '/tasks',
+      '/messaging',
     ];
     // Allow paths that start with /open-sales-orders/, /open-purchase-orders/, /purchase-order/ (for detail pages)
     if (
@@ -99,7 +106,7 @@ const PrivateRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => 
   // (No restriction block for Admin)
   if (user?.access_role === 'Quotes') {
     // Allow list and editor/detail routes under /quotes
-    if (path !== '/quotes' && !path.startsWith('/quotes/')) {
+    if (path !== '/quotes' && !path.startsWith('/quotes/') && path !== '/messaging') {
       return <Navigate to="/quotes" replace />;
     }
   }

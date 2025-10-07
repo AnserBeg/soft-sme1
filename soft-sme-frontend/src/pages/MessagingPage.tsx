@@ -7,7 +7,7 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
-  Grid,
+  Divider,
   Paper,
   Stack,
   TextField,
@@ -42,6 +42,7 @@ const MessagingPage: React.FC = () => {
     createConversation,
     loadMessages,
     deleteMessage,
+    unreadConversationIds,
   } = useMessaging();
 
   const [employees, setEmployees] = useState<EmployeeOption[]>([]);
@@ -185,8 +186,8 @@ const MessagingPage: React.FC = () => {
   const autocompleteOptions = useMemo(() => employees, [employees]);
 
   return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', p: { xs: 2, md: 3 } }}>
-      <Stack spacing={1} sx={{ mb: 3 }}>
+    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', p: { xs: 2, md: 3 }, gap: 3 }}>
+      <Stack spacing={1}>
         <Typography variant="h4" component="h1">
           Messaging
         </Typography>
@@ -195,32 +196,55 @@ const MessagingPage: React.FC = () => {
         </Typography>
       </Stack>
 
-      <Box sx={{ flexGrow: 1, minHeight: 0 }}>
-        <Grid container spacing={2} sx={{ height: '100%' }}>
-          <Grid item xs={12} md={4} sx={{ height: { xs: 'auto', md: '100%' } }}>
-            <Paper sx={{ height: { xs: 'auto', md: '100%' }, p: 2, display: 'flex', flexDirection: 'column' }}>
-              <ConversationList
-                conversations={conversations}
-                activeConversationId={activeConversationId}
-                onSelect={selectConversation}
-                onStartConversation={handleStartConversation}
-                isLoading={isLoadingConversations}
-              />
-            </Paper>
-          </Grid>
-          <Grid item xs={12} md={8} sx={{ height: { xs: '60vh', md: '100%' } }}>
-            <MessageThread
-              conversation={activeConversation}
-              messages={activeMessages}
-              currentUserId={currentUserId}
-              isLoading={messagesLoading}
-              isSending={isSending}
-              onSendMessage={handleSendMessage}
-              onDeleteMessage={handleDeleteMessage}
+      <Paper
+        elevation={0}
+        sx={{
+          flexGrow: 1,
+          minHeight: { xs: 480, md: 540 },
+          display: 'flex',
+          flexDirection: { xs: 'column', md: 'row' },
+          borderRadius: 3,
+          overflow: 'hidden',
+          border: '1px solid',
+          borderColor: 'divider',
+          backgroundColor: 'background.paper',
+        }}
+      >
+        <Box
+          sx={{
+            width: { xs: '100%', md: 340 },
+            flexShrink: 0,
+            borderRight: { md: '1px solid', xs: 'none' },
+            borderColor: 'divider',
+            backgroundColor: 'background.default',
+          }}
+        >
+          <Box sx={{ height: '100%', p: { xs: 2, md: 2.5 } }}>
+            <ConversationList
+              conversations={conversations}
+              activeConversationId={activeConversationId}
+              onSelect={selectConversation}
+              onStartConversation={handleStartConversation}
+              isLoading={isLoadingConversations}
+              unreadConversationIds={unreadConversationIds}
             />
-          </Grid>
-        </Grid>
-      </Box>
+          </Box>
+        </Box>
+
+        <Divider orientation="vertical" flexItem sx={{ display: { xs: 'none', md: 'block' } }} />
+
+        <Box sx={{ flex: 1, p: { xs: 2, md: 2.5 }, display: 'flex', flexDirection: 'column', backgroundColor: 'background.paper' }}>
+          <MessageThread
+            conversation={activeConversation}
+            messages={activeMessages}
+            currentUserId={currentUserId}
+            isLoading={messagesLoading}
+            isSending={isSending}
+            onSendMessage={handleSendMessage}
+            onDeleteMessage={handleDeleteMessage}
+          />
+        </Box>
+      </Paper>
 
       <Dialog open={dialogOpen} onClose={handleCloseDialog} fullWidth maxWidth="sm">
         <DialogTitle>Start a Conversation</DialogTitle>
