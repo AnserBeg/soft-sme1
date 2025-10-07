@@ -72,10 +72,18 @@ export class PurchaseOrderOcrService {
   constructor(uploadDir: string, options: PurchaseOrderOcrServiceOptions = {}) {
     this.uploadDir = uploadDir;
 
+    this.augmentProcessPath([
+      '/opt/render/project/.apt/usr/bin',
+      '/opt/render/project/src/.apt/usr/bin',
+      '/opt/render/.apt/usr/bin',
+    ]);
+
     const preferredTesseract = options.tesseractCmd || process.env.TESSERACT_CMD || 'tesseract';
     const resolvedTesseract = this.resolveCommand(preferredTesseract, [
       preferredTesseract,
       '/opt/render/project/.apt/usr/bin/tesseract',
+      '/opt/render/project/src/.apt/usr/bin/tesseract',
+      '/opt/render/.apt/usr/bin/tesseract',
       '/usr/bin/tesseract',
       '/usr/local/bin/tesseract',
     ]);
@@ -94,6 +102,8 @@ export class PurchaseOrderOcrService {
     const resolvedPdftoppm = this.resolveCommand(preferredPdftoppm, [
       preferredPdftoppm,
       '/opt/render/project/.apt/usr/bin/pdftoppm',
+      '/opt/render/project/src/.apt/usr/bin/pdftoppm',
+      '/opt/render/.apt/usr/bin/pdftoppm',
       '/usr/bin/pdftoppm',
       '/usr/local/bin/pdftoppm',
     ]);
@@ -597,6 +607,36 @@ export class PurchaseOrderOcrService {
     }
 
     return null;
+  }
+
+  private augmentProcessPath(candidates: string[]): void {
+    const currentPath = process.env.PATH || '';
+    const segments = currentPath.split(path.delimiter).filter((segment) => segment.length > 0);
+
+    for (const candidate of candidates) {
+      if (!candidate) {
+        continue;
+      }
+
+      let stats: fs.Stats | null = null;
+      try {
+        stats = fs.statSync(candidate);
+      } catch {
+        continue;
+      }
+
+      if (!stats.isDirectory()) {
+        continue;
+      }
+
+      if (segments.includes(candidate)) {
+        continue;
+      }
+
+      segments.unshift(candidate);
+    }
+
+    process.env.PATH = segments.join(path.delimiter);
   }
 
   private normalizeCommandCandidates(preferred: string, fallbacks: string[]): string[] {
