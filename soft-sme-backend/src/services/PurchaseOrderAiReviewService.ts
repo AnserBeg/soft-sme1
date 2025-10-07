@@ -17,67 +17,6 @@ interface PurchaseOrderAiStructuredResponse {
 const DEFAULT_MODEL = process.env.AI_MODEL || 'gemini-2.5-flash';
 const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${DEFAULT_MODEL}:generateContent`;
 
-const RESPONSE_SCHEMA = {
-  type: 'object',
-  properties: {
-    normalized: {
-      type: 'object',
-      properties: {
-        vendorName: { type: ['string', 'null'] },
-        vendorAddress: { type: ['string', 'null'] },
-        billNumber: { type: ['string', 'null'] },
-        billDate: { type: ['string', 'null'] },
-        gstRate: { type: ['number', 'null'] },
-        currency: { type: ['string', 'null'] },
-        documentType: {
-          type: 'string',
-          enum: ['invoice', 'packing_slip', 'receipt', 'unknown'],
-        },
-        detectedKeywords: {
-          type: 'array',
-          items: { type: 'string' },
-        },
-        lineItems: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              rawLine: { type: 'string' },
-              partNumber: { type: ['string', 'null'] },
-              description: { type: 'string' },
-              quantity: { type: ['number', 'null'] },
-              unit: { type: ['string', 'null'] },
-              unitCost: { type: ['number', 'null'] },
-              totalCost: { type: ['number', 'null'] },
-            },
-            required: ['rawLine', 'description'],
-          },
-        },
-      },
-      required: [
-        'vendorName',
-        'vendorAddress',
-        'billNumber',
-        'billDate',
-        'gstRate',
-        'currency',
-        'documentType',
-        'detectedKeywords',
-        'lineItems',
-      ],
-    },
-    warnings: {
-      type: 'array',
-      items: { type: 'string' },
-    },
-    notes: {
-      type: 'array',
-      items: { type: 'string' },
-    },
-  },
-  required: ['normalized', 'warnings', 'notes'],
-} as const;
-
 const SYSTEM_INSTRUCTIONS = `You are helping an inventory specialist capture purchase order details.
 Extract structured data from raw invoice or packing slip text.
 Return a JSON object that exactly matches the following schema:
@@ -144,7 +83,6 @@ export class PurchaseOrderAiReviewService {
         maxOutputTokens: 2048,
         responseMimeType: 'application/json',
       },
-      responseSchema: RESPONSE_SCHEMA,
       safetySettings: [
         {
           category: 'HARM_CATEGORY_HARASSMENT',
@@ -179,15 +117,39 @@ export class PurchaseOrderAiReviewService {
     }
 
     const data = await response.json();
-    const candidate = data?.candidates?.[0];
+    const candidate = this.pickBestCandidate(data?.candidates);
+
+    if (!candidate) {
+      throw new Error('AI response did not include any candidates.');
+    }
+
     const structuredContent = this.extractStructuredContent(candidate?.content?.parts ?? []);
 
     if (!structuredContent) {
-      throw new Error('AI response did not include structured text.');
+      const finishReason = candidate?.finishReason ?? 'unknown';
+      throw new Error(`AI response did not include structured text (finish reason: ${finishReason}).`);
     }
 
     const structured = this.parseStructuredResponse(structuredContent, options);
     return structured;
+  }
+
+  private static pickBestCandidate(candidates: any[]): any | null {
+    if (!Array.isArray(candidates) || candidates.length === 0) {
+      return null;
+    }
+
+    const hasStop = candidates.find((candidate) => candidate?.finishReason === 'STOP');
+    if (hasStop) {
+      return hasStop;
+    }
+
+    const nonSafety = candidates.find((candidate) => candidate?.finishReason !== 'SAFETY');
+    if (nonSafety) {
+      return nonSafety;
+    }
+
+    return candidates[0];
   }
 
   private static extractStructuredContent(parts: any[]): string | Record<string, unknown> | null {
@@ -195,10 +157,13 @@ export class PurchaseOrderAiReviewService {
       return null;
     }
 
+    const textParts: string[] = [];
+
     for (const part of parts) {
       const text = part?.text;
       if (typeof text === 'string' && text.trim().length > 0) {
-        return text;
+        textParts.push(text);
+        continue;
       }
 
       const functionCallArgs = part?.functionCall?.args;
@@ -207,7 +172,11 @@ export class PurchaseOrderAiReviewService {
       }
     }
 
-    return null;
+    if (textParts.length === 0) {
+      return null;
+    }
+
+    return textParts.join('');
   }
 
   private static parseStructuredResponse(
