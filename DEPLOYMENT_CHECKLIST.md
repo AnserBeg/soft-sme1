@@ -27,17 +27,19 @@ git push origin main
 4. **Connect your GitHub repository**
 5. **Configure the service:**
    - **Name**: `soft-sme-backend`
+   - **Root Directory**: `soft-sme-backend` (matches the blueprint configuration so Render sees `apt.txt` and preinstalls the OCR packages)
    - **Environment**: `Node`
-   - **Build Command**: `npm install && npm run build`
+   - **Build Command**: `./render-build.sh` (logs whether `apt.txt` was detected and then runs the Node build)
    - **Start Command**: `npm start`
    - **Plan**: Free (or choose paid plan)
+   - _Render automatically installs the packages listed in `soft-sme-backend/apt.txt`; do not remove or rename this file._
 6. **Click "Create Web Service"**
 
 #### Option B: Blueprint Deployment
 1. **Go to [render.com](https://render.com)**
 2. **Click "New +"** → **"Blueprint"**
 3. **Connect your GitHub repository**
-4. **Render will automatically detect `render.yaml`**
+4. **Render will automatically detect `render.yaml`** (which pins `rootDir: soft-sme-backend` so the platform installs the OCR packages from `apt.txt`)
 
 ### 3. Set Up Database
 1. **In your web service dashboard**
