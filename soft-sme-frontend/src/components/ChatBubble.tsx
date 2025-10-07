@@ -26,7 +26,7 @@ const ChatBubble: React.FC<ChatBubbleProps> = ({ onClick, isOpen, unreadCount = 
         },
       }}
     >
-      <Badge badgeContent={unreadCount} color="error">
+      <Badge badgeContent={unreadCount} color="error" invisible={unreadCount === 0}>
         <ChatIcon />
       </Badge>
     </Fab>

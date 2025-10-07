@@ -1,6 +1,7 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { ChatMessage } from '../components/ChatMessage';
 import { chatService } from '../services/chatService';
+import { toast } from 'react-toastify';
 
 const STORAGE_KEY = 'chat_messages';
 
@@ -8,6 +9,8 @@ export const useChat = () => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const previousMessageCountRef = useRef(0);
 
   // Load messages from localStorage on mount
   useEffect(() => {
@@ -32,8 +35,29 @@ export const useChat = () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
   }, [messages]);
 
+  useEffect(() => {
+    if (messages.length > previousMessageCountRef.current) {
+      const newMessages = messages.slice(previousMessageCountRef.current);
+      const unreadMessages = newMessages.filter((msg) => msg.sender !== 'user');
+
+      if (unreadMessages.length > 0) {
+        if (!isOpen) {
+          setUnreadCount((prev) => prev + unreadMessages.length);
+          const label = unreadMessages.length > 1 ? `${unreadMessages.length} new replies` : 'Workspace Copilot replied';
+          toast.info(label, { toastId: 'chat-unread' });
+        } else {
+          setUnreadCount(0);
+        }
+      }
+    } else if (isOpen && unreadCount !== 0) {
+      setUnreadCount(0);
+    }
+
+    previousMessageCountRef.current = messages.length;
+  }, [messages, isOpen, unreadCount]);
+
   const addMessage = useCallback((message: ChatMessage) => {
-    setMessages(prev => [...prev, message]);
+    setMessages((prev) => [...prev, message]);
   }, []);
 
   const sendMessage = useCallback(async (text: string) => {
@@ -85,10 +109,17 @@ export const useChat = () => {
   const clearMessages = useCallback(() => {
     setMessages([]);
     localStorage.removeItem(STORAGE_KEY);
+    setUnreadCount(0);
   }, []);
 
   const toggleChat = useCallback(() => {
-    setIsOpen(prev => !prev);
+    setIsOpen((prev) => {
+      const next = !prev;
+      if (next) {
+        setUnreadCount(0);
+      }
+      return next;
+    });
   }, []);
 
   const closeChat = useCallback(() => {
@@ -97,19 +128,26 @@ export const useChat = () => {
 
   const openChat = useCallback(async () => {
     setIsOpen(true);
+    setUnreadCount(0);
     // Test API connection when chat is opened
     const isConnected = await chatService.testConnection();
     console.log('API Connection Test:', isConnected ? 'SUCCESS' : 'FAILED');
+  }, []);
+
+  const acknowledgeMessages = useCallback(() => {
+    setUnreadCount(0);
   }, []);
 
   return {
     messages,
     isLoading,
     isOpen,
+    unreadCount,
     sendMessage,
     clearMessages,
     toggleChat,
     closeChat,
     openChat,
+    acknowledgeMessages,
   };
-}; 
+};

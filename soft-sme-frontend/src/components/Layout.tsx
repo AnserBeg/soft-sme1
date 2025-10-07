@@ -1,5 +1,5 @@
 import React from 'react';
-import { useNavigate, Outlet } from 'react-router-dom';
+import { useNavigate, Outlet, useLocation } from 'react-router-dom';
 import {
   AppBar,
   Box,
@@ -53,9 +53,11 @@ const drawerWidth = 240;
 const Layout: React.FC = () => {
   const [mobileOpen, setMobileOpen] = React.useState(false);
   const navigate = useNavigate();
+  const location = useLocation();
   const { logout, user } = useAuth();
-  const { isOpen, toggleChat, closeChat } = useChat();
+  const { isOpen, toggleChat, closeChat, unreadCount } = useChat();
   const [pendingCount, setPendingCount] = useState<number>(0);
+  const isMessagingEmbedded = location.pathname === '/' || location.pathname === '/dashboard';
 
   useEffect(() => {
     let mounted = true;
@@ -266,8 +268,12 @@ const Layout: React.FC = () => {
       </Box>
       
       {/* Chat Components */}
-      <ChatBubble onClick={toggleChat} isOpen={isOpen} />
-      <ChatWindow isOpen={isOpen} onClose={closeChat} />
+      {!isMessagingEmbedded && (
+        <>
+          <ChatBubble onClick={toggleChat} isOpen={isOpen} unreadCount={unreadCount} />
+          <ChatWindow isOpen={isOpen} onClose={closeChat} />
+        </>
+      )}
     </Box>
   );
 };
