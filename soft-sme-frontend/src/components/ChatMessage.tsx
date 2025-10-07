@@ -106,8 +106,8 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
         </Typography>
       </Paper>
 
-        <Paper
-          elevation={0}
+      {isUser && (
+        <Avatar
           sx={{
             bgcolor: 'secondary.main',
             width: 34,
