@@ -17,6 +17,67 @@ interface PurchaseOrderAiStructuredResponse {
 const DEFAULT_MODEL = process.env.AI_MODEL || 'gemini-2.5-flash';
 const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${DEFAULT_MODEL}:generateContent`;
 
+const RESPONSE_SCHEMA = {
+  type: 'object',
+  properties: {
+    normalized: {
+      type: 'object',
+      properties: {
+        vendorName: { type: ['string', 'null'] },
+        vendorAddress: { type: ['string', 'null'] },
+        billNumber: { type: ['string', 'null'] },
+        billDate: { type: ['string', 'null'] },
+        gstRate: { type: ['number', 'null'] },
+        currency: { type: ['string', 'null'] },
+        documentType: {
+          type: 'string',
+          enum: ['invoice', 'packing_slip', 'receipt', 'unknown'],
+        },
+        detectedKeywords: {
+          type: 'array',
+          items: { type: 'string' },
+        },
+        lineItems: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              rawLine: { type: 'string' },
+              partNumber: { type: ['string', 'null'] },
+              description: { type: 'string' },
+              quantity: { type: ['number', 'null'] },
+              unit: { type: ['string', 'null'] },
+              unitCost: { type: ['number', 'null'] },
+              totalCost: { type: ['number', 'null'] },
+            },
+            required: ['rawLine', 'description'],
+          },
+        },
+      },
+      required: [
+        'vendorName',
+        'vendorAddress',
+        'billNumber',
+        'billDate',
+        'gstRate',
+        'currency',
+        'documentType',
+        'detectedKeywords',
+        'lineItems',
+      ],
+    },
+    warnings: {
+      type: 'array',
+      items: { type: 'string' },
+    },
+    notes: {
+      type: 'array',
+      items: { type: 'string' },
+    },
+  },
+  required: ['normalized', 'warnings', 'notes'],
+} as const;
+
 const SYSTEM_INSTRUCTIONS = `You are helping an inventory specialist capture purchase order details.
 Extract structured data from raw invoice or packing slip text.
 Return a JSON object that exactly matches the following schema:
@@ -83,6 +144,7 @@ export class PurchaseOrderAiReviewService {
         maxOutputTokens: 2048,
         responseMimeType: 'application/json',
       },
+      responseSchema: RESPONSE_SCHEMA,
       safetySettings: [
         {
           category: 'HARM_CATEGORY_HARASSMENT',
@@ -172,24 +234,16 @@ export class PurchaseOrderAiReviewService {
       return content;
     }
 
-    const cleaned = content
-      .replace(/```json/gi, '```')
-      .replace(/```/g, '')
-      .trim();
+    const cleaned = this.cleanJsonText(content);
 
-    const directAttempt = this.safeJsonParse(cleaned);
-    if (directAttempt) {
-      return directAttempt;
-    }
-
-    const match = cleaned.match(/\{[\s\S]*\}/);
-    if (match) {
-      const parsed = this.safeJsonParse(match[0]);
+    for (const candidate of this.generateJsonCandidates(cleaned)) {
+      const parsed = this.safeJsonParse(candidate);
       if (parsed) {
         return parsed;
       }
     }
 
+    console.error('AI response parsing failed. Snippet:', cleaned.slice(0, 500));
     throw new Error('AI response could not be parsed as JSON.');
   }
 
@@ -199,6 +253,74 @@ export class PurchaseOrderAiReviewService {
     } catch (error) {
       return null;
     }
+  }
+
+  private static cleanJsonText(content: string): string {
+    return content
+      .replace(/```json/gi, '```')
+      .replace(/```/g, '')
+      .replace(/^[\uFEFF\u200B]+/, '')
+      .trim();
+  }
+
+  private static *generateJsonCandidates(initial: string): Iterable<string> {
+    const attempts = new Set<string>();
+    const queue: string[] = [initial];
+
+    const applyTransforms = (value: string): string[] => {
+      return [
+        value,
+        this.extractFirstJsonObject(value),
+        this.stripTrailingCommas(value),
+        this.ensureQuotedKeys(value),
+        this.convertSingleQuotedStrings(value),
+        this.stripTrailingCommas(this.ensureQuotedKeys(value)),
+        this.stripTrailingCommas(this.convertSingleQuotedStrings(value)),
+        this.convertSingleQuotedStrings(this.ensureQuotedKeys(value)),
+        this.stripTrailingCommas(this.convertSingleQuotedStrings(this.ensureQuotedKeys(value))),
+      ];
+    };
+
+    while (queue.length > 0) {
+      const current = queue.shift();
+      if (!current || attempts.has(current)) {
+        continue;
+      }
+
+      attempts.add(current);
+      yield current;
+
+      for (const transformed of applyTransforms(current)) {
+        if (!attempts.has(transformed)) {
+          queue.push(transformed);
+        }
+      }
+    }
+  }
+
+  private static stripTrailingCommas(input: string): string {
+    return input.replace(/,\s*([}\]])/g, '$1');
+  }
+
+  private static ensureQuotedKeys(input: string): string {
+    return input.replace(/([\{,]\s*)([A-Za-z0-9_]+)\s*:/g, (match, prefix, key) => {
+      if (key.startsWith('"')) {
+        return match;
+      }
+      return `${prefix}"${key}":`;
+    });
+  }
+
+  private static convertSingleQuotedStrings(input: string): string {
+    return input.replace(/'([^'\\]*(?:\\.[^'\\]*)*)'/g, (_match, value: string) => {
+      const escaped = value.replace(/"/g, '\\"');
+      return `"${escaped}"`;
+    });
+  }
+
+  private static extractFirstJsonObject(input: string): string {
+    const match = input.match(/\{[\s\S]*\}/);
+    return match ? match[0] : input;
   }
 
   private static buildNormalizedData(input: any): PurchaseOrderOcrNormalizedData {
