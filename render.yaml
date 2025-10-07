@@ -1,15 +1,13 @@
 services:
   - type: web
     name: soft-sme-backend
-    env: node
-    rootDir: soft-sme-backend
-    buildCommand: ./render-build.sh
-    startCommand: npm start
+    runtime: docker
+    plan: starter
     envVars:
+      - key: PORT
+        value: "10000"
       - key: NODE_ENV
         value: production
-      - key: PORT
-        value: 10000
       - key: DB_HOST
         fromDatabase:
           name: soft-sme-db
