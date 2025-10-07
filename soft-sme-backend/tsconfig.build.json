@@ -4,7 +4,7 @@
     "skipLibCheck": true,
     "noEmit": false,
     "outDir": "./dist",
-    "types": ["node"],
+    "types": ["node", "express", "multer"],
     "strict": false,
     "noImplicitAny": false,
     "strictNullChecks": false
