@@ -5,7 +5,30 @@ import path from 'path';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 
+const MONEY_RE = /(?<!\w)(?:\$)?\d{1,3}(?:[\s,]\d{3})*(?:\.\d{2})|(?<!\w)\d+(?:\.\d{2})?(?!\w)/;
+const PART_RE = /[A-Z0-9][A-Z0-9\-_.\/]{1,24}/i;
+const UOM_RE =
+  /\b(ea|each|pc|pcs|pair|set|pkg|pack|box|bag|roll|sheet|panel|lb|lbs|kg|g|mg|l|liter|litre|ml|cm|mm|m|in|inch|ft|feet|hour|hrs?)\b/i;
+const STOP_BEFORE_TOTALS_RE = /(subtotal|total|gst|hst|pst|qst|vat|balance|amount due)/i;
+const COMPANY_KEYWORD_RE = /(inc|ltd|limited|llc|company|co\.?|corp|corporation|enterprises|solutions|systems|trading|services)/i;
+const EMAIL_RE = /\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b/i;
+const URL_RE = /\b(?:https?:\/\/|www\.)[A-Za-z0-9._\/-?=&%#]+\b/i;
+
 const execFileAsync = promisify(execFile);
+
+interface OcrWord {
+  text: string;
+  confidence: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+interface OcrRow {
+  words: OcrWord[];
+  top: number;
+}
 
 export interface PurchaseOrderOcrLineItem {
   rawLine: string;
@@ -50,6 +73,7 @@ export interface PurchaseOrderOcrResponse {
 
 interface TextExtractionResult {
   text: string;
+  rows: OcrRow[];
   warnings: string[];
 }
 
@@ -146,7 +170,7 @@ export class PurchaseOrderOcrService {
     const startTime = Date.now();
 
     const extraction = await this.extractText(file.path, file.mimetype);
-    const normalization = this.normalizeText(extraction.text);
+    const normalization = this.normalizeText(extraction.text, extraction.rows);
 
     const warnings = [...extraction.warnings, ...normalization.warnings];
 
@@ -186,7 +210,7 @@ export class PurchaseOrderOcrService {
         const pdfResult = await this.extractFromPdf(filePath);
         warnings.push(...pdfResult.warnings);
         if (pdfResult.text.trim().length > 0) {
-          return { text: pdfResult.text, warnings };
+          return { text: pdfResult.text, rows: pdfResult.rows, warnings };
         }
         warnings.push('PDF conversion produced no text. Falling back to direct OCR.');
       } catch (error: any) {
@@ -196,8 +220,8 @@ export class PurchaseOrderOcrService {
       }
     }
 
-    const text = await this.runTesseract(filePath);
-    return { text, warnings };
+    const direct = await this.performOcr(filePath);
+    return { text: direct.text, rows: direct.rows, warnings };
   }
 
   private async extractFromPdf(filePath: string): Promise<TextExtractionResult> {
@@ -216,7 +240,7 @@ export class PurchaseOrderOcrService {
       } else {
         warnings.push('pdftoppm failed to convert PDF.');
       }
-      return { text: '', warnings };
+      return { text: '', rows: [], warnings };
     }
 
     const generatedFiles = await fs.promises.readdir(tempDir);
@@ -226,15 +250,17 @@ export class PurchaseOrderOcrService {
 
     if (imageFiles.length === 0) {
       warnings.push('No images were generated from the PDF.');
-      return { text: '', warnings };
+      return { text: '', rows: [], warnings };
     }
 
     const texts: string[] = [];
+    const rows: OcrRow[] = [];
     for (const imageFile of imageFiles) {
       const imagePath = path.join(tempDir, imageFile);
       try {
-        const text = await this.runTesseract(imagePath);
-        texts.push(text);
+        const result = await this.performOcr(imagePath);
+        texts.push(result.text);
+        rows.push(...result.rows);
       } finally {
         try {
           await fs.promises.unlink(imagePath);
@@ -244,12 +270,27 @@ export class PurchaseOrderOcrService {
       }
     }
 
-    return { text: texts.join('\n'), warnings };
+    return { text: texts.join('\n'), rows, warnings };
+  }
+
+  private async performOcr(filePath: string): Promise<{ text: string; rows: OcrRow[] }> {
+    const [text, tsv] = await Promise.all([this.runTesseractInternal(filePath, 'plain'), this.runTesseractInternal(filePath, 'tsv')]);
+    const rows = this.parseTsv(tsv);
+    return { text, rows };
   }
 
   private async runTesseract(filePath: string): Promise<string> {
+    return this.runTesseractInternal(filePath, 'plain');
+  }
+
+  private async runTesseractInternal(filePath: string, format: 'plain' | 'tsv'): Promise<string> {
+    const args = [filePath, 'stdout', '--psm', '6', '-l', 'eng'] as string[];
+    if (format === 'tsv') {
+      args.push('tsv');
+    }
+
     try {
-      const { stdout } = await execFileAsync(this.tesseractCmd, [filePath, 'stdout', '--psm', '6', '-l', 'eng'], {
+      const { stdout } = await execFileAsync(this.tesseractCmd, args, {
         maxBuffer: 1024 * 1024 * 20,
       });
       return stdout;
@@ -266,7 +307,79 @@ export class PurchaseOrderOcrService {
     }
   }
 
-  private normalizeText(text: string): NormalizationResult {
+  private parseTsv(tsv: string): OcrRow[] {
+    if (!tsv || tsv.trim().length === 0) {
+      return [];
+    }
+
+    const lines = tsv.split(/\r?\n/);
+    if (lines.length <= 1) {
+      return [];
+    }
+
+    const groups = new Map<string, { words: OcrWord[]; top: number }>();
+
+    for (let i = 1; i < lines.length; i += 1) {
+      const line = lines[i];
+      if (!line) {
+        continue;
+      }
+      const parts = line.split('\t');
+      if (parts.length < 12) {
+        continue;
+      }
+
+      const level = Number(parts[0]);
+      if (Number.isNaN(level) || level !== 5) {
+        continue;
+      }
+
+      const text = (parts[11] || '').trim();
+      if (!text) {
+        continue;
+      }
+
+      const confidence = Number(parts[10]);
+      if (Number.isNaN(confidence) || confidence < 0) {
+        continue;
+      }
+
+      const left = Number(parts[6]);
+      const top = Number(parts[7]);
+      const width = Number(parts[8]);
+      const height = Number(parts[9]);
+      if ([left, top, width, height].some((value) => Number.isNaN(value))) {
+        continue;
+      }
+
+      const key = `${parts[1]}-${parts[2]}-${parts[3]}-${parts[4]}`;
+      const existing = groups.get(key);
+      const word: OcrWord = { text, confidence, x: left, y: top, width, height };
+      if (existing) {
+        existing.top = Math.min(existing.top, top);
+        existing.words.push(word);
+      } else {
+        groups.set(key, { top, words: [word] });
+      }
+    }
+
+    const rows: OcrRow[] = [];
+    for (const group of groups.values()) {
+      if (group.words.length === 0) {
+        continue;
+      }
+      group.words.sort((a, b) => a.x - b.x);
+      rows.push({
+        words: group.words,
+        top: group.top,
+      });
+    }
+
+    rows.sort((a, b) => a.top - b.top);
+    return rows;
+  }
+
+  private normalizeText(text: string, rows: OcrRow[]): NormalizationResult {
     const lines = text
       .split(/\r?\n/)
       .map((line) => line.trim())
@@ -302,7 +415,7 @@ export class PurchaseOrderOcrService {
 
     const currency = this.detectCurrency(lines);
 
-    const lineItems = this.detectLineItems(lines);
+    const lineItems = this.detectLineItems(lines, rows);
     if (lineItems.length === 0) {
       warnings.push('No line items were detected in the document.');
     }
@@ -359,32 +472,81 @@ export class PurchaseOrderOcrService {
   }
 
   private detectVendor(lines: string[]): { vendorName: string | null; vendorAddress: string | null } {
-    let vendorName: string | null = null;
-    let vendorAddress: string | null = null;
+    const searchWindow = lines.slice(0, 30);
+    const candidates: Array<{ value: string; index: number; score: number }> = [];
 
-    for (let i = 0; i < Math.min(lines.length, 12); i += 1) {
-      const line = lines[i];
-      if (/(invoice|packing|bill|statement|date|phone|fax|email|ship|sold)/i.test(line)) {
+    for (let i = 0; i < searchWindow.length; i += 1) {
+      const rawLine = searchWindow[i]?.trim();
+      if (!rawLine) {
         continue;
       }
-      if (line.split(' ').length <= 10) {
-        vendorName = line;
-        const addressLines: string[] = [];
-        for (let j = i + 1; j < Math.min(lines.length, i + 5); j += 1) {
-          const addressCandidate = lines[j];
-          if (/(invoice|packing|bill|statement|date|phone|fax|email|ship|sold|gst|subtotal|total|amount)/i.test(
-            addressCandidate
-          )) {
-            break;
-          }
-          if (/^[A-Za-z0-9#.,\-\s]+$/.test(addressCandidate)) {
-            addressLines.push(addressCandidate);
-          }
+
+      if (
+        EMAIL_RE.test(rawLine)
+        || URL_RE.test(rawLine)
+        || /(bill\s*to|ship\s*to|invoice|packing|statement|date|phone|fax|gst|hst|pst|total|amount|customer)/i.test(rawLine)
+      ) {
+        continue;
+      }
+
+      let score = 0;
+      if (COMPANY_KEYWORD_RE.test(rawLine)) {
+        score += 3;
+      }
+      if (/^[A-Z0-9 &'.,\-]+$/.test(rawLine) && rawLine === rawLine.toUpperCase()) {
+        score += 2;
+      }
+      if (/[A-Za-z]/.test(rawLine)) {
+        score += 1;
+      }
+      if (rawLine.split(/\s+/).length <= 6) {
+        score += 1;
+      }
+      if (i < 5) {
+        score += 1;
+      }
+      if (!/[A-Za-z]/.test(rawLine) && /\d/.test(rawLine)) {
+        score -= 2;
+      }
+
+      if (score > 0) {
+        candidates.push({ value: rawLine, index: i, score });
+      }
+    }
+
+    candidates.sort((a, b) => b.score - a.score || a.index - b.index);
+    const topCandidate = candidates[0];
+    let vendorName = topCandidate ? topCandidate.value : null;
+
+    if (!vendorName) {
+      const fallback = searchWindow.find((line) => line && !EMAIL_RE.test(line) && !URL_RE.test(line));
+      vendorName = fallback ?? null;
+    }
+
+    let vendorAddress: string | null = null;
+    if (topCandidate) {
+      const addressLines: string[] = [];
+      for (let j = topCandidate.index + 1; j < Math.min(lines.length, topCandidate.index + 8); j += 1) {
+        const candidate = lines[j]?.trim();
+        if (!candidate) {
+          break;
         }
-        if (addressLines.length > 0) {
-          vendorAddress = addressLines.join(', ');
+        if (EMAIL_RE.test(candidate) || URL_RE.test(candidate)) {
+          continue;
         }
-        break;
+        if (
+          /(invoice|packing|bill|statement|date|gst|hst|pst|total|amount|ship|sold|customer|balance)/i.test(candidate)
+        ) {
+          break;
+        }
+        if (/^[A-Za-z0-9#.,\-\s]+$/.test(candidate)) {
+          addressLines.push(candidate);
+        } else if (addressLines.length > 0) {
+          break;
+        }
+      }
+      if (addressLines.length > 0) {
+        vendorAddress = addressLines.join(', ');
       }
     }
 
@@ -537,7 +699,165 @@ export class PurchaseOrderOcrService {
     return null;
   }
 
-  private detectLineItems(lines: string[]): PurchaseOrderOcrLineItem[] {
+  private detectLineItems(lines: string[], rows: OcrRow[]): PurchaseOrderOcrLineItem[] {
+    const rowDerived = this.detectLineItemsFromRows(rows);
+    if (rowDerived.length > 0) {
+      return rowDerived;
+    }
+    return this.detectLineItemsFromTextLines(lines);
+  }
+
+  private detectLineItemsFromRows(rows: OcrRow[]): PurchaseOrderOcrLineItem[] {
+    const items: PurchaseOrderOcrLineItem[] = [];
+    const seen = new Set<string>();
+
+    for (const row of rows) {
+      const rawLine = row.words.map((word) => word.text).join(' ').trim();
+      if (!rawLine) {
+        continue;
+      }
+      if (STOP_BEFORE_TOTALS_RE.test(rawLine)) {
+        break;
+      }
+
+      const parsed = this.parseRowToLineItem(row);
+      if (!parsed) {
+        continue;
+      }
+
+      const dedupeKey = [
+        parsed.partNumber ?? '',
+        parsed.description,
+        parsed.quantity ?? '',
+        parsed.unitCost ?? '',
+        parsed.totalCost ?? '',
+      ].join('|');
+      if (seen.has(dedupeKey)) {
+        continue;
+      }
+      seen.add(dedupeKey);
+      items.push({
+        rawLine,
+        ...parsed,
+      });
+    }
+
+    return items;
+  }
+
+  private parseRowToLineItem(row: OcrRow): Omit<PurchaseOrderOcrLineItem, 'rawLine'> | null {
+    if (row.words.length === 0) {
+      return null;
+    }
+
+    const tokens = row.words
+      .map((word) => word.text.trim())
+      .filter((token) => token.length > 0);
+
+    if (tokens.length === 0) {
+      return null;
+    }
+
+    const lowerJoined = tokens.join(' ').toLowerCase();
+    if (/(description|qty|quantity|price|total|amount)/i.test(lowerJoined) && !/\d/.test(lowerJoined)) {
+      return null;
+    }
+
+    let totalCost: number | null = null;
+    let totalIndex = -1;
+    for (let i = tokens.length - 1; i >= 0; i -= 1) {
+      const match = tokens[i].match(MONEY_RE);
+      if (match) {
+        totalCost = this.tryParseNumber(match[0]);
+        totalIndex = i;
+        break;
+      }
+    }
+
+    if (totalCost === null || totalIndex < 0) {
+      return null;
+    }
+
+    let unitCost: number | null = null;
+    let unitIndex = -1;
+    for (let i = totalIndex - 1; i >= 0; i -= 1) {
+      const match = tokens[i].match(MONEY_RE);
+      if (match) {
+        unitCost = this.tryParseNumber(match[0]);
+        unitIndex = i;
+        break;
+      }
+    }
+
+    let quantity: number | null = null;
+    let quantityIndex = -1;
+    const searchLimit = unitIndex >= 0 ? unitIndex : totalIndex;
+    for (let i = searchLimit - 1; i >= 0; i -= 1) {
+      const parsed = this.tryParseNumber(tokens[i]);
+      if (parsed !== null) {
+        quantity = parsed;
+        quantityIndex = i;
+        break;
+      }
+    }
+
+    let unit: string | null = null;
+    for (const token of tokens) {
+      const match = token.match(UOM_RE);
+      if (match) {
+        unit = match[0].toLowerCase();
+        break;
+      }
+    }
+
+    let partNumber: string | null = null;
+    let partIndex = -1;
+    for (let i = 0; i < tokens.length; i += 1) {
+      const token = tokens[i];
+      if (token.length < 2) {
+        continue;
+      }
+      const match = token.match(PART_RE);
+      if (match) {
+        partNumber = match[0];
+        partIndex = i;
+        break;
+      }
+    }
+
+    const numericIndices = [quantityIndex, unitIndex, totalIndex].filter((idx) => idx >= 0);
+    const descriptionEnd = numericIndices.length > 0 ? Math.min(...numericIndices) : tokens.length;
+    const descriptionStart = partIndex >= 0 ? partIndex + 1 : 0;
+
+    const descriptionTokens: string[] = [];
+    for (let i = descriptionStart; i < descriptionEnd; i += 1) {
+      if (i === quantityIndex) {
+        continue;
+      }
+      const token = tokens[i];
+      if (MONEY_RE.test(token)) {
+        continue;
+      }
+      descriptionTokens.push(token);
+    }
+
+    const description = descriptionTokens.join(' ').replace(/\s+/g, ' ').trim();
+
+    if (!partNumber && description.length < 3) {
+      return null;
+    }
+
+    return {
+      partNumber,
+      description,
+      quantity,
+      unit,
+      unitCost,
+      totalCost,
+    };
+  }
+
+  private detectLineItemsFromTextLines(lines: string[]): PurchaseOrderOcrLineItem[] {
     const lineItems: PurchaseOrderOcrLineItem[] = [];
     const headerIndex = lines.findIndex((line) =>
       /(part|item|sku|description).*(qty|quantity).*(price|cost|amount|total)/i.test(line)
@@ -547,7 +867,7 @@ export class PurchaseOrderOcrService {
 
     for (let i = startIndex; i < lines.length; i += 1) {
       const line = lines[i];
-      if (/(subtotal|total|gst|hst|pst|tax)/i.test(line)) {
+      if (STOP_BEFORE_TOTALS_RE.test(line)) {
         break;
       }
       const columns = line.split(/\s{2,}/).map((col) => col.trim()).filter((col) => col.length > 0);
