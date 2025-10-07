@@ -81,6 +81,7 @@ export class PurchaseOrderAiReviewService {
         topK: 32,
         topP: 0.9,
         maxOutputTokens: 2048,
+        responseMimeType: 'application/json',
       },
       safetySettings: [
         {
@@ -116,23 +117,42 @@ export class PurchaseOrderAiReviewService {
     }
 
     const data = await response.json();
-    const textResponse = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    const candidate = data?.candidates?.[0];
+    const structuredContent = this.extractStructuredContent(candidate?.content?.parts ?? []);
 
-    if (typeof textResponse !== 'string' || textResponse.trim().length === 0) {
+    if (!structuredContent) {
       throw new Error('AI response did not include structured text.');
     }
 
-    const structured = this.parseStructuredResponse(textResponse, options);
+    const structured = this.parseStructuredResponse(structuredContent, options);
     return structured;
   }
 
-  private static parseStructuredResponse(responseText: string, _options: PurchaseOrderAiReviewOptions): PurchaseOrderAiStructuredResponse {
-    const cleaned = responseText
-      .replace(/```json/gi, '```')
-      .replace(/```/g, '')
-      .trim();
+  private static extractStructuredContent(parts: any[]): string | Record<string, unknown> | null {
+    if (!Array.isArray(parts)) {
+      return null;
+    }
 
-    const extractedJson = this.extractJson(cleaned);
+    for (const part of parts) {
+      const text = part?.text;
+      if (typeof text === 'string' && text.trim().length > 0) {
+        return text;
+      }
+
+      const functionCallArgs = part?.functionCall?.args;
+      if (functionCallArgs) {
+        return functionCallArgs;
+      }
+    }
+
+    return null;
+  }
+
+  private static parseStructuredResponse(
+    responseContent: string | Record<string, unknown>,
+    _options: PurchaseOrderAiReviewOptions,
+  ): PurchaseOrderAiStructuredResponse {
+    const extractedJson = this.extractJson(responseContent);
 
     const normalized = this.buildNormalizedData(extractedJson?.normalized ?? {});
     const warnings = this.buildStringArray(extractedJson?.warnings);
@@ -147,13 +167,22 @@ export class PurchaseOrderAiReviewService {
     };
   }
 
-  private static extractJson(text: string): any {
-    const directAttempt = this.safeJsonParse(text);
+  private static extractJson(content: string | Record<string, unknown>): any {
+    if (typeof content !== 'string') {
+      return content;
+    }
+
+    const cleaned = content
+      .replace(/```json/gi, '```')
+      .replace(/```/g, '')
+      .trim();
+
+    const directAttempt = this.safeJsonParse(cleaned);
     if (directAttempt) {
       return directAttempt;
     }
 
-    const match = text.match(/\{[\s\S]*\}/);
+    const match = cleaned.match(/\{[\s\S]*\}/);
     if (match) {
       const parsed = this.safeJsonParse(match[0]);
       if (parsed) {
