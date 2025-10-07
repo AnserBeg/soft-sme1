@@ -44,6 +44,7 @@ import agentV2Routes from './routes/agentV2Routes';
 import voiceRoutes from './routes/voiceRoutes';
 import voiceStreamRoutes from './routes/voiceStreamRoutes';
 import voiceSearchRoutes from './routes/voiceSearchRoutes';
+import taskRoutes from './routes/taskRoutes';
 import aiAssistantService from './services/aiAssistantService';
 import partFinderRoutes from './routes/partFinderRoutes';
 import inventoryVendorRoutes from './routes/inventoryVendorRoutes';
@@ -198,6 +199,9 @@ console.log('Registered profile document routes');
 
 app.use('/api/messaging', authMiddleware, messagingRoutes);
 console.log('Registered messaging routes');
+
+app.use('/api/tasks', taskRoutes);
+console.log('Registered task routes');
 
 // Agent V2 routes (feature-flagged)
 if (process.env.AI_ASSISTANT_V2 !== 'false') {
