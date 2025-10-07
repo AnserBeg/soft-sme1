@@ -128,9 +128,17 @@ class BackupSystem {
         'render.yaml'
       ];
 
+      const configSearchPaths = [
+        __dirname,
+        path.join(__dirname, '..')
+      ];
+
       configFiles.forEach(file => {
-        const filePath = path.join(__dirname, file);
-        if (fs.existsSync(filePath)) {
+        const filePath = configSearchPaths
+          .map(basePath => path.join(basePath, file))
+          .find(candidate => fs.existsSync(candidate));
+
+        if (filePath) {
           archive.file(filePath, { name: file });
         }
       });

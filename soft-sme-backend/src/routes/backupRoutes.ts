@@ -200,9 +200,17 @@ router.post('/create', authMiddleware, async (req: Request, res: Response) => {
           'render.yaml'
         ];
 
+        const configSearchBases = [
+          path.join(__dirname, '../../'),
+          path.join(__dirname, '../../../')
+        ];
+
         configFiles.forEach(file => {
-          const filePath = path.join(__dirname, '../../', file);
-          if (fs.existsSync(filePath)) {
+          const filePath = configSearchBases
+            .map(basePath => path.join(basePath, file))
+            .find(candidate => fs.existsSync(candidate));
+
+          if (filePath) {
             archive.file(filePath, { name: file });
           }
         });

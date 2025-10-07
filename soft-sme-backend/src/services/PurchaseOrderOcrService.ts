@@ -78,7 +78,8 @@ export class PurchaseOrderOcrService {
       '/opt/render/.apt/usr/bin',
     ]);
 
-    const preferredTesseract = options.tesseractCmd || process.env.TESSERACT_CMD || 'tesseract';
+    const envTesseractBinary = process.env.TESSERACT_CMD || process.env.TESSERACT_PATH;
+    const preferredTesseract = options.tesseractCmd || envTesseractBinary || 'tesseract';
     const resolvedTesseract = this.resolveCommand(preferredTesseract, [
       preferredTesseract,
       '/opt/render/project/.apt/usr/bin/tesseract',
