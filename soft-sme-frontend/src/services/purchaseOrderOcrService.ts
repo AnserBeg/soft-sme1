@@ -23,8 +23,9 @@ export interface PurchaseOrderOcrNormalizedData {
 }
 
 export interface PurchaseOrderOcrResponse {
-  uploadId: string;
-  file: {
+  source: 'ocr' | 'ai';
+  uploadId?: string;
+  file?: {
     originalName: string;
     storedName: string;
     mimeType: string;
@@ -51,5 +52,10 @@ export const uploadPurchaseOrderDocument = async (file: File): Promise<PurchaseO
     },
   });
 
+  return response.data;
+};
+
+export const analyzePurchaseOrderRawText = async (rawText: string): Promise<PurchaseOrderOcrResponse> => {
+  const response = await api.post<PurchaseOrderOcrResponse>('/api/purchase-orders/ocr/ai-review', { rawText });
   return response.data;
 };
