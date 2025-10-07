@@ -17,6 +17,8 @@ export interface MessageDTO {
   isSystem: boolean;
   createdAt: string;
   updatedAt: string;
+  isDeletedForUser: boolean;
+  deletedAt: string | null;
 }
 
 export interface ConversationDTO {
@@ -77,10 +79,12 @@ class MessagingService {
             ? Number(row.last_message_sender_id)
             : null,
           senderName: row.last_message_sender_username || row.last_message_sender_email || null,
-          content: row.last_message_content,
+          content: row.last_message_is_deleted_for_user ? 'Message deleted' : row.last_message_content,
           isSystem: Boolean(row.last_message_is_system),
           createdAt: row.last_message_created_at,
           updatedAt: row.last_message_created_at,
+          isDeletedForUser: Boolean(row.last_message_is_deleted_for_user),
+          deletedAt: row.last_message_deleted_at ?? null,
         }
       : null;
 
@@ -104,10 +108,12 @@ class MessagingService {
       conversationId: Number(row.conversation_id),
       senderId: row.sender_id !== null && row.sender_id !== undefined ? Number(row.sender_id) : null,
       senderName: row.username || row.email || null,
-      content: row.content,
+      content: row.is_deleted_for_user ? 'Message deleted' : row.content,
       isSystem: Boolean(row.is_system),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
+      isDeletedForUser: Boolean(row.is_deleted_for_user),
+      deletedAt: row.deleted_at ?? null,
     };
   }
 
@@ -129,6 +135,8 @@ class MessagingService {
          last_message.sender_id AS last_message_sender_id,
          last_message.created_at AS last_message_created_at,
          last_message.is_system AS last_message_is_system,
+         last_message.is_deleted_for_user AS last_message_is_deleted_for_user,
+         last_message.deleted_at AS last_message_deleted_at,
          last_sender.username AS last_message_sender_username,
          last_sender.email AS last_message_sender_email
        FROM conversations c
@@ -146,8 +154,15 @@ class MessagingService {
          WHERE cp.conversation_id = c.id
        ) AS participants ON TRUE
        LEFT JOIN LATERAL (
-         SELECT m.id, m.content, m.sender_id, m.created_at, m.is_system
+         SELECT m.id,
+                m.content,
+                m.sender_id,
+                m.created_at,
+                m.is_system,
+                (md.deleted_at IS NOT NULL) AS is_deleted_for_user,
+                md.deleted_at
          FROM messages m
+         LEFT JOIN message_deletions md ON md.message_id = m.id AND md.user_id = $1
          WHERE m.conversation_id = c.id
          ORDER BY m.created_at DESC
          LIMIT 1
@@ -283,23 +298,25 @@ class MessagingService {
 
   async getUserConversations(userId: number, companyId: number): Promise<ConversationDTO[]> {
     const result = await this.db.query(
-      `SELECT
-         c.id,
-         c.company_id,
-         c.conversation_type,
-         c.title,
-         c.created_by,
-         c.last_message_at,
-         c.created_at,
-         c.updated_at,
-         participants.participant_list,
-         last_message.id AS last_message_id,
-         last_message.content AS last_message_content,
-         last_message.sender_id AS last_message_sender_id,
-         last_message.created_at AS last_message_created_at,
-         last_message.is_system AS last_message_is_system,
-         last_sender.username AS last_message_sender_username,
-         last_sender.email AS last_message_sender_email
+       `SELECT
+          c.id,
+          c.company_id,
+          c.conversation_type,
+          c.title,
+          c.created_by,
+          c.last_message_at,
+          c.created_at,
+          c.updated_at,
+          participants.participant_list,
+          last_message.id AS last_message_id,
+          last_message.content AS last_message_content,
+          last_message.sender_id AS last_message_sender_id,
+          last_message.created_at AS last_message_created_at,
+          last_message.is_system AS last_message_is_system,
+          last_message.is_deleted_for_user AS last_message_is_deleted_for_user,
+          last_message.deleted_at AS last_message_deleted_at,
+          last_sender.username AS last_message_sender_username,
+          last_sender.email AS last_message_sender_email
        FROM conversations c
        JOIN conversation_participants membership ON membership.conversation_id = c.id AND membership.user_id = $1
        LEFT JOIN LATERAL (
@@ -316,8 +333,15 @@ class MessagingService {
          WHERE cp.conversation_id = c.id
        ) AS participants ON TRUE
        LEFT JOIN LATERAL (
-         SELECT m.id, m.content, m.sender_id, m.created_at, m.is_system
+         SELECT m.id,
+                m.content,
+                m.sender_id,
+                m.created_at,
+                m.is_system,
+                (md.deleted_at IS NOT NULL) AS is_deleted_for_user,
+                md.deleted_at
          FROM messages m
+         LEFT JOIN message_deletions md ON md.message_id = m.id AND md.user_id = $1
          WHERE m.conversation_id = c.id
          ORDER BY m.created_at DESC
          LIMIT 1
@@ -376,6 +400,71 @@ class MessagingService {
     });
   }
 
+  async deleteMessageForUser(
+    conversationId: number,
+    messageId: number,
+    userId: number
+  ): Promise<MessageDTO> {
+    return this.withTransaction(async (client) => {
+      await this.ensureParticipant(conversationId, userId, client);
+
+      const messageRow = await client.query(
+        `SELECT id, conversation_id
+         FROM messages
+         WHERE id = $1`,
+        [messageId]
+      );
+
+      if (messageRow.rows.length === 0) {
+        const error = new Error('Message not found.');
+        (error as any).status = 404;
+        throw error;
+      }
+
+      const record = messageRow.rows[0];
+      if (Number(record.conversation_id) !== conversationId) {
+        const error = new Error('Message does not belong to this conversation.');
+        (error as any).status = 400;
+        throw error;
+      }
+
+      await client.query(
+        `INSERT INTO message_deletions (message_id, user_id)
+         VALUES ($1, $2)
+         ON CONFLICT (message_id, user_id) DO UPDATE
+         SET deleted_at = CURRENT_TIMESTAMP`,
+        [messageId, userId]
+      );
+
+      const messageResult = await client.query(
+        `SELECT m.id,
+                m.conversation_id,
+                m.sender_id,
+                m.content,
+                m.is_system,
+                m.created_at,
+                m.updated_at,
+                u.username,
+                u.email,
+                TRUE AS is_deleted_for_user,
+                md.deleted_at
+         FROM messages m
+         LEFT JOIN users u ON u.id = m.sender_id
+         LEFT JOIN message_deletions md ON md.message_id = m.id AND md.user_id = $2
+         WHERE m.id = $1`,
+        [messageId, userId]
+      );
+
+      if (messageResult.rows.length === 0) {
+        const error = new Error('Unable to load message after deletion.');
+        (error as any).status = 500;
+        throw error;
+      }
+
+      return this.mapMessage(messageResult.rows[0]);
+    });
+  }
+
   async getConversationMessages(
     conversationId: number,
     userId: number,
@@ -387,15 +476,25 @@ class MessagingService {
     const before = options.before ? new Date(options.before) : null;
 
     const result = await this.db.query(
-      `SELECT m.id, m.conversation_id, m.sender_id, m.content, m.is_system, m.created_at, m.updated_at,
-              u.username, u.email
+      `SELECT m.id,
+              m.conversation_id,
+              m.sender_id,
+              m.content,
+              m.is_system,
+              m.created_at,
+              m.updated_at,
+              u.username,
+              u.email,
+              (md.deleted_at IS NOT NULL) AS is_deleted_for_user,
+              md.deleted_at
        FROM messages m
        LEFT JOIN users u ON u.id = m.sender_id
+       LEFT JOIN message_deletions md ON md.message_id = m.id AND md.user_id = $2
        WHERE m.conversation_id = $1
-         AND ($2::timestamptz IS NULL OR m.created_at < $2::timestamptz)
+         AND ($3::timestamptz IS NULL OR m.created_at < $3::timestamptz)
        ORDER BY m.created_at ASC
-       LIMIT $3`,
-      [conversationId, before, limit]
+       LIMIT $4`,
+      [conversationId, userId, before, limit]
     );
 
     return result.rows.map((row) => this.mapMessage(row));

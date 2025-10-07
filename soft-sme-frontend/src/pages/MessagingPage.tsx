@@ -41,6 +41,7 @@ const MessagingPage: React.FC = () => {
     sendMessage,
     createConversation,
     loadMessages,
+    deleteMessage,
   } = useMessaging();
 
   const [employees, setEmployees] = useState<EmployeeOption[]>([]);
@@ -166,6 +167,21 @@ const MessagingPage: React.FC = () => {
     }
   };
 
+  const handleDeleteMessage = async (messageId: number) => {
+    if (!activeConversationId) {
+      toast.error('Select a conversation before deleting a message.');
+      return;
+    }
+
+    try {
+      await deleteMessage(activeConversationId, messageId);
+      toast.info('Message deleted for you.');
+    } catch (error) {
+      console.error('Failed to delete message', error);
+      toast.error('Unable to delete message. Please try again.');
+    }
+  };
+
   const autocompleteOptions = useMemo(() => employees, [employees]);
 
   return (
@@ -200,6 +216,7 @@ const MessagingPage: React.FC = () => {
               isLoading={messagesLoading}
               isSending={isSending}
               onSendMessage={handleSendMessage}
+              onDeleteMessage={handleDeleteMessage}
             />
           </Grid>
         </Grid>

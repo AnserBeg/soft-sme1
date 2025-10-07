@@ -26,7 +26,7 @@ interface MessagingContextValue {
   activeConversationId: number | null;
   selectConversation: (conversationId: number | null) => void;
   messagesByConversation: Record<number, MessagingMessage[]>;
-  loadMessages: (conversationId: number, options?: { force?: boolean }) => Promise<void>;
+  loadMessages: (conversationId: number, options?: { force?: boolean; silent?: boolean }) => Promise<void>;
   isLoadingMessages: Record<number, boolean>;
   sendMessage: (conversationId: number, content: string) => Promise<MessagingMessage>;
   createConversation: (
@@ -36,7 +36,8 @@ interface MessagingContextValue {
       type?: 'direct' | 'group';
     }
   ) => Promise<{ conversation: ConversationSummary; created: boolean }>;
-  refreshConversations: () => Promise<void>;
+  refreshConversations: (options?: { silent?: boolean }) => Promise<void>;
+  deleteMessage: (conversationId: number, messageId: number) => Promise<MessagingMessage>;
 }
 
 const MessagingContext = createContext<MessagingContextValue | undefined>(undefined);
@@ -120,11 +121,13 @@ export const MessagingProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     [currentUserId]
   );
 
-  const refreshConversations = useCallback(async () => {
+  const refreshConversations = useCallback(async (options: { silent?: boolean } = {}) => {
     if (!isAuthenticated) {
       return;
     }
-    setIsLoadingConversations(true);
+    if (!options.silent) {
+      setIsLoadingConversations(true);
+    }
     try {
       const fetched = await messagingService.getConversations();
       const decorated = sortConversations(fetched.map(decorateConversation));
@@ -132,7 +135,9 @@ export const MessagingProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     } catch (error) {
       console.error('Failed to load conversations', error);
     } finally {
-      setIsLoadingConversations(false);
+      if (!options.silent) {
+        setIsLoadingConversations(false);
+      }
     }
   }, [decorateConversation, isAuthenticated]);
 
@@ -153,7 +158,7 @@ export const MessagingProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       return;
     }
     const interval = setInterval(() => {
-      refreshConversations().catch(() => undefined);
+      refreshConversations({ silent: true }).catch(() => undefined);
     }, 10000);
     return () => clearInterval(interval);
   }, [isAuthenticated, refreshConversations]);
@@ -168,14 +173,16 @@ export const MessagingProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   }, [activeConversationId, conversations, isAuthenticated]);
 
   const loadMessages = useCallback(
-    async (conversationId: number, options: { force?: boolean } = {}) => {
+    async (conversationId: number, options: { force?: boolean; silent?: boolean } = {}) => {
       if (!isAuthenticated) {
         return;
       }
       if (!options.force && messagesCacheRef.current[conversationId]) {
         return;
       }
-      setIsLoadingMessages((prev) => ({ ...prev, [conversationId]: true }));
+      if (!options.silent) {
+        setIsLoadingMessages((prev) => ({ ...prev, [conversationId]: true }));
+      }
       try {
         const fetched = await messagingService.getMessages(conversationId);
         setMessagesByConversation((prev) => ({
@@ -185,7 +192,9 @@ export const MessagingProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       } catch (error) {
         console.error('Failed to load messages', error);
       } finally {
-        setIsLoadingMessages((prev) => ({ ...prev, [conversationId]: false }));
+        if (!options.silent) {
+          setIsLoadingMessages((prev) => ({ ...prev, [conversationId]: false }));
+        }
       }
     },
     [isAuthenticated]
@@ -203,7 +212,7 @@ export const MessagingProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       return;
     }
     const interval = setInterval(() => {
-      loadMessages(activeConversationId, { force: true }).catch(() => undefined);
+      loadMessages(activeConversationId, { force: true, silent: true }).catch(() => undefined);
     }, 10000);
     return () => clearInterval(interval);
   }, [activeConversationId, isAuthenticated, loadMessages]);
@@ -276,6 +285,40 @@ export const MessagingProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     [currentUserId, isAuthenticated, refreshConversations, user]
   );
 
+  const deleteMessage = useCallback(
+    async (conversationId: number, messageId: number) => {
+      if (!isAuthenticated) {
+        throw new Error('Not authenticated');
+      }
+
+      const updated = await messagingService.deleteMessage(conversationId, messageId);
+      setMessagesByConversation((prev) => {
+        const existing = prev[conversationId] ?? [];
+        return {
+          ...prev,
+          [conversationId]: existing.map((message) =>
+            Number(message.id) === Number(messageId)
+              ? {
+                  ...message,
+                  ...updated,
+                  id: message.id,
+                  content: 'Message deleted',
+                  isDeletedForUser: true,
+                  deletedAt: updated.deletedAt ?? null,
+                  pending: false,
+                  error: false,
+                }
+              : message
+          ),
+        };
+      });
+
+      refreshConversations({ silent: true }).catch(() => undefined);
+      return updated;
+    },
+    [isAuthenticated, refreshConversations]
+  );
+
   const createConversation = useCallback(
     async (
       payload: {
@@ -317,6 +360,7 @@ export const MessagingProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       sendMessage,
       createConversation,
       refreshConversations,
+      deleteMessage,
     }),
     [
       conversations,
@@ -329,6 +373,7 @@ export const MessagingProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       sendMessage,
       createConversation,
       refreshConversations,
+      deleteMessage,
     ]
   );
 

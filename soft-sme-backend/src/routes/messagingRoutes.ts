@@ -126,4 +126,32 @@ router.get('/conversations/:conversationId/messages', async (req: Request, res: 
   }
 });
 
+router.delete('/conversations/:conversationId/messages/:messageId', async (req: Request, res: Response) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ message: 'Not authenticated' });
+    }
+
+    const conversationId = Number(req.params.conversationId);
+    const messageId = Number(req.params.messageId);
+    const userId = Number(req.user.id);
+
+    if (!Number.isInteger(conversationId) || !Number.isInteger(messageId)) {
+      return res.status(400).json({ message: 'Invalid identifiers provided' });
+    }
+
+    if (!Number.isInteger(userId)) {
+      return res.status(400).json({ message: 'Invalid user context' });
+    }
+
+    const message = await messagingService.deleteMessageForUser(conversationId, messageId, userId);
+    return res.json({ message });
+  } catch (error) {
+    console.error('Failed to delete message for user', error);
+    const status = (error as any)?.status ?? 500;
+    const message = (error as Error).message || 'Unable to delete message';
+    return res.status(status).json({ message });
+  }
+});
+
 export default router;

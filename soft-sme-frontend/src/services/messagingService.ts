@@ -18,6 +18,8 @@ export interface MessagingMessage {
   updatedAt: string;
   pending?: boolean;
   error?: boolean;
+  isDeletedForUser?: boolean;
+  deletedAt?: string | null;
 }
 
 export interface MessagingConversation {
@@ -65,10 +67,17 @@ const normalizeConversation = (conversation: any): MessagingConversation => ({
             ? Number(conversation.lastMessage.senderId)
             : null,
         senderName: conversation.lastMessage.senderName ?? null,
-        content: conversation.lastMessage.content ?? '',
+        content:
+          conversation.lastMessage.isDeletedForUser || conversation.lastMessage.is_deleted_for_user
+            ? 'Message deleted'
+            : conversation.lastMessage.content ?? '',
         isSystem: Boolean(conversation.lastMessage.isSystem),
         createdAt: conversation.lastMessage.createdAt ?? '',
         updatedAt: conversation.lastMessage.updatedAt ?? conversation.lastMessage.createdAt ?? '',
+        isDeletedForUser: Boolean(
+          conversation.lastMessage.isDeletedForUser ?? conversation.lastMessage.is_deleted_for_user ?? false
+        ),
+        deletedAt: conversation.lastMessage.deletedAt ?? conversation.lastMessage.deleted_at ?? null,
       }
     : null,
 });
@@ -83,12 +92,14 @@ const normalizeMessage = (message: any): MessagingMessage => ({
         ? Number(message.sender_id)
         : null,
   senderName: message.senderName ?? message.sender_name ?? message.username ?? null,
-  content: message.content ?? '',
+  content: message.isDeletedForUser || message.is_deleted_for_user ? 'Message deleted' : message.content ?? '',
   isSystem: Boolean(message.isSystem ?? message.is_system ?? false),
   createdAt: message.createdAt ?? message.created_at ?? new Date().toISOString(),
   updatedAt: message.updatedAt ?? message.updated_at ?? message.createdAt ?? message.created_at ?? new Date().toISOString(),
   pending: message.pending,
   error: message.error,
+  isDeletedForUser: Boolean(message.isDeletedForUser ?? message.is_deleted_for_user ?? false),
+  deletedAt: message.deletedAt ?? message.deleted_at ?? null,
 });
 
 export const messagingService = {
@@ -112,6 +123,11 @@ export const messagingService = {
 
   async postMessage(conversationId: number, content: string): Promise<MessagingMessage> {
     const response = await api.post(`/api/messaging/conversations/${conversationId}/messages`, { content });
+    return normalizeMessage(response.data?.message ?? response.data);
+  },
+
+  async deleteMessage(conversationId: number, messageId: number): Promise<MessagingMessage> {
+    const response = await api.delete(`/api/messaging/conversations/${conversationId}/messages/${messageId}`);
     return normalizeMessage(response.data?.message ?? response.data);
   },
 };

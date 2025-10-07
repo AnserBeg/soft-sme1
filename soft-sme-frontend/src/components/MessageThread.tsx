@@ -4,14 +4,17 @@ import {
   Chip,
   CircularProgress,
   Divider,
+  IconButton,
   Paper,
   Stack,
+  Tooltip,
   Typography,
 } from '@mui/material';
 import { format } from 'date-fns';
 import ChatInput from './ChatInput';
 import { ConversationSummary } from '../contexts/MessagingContext';
 import { MessagingMessage } from '../services/messagingService';
+import DeleteOutlineOutlinedIcon from '@mui/icons-material/DeleteOutlineOutlined';
 
 interface MessageThreadProps {
   conversation?: ConversationSummary;
@@ -20,6 +23,7 @@ interface MessageThreadProps {
   isLoading: boolean;
   isSending: boolean;
   onSendMessage: (message: string) => Promise<void> | void;
+  onDeleteMessage: (messageId: number) => Promise<void> | void;
 }
 
 const formatTimestamp = (timestamp: string): string => {
@@ -37,6 +41,7 @@ const MessageThread: React.FC<MessageThreadProps> = ({
   isLoading,
   isSending,
   onSendMessage,
+  onDeleteMessage,
 }) => {
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
@@ -92,13 +97,32 @@ const MessageThread: React.FC<MessageThreadProps> = ({
           <Stack spacing={2}>
             {messages.map((message) => {
               const isSelf = currentUserId !== null && message.senderId === currentUserId;
+              const isDeleted = Boolean(message.isDeletedForUser);
               const align = isSelf ? 'flex-end' : 'flex-start';
               const backgroundColor = message.error
                 ? 'error.light'
-                : isSelf
-                  ? 'primary.main'
-                  : 'grey.100';
-              const textColor = message.error ? 'error.dark' : isSelf ? 'common.white' : 'text.primary';
+                : isDeleted
+                  ? 'grey.300'
+                  : isSelf
+                    ? 'primary.main'
+                    : 'grey.100';
+              const textColor = message.error
+                ? 'error.dark'
+                : isDeleted
+                  ? 'text.secondary'
+                  : isSelf
+                    ? 'common.white'
+                    : 'text.primary';
+              const canDelete =
+                !isDeleted &&
+                !message.error &&
+                !message.pending &&
+                typeof message.id === 'number';
+              const displayContent = isDeleted
+                ? isSelf
+                  ? 'You deleted this message'
+                  : 'Message deleted'
+                : message.content;
 
               return (
                 <Box key={message.id} sx={{ display: 'flex', justifyContent: align }}>
@@ -112,19 +136,43 @@ const MessageThread: React.FC<MessageThreadProps> = ({
                         borderRadius: 2,
                         border: message.error ? '1px solid' : 'none',
                         borderColor: message.error ? 'error.main' : undefined,
+                        position: 'relative',
                       }}
                     >
                       <Stack spacing={0.5}>
                         <Typography variant="caption" sx={{ opacity: isSelf ? 0.85 : 0.6 }}>
                           {message.senderName || (isSelf ? 'You' : 'Unknown user')}
                         </Typography>
-                        <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
-                          {message.content}
+                        <Typography
+                          variant="body2"
+                          sx={{ whiteSpace: 'pre-wrap', fontStyle: isDeleted ? 'italic' : 'normal' }}
+                        >
+                          {displayContent}
                         </Typography>
                         <Typography variant="caption" sx={{ opacity: isSelf ? 0.85 : 0.6, textAlign: 'right' }}>
                           {formatTimestamp(message.createdAt)}
                         </Typography>
                       </Stack>
+                      {canDelete && (
+                        <Tooltip title="Delete for me">
+                          <IconButton
+                            size="small"
+                            onClick={() => onDeleteMessage(Number(message.id))}
+                            sx={{
+                              position: 'absolute',
+                              top: 4,
+                              right: 4,
+                              color: isSelf ? 'common.white' : 'text.secondary',
+                              bgcolor: isSelf ? 'rgba(255,255,255,0.1)' : 'transparent',
+                              '&:hover': {
+                                bgcolor: isSelf ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.04)',
+                              },
+                            }}
+                          >
+                            <DeleteOutlineOutlinedIcon fontSize="inherit" />
+                          </IconButton>
+                        </Tooltip>
+                      )}
                     </Paper>
                     {message.pending && !message.error && (
                       <Chip
