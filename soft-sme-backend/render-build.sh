@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -euxo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APT_FILE="${SCRIPT_DIR}/apt.txt"
@@ -16,5 +16,5 @@ else
   echo "WARN: tesseract not in PATH yet (Render should provision it from apt.txt before the app starts)."
 fi
 
-npm ci
+npm ci --include=dev
 npm run build
