@@ -117,15 +117,39 @@ export class PurchaseOrderAiReviewService {
     }
 
     const data = await response.json();
-    const candidate = data?.candidates?.[0];
+    const candidate = this.pickBestCandidate(data?.candidates);
+
+    if (!candidate) {
+      throw new Error('AI response did not include any candidates.');
+    }
+
     const structuredContent = this.extractStructuredContent(candidate?.content?.parts ?? []);
 
     if (!structuredContent) {
-      throw new Error('AI response did not include structured text.');
+      const finishReason = candidate?.finishReason ?? 'unknown';
+      throw new Error(`AI response did not include structured text (finish reason: ${finishReason}).`);
     }
 
     const structured = this.parseStructuredResponse(structuredContent, options);
     return structured;
+  }
+
+  private static pickBestCandidate(candidates: any[]): any | null {
+    if (!Array.isArray(candidates) || candidates.length === 0) {
+      return null;
+    }
+
+    const hasStop = candidates.find((candidate) => candidate?.finishReason === 'STOP');
+    if (hasStop) {
+      return hasStop;
+    }
+
+    const nonSafety = candidates.find((candidate) => candidate?.finishReason !== 'SAFETY');
+    if (nonSafety) {
+      return nonSafety;
+    }
+
+    return candidates[0];
   }
 
   private static extractStructuredContent(parts: any[]): string | Record<string, unknown> | null {
@@ -133,10 +157,13 @@ export class PurchaseOrderAiReviewService {
       return null;
     }
 
+    const textParts: string[] = [];
+
     for (const part of parts) {
       const text = part?.text;
       if (typeof text === 'string' && text.trim().length > 0) {
-        return text;
+        textParts.push(text);
+        continue;
       }
 
       const functionCallArgs = part?.functionCall?.args;
@@ -145,7 +172,11 @@ export class PurchaseOrderAiReviewService {
       }
     }
 
-    return null;
+    if (textParts.length === 0) {
+      return null;
+    }
+
+    return textParts.join('');
   }
 
   private static parseStructuredResponse(
