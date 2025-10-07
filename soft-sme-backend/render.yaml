@@ -2,6 +2,7 @@ services:
   - type: web
     name: soft-sme-backend
     env: node
+    rootDir: soft-sme-backend
     buildCommand: ./render-build.sh
     startCommand: npm start
     envVars:
@@ -37,4 +38,4 @@ services:
 databases:
   - name: soft-sme-db
     databaseName: soft_sme_db
-    user: soft_sme_user 
+    user: soft_sme_user
