@@ -38,6 +38,9 @@ interface MessagingContextValue {
   ) => Promise<{ conversation: ConversationSummary; created: boolean }>;
   refreshConversations: (options?: { silent?: boolean }) => Promise<void>;
   deleteMessage: (conversationId: number, messageId: number) => Promise<MessagingMessage>;
+  unreadConversationIds: number[];
+  unreadConversationCount: number;
+  markConversationRead: (conversationId: number, timestamp?: string) => void;
 }
 
 const MessagingContext = createContext<MessagingContextValue | undefined>(undefined);
@@ -102,11 +105,61 @@ export const MessagingProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [messagesByConversation, setMessagesByConversation] = useState<Record<number, MessagingMessage[]>>({});
   const [isLoadingMessages, setIsLoadingMessages] = useState<Record<number, boolean>>({});
   const [activeConversationId, setActiveConversationId] = useState<number | null>(null);
+  const [lastReadByConversation, setLastReadByConversation] = useState<Record<number, string>>({});
+  const [unreadConversationIds, setUnreadConversationIds] = useState<number[]>([]);
 
   const messagesCacheRef = useRef<Record<number, MessagingMessage[]>>({});
   useEffect(() => {
     messagesCacheRef.current = messagesByConversation;
   }, [messagesByConversation]);
+
+  const storageKey = useMemo(() => (currentUserId ? `messaging:last-read:${currentUserId}` : null), [currentUserId]);
+
+  useEffect(() => {
+    if (!storageKey) {
+      setLastReadByConversation({});
+      return;
+    }
+    try {
+      const stored = localStorage.getItem(storageKey);
+      if (stored) {
+        const parsed = JSON.parse(stored) as Record<number, string>;
+        setLastReadByConversation(parsed);
+      } else {
+        setLastReadByConversation({});
+      }
+    } catch {
+      setLastReadByConversation({});
+    }
+  }, [storageKey]);
+
+  useEffect(() => {
+    if (!storageKey) {
+      return;
+    }
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(lastReadByConversation));
+    } catch {
+      // noop
+    }
+  }, [lastReadByConversation, storageKey]);
+
+  const markConversationRead = useCallback(
+    (conversationId: number, timestamp?: string) => {
+      if (!storageKey) {
+        return;
+      }
+      setLastReadByConversation((prev) => {
+        const nextTimestamp = timestamp ?? new Date().toISOString();
+        const prevTimestamp = prev[conversationId];
+        if (prevTimestamp && new Date(prevTimestamp).getTime() >= new Date(nextTimestamp).getTime()) {
+          return prev;
+        }
+        return { ...prev, [conversationId]: nextTimestamp };
+      });
+    },
+    [storageKey]
+  );
 
   const decorateConversation = useCallback(
     (conversation: MessagingConversation): ConversationSummary => {
@@ -148,6 +201,7 @@ export const MessagingProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       setIsLoadingConversations(false);
       setIsLoadingMessages({});
       setActiveConversationId(null);
+      setUnreadConversationIds([]);
       return;
     }
     refreshConversations();
@@ -268,6 +322,7 @@ export const MessagingProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           };
         });
         await refreshConversations();
+        markConversationRead(conversationId, new Date().toISOString());
         return saved;
       } catch (error) {
         setMessagesByConversation((prev) => {
@@ -343,10 +398,62 @@ export const MessagingProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           [decorated.id]: [],
         }));
       }
+      markConversationRead(decorated.id, new Date().toISOString());
       return { conversation: decorated, created: result.created };
     },
-    [decorateConversation, isAuthenticated]
+    [decorateConversation, isAuthenticated, markConversationRead]
   );
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      setUnreadConversationIds([]);
+      return;
+    }
+    const ids = conversations
+      .filter((conversation) => {
+        const lastMessage = conversation.lastMessage;
+        if (!lastMessage) {
+          return false;
+        }
+        const rawTimestamp = conversation.lastMessageAt || lastMessage.updatedAt || lastMessage.createdAt;
+        if (!rawTimestamp) {
+          return false;
+        }
+        const lastMessageTime = new Date(rawTimestamp).getTime();
+        if (!lastMessageTime || Number.isNaN(lastMessageTime)) {
+          return false;
+        }
+        const lastRead = lastReadByConversation[conversation.id]
+          ? new Date(lastReadByConversation[conversation.id]).getTime()
+          : 0;
+        if (lastRead && lastRead >= lastMessageTime) {
+          return false;
+        }
+        const senderId = lastMessage.senderId !== null && lastMessage.senderId !== undefined
+          ? Number(lastMessage.senderId)
+          : null;
+        if (senderId !== null && currentUserId !== null && senderId === currentUserId) {
+          return false;
+        }
+        return true;
+      })
+      .map((conversation) => conversation.id);
+    setUnreadConversationIds(ids);
+  }, [conversations, currentUserId, isAuthenticated, lastReadByConversation]);
+
+  useEffect(() => {
+    if (!activeConversationId) {
+      return;
+    }
+    const conversation = conversations.find((item) => item.id === activeConversationId);
+    if (!conversation) {
+      return;
+    }
+    const timestamp = conversation.lastMessageAt || conversation.updatedAt || conversation.createdAt;
+    if (timestamp) {
+      markConversationRead(activeConversationId, timestamp);
+    }
+  }, [activeConversationId, conversations, markConversationRead]);
 
   const value = useMemo<MessagingContextValue>(
     () => ({
@@ -361,6 +468,9 @@ export const MessagingProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       createConversation,
       refreshConversations,
       deleteMessage,
+      unreadConversationIds,
+      unreadConversationCount: unreadConversationIds.length,
+      markConversationRead,
     }),
     [
       conversations,
@@ -374,6 +484,8 @@ export const MessagingProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       createConversation,
       refreshConversations,
       deleteMessage,
+      unreadConversationIds,
+      markConversationRead,
     ]
   );
 

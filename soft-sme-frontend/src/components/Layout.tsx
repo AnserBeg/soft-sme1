@@ -1,8 +1,9 @@
 import React from 'react';
-import { useNavigate, Outlet, useLocation } from 'react-router-dom';
+import { useNavigate, Outlet } from 'react-router-dom';
 import {
   AppBar,
   Box,
+  Badge,
   Button,
   Drawer,
   IconButton,
@@ -44,20 +45,20 @@ import { useAuth } from '../contexts/AuthContext';
 import ChatBubble from './ChatBubble';
 import ChatWindow from './ChatWindow';
 import { useChat } from '../hooks/useChat';
-import { Alert, Tooltip } from '@mui/material';
-import { useEffect, useState } from 'react';
+import { Tooltip } from '@mui/material';
+import { useEffect, useMemo, useState } from 'react';
 import { getPendingCount, syncPending } from '../services/offlineSync';
+import { useMessaging } from '../contexts/MessagingContext';
 
 const drawerWidth = 240;
 
 const Layout: React.FC = () => {
   const [mobileOpen, setMobileOpen] = React.useState(false);
   const navigate = useNavigate();
-  const location = useLocation();
   const { logout, user } = useAuth();
   const { isOpen, toggleChat, closeChat, unreadCount } = useChat();
+  const { unreadConversationCount } = useMessaging();
   const [pendingCount, setPendingCount] = useState<number>(0);
-  const isMessagingEmbedded = location.pathname === '/' || location.pathname === '/dashboard';
 
   useEffect(() => {
     let mounted = true;
@@ -81,110 +82,143 @@ const Layout: React.FC = () => {
     navigate('/login');
   };
 
-  const menuItems = [
-    { type: 'header', text: 'Dashboard' },
-    { text: 'Dashboard', icon: <DashboardIcon />, path: '/dashboard' },
-    { text: 'Tasks', icon: <AssignmentTurnedInIcon />, path: '/tasks' },
+  type HeaderMenuEntry = { type: 'header'; text: string };
+  type NavigationMenuEntry = { text: string; icon: React.ReactNode; path: string; showUnreadDot?: boolean };
+  type MenuEntry = HeaderMenuEntry | NavigationMenuEntry;
 
-    { type: 'header', text: 'Purchasing' },
-    { text: 'Purchase Orders', icon: <AssignmentIcon />, path: '/open-purchase-orders' },
-    { text: 'Parts to Order', icon: <InventoryIcon />, path: '/parts-to-order' },
-    { text: 'Vendors', icon: <StoreIcon />, path: '/vendors' },
+  const isHeaderItem = (entry: MenuEntry): entry is HeaderMenuEntry =>
+    'type' in entry && entry.type === 'header';
 
-    { type: 'header', text: 'Sales' },
-    { text: 'Quotes', icon: <ListAltIcon />, path: '/quotes' },
-    { text: 'Sales Orders', icon: <ReceiptIcon />, path: '/open-sales-orders' },
-    { text: 'Customers', icon: <PeopleIcon />, path: '/customers' },
+  const messageMenuItem = useMemo<MenuEntry>(
+    () => ({
+      text: 'Messages',
+      icon: <ChatIcon />,
+      path: '/messaging',
+      showUnreadDot: unreadConversationCount > 0,
+    }),
+    [unreadConversationCount]
+  );
 
-    { type: 'header', text: 'Products & Inventory' },
-    { text: 'Products', icon: <LocalOfferIcon />, path: '/products' },
-    { text: 'Stock', icon: <InventoryIcon />, path: '/inventory' },
-    { text: 'Supply', icon: <InventoryIcon />, path: '/supply' },
+  const menuItems = useMemo<MenuEntry[]>(
+    () => [
+      { type: 'header', text: 'Dashboard' },
+      { text: 'Dashboard', icon: <DashboardIcon />, path: '/dashboard' },
+      { text: 'Tasks', icon: <AssignmentTurnedInIcon />, path: '/tasks' },
+      messageMenuItem,
 
-    { type: 'header', text: 'Time Tracking' },
-    { text: 'Attendance', icon: <TimelineIcon />, path: '/attendance' },
-    { text: 'Time Tracking', icon: <TimelineIcon />, path: '/time-tracking' },
-    { text: 'Time Tracking Reports', icon: <QueryStatsIcon />, path: '/time-tracking/reports' },
+      { type: 'header', text: 'Purchasing' },
+      { text: 'Purchase Orders', icon: <AssignmentIcon />, path: '/open-purchase-orders' },
+      { text: 'Parts to Order', icon: <InventoryIcon />, path: '/parts-to-order' },
+      { text: 'Vendors', icon: <StoreIcon />, path: '/vendors' },
 
-    { type: 'header', text: 'Human Resources' },
-    { text: 'Employees', icon: <GroupIcon />, path: '/employees' },
-    { text: 'Profile Documents', icon: <DescriptionIcon />, path: '/profile-documents' },
-    { text: 'Leave Management', icon: <CalendarIcon />, path: '/leave-management' },
-    { text: 'Mobile User Access', icon: <PeopleIcon />, path: '/mobile-user-access' },
+      { type: 'header', text: 'Sales' },
+      { text: 'Quotes', icon: <ListAltIcon />, path: '/quotes' },
+      { text: 'Sales Orders', icon: <ReceiptIcon />, path: '/open-sales-orders' },
+      { text: 'Customers', icon: <PeopleIcon />, path: '/customers' },
 
-    { type: 'header', text: 'Communication' },
-    { text: 'Messaging', icon: <ChatIcon />, path: '/messaging' },
+      { type: 'header', text: 'Products & Inventory' },
+      { text: 'Products', icon: <LocalOfferIcon />, path: '/products' },
+      { text: 'Stock', icon: <InventoryIcon />, path: '/inventory' },
+      { text: 'Supply', icon: <InventoryIcon />, path: '/supply' },
 
-    { type: 'header', text: 'Settings' },
-    { text: 'Business Profile', icon: <BusinessIcon />, path: '/business-profile' },
-    { text: 'Accounting', icon: <AttachMoneyIcon />, path: '/qbo-account-mapping' },
-    { text: 'Global Variables', icon: <AttachMoneyIcon />, path: '/margin-schedule' },
-    { text: 'Email Settings', icon: <EmailIcon />, path: '/email-settings' },
-    { text: 'Backup Management', icon: <BackupIcon />, path: '/backup-management' },
-  ];
+      { type: 'header', text: 'Time Tracking' },
+      { text: 'Attendance', icon: <TimelineIcon />, path: '/attendance' },
+      { text: 'Time Tracking', icon: <TimelineIcon />, path: '/time-tracking' },
+      { text: 'Time Tracking Reports', icon: <QueryStatsIcon />, path: '/time-tracking/reports' },
+
+      { type: 'header', text: 'Human Resources' },
+      { text: 'Employees', icon: <GroupIcon />, path: '/employees' },
+      { text: 'Profile Documents', icon: <DescriptionIcon />, path: '/profile-documents' },
+      { text: 'Leave Management', icon: <CalendarIcon />, path: '/leave-management' },
+      { text: 'Mobile User Access', icon: <PeopleIcon />, path: '/mobile-user-access' },
+
+      { type: 'header', text: 'Settings' },
+      { text: 'Business Profile', icon: <BusinessIcon />, path: '/business-profile' },
+      { text: 'Accounting', icon: <AttachMoneyIcon />, path: '/qbo-account-mapping' },
+      { text: 'Global Variables', icon: <AttachMoneyIcon />, path: '/margin-schedule' },
+      { text: 'Email Settings', icon: <EmailIcon />, path: '/email-settings' },
+      { text: 'Backup Management', icon: <BackupIcon />, path: '/backup-management' },
+    ],
+    [messageMenuItem]
+  );
 
   // Filter menu items for Time Tracking users
-  const filteredMenuItems = React.useMemo(() => {
+  const filteredMenuItems = React.useMemo<MenuEntry[]>(() => {
     if (user?.access_role === 'Time Tracking') {
       return [
-        { type: 'header', text: 'Time Tracking' },
+        { type: 'header', text: 'Dashboard' },
         { text: 'Attendance', icon: <TimelineIcon />, path: '/attendance' },
         { text: 'Time Tracking', icon: <TimelineIcon />, path: '/time-tracking' },
-        { type: 'header', text: 'Human Resources' },
-        { text: 'Leave Management', icon: <CalendarIcon />, path: '/leave-management' },
-        { type: 'header', text: 'Communication' },
-        { text: 'Messaging', icon: <ChatIcon />, path: '/messaging' },
+        messageMenuItem,
         { type: 'header', text: 'Sales' },
         { text: 'Sales Orders', icon: <ReceiptIcon />, path: '/open-sales-orders' },
       ];
     }
     // Always show Dashboard at the top as a separate section
-    const dashboardSection = [
+    const dashboardSection: MenuEntry[] = [
       { type: 'header', text: 'Main' },
       { text: 'Dashboard', icon: <DashboardIcon />, path: '/' },
+      { text: 'Tasks', icon: <AssignmentTurnedInIcon />, path: '/tasks' },
+      messageMenuItem,
     ];
     if (user?.access_role === 'Sales and Purchase') {
       return [
         ...dashboardSection,
         { type: 'header', text: 'Sales & Purchase' },
-        { text: 'Tasks', icon: <AssignmentTurnedInIcon />, path: '/tasks' },
         { text: 'Sales Orders', icon: <ReceiptIcon />, path: '/open-sales-orders' },
         { text: 'Purchase Orders', icon: <AssignmentIcon />, path: '/open-purchase-orders' },
         { text: 'Parts to Order', icon: <InventoryIcon />, path: '/parts-to-order' },
         { type: 'header', text: 'Inventory' },
         { text: 'Stock', icon: <InventoryIcon />, path: '/inventory' },
         { text: 'Supply', icon: <InventoryIcon />, path: '/supply' },
-        { type: 'header', text: 'Communication' },
-        { text: 'Messaging', icon: <ChatIcon />, path: '/messaging' },
         { type: 'header', text: 'Settings' },
         { text: 'Email Settings', icon: <EmailIcon />, path: '/email-settings' },
       ];
     }
     return menuItems;
-  }, [user, menuItems]);
+  }, [user, menuItems, messageMenuItem]);
 
   const drawer = (
     <div>
       <Toolbar />
       <List>
-        {filteredMenuItems.map((item, idx) =>
-          item.type === 'header' ? (
-            <ListSubheader key={`header-${item.text}-${idx}`} sx={{ bgcolor: 'inherit', color: 'text.secondary', fontWeight: 'bold', fontSize: 13, textAlign: 'left', pl: 2 }}>
-              {item.text}
-            </ListSubheader>
-          ) : (
-          <ListItem
-            key={item.path || `${item.text}-${idx}`}
-            onClick={() => {
-              navigate(item.path);
-              setMobileOpen(false);
-            }}
-            sx={{ cursor: 'pointer' }}
-          >
-            <ListItemIcon>{item.icon}</ListItemIcon>
-            <ListItemText primary={item.text} />
-          </ListItem>
-        ))}
+        {filteredMenuItems.map((item, idx) => {
+          if (isHeaderItem(item)) {
+            return (
+              <ListSubheader
+                key={`header-${item.text}-${idx}`}
+                sx={{ bgcolor: 'inherit', color: 'text.secondary', fontWeight: 'bold', fontSize: 13, textAlign: 'left', pl: 2 }}
+              >
+                {item.text}
+              </ListSubheader>
+            );
+          }
+          const navItem = item as NavigationMenuEntry;
+          return (
+            <ListItem
+              key={navItem.path || `${navItem.text}-${idx}`}
+              onClick={() => {
+                navigate(navItem.path);
+                setMobileOpen(false);
+              }}
+              sx={{ cursor: 'pointer' }}
+            >
+              <ListItemIcon>
+                {navItem.showUnreadDot ? (
+                  <Badge color="error" variant="dot" overlap="circular">
+                    {navItem.icon}
+                  </Badge>
+                ) : (
+                  navItem.icon
+                )}
+              </ListItemIcon>
+              <ListItemText
+                primary={navItem.text}
+                primaryTypographyProps={navItem.showUnreadDot ? { fontWeight: 600 } : undefined}
+              />
+            </ListItem>
+          );
+        })}
       </List>
     </div>
   );
@@ -268,12 +302,8 @@ const Layout: React.FC = () => {
       </Box>
       
       {/* Chat Components */}
-      {!isMessagingEmbedded && (
-        <>
-          <ChatBubble onClick={toggleChat} isOpen={isOpen} unreadCount={unreadCount} />
-          <ChatWindow isOpen={isOpen} onClose={closeChat} />
-        </>
-      )}
+      <ChatBubble onClick={toggleChat} isOpen={isOpen} unreadCount={unreadCount} />
+      <ChatWindow isOpen={isOpen} onClose={closeChat} />
     </Box>
   );
 };
