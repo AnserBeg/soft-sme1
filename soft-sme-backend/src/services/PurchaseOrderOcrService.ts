@@ -231,7 +231,7 @@ export class PurchaseOrderOcrService {
     const outputBasePath = path.join(tempDir, tempBaseName);
 
     try {
-      await execFileAsync(this.pdftoppmCmd, ['-png', filePath, outputBasePath]);
+      await execFileAsync(this.pdftoppmCmd, ['-png', '-r', '300', filePath, outputBasePath]);
     } catch (error: any) {
       if ((error as any)?.code === 'ENOENT') {
         warnings.push(
@@ -284,7 +284,7 @@ export class PurchaseOrderOcrService {
   }
 
   private async runTesseractInternal(filePath: string, format: 'plain' | 'tsv'): Promise<string> {
-    const args = [filePath, 'stdout', '--psm', '6', '-l', 'eng'] as string[];
+    const args = [filePath, 'stdout', '--psm', '6', '--oem', '1', '-l', 'eng', '-c', 'preserve_interword_spaces=1'] as string[];
     if (format === 'tsv') {
       args.push('tsv');
     }
@@ -556,7 +556,8 @@ export class PurchaseOrderOcrService {
   private detectBillNumber(lines: string[]): string | null {
     const billPatterns = [
       /(invoice|bill|packing\s+slip|packing\s+list|reference)\s*(number|no\.?|#)[:\-\s]*([A-Za-z0-9\-\/_]+)/i,
-      /(ref\.?|number)[:\-\s]*([A-Za-z0-9\-\/_]+)/i,
+      /(invoice|bill)[:\-\s]*([A-Za-z0-9][A-Za-z0-9\-\/_]+)/i,
+      /(ref\.?|reference|number)[:\-\s]*([A-Za-z0-9\-\/_]+)/i,
     ];
 
     for (const line of lines) {
@@ -565,7 +566,15 @@ export class PurchaseOrderOcrService {
         if (match) {
           const captured = match[3] || match[2];
           if (captured) {
-            return captured.trim();
+            const cleaned = captured.replace(/[^A-Za-z0-9\-\/_]/g, '').trim();
+            if (!cleaned) {
+              continue;
+            }
+            const context = match[0];
+            if (/total/i.test(context)) {
+              continue;
+            }
+            return cleaned;
           }
         }
       }
@@ -801,6 +810,13 @@ export class PurchaseOrderOcrService {
       }
     }
 
+    if (quantity === null && unitCost !== null && totalCost !== null && unitCost !== 0) {
+      const derivedQuantity = this.deriveQuantityFromCosts(unitCost, totalCost);
+      if (derivedQuantity !== null) {
+        quantity = derivedQuantity;
+      }
+    }
+
     let unit: string | null = null;
     for (const token of tokens) {
       const match = token.match(UOM_RE);
@@ -857,6 +873,35 @@ export class PurchaseOrderOcrService {
     };
   }
 
+  private deriveQuantityFromCosts(unitCost: number, totalCost: number): number | null {
+    if (!Number.isFinite(unitCost) || !Number.isFinite(totalCost) || unitCost === 0) {
+      return null;
+    }
+
+    const ratio = totalCost / unitCost;
+    if (!Number.isFinite(ratio)) {
+      return null;
+    }
+
+    const absRatio = Math.abs(ratio);
+    if (absRatio < 0.0001) {
+      return null;
+    }
+
+    const roundedToTwo = Math.round(absRatio * 100) / 100;
+    const roundedToInt = Math.round(absRatio);
+    if (Math.abs(absRatio - roundedToInt) <= 0.02) {
+      return roundedToInt === 0 ? null : roundedToInt;
+    }
+
+    const normalized = parseFloat(roundedToTwo.toFixed(2));
+    if (Number.isNaN(normalized) || normalized === 0) {
+      return null;
+    }
+
+    return normalized;
+  }
+
   private detectLineItemsFromTextLines(lines: string[]): PurchaseOrderOcrLineItem[] {
     const lineItems: PurchaseOrderOcrLineItem[] = [];
     const headerIndex = lines.findIndex((line) =>
@@ -910,12 +955,128 @@ export class PurchaseOrderOcrService {
   }
 
   private tryParseNumber(value: string): number | null {
-    const sanitized = value.replace(/[^0-9.\-]/g, '');
-    if (!sanitized) {
+    if (!value) {
       return null;
     }
-    const parsed = parseFloat(sanitized);
+
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return null;
+    }
+
+    let sanitized = '';
+    for (const char of trimmed) {
+      if (/[0-9.\-]/.test(char)) {
+        sanitized += char;
+        continue;
+      }
+      if (char === ',' || char === ' ') {
+        continue;
+      }
+      const mapped = this.mapConfusableDigit(char);
+      if (mapped) {
+        sanitized += mapped;
+      }
+    }
+
+    if (!sanitized) {
+      const fallback = this.mapSingleCharacterToDigit(trimmed);
+      if (fallback) {
+        sanitized = fallback;
+      }
+    }
+
+    if (!sanitized || sanitized === '-' || sanitized === '.') {
+      return null;
+    }
+
+    const normalized = sanitized
+      .replace(/-{2,}/g, '-')
+      .replace(/\.{2,}/g, '.')
+      .replace(/^-\./, '-0.')
+      .replace(/^\./, '0.');
+
+    const parsed = parseFloat(normalized);
     return Number.isNaN(parsed) ? null : parsed;
+  }
+
+  private mapConfusableDigit(char: string): string | null {
+    if (!char) {
+      return null;
+    }
+
+    const normalized = char.normalize('NFKD').replace(/[\u0300-\u036f]/g, '');
+    switch (normalized) {
+      case 'O':
+      case 'o':
+      case 'Ø':
+      case 'º':
+      case '°':
+      case 'D':
+      case 'Q':
+        return '0';
+      case 'I':
+      case 'l':
+      case 'L':
+      case '|':
+      case '!':
+      case 'ï':
+      case 'ì':
+        return '1';
+      case 'S':
+      case 's':
+        return '5';
+      case 'B':
+        return '8';
+      case 'G':
+        return '6';
+      case 'g':
+        return '9';
+      case 'Z':
+      case 'z':
+        return '2';
+      case '—':
+      case '–':
+      case '−':
+      case '﹘':
+      case '﹣':
+      case '‑':
+        return '-';
+      default:
+        return null;
+    }
+  }
+
+  private mapSingleCharacterToDigit(value: string): string | null {
+    const normalized = value.normalize('NFKD').replace(/[\u0300-\u036f]/g, '');
+    const lower = normalized.toLowerCase();
+
+    if (['o', 'ø', 'º', '°', 'd', 'q'].includes(lower)) {
+      return '0';
+    }
+    if (['i', 'l', '|', '!', 'ï', 'ì', '₁'].includes(lower)) {
+      return '1';
+    }
+    if (lower === 'a') {
+      return '1';
+    }
+    if (lower === 's') {
+      return '5';
+    }
+    if (lower === 'b') {
+      return '8';
+    }
+    if (lower === 'g') {
+      return '9';
+    }
+    if (lower === 'z') {
+      return '2';
+    }
+    if (['—', '–', '−', '﹘', '﹣', '‑', '-'].includes(normalized)) {
+      return '-';
+    }
+
+    return null;
   }
 
   private async persistResult(file: Express.Multer.File, result: PurchaseOrderOcrResponse): Promise<void> {
