@@ -17,17 +17,33 @@ EOF
   exit 1
 fi
 
-# Render should have already installed the packages from apt.txt before this
-# script runs. If Tesseract is still missing we fail fast with an actionable
-# message instead of attempting apt-get (which is blocked in the sandbox).
+mapfile -t APT_PACKAGES < <(grep -Ev '^(#|\s*$)' "${APT_FILE}")
+
 if ! command -v tesseract >/dev/null 2>&1; then
-  cat <<'EOF'
-ERROR: Tesseract is not available even though apt.txt is present.
-Render installs the packages listed in apt.txt during the dependency phase.
-Double-check that the service root is soft-sme-backend and redeploy so the
-platform can provision the OCR packages.
+  if ((${#APT_PACKAGES[@]} == 0)); then
+    cat <<'EOF'
+ERROR: apt.txt is present but does not list any packages to install.
+Please add the required OCR packages (e.g., tesseract-ocr) and redeploy.
 EOF
-  exit 1
+    exit 1
+  fi
+
+  echo "Tesseract not found; installing packages from apt.txt..."
+
+  export DEBIAN_FRONTEND=noninteractive
+  APT_CACHE_DIR="${TMPDIR:-/tmp}/render-apt-cache"
+  APT_STATE_DIR="${TMPDIR:-/tmp}/render-apt-state"
+  mkdir -p "${APT_CACHE_DIR}/archives/partial" \
+           "${APT_STATE_DIR}/lists/partial"
+
+  APT_OPTS=(
+    "-o" "Dir::Cache=${APT_CACHE_DIR}"
+    "-o" "Dir::State=${APT_STATE_DIR}"
+    "-o" "Dir::State::status=/var/lib/dpkg/status"
+  )
+
+  apt-get update "${APT_OPTS[@]}"
+  apt-get install -y --no-install-recommends "${APT_OPTS[@]}" "${APT_PACKAGES[@]}"
 fi
 
 npm install --include=dev
