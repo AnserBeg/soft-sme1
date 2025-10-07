@@ -37,6 +37,7 @@ import { useAuth } from '../contexts/AuthContext';
 import TaskSummaryWidget from '../components/tasks/TaskSummaryWidget';
 import { getTaskSummary } from '../services/taskService';
 import { TaskSummary } from '../types/task';
+import { ChatBoard } from '../components/ChatWindow';
 
 const sectionIcons: Record<string, React.ReactNode> = {
   'Purchasing': <AssignmentIcon sx={{ color: 'primary.main' }} />,
@@ -194,6 +195,16 @@ const LandingPage: React.FC = () => {
           onRefresh={loadTaskSummary}
           onViewTasks={() => navigate('/tasks')}
         />
+      </Box>
+
+      <Box sx={{ mb: 6 }}>
+        <Typography variant="h4" component="h2" sx={{ mb: 2, fontWeight: 600 }}>
+          Workspace Copilot
+        </Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          Get instant answers, summaries, and suggestions tailored to your current data without leaving the dashboard.
+        </Typography>
+        <ChatBoard variant="embedded" sx={{ maxWidth: '100%' }} />
       </Box>
 
       {filteredSections.map((section, sectionIndex) => (

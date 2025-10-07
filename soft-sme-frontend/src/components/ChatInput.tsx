@@ -31,28 +31,27 @@ const ChatInput: React.FC<ChatInputProps> = ({
 
   return (
     <Paper
-      elevation={2}
+      elevation={0}
       sx={{
-        p: 2,
-        borderTop: 1,
+        px: { xs: 2, sm: 3 },
+        py: 2.5,
+        borderTop: '1px solid',
         borderColor: 'divider',
-        bgcolor: 'background.paper',
-        borderRadius: 0,
-        boxShadow: '0 -8px 24px -20px rgba(15, 23, 42, 0.65)',
+        bgcolor: 'transparent',
+        backdropFilter: 'blur(6px)',
       }}
     >
       <Box
         sx={{
           display: 'flex',
-          alignItems: 'center',
+          alignItems: { xs: 'stretch', sm: 'center' },
           gap: 1.5,
-          bgcolor: 'grey.50',
-          borderRadius: '18px',
-          px: 2,
-          py: 1.25,
-          border: 1,
-          borderColor: 'grey.200',
-          boxShadow: 'inset 0 1px 2px rgba(15, 23, 42, 0.04)',
+          bgcolor: 'rgba(255, 255, 255, 0.92)',
+          borderRadius: 3,
+          px: { xs: 1.5, sm: 2.5 },
+          py: { xs: 1.25, sm: 1.5 },
+          border: '1px solid rgba(148, 163, 184, 0.25)',
+          boxShadow: '0 18px 36px -28px rgba(15, 23, 42, 0.4)',
         }}
       >
         <TextField
@@ -64,44 +63,42 @@ const ChatInput: React.FC<ChatInputProps> = ({
           onKeyDown={handleKeyPress}
           placeholder={placeholder}
           disabled={disabled}
-          variant="outlined"
-          size="small"
+          variant="standard"
+          size="medium"
           sx={{
-            '& .MuiOutlinedInput-notchedOutline': {
-              border: 'none',
-            },
-            '& .MuiOutlinedInput-root': {
-              borderRadius: '16px',
-              bgcolor: 'transparent',
-              fontSize: 14,
-              '& textarea': {
-                lineHeight: 1.6,
+            '& .MuiInputBase-root': {
+              fontSize: 15,
+              lineHeight: 1.7,
+              '&::before, &::after': {
+                display: 'none',
               },
+            },
+            '& textarea': {
+              padding: 0,
             },
           }}
         />
         <Tooltip title="Send message">
           <span>
             <IconButton
-              color="primary"
               onClick={handleSend}
               disabled={!message.trim() || disabled}
               sx={{
                 bgcolor: 'primary.main',
-                color: 'white',
-                p: 1.25,
-                borderRadius: '16px',
+                color: 'common.white',
+                p: 1.4,
+                borderRadius: '18px',
                 transition: 'transform 0.2s ease, box-shadow 0.2s ease',
                 boxShadow: (theme) =>
-                  `0 12px 25px -15px ${theme.palette.primary.main}`,
+                  `0 16px 32px -18px ${theme.palette.primary.main}`,
                 '&:hover': {
                   bgcolor: 'primary.dark',
                   transform: 'translateY(-1px)',
                   boxShadow: (theme) =>
-                    `0 14px 28px -16px ${theme.palette.primary.dark}`,
+                    `0 20px 38px -20px ${theme.palette.primary.dark}`,
                 },
                 '&.Mui-disabled': {
-                  bgcolor: 'grey.300',
+                  bgcolor: 'grey.200',
                   color: 'grey.500',
                   boxShadow: 'none',
                   transform: 'none',
