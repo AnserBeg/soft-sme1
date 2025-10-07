@@ -72,16 +72,37 @@ export class PurchaseOrderOcrService {
   constructor(uploadDir: string, options: PurchaseOrderOcrServiceOptions = {}) {
     this.uploadDir = uploadDir;
 
+    const localAptRoots = this.computeLocalAptRoots();
+    const localAptBinDirs = localAptRoots.map((root) => path.join(root, 'usr', 'bin'));
+    const localAptLibDirs = [
+      ...localAptRoots.map((root) => path.join(root, 'usr', 'lib')),
+      ...localAptRoots.map((root) => path.join(root, 'usr', 'lib', 'x86_64-linux-gnu')),
+    ];
+
     this.augmentProcessPath([
+      ...localAptBinDirs,
       '/opt/render/project/.apt/usr/bin',
       '/opt/render/project/src/.apt/usr/bin',
       '/opt/render/.apt/usr/bin',
     ]);
 
+    this.augmentLibraryPath([
+      ...localAptLibDirs,
+      '/opt/render/project/.apt/usr/lib',
+      '/opt/render/project/.apt/usr/lib/x86_64-linux-gnu',
+      '/opt/render/project/src/.apt/usr/lib',
+      '/opt/render/project/src/.apt/usr/lib/x86_64-linux-gnu',
+      '/opt/render/.apt/usr/lib',
+      '/opt/render/.apt/usr/lib/x86_64-linux-gnu',
+    ]);
+
+    this.ensureTessdataPrefix(localAptRoots);
+
     const envTesseractBinary = process.env.TESSERACT_CMD || process.env.TESSERACT_PATH;
     const preferredTesseract = options.tesseractCmd || envTesseractBinary || 'tesseract';
     const resolvedTesseract = this.resolveCommand(preferredTesseract, [
       preferredTesseract,
+      ...localAptBinDirs.map((dir) => path.join(dir, 'tesseract')),
       '/opt/render/project/.apt/usr/bin/tesseract',
       '/opt/render/project/src/.apt/usr/bin/tesseract',
       '/opt/render/.apt/usr/bin/tesseract',
@@ -102,6 +123,7 @@ export class PurchaseOrderOcrService {
     const preferredPdftoppm = options.pdftoppmCmd || process.env.PDFTOPPM_CMD || 'pdftoppm';
     const resolvedPdftoppm = this.resolveCommand(preferredPdftoppm, [
       preferredPdftoppm,
+      ...localAptBinDirs.map((dir) => path.join(dir, 'pdftoppm')),
       '/opt/render/project/.apt/usr/bin/pdftoppm',
       '/opt/render/project/src/.apt/usr/bin/pdftoppm',
       '/opt/render/.apt/usr/bin/pdftoppm',
@@ -640,6 +662,46 @@ export class PurchaseOrderOcrService {
     process.env.PATH = segments.join(path.delimiter);
   }
 
+  private augmentLibraryPath(candidates: string[]): void {
+    if (process.platform === 'win32') {
+      return;
+    }
+
+    const currentLdPath = process.env.LD_LIBRARY_PATH || '';
+    const delimiter = ':';
+    const segments = currentLdPath
+      .split(delimiter)
+      .map((segment) => segment.trim())
+      .filter((segment) => segment.length > 0);
+
+    for (const candidate of candidates) {
+      if (!candidate) {
+        continue;
+      }
+
+      let stats: fs.Stats | null = null;
+      try {
+        stats = fs.statSync(candidate);
+      } catch {
+        continue;
+      }
+
+      if (!stats.isDirectory()) {
+        continue;
+      }
+
+      if (segments.includes(candidate)) {
+        continue;
+      }
+
+      segments.unshift(candidate);
+    }
+
+    if (segments.length > 0) {
+      process.env.LD_LIBRARY_PATH = segments.join(delimiter);
+    }
+  }
+
   private normalizeCommandCandidates(preferred: string, fallbacks: string[]): string[] {
     const seen = new Set<string>();
     const candidates: string[] = [];
@@ -697,5 +759,61 @@ export class PurchaseOrderOcrService {
     }
 
     return null;
+  }
+
+  private computeLocalAptRoots(): string[] {
+    const candidates: Array<string | null> = [
+      path.resolve(__dirname, '..', '..', '.apt'),
+      path.resolve(__dirname, '..', '..', '..', '.apt'),
+      path.resolve(process.cwd(), '.apt'),
+      process.env.RENDER_APT_DIR ? path.resolve(process.env.RENDER_APT_DIR) : null,
+    ];
+
+    const seen = new Set<string>();
+    const resolved: string[] = [];
+    for (const candidate of candidates) {
+      if (!candidate) {
+        continue;
+      }
+
+      const normalized = path.normalize(candidate);
+      if (seen.has(normalized)) {
+        continue;
+      }
+
+      seen.add(normalized);
+      resolved.push(normalized);
+    }
+
+    return resolved;
+  }
+
+  private ensureTessdataPrefix(localAptRoots: string[]): void {
+    const existing = process.env.TESSDATA_PREFIX;
+    if (existing) {
+      try {
+        if (fs.statSync(existing).isDirectory()) {
+          return;
+        }
+      } catch {
+        // Existing value is unusable; fall through to discover a local path.
+      }
+    }
+
+    const candidateDirs = [
+      ...localAptRoots.map((root) => path.join(root, 'usr', 'share', 'tesseract-ocr', '4.00', 'tessdata')),
+      ...localAptRoots.map((root) => path.join(root, 'usr', 'share', 'tesseract-ocr', '5', 'tessdata')),
+    ];
+
+    for (const candidate of candidateDirs) {
+      try {
+        if (fs.statSync(candidate).isDirectory()) {
+          process.env.TESSDATA_PREFIX = candidate;
+          return;
+        }
+      } catch {
+        // Ignore inaccessible paths.
+      }
+    }
   }
 }
