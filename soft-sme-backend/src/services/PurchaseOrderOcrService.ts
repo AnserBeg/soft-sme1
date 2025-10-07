@@ -71,8 +71,42 @@ export class PurchaseOrderOcrService {
 
   constructor(uploadDir: string, options: PurchaseOrderOcrServiceOptions = {}) {
     this.uploadDir = uploadDir;
-    this.tesseractCmd = options.tesseractCmd || process.env.TESSERACT_CMD || 'tesseract';
-    this.pdftoppmCmd = options.pdftoppmCmd || process.env.PDFTOPPM_CMD || 'pdftoppm';
+
+    const preferredTesseract = options.tesseractCmd || process.env.TESSERACT_CMD || 'tesseract';
+    const resolvedTesseract = this.resolveCommand(preferredTesseract, [
+      preferredTesseract,
+      '/opt/render/project/.apt/usr/bin/tesseract',
+      '/usr/bin/tesseract',
+      '/usr/local/bin/tesseract',
+    ]);
+
+    if (resolvedTesseract) {
+      this.tesseractCmd = resolvedTesseract;
+    } else {
+      this.tesseractCmd = preferredTesseract;
+      console.warn(
+        'PurchaseOrderOcrService: Tesseract command not found in PATH or fallback locations. '
+          + 'OCR requests will fail until it is installed.'
+      );
+    }
+
+    const preferredPdftoppm = options.pdftoppmCmd || process.env.PDFTOPPM_CMD || 'pdftoppm';
+    const resolvedPdftoppm = this.resolveCommand(preferredPdftoppm, [
+      preferredPdftoppm,
+      '/opt/render/project/.apt/usr/bin/pdftoppm',
+      '/usr/bin/pdftoppm',
+      '/usr/local/bin/pdftoppm',
+    ]);
+
+    if (resolvedPdftoppm) {
+      this.pdftoppmCmd = resolvedPdftoppm;
+    } else {
+      this.pdftoppmCmd = preferredPdftoppm;
+      console.warn(
+        'PurchaseOrderOcrService: pdftoppm command not found in PATH or fallback locations. '
+          + 'PDF OCR conversion will be unavailable until it is installed.'
+      );
+    }
   }
 
   async processDocument(file: Express.Multer.File): Promise<PurchaseOrderOcrResponse> {
@@ -189,7 +223,7 @@ export class PurchaseOrderOcrService {
     } catch (error: any) {
       if (error?.code === 'ENOENT') {
         throw new Error(
-          'Tesseract binary not found. Install tesseract-ocr (apk add tesseract-ocr tesseract-ocr-data-eng or apt-get install tesseract-ocr tesseract-ocr-eng) on the server and ensure it is available in PATH.'
+          `Tesseract binary not found at "${this.tesseractCmd}". Install tesseract-ocr (apk add tesseract-ocr tesseract-ocr-data-eng or apt-get install tesseract-ocr tesseract-ocr-eng) on the server and ensure it is available in PATH.`
         );
       }
       if (error?.stderr) {
@@ -547,5 +581,80 @@ export class PurchaseOrderOcrService {
       fs.promises.writeFile(metadataPath, JSON.stringify(metadata, null, 2), 'utf-8'),
       fs.promises.writeFile(textPath, result.ocr.rawText, 'utf-8'),
     ]);
+  }
+
+  private resolveCommand(preferred: string, fallbacks: string[]): string | null {
+    const candidates = this.normalizeCommandCandidates(preferred, fallbacks);
+
+    for (const candidate of candidates) {
+      const resolved = this.isExplicitPath(candidate)
+        ? this.checkExplicitPath(candidate)
+        : this.findInSystemPath(candidate);
+
+      if (resolved) {
+        return resolved;
+      }
+    }
+
+    return null;
+  }
+
+  private normalizeCommandCandidates(preferred: string, fallbacks: string[]): string[] {
+    const seen = new Set<string>();
+    const candidates: string[] = [];
+    for (const candidate of [preferred, ...fallbacks]) {
+      if (!candidate) {
+        continue;
+      }
+      const key = candidate.trim();
+      if (key.length === 0 || seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      candidates.push(key);
+    }
+    return candidates;
+  }
+
+  private isExplicitPath(command: string): boolean {
+    return command.includes('/') || command.includes('\\');
+  }
+
+  private checkExplicitPath(commandPath: string): string | null {
+    try {
+      const stats = fs.statSync(commandPath);
+      return stats.isFile() ? commandPath : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private findInSystemPath(command: string): string | null {
+    const envPath = process.env.PATH || '';
+    const pathSegments = envPath.split(path.delimiter).filter((segment) => segment && segment.trim().length > 0);
+
+    const extensions =
+      process.platform === 'win32'
+        ? (process.env.PATHEXT || '')
+            .split(';')
+            .map((ext) => ext.trim())
+            .filter((ext) => ext.length > 0)
+        : [''];
+
+    for (const segment of pathSegments) {
+      for (const ext of extensions) {
+        const candidatePath = path.join(segment, `${command}${ext}`);
+        try {
+          const stats = fs.statSync(candidatePath);
+          if (stats.isFile()) {
+            return candidatePath;
+          }
+        } catch {
+          // Ignore inaccessible or missing files.
+        }
+      }
+    }
+
+    return null;
   }
 }
