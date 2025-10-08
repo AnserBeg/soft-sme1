@@ -27,7 +27,47 @@ class AIAssistantService {
 
   constructor() {
     this.isLocalMode = process.env.AI_AGENT_MODE === 'local';
-    this.aiEndpoint = process.env.AI_AGENT_ENDPOINT || 'http://localhost:15000';
+    this.aiEndpoint = this.resolveAgentEndpoint();
+
+    console.log(
+      `[AI Assistant] Running in ${this.isLocalMode ? 'local' : 'remote'} mode. ` +
+      `Using AI agent endpoint: ${this.aiEndpoint}`
+    );
+  }
+
+  private resolveAgentEndpoint(): string {
+    const configuredEndpoint = process.env.AI_AGENT_ENDPOINT?.trim();
+    if (configuredEndpoint) {
+      return this.normalizeEndpoint(configuredEndpoint);
+    }
+
+    const host = process.env.AI_AGENT_HOST?.trim();
+    const port = process.env.AI_AGENT_PORT?.trim();
+    const protocolEnv = process.env.AI_AGENT_PROTOCOL?.trim();
+
+    if (host) {
+      const hasProtocol = host.startsWith('http://') || host.startsWith('https://');
+      const protocol = protocolEnv || (hasProtocol ? undefined : port === '443' ? 'https' : 'http');
+
+      if (hasProtocol) {
+        return this.normalizeEndpoint(host);
+      }
+
+      const portSegment = port && port.length > 0 ? `:${port}` : '';
+      const base = `${protocol || 'http'}://${host}${portSegment}`;
+      return this.normalizeEndpoint(base);
+    }
+
+    return 'http://localhost:15000';
+  }
+
+  private normalizeEndpoint(endpoint: string): string {
+    if (!endpoint) {
+      return 'http://localhost:15000';
+    }
+
+    // Remove trailing slash to avoid double slashes when composing URLs
+    return endpoint.replace(/\/$/, '');
   }
 
   /**
