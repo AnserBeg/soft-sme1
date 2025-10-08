@@ -697,74 +697,66 @@ export class PurchaseOrderAiReviewService {
     responseSchema: Record<string, unknown>;
     maxOutputTokens: number;
   } {
-    const baseString = (options: { nullable?: boolean; maxLength?: number } = {}) => {
-      const typeValue: string | string[] = options.nullable ? ['string', 'null'] : 'string';
-      const schema: Record<string, unknown> = { type: typeValue };
-      if (options.maxLength) {
-        schema.maxLength = options.maxLength;
+    const baseString = (options: { nullable?: boolean } = {}) => {
+      const schema: Record<string, unknown> = { type: 'STRING' };
+      if (options.nullable) {
+        schema.nullable = true;
       }
       return schema;
     };
 
-    const numberSchema = { type: ['number', 'null'] };
+    const numberSchema: Record<string, unknown> = { type: 'NUMBER', nullable: true };
 
-    const lineItemSchema = {
-      type: 'object',
-      additionalProperties: false,
+    const lineItemSchema: Record<string, unknown> = {
+      type: 'OBJECT',
       properties: {
-        rawLine: baseString({ nullable: false, maxLength: 512 }),
-        partNumber: baseString({ nullable: true, maxLength: 128 }),
-        description: baseString({ nullable: false, maxLength: 512 }),
+        rawLine: baseString(),
+        partNumber: baseString({ nullable: true }),
+        description: baseString(),
         quantity: numberSchema,
-        unit: baseString({ nullable: true, maxLength: 64 }),
+        unit: baseString({ nullable: true }),
         unitCost: numberSchema,
         totalCost: numberSchema,
       },
       required: ['rawLine', 'description'],
     };
 
-    const normalizedSchema = {
-      type: 'object',
-      additionalProperties: false,
+    const normalizedSchema: Record<string, unknown> = {
+      type: 'OBJECT',
       properties: {
-        vendorName: baseString({ nullable: true, maxLength: 256 }),
-        vendorAddress: baseString({ nullable: true, maxLength: 512 }),
-        billNumber: baseString({ nullable: true, maxLength: 128 }),
-        billDate: baseString({ nullable: true, maxLength: 64 }),
+        vendorName: baseString({ nullable: true }),
+        vendorAddress: baseString({ nullable: true }),
+        billNumber: baseString({ nullable: true }),
+        billDate: baseString({ nullable: true }),
         gstRate: numberSchema,
-        currency: baseString({ nullable: true, maxLength: 16 }),
+        currency: baseString({ nullable: true }),
         documentType: {
-          type: 'string',
+          type: 'STRING',
           enum: ['invoice', 'packing_slip', 'receipt', 'unknown'],
         },
         detectedKeywords: {
-          type: 'array',
-          items: baseString({ nullable: false, maxLength: 64 }),
-          maxItems: 20,
+          type: 'ARRAY',
+          items: baseString(),
         },
         lineItems: {
-          type: 'array',
+          type: 'ARRAY',
           items: lineItemSchema,
-          maxItems: mode === 'headers_only' ? 0 : MAX_LINE_ITEMS,
         },
       },
       required: ['documentType', 'detectedKeywords', 'lineItems'],
     };
 
-    const responseSchema = {
-      type: 'object',
-      additionalProperties: false,
+    const responseSchema: Record<string, unknown> = {
+      type: 'OBJECT',
       properties: {
         normalized: normalizedSchema,
         warnings: {
-          type: 'array',
-          items: baseString({ nullable: false, maxLength: 200 }),
-          maxItems: 50,
+          type: 'ARRAY',
+          items: baseString(),
         },
         notes: {
-          type: 'array',
-          items: baseString({ nullable: false, maxLength: 200 }),
-          maxItems: 50,
+          type: 'ARRAY',
+          items: baseString(),
         },
       },
       required: ['normalized', 'warnings', 'notes'],
