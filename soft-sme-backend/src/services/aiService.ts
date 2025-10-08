@@ -78,22 +78,47 @@ export class AIService {
       }
 
       const data = await response.json();
-      
-      // Extract the response text
-      if (data.candidates && data.candidates[0] && data.candidates[0].content) {
-        const responseText = data.candidates[0].content.parts[0].text;
-        
-        console.log(`[AI] Gemini response to user ${userId || 'unknown'}: "${responseText.substring(0, 50)}${responseText.length > 50 ? '...' : ''}"`);
-        
+
+      const responseText = this.extractCandidateText(data);
+
+      if (responseText) {
+        console.log(
+          `[AI] Gemini response to user ${userId || 'unknown'}: "${responseText.substring(0, 50)}${responseText.length > 50 ? '...' : ''}"`
+        );
+
         return responseText.trim();
-      } else {
-        console.error('[AI] Invalid response format:', data);
-        throw new Error('Invalid response format from Gemini API');
       }
+
+      const fallbackMessage = 'I\'m sorry, but I couldn\'t generate a response right now. Please try again in a moment.';
+      console.error('[AI] Invalid response format received from Gemini API:', data);
+      return fallbackMessage;
 
     } catch (error) {
       console.error('[AI] Error calling Gemini API:', error);
       throw error; // Re-throw the error to be handled by the route
     }
   }
-} 
+
+  private static extractCandidateText(data: any): string | undefined {
+    if (!data || !Array.isArray(data.candidates)) {
+      return undefined;
+    }
+
+    for (const candidate of data.candidates) {
+      const parts = candidate?.content?.parts;
+      if (!Array.isArray(parts)) {
+        continue;
+      }
+
+      const textParts = parts
+        .map((part: any) => (typeof part?.text === 'string' ? part.text : ''))
+        .filter((text: string) => text.trim().length > 0);
+
+      if (textParts.length > 0) {
+        return textParts.join('\n').trim();
+      }
+    }
+
+    return undefined;
+  }
+}
