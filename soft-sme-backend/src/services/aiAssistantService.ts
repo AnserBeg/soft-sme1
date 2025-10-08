@@ -1,7 +1,8 @@
 import axios from 'axios';
-import { spawn, ChildProcess } from 'child_process';
+import { spawn, spawnSync, ChildProcess } from 'child_process';
 import path from 'path';
 import fs from 'fs';
+import crypto from 'crypto';
 import { AIService } from './aiService';
 
 interface AIResponse {
@@ -27,24 +28,31 @@ class AIAssistantService {
   private isLocalMode: boolean;
 
   constructor() {
-    this.isLocalMode = process.env.AI_AGENT_MODE === 'local';
-    const resolvedEndpoint = this.resolveAgentEndpoint();
-    this.aiEndpoint = resolvedEndpoint;
+    const configuredMode = process.env.AI_AGENT_MODE?.trim().toLowerCase();
+    const desiredMode: 'local' | 'remote' = configuredMode === 'remote' ? 'remote' : 'local';
 
-    if (!this.isLocalMode && this.isLocalEndpoint(resolvedEndpoint)) {
+    const resolvedEndpoint = this.resolveAgentEndpoint(desiredMode);
+    const endpointIsLocal = this.isLocalEndpoint(resolvedEndpoint);
+
+    if (desiredMode === 'remote' && endpointIsLocal) {
       console.warn(
-        `[AI Assistant] Remote mode is configured but the endpoint resolves to a local address (${resolvedEndpoint}). ` +
-          'Requests will fall back to the direct Gemini integration if the local agent is unavailable.'
+        `[AI Assistant] Remote mode requested but the endpoint resolves to a local address (${resolvedEndpoint}). ` +
+          'Automatically starting the embedded AI agent instead of falling back to Gemini.'
       );
     }
 
+    this.isLocalMode = desiredMode === 'local' || endpointIsLocal;
+    this.aiEndpoint = resolvedEndpoint;
+
+    const modeNote = desiredMode === 'remote' && this.isLocalMode ? ' (auto-local mode)' : '';
+
     console.log(
-      `[AI Assistant] Running in ${this.isLocalMode ? 'local' : 'remote'} mode. ` +
+      `[AI Assistant] Running in ${this.isLocalMode ? 'local' : 'remote'} mode${modeNote}. ` +
       `Using AI agent endpoint: ${this.aiEndpoint}`
     );
   }
 
-  private resolveAgentEndpoint(): string {
+  private resolveAgentEndpoint(desiredMode: 'local' | 'remote'): string {
     const configuredEndpoint = process.env.AI_AGENT_ENDPOINT?.trim();
     if (configuredEndpoint) {
       return this.normalizeEndpoint(configuredEndpoint);
@@ -67,7 +75,7 @@ class AIAssistantService {
       return this.normalizeEndpoint(base);
     }
 
-    if (this.isLocalMode) {
+    if (desiredMode === 'local') {
       return 'http://localhost:15000';
     }
 
@@ -129,7 +137,10 @@ class AIAssistantService {
   private async startLocalAIAgent(): Promise<void> {
     try {
       const aiAgentPath = path.join(__dirname, '..', '..', 'ai_agent');
-      const pythonPath = process.env.PYTHON_PATH || 'python';
+      const pythonPath = process.env.PYTHON_PATH || 'python3';
+      const pythonExecutable = this.preparePythonEnvironment(pythonPath, aiAgentPath);
+
+      const defaultHost = process.env.AI_AGENT_HOST?.trim() || (process.env.RENDER ? '0.0.0.0' : '127.0.0.1');
       
       // Check if AI agent directory exists
       if (!fs.existsSync(aiAgentPath)) {
@@ -138,13 +149,14 @@ class AIAssistantService {
       }
 
       // Start Python AI agent
-      this.aiProcess = spawn(pythonPath, ['main.py'], {
+      this.aiProcess = spawn(pythonExecutable, ['main.py'], {
         cwd: aiAgentPath,
         stdio: ['pipe', 'pipe', 'pipe'],
         env: {
           ...process.env,
           PYTHONPATH: aiAgentPath,
-          AI_AGENT_PORT: process.env.AI_AGENT_PORT || '15000'
+          AI_AGENT_PORT: process.env.AI_AGENT_PORT || '15000',
+          AI_AGENT_HOST: defaultHost
         }
       });
 
@@ -172,6 +184,73 @@ class AIAssistantService {
     } catch (error) {
       console.error('Failed to start AI agent:', error);
       throw error;
+    }
+  }
+
+  private preparePythonEnvironment(pythonPath: string, aiAgentPath: string): string {
+    const venvPath = path.join(aiAgentPath, '.venv');
+    const requirementsPath = path.join(aiAgentPath, 'requirements.txt');
+    const binDir = process.platform === 'win32' ? 'Scripts' : 'bin';
+    const pythonExecutable = path.join(
+      venvPath,
+      binDir,
+      process.platform === 'win32' ? 'python.exe' : 'python'
+    );
+    const pipExecutable = path.join(
+      venvPath,
+      binDir,
+      process.platform === 'win32' ? 'pip.exe' : 'pip'
+    );
+    const requirementsHash = this.hashFile(requirementsPath);
+    const hashFilePath = path.join(venvPath, '.requirements-hash');
+
+    const needsSetup =
+      !fs.existsSync(pythonExecutable) ||
+      !fs.existsSync(hashFilePath) ||
+      fs.readFileSync(hashFilePath, 'utf8').trim() !== requirementsHash;
+
+    if (needsSetup) {
+      console.log('[AI Assistant] Preparing Python environment for embedded AI agent');
+
+      this.runCommand(pythonPath, ['-m', 'venv', venvPath], aiAgentPath);
+
+      if (!fs.existsSync(pipExecutable)) {
+        throw new Error('Failed to initialize Python virtual environment for AI agent');
+      }
+
+      this.runCommand(pipExecutable, ['install', '--upgrade', 'pip', 'setuptools', 'wheel'], aiAgentPath);
+
+      if (fs.existsSync(requirementsPath)) {
+        this.runCommand(pipExecutable, ['install', '-r', requirementsPath], aiAgentPath);
+      }
+
+      fs.writeFileSync(hashFilePath, requirementsHash, 'utf8');
+    }
+
+    return pythonExecutable;
+  }
+
+  private hashFile(filePath: string): string {
+    if (!filePath || !fs.existsSync(filePath)) {
+      return '';
+    }
+
+    const fileBuffer = fs.readFileSync(filePath);
+    const hash = crypto.createHash('sha256');
+    hash.update(fileBuffer);
+    return hash.digest('hex');
+  }
+
+  private runCommand(command: string, args: string[], cwd: string): void {
+    console.log(`[AI Assistant] Running command: ${command} ${args.join(' ')}`);
+    const result = spawnSync(command, args, { cwd, stdio: 'inherit' });
+
+    if (result.error) {
+      throw result.error;
+    }
+
+    if (typeof result.status === 'number' && result.status !== 0) {
+      throw new Error(`Command failed: ${command} ${args.join(' ')}`);
     }
   }
 
