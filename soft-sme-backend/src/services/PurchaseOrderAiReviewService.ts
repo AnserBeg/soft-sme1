@@ -14,6 +14,8 @@ interface PurchaseOrderAiStructuredResponse {
   notes: string[];
 }
 
+type ReviewMode = 'full' | 'headers_only';
+
 const DEFAULT_MODEL = process.env.AI_MODEL || 'gemini-2.5-flash';
 const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${DEFAULT_MODEL}:generateContent`;
 
@@ -37,10 +39,14 @@ const parseMaxOutputTokens = (): number => {
 
 const MAX_OUTPUT_TOKENS = parseMaxOutputTokens();
 
+const MAX_LINE_ITEMS = 120;
+const HEADER_ONLY_MAX_OUTPUT_TOKENS = 4096;
+
 const SYSTEM_INSTRUCTIONS = `You are helping an inventory specialist capture purchase order details.
 Extract structured data from raw invoice or packing slip text.
 Keep the response compact: limit detectedKeywords to unique, relevant terms (maximum 20),
-limit warnings and notes to 200 characters each, and truncate rawLine or description values that exceed 512 characters with an ellipsis.
+limit warnings and notes to 200 characters each, truncate rawLine or description values that exceed 512 characters with an ellipsis,
+and include at most ${MAX_LINE_ITEMS} line items (prioritize the most complete entries and mention any omissions in warnings).
 Return a JSON object that exactly matches the following schema:
 {
   "normalized": {
@@ -94,24 +100,26 @@ export class PurchaseOrderAiReviewService {
     let maxTokens = MAX_OUTPUT_TOKENS;
     let useConcisePrompt = false;
 
-    for (let attempt = 0; attempt < 3; attempt += 1) {
+    let mode: ReviewMode = 'full';
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
       const { result, errorSummary, sawMaxTokens, shouldRetry } = await this.requestAndParse({
         apiKey,
         rawDocument: trimmed,
         maxTokens,
         useConcisePrompt,
+        mode,
         options,
       });
 
       if (result) {
+        if (mode === 'headers_only') {
+          this.ensureHeaderOnlyFallbackNote(result);
+        }
         return result;
       }
 
       attemptErrors.push(`[maxTokens=${maxTokens}${useConcisePrompt ? ', concise' : ''}] ${errorSummary}`);
-
-      if (!shouldRetry) {
-        break;
-      }
 
       if (sawMaxTokens && maxTokens < ABSOLUTE_MAX_OUTPUT_TOKENS) {
         const nextTokens = Math.min(ABSOLUTE_MAX_OUTPUT_TOKENS, Math.max(maxTokens + 1024, maxTokens * 2));
@@ -126,7 +134,15 @@ export class PurchaseOrderAiReviewService {
         continue;
       }
 
-      break;
+      if (mode === 'full' && sawMaxTokens) {
+        mode = 'headers_only';
+        attemptErrors.push('Switching to header-only fallback after repeated MAX_TOKENS responses.');
+        continue;
+      }
+
+      if (!shouldRetry) {
+        break;
+      }
     }
 
     throw new Error(`AI response could not be parsed after retries. Attempts: ${attemptErrors.join('; ')}`);
@@ -166,21 +182,36 @@ export class PurchaseOrderAiReviewService {
     });
   }
 
-  private static buildPrompt(rawDocument: string, concise: boolean): string {
+  private static buildPrompt(rawDocument: string, concise: boolean, mode: ReviewMode): string {
+    const fallbackInstructions =
+      mode === 'headers_only'
+        ? [
+            'Fallback mode engaged: capture header level metadata only.',
+            'Set normalized.lineItems to an empty array.',
+            'Add a note explaining that line items were omitted due to response size limits.',
+          ].join(' ')
+        : '';
+
     if (!concise) {
-      return `${SYSTEM_INSTRUCTIONS}\n\nRAW DOCUMENT:\n${rawDocument}`;
+      return `${SYSTEM_INSTRUCTIONS}${fallbackInstructions ? `\n${fallbackInstructions}` : ''}\n\nRAW DOCUMENT:\n${rawDocument}`;
     }
 
     const conciseInstructions = [
       'If earlier attempts were truncated, respond with shorter field values while preserving accuracy.',
       'Avoid repeating boilerplate text.',
       'Use the minimum characters required to convey each value.',
-    ].join(' ');
+    ];
 
-    return `${SYSTEM_INSTRUCTIONS}\n${conciseInstructions}\n\nRAW DOCUMENT:\n${rawDocument}`;
+    if (fallbackInstructions) {
+      conciseInstructions.push(fallbackInstructions);
+    }
+
+    return `${SYSTEM_INSTRUCTIONS}\n${conciseInstructions.join(' ')}\n\nRAW DOCUMENT:\n${rawDocument}`;
   }
 
-  private static buildRequestBody(prompt: string, maxTokens: number) {
+  private static buildRequestBody(prompt: string, maxTokens: number, mode: ReviewMode) {
+    const { responseSchema, maxOutputTokens } = this.buildSchemaConfig(maxTokens, mode);
+
     return {
       contents: [
         {
@@ -195,8 +226,9 @@ export class PurchaseOrderAiReviewService {
         temperature: 0.2,
         topK: 32,
         topP: 0.9,
-        maxOutputTokens: maxTokens,
+        maxOutputTokens,
         responseMimeType: 'application/json',
+        responseSchema,
       },
       safetySettings: [
         {
@@ -224,12 +256,14 @@ export class PurchaseOrderAiReviewService {
     rawDocument,
     maxTokens,
     useConcisePrompt,
+    mode,
     options,
   }: {
     apiKey: string;
     rawDocument: string;
     maxTokens: number;
     useConcisePrompt: boolean;
+    mode: ReviewMode;
     options: PurchaseOrderAiReviewOptions;
   }): Promise<{
     result: PurchaseOrderAiStructuredResponse | null;
@@ -237,8 +271,8 @@ export class PurchaseOrderAiReviewService {
     sawMaxTokens: boolean;
     shouldRetry: boolean;
   }> {
-    const prompt = this.buildPrompt(rawDocument, useConcisePrompt);
-    const requestBody = this.buildRequestBody(prompt, maxTokens);
+    const prompt = this.buildPrompt(rawDocument, useConcisePrompt, mode);
+    const requestBody = this.buildRequestBody(prompt, maxTokens, mode);
 
     const response = await fetch(`${GEMINI_API_URL}?key=${apiKey}`, {
       method: 'POST',
@@ -266,11 +300,11 @@ export class PurchaseOrderAiReviewService {
         result: null,
         errorSummary: 'no candidates returned',
         sawMaxTokens: false,
-        shouldRetry: true,
+        shouldRetry: mode === 'full',
       };
     }
 
-    const { structured, errors, sawMaxTokens } = this.parseCandidates(candidates, options);
+    const { structured, errors, sawMaxTokens } = this.parseCandidates(candidates, options, mode);
 
     if (structured) {
       return { result: structured, errorSummary: '', sawMaxTokens, shouldRetry: false };
@@ -280,13 +314,14 @@ export class PurchaseOrderAiReviewService {
       result: null,
       errorSummary: errors.length > 0 ? errors.join('; ') : 'candidates could not be parsed',
       sawMaxTokens,
-      shouldRetry: sawMaxTokens,
+      shouldRetry: sawMaxTokens && mode === 'full',
     };
   }
 
   private static parseCandidates(
     candidates: any[],
     options: PurchaseOrderAiReviewOptions,
+    mode: ReviewMode,
   ): {
     structured: PurchaseOrderAiStructuredResponse | null;
     errors: string[];
@@ -310,7 +345,7 @@ export class PurchaseOrderAiReviewService {
       }
 
       try {
-        const structured = this.parseStructuredResponse(structuredContent, options);
+        const structured = this.parseStructuredResponse(structuredContent, options, mode);
         return { structured, errors, sawMaxTokens };
       } catch (error) {
         const message = error instanceof Error ? error.message : 'unknown error';
@@ -369,12 +404,17 @@ export class PurchaseOrderAiReviewService {
   private static parseStructuredResponse(
     responseContent: string | Record<string, unknown>,
     _options: PurchaseOrderAiReviewOptions,
+    mode: ReviewMode,
   ): PurchaseOrderAiStructuredResponse {
     const extractedJson = this.extractJson(responseContent);
 
     const normalized = this.buildNormalizedData(extractedJson?.normalized ?? {});
     const warnings = this.buildStringArray(extractedJson?.warnings);
     const notes = this.buildStringArray(extractedJson?.notes);
+
+    if (mode === 'headers_only') {
+      normalized.lineItems = [];
+    }
 
     this.ensureDefaultWarnings(normalized, warnings, notes);
 
@@ -531,7 +571,7 @@ export class PurchaseOrderAiReviewService {
       });
     }
 
-    return items;
+    return items.slice(0, MAX_LINE_ITEMS);
   }
 
   private static toNullableString(value: any): string | null {
@@ -615,6 +655,99 @@ export class PurchaseOrderAiReviewService {
     if (normalized.lineItems.length === 0) {
       pushUnique(warnings, 'No line items were detected in the document.');
     }
+  }
+
+  private static ensureHeaderOnlyFallbackNote(result: PurchaseOrderAiStructuredResponse): void {
+    const message = 'Line items were omitted due to response size limits. Please enter them manually.';
+    const pushUnique = (collection: string[], value: string) => {
+      if (!collection.includes(value)) {
+        collection.push(value);
+      }
+    };
+
+    pushUnique(result.notes, message);
+  }
+
+  private static buildSchemaConfig(maxTokens: number, mode: ReviewMode): {
+    responseSchema: Record<string, unknown>;
+    maxOutputTokens: number;
+  } {
+    const baseString = (options: { nullable?: boolean; maxLength?: number } = {}) => {
+      const typeValue: string | string[] = options.nullable ? ['string', 'null'] : 'string';
+      const schema: Record<string, unknown> = { type: typeValue };
+      if (options.maxLength) {
+        schema.maxLength = options.maxLength;
+      }
+      return schema;
+    };
+
+    const numberSchema = { type: ['number', 'null'] };
+
+    const lineItemSchema = {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        rawLine: baseString({ nullable: false, maxLength: 512 }),
+        partNumber: baseString({ nullable: true, maxLength: 128 }),
+        description: baseString({ nullable: false, maxLength: 512 }),
+        quantity: numberSchema,
+        unit: baseString({ nullable: true, maxLength: 64 }),
+        unitCost: numberSchema,
+        totalCost: numberSchema,
+      },
+      required: ['rawLine', 'description'],
+    };
+
+    const normalizedSchema = {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        vendorName: baseString({ nullable: true, maxLength: 256 }),
+        vendorAddress: baseString({ nullable: true, maxLength: 512 }),
+        billNumber: baseString({ nullable: true, maxLength: 128 }),
+        billDate: baseString({ nullable: true, maxLength: 64 }),
+        gstRate: numberSchema,
+        currency: baseString({ nullable: true, maxLength: 16 }),
+        documentType: {
+          type: 'string',
+          enum: ['invoice', 'packing_slip', 'receipt', 'unknown'],
+        },
+        detectedKeywords: {
+          type: 'array',
+          items: baseString({ nullable: false, maxLength: 64 }),
+          maxItems: 20,
+        },
+        lineItems: {
+          type: 'array',
+          items: lineItemSchema,
+          maxItems: mode === 'headers_only' ? 0 : MAX_LINE_ITEMS,
+        },
+      },
+      required: ['documentType', 'detectedKeywords', 'lineItems'],
+    };
+
+    const responseSchema = {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        normalized: normalizedSchema,
+        warnings: {
+          type: 'array',
+          items: baseString({ nullable: false, maxLength: 200 }),
+          maxItems: 50,
+        },
+        notes: {
+          type: 'array',
+          items: baseString({ nullable: false, maxLength: 200 }),
+          maxItems: 50,
+        },
+      },
+      required: ['normalized', 'warnings', 'notes'],
+    };
+
+    const maxOutputTokens = mode === 'headers_only' ? Math.min(maxTokens, HEADER_ONLY_MAX_OUTPUT_TOKENS) : maxTokens;
+
+    return { responseSchema, maxOutputTokens };
   }
 }
 
