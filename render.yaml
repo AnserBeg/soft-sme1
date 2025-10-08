@@ -3,6 +3,10 @@ services:
     name: soft-sme-backend
     runtime: docker
     plan: starter
+    disk:
+      name: ai-cache
+      mountPath: /var/lib/render/ai-cache
+      sizeGB: 20
     envVars:
       - key: PORT
         value: "10000"
@@ -32,6 +36,18 @@ services:
         generateValue: true
       - key: CORS_ORIGIN
         value: "*"
+      - key: TRANSFORMERS_CACHE
+        value: "/var/lib/render/ai-cache/huggingface"
+      - key: HUGGINGFACE_HUB_CACHE
+        value: "/var/lib/render/ai-cache/huggingface"
+      - key: HF_HOME
+        value: "/var/lib/render/ai-cache/huggingface"
+      - key: XDG_CACHE_HOME
+        value: "/var/lib/render/ai-cache"
+      - key: PIP_CACHE_DIR
+        value: "/var/lib/render/ai-cache/pip"
+      - key: UV_CACHE_DIR
+        value: "/var/lib/render/ai-cache/uv"
 
 databases:
   - name: soft-sme-db

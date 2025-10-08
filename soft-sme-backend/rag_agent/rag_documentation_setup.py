@@ -16,9 +16,27 @@ Requirements:
 import os
 import json
 import hashlib
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 from pathlib import Path
 import logging
+
+
+def _ensure_hf_cache_dirs() -> None:
+    """Ensure any configured Hugging Face cache directories exist."""
+    cache_env_vars = (
+        "TRANSFORMERS_CACHE",
+        "HUGGINGFACE_HUB_CACHE",
+        "HF_HOME",
+    )
+
+    for env_var in cache_env_vars:
+        cache_dir = os.getenv(env_var)
+        if cache_dir:
+            os.makedirs(cache_dir, exist_ok=True)
+
+    xdg_cache_home = os.getenv("XDG_CACHE_HOME")
+    if xdg_cache_home:
+        os.makedirs(os.path.join(xdg_cache_home, "huggingface"), exist_ok=True)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -150,6 +168,7 @@ class DocumentationVectorDB:
             from sentence_transformers import SentenceTransformer
             
             if self.embedding_model is None:
+                _ensure_hf_cache_dirs()
                 self.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
             
             embeddings = self.embedding_model.encode(texts, convert_to_tensor=False)
