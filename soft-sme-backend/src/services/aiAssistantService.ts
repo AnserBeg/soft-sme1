@@ -2,6 +2,7 @@ import axios from 'axios';
 import { spawn, ChildProcess } from 'child_process';
 import path from 'path';
 import fs from 'fs';
+import { AIService } from './aiService';
 
 interface AIResponse {
   response: string;
@@ -27,7 +28,15 @@ class AIAssistantService {
 
   constructor() {
     this.isLocalMode = process.env.AI_AGENT_MODE === 'local';
-    this.aiEndpoint = this.resolveAgentEndpoint();
+    const resolvedEndpoint = this.resolveAgentEndpoint();
+    this.aiEndpoint = resolvedEndpoint;
+
+    if (!this.isLocalMode && this.isLocalEndpoint(resolvedEndpoint)) {
+      console.warn(
+        `[AI Assistant] Remote mode is configured but the endpoint resolves to a local address (${resolvedEndpoint}). ` +
+          'Requests will fall back to the direct Gemini integration if the local agent is unavailable.'
+      );
+    }
 
     console.log(
       `[AI Assistant] Running in ${this.isLocalMode ? 'local' : 'remote'} mode. ` +
@@ -58,6 +67,13 @@ class AIAssistantService {
       return this.normalizeEndpoint(base);
     }
 
+    if (this.isLocalMode) {
+      return 'http://localhost:15000';
+    }
+
+    // In remote mode without explicit configuration we keep the legacy
+    // localhost endpoint for backward compatibility. A fallback to the
+    // direct Gemini integration will handle connection issues at runtime.
     return 'http://localhost:15000';
   }
 
@@ -181,6 +197,17 @@ class AIAssistantService {
         return await this.sendToRemoteAgent(message, userId, conversationId);
       }
     } catch (error) {
+      if (this.shouldFallbackToGemini(error)) {
+        console.warn('[AI Assistant] Primary AI agent unavailable. Falling back to direct Gemini service.');
+
+        try {
+          return await this.createGeminiFallbackResponse(message, userId);
+        } catch (fallbackError) {
+          console.error('[AI Assistant] Gemini fallback failed:', fallbackError);
+          throw new Error('AI assistant is currently unavailable. Please try again later.');
+        }
+      }
+
       console.error('Error sending message to AI agent:', error);
       throw new Error('Failed to get response from AI assistant');
     }
@@ -316,6 +343,50 @@ class AIAssistantService {
       console.error('Failed to get AI agent statistics:', error);
       return {};
     }
+  }
+
+  private isLocalEndpoint(endpoint: string): boolean {
+    try {
+      const url = new URL(endpoint);
+      const localHosts = new Set(['localhost', '127.0.0.1', '::1']);
+      return localHosts.has(url.hostname);
+    } catch (error) {
+      console.warn('[AI Assistant] Unable to parse AI endpoint URL:', error);
+      return false;
+    }
+  }
+
+  private shouldFallbackToGemini(error: unknown): boolean {
+    if (axios.isAxiosError(error)) {
+      const code = (error.code || '').toUpperCase();
+      const transientNetworkCodes = new Set(['ECONNREFUSED', 'ENOTFOUND', 'ECONNRESET', 'ETIMEDOUT', 'EHOSTUNREACH']);
+
+      if (transientNetworkCodes.has(code)) {
+        return true;
+      }
+
+      // Axios sets `response` for HTTP errors. If it's undefined the request
+      // never reached the server which usually indicates a connectivity issue.
+      return !error.response;
+    }
+
+    if (error instanceof Error) {
+      return error.message.toLowerCase().includes('econnrefused') ||
+        error.message.toLowerCase().includes('ai agent not properly configured');
+    }
+
+    return false;
+  }
+
+  private async createGeminiFallbackResponse(message: string, userId?: number): Promise<AIResponse> {
+    const fallbackResponse = await AIService.sendMessage(message, userId);
+
+    return {
+      response: fallbackResponse,
+      sources: ['gemini'],
+      confidence: 0.6,
+      tool_used: 'gemini_direct'
+    };
   }
 }
 
