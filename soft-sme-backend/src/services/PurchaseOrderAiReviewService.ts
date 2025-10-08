@@ -17,8 +17,30 @@ interface PurchaseOrderAiStructuredResponse {
 const DEFAULT_MODEL = process.env.AI_MODEL || 'gemini-2.5-flash';
 const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${DEFAULT_MODEL}:generateContent`;
 
+const ABSOLUTE_MAX_OUTPUT_TOKENS = 24576;
+
+const parseMaxOutputTokens = (): number => {
+  const raw = process.env.AI_MAX_OUTPUT_TOKENS;
+  if (!raw) {
+    return 8192;
+  }
+
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    console.warn(`Invalid AI_MAX_OUTPUT_TOKENS value "${raw}". Falling back to default.`);
+    return 8192;
+  }
+
+  // Gemini 2.5 models support large outputs, but we cap to a safe ceiling to avoid runaway responses.
+  return Math.max(512, Math.min(parsed, ABSOLUTE_MAX_OUTPUT_TOKENS));
+};
+
+const MAX_OUTPUT_TOKENS = parseMaxOutputTokens();
+
 const SYSTEM_INSTRUCTIONS = `You are helping an inventory specialist capture purchase order details.
 Extract structured data from raw invoice or packing slip text.
+Keep the response compact: limit detectedKeywords to unique, relevant terms (maximum 20),
+limit warnings and notes to 200 characters each, and truncate rawLine or description values that exceed 512 characters with an ellipsis.
 Return a JSON object that exactly matches the following schema:
 {
   "normalized": {
@@ -53,7 +75,10 @@ Rules:
 `;
 
 export class PurchaseOrderAiReviewService {
-  static async reviewRawText(rawText: string, options: PurchaseOrderAiReviewOptions = {}): Promise<PurchaseOrderAiStructuredResponse> {
+  static async reviewRawText(
+    rawText: string,
+    options: PurchaseOrderAiReviewOptions = {},
+  ): Promise<PurchaseOrderAiStructuredResponse> {
     const trimmed = rawText?.trim();
     if (!trimmed) {
       throw new Error('Raw text is required for AI review.');
@@ -64,88 +89,47 @@ export class PurchaseOrderAiReviewService {
       throw new Error('Gemini API key not configured');
     }
 
-    const prompt = `${SYSTEM_INSTRUCTIONS}\n\nRAW DOCUMENT:\n${trimmed}`;
+    const attemptErrors: string[] = [];
 
-    const requestBody = {
-      contents: [
-        {
-          parts: [
-            {
-              text: prompt,
-            },
-          ],
-        },
-      ],
-      generationConfig: {
-        temperature: 0.2,
-        topK: 32,
-        topP: 0.9,
-        maxOutputTokens: 2048,
-        responseMimeType: 'application/json',
-      },
-      safetySettings: [
-        {
-          category: 'HARM_CATEGORY_HARASSMENT',
-          threshold: 'BLOCK_MEDIUM_AND_ABOVE',
-        },
-        {
-          category: 'HARM_CATEGORY_HATE_SPEECH',
-          threshold: 'BLOCK_MEDIUM_AND_ABOVE',
-        },
-        {
-          category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT',
-          threshold: 'BLOCK_MEDIUM_AND_ABOVE',
-        },
-        {
-          category: 'HARM_CATEGORY_DANGEROUS_CONTENT',
-          threshold: 'BLOCK_MEDIUM_AND_ABOVE',
-        },
-      ],
-    };
+    let maxTokens = MAX_OUTPUT_TOKENS;
+    let useConcisePrompt = false;
 
-    const response = await fetch(`${GEMINI_API_URL}?key=${apiKey}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(requestBody),
-    });
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const { result, errorSummary, sawMaxTokens, shouldRetry } = await this.requestAndParse({
+        apiKey,
+        rawDocument: trimmed,
+        maxTokens,
+        useConcisePrompt,
+        options,
+      });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`AI request failed: ${response.status} ${response.statusText} - ${errorText}`);
-    }
+      if (result) {
+        return result;
+      }
 
-    const data = await response.json();
-    const candidates = this.sortCandidates(data?.candidates);
+      attemptErrors.push(`[maxTokens=${maxTokens}${useConcisePrompt ? ', concise' : ''}] ${errorSummary}`);
 
-    if (candidates.length === 0) {
-      throw new Error('AI response did not include any candidates.');
-    }
+      if (!shouldRetry) {
+        break;
+      }
 
-    const errors: string[] = [];
+      if (sawMaxTokens && maxTokens < ABSOLUTE_MAX_OUTPUT_TOKENS) {
+        const nextTokens = Math.min(ABSOLUTE_MAX_OUTPUT_TOKENS, Math.max(maxTokens + 1024, maxTokens * 2));
+        if (nextTokens > maxTokens) {
+          maxTokens = nextTokens;
+          continue;
+        }
+      }
 
-    for (const candidate of candidates) {
-      const parts = candidate?.content?.parts ?? [];
-      const structuredContent = this.extractStructuredContent(parts);
-
-      if (!structuredContent) {
-        const finishReason = candidate?.finishReason ?? 'unknown';
-        errors.push(`no structured text (finish reason: ${finishReason})`);
+      if (!useConcisePrompt) {
+        useConcisePrompt = true;
         continue;
       }
 
-      try {
-        const structured = this.parseStructuredResponse(structuredContent, options);
-        return structured;
-      } catch (error) {
-        const finishReason = candidate?.finishReason ?? 'unknown';
-        const message = error instanceof Error ? error.message : 'unknown error';
-        errors.push(`parse failure (finish reason: ${finishReason}): ${message}`);
-      }
+      break;
     }
 
-    throw new Error(`AI response could not be parsed. Attempts: ${errors.join('; ')}`);
+    throw new Error(`AI response could not be parsed after retries. Attempts: ${attemptErrors.join('; ')}`);
   }
 
   private static sortCandidates(candidates: any[]): any[] {
@@ -180,6 +164,161 @@ export class PurchaseOrderAiReviewService {
 
       return bParts - aParts;
     });
+  }
+
+  private static buildPrompt(rawDocument: string, concise: boolean): string {
+    if (!concise) {
+      return `${SYSTEM_INSTRUCTIONS}\n\nRAW DOCUMENT:\n${rawDocument}`;
+    }
+
+    const conciseInstructions = [
+      'If earlier attempts were truncated, respond with shorter field values while preserving accuracy.',
+      'Avoid repeating boilerplate text.',
+      'Use the minimum characters required to convey each value.',
+    ].join(' ');
+
+    return `${SYSTEM_INSTRUCTIONS}\n${conciseInstructions}\n\nRAW DOCUMENT:\n${rawDocument}`;
+  }
+
+  private static buildRequestBody(prompt: string, maxTokens: number) {
+    return {
+      contents: [
+        {
+          parts: [
+            {
+              text: prompt,
+            },
+          ],
+        },
+      ],
+      generationConfig: {
+        temperature: 0.2,
+        topK: 32,
+        topP: 0.9,
+        maxOutputTokens: maxTokens,
+        responseMimeType: 'application/json',
+      },
+      safetySettings: [
+        {
+          category: 'HARM_CATEGORY_HARASSMENT',
+          threshold: 'BLOCK_MEDIUM_AND_ABOVE',
+        },
+        {
+          category: 'HARM_CATEGORY_HATE_SPEECH',
+          threshold: 'BLOCK_MEDIUM_AND_ABOVE',
+        },
+        {
+          category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT',
+          threshold: 'BLOCK_MEDIUM_AND_ABOVE',
+        },
+        {
+          category: 'HARM_CATEGORY_DANGEROUS_CONTENT',
+          threshold: 'BLOCK_MEDIUM_AND_ABOVE',
+        },
+      ],
+    };
+  }
+
+  private static async requestAndParse({
+    apiKey,
+    rawDocument,
+    maxTokens,
+    useConcisePrompt,
+    options,
+  }: {
+    apiKey: string;
+    rawDocument: string;
+    maxTokens: number;
+    useConcisePrompt: boolean;
+    options: PurchaseOrderAiReviewOptions;
+  }): Promise<{
+    result: PurchaseOrderAiStructuredResponse | null;
+    errorSummary: string;
+    sawMaxTokens: boolean;
+    shouldRetry: boolean;
+  }> {
+    const prompt = this.buildPrompt(rawDocument, useConcisePrompt);
+    const requestBody = this.buildRequestBody(prompt, maxTokens);
+
+    const response = await fetch(`${GEMINI_API_URL}?key=${apiKey}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(requestBody),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      return {
+        result: null,
+        errorSummary: `request failed: ${response.status} ${response.statusText} - ${errorText}`,
+        sawMaxTokens: false,
+        shouldRetry: false,
+      };
+    }
+
+    const data = await response.json();
+    const candidates = this.sortCandidates(data?.candidates);
+
+    if (candidates.length === 0) {
+      return {
+        result: null,
+        errorSummary: 'no candidates returned',
+        sawMaxTokens: false,
+        shouldRetry: true,
+      };
+    }
+
+    const { structured, errors, sawMaxTokens } = this.parseCandidates(candidates, options);
+
+    if (structured) {
+      return { result: structured, errorSummary: '', sawMaxTokens, shouldRetry: false };
+    }
+
+    return {
+      result: null,
+      errorSummary: errors.length > 0 ? errors.join('; ') : 'candidates could not be parsed',
+      sawMaxTokens,
+      shouldRetry: sawMaxTokens,
+    };
+  }
+
+  private static parseCandidates(
+    candidates: any[],
+    options: PurchaseOrderAiReviewOptions,
+  ): {
+    structured: PurchaseOrderAiStructuredResponse | null;
+    errors: string[];
+    sawMaxTokens: boolean;
+  } {
+    const errors: string[] = [];
+    let sawMaxTokens = false;
+
+    for (const candidate of candidates) {
+      const finishReason = candidate?.finishReason ?? 'unknown';
+      if (finishReason === 'MAX_TOKENS') {
+        sawMaxTokens = true;
+      }
+
+      const parts = candidate?.content?.parts ?? [];
+      const structuredContent = this.extractStructuredContent(parts);
+
+      if (!structuredContent) {
+        errors.push(`no structured text (finish reason: ${finishReason})`);
+        continue;
+      }
+
+      try {
+        const structured = this.parseStructuredResponse(structuredContent, options);
+        return { structured, errors, sawMaxTokens };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'unknown error';
+        errors.push(`parse failure (finish reason: ${finishReason}): ${message}`);
+      }
+    }
+
+    return { structured: null, errors, sawMaxTokens };
   }
 
   private static pickBestCandidate(candidates: any[]): any | null {
