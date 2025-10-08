@@ -1,11 +1,16 @@
 import dotenv from 'dotenv';
 import path from 'path';
-import { PurchaseOrderOcrLineItem, PurchaseOrderOcrNormalizedData } from './PurchaseOrderOcrService';
+import {
+  PurchaseOrderOcrLineItem,
+  PurchaseOrderOcrNormalizedData,
+} from './PurchaseOrderOcrService';
+import { PurchaseOrderOcrAssociationService } from './PurchaseOrderOcrAssociationService';
 
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
 interface PurchaseOrderAiReviewOptions {
   userId?: number;
+  heuristicNormalized?: PurchaseOrderOcrNormalizedData;
 }
 
 interface PurchaseOrderAiStructuredResponse {
@@ -116,7 +121,27 @@ export class PurchaseOrderAiReviewService {
         if (mode === 'headers_only') {
           this.ensureHeaderOnlyFallbackNote(result);
         }
-        return result;
+
+        const enrichment = await PurchaseOrderOcrAssociationService.enrich({
+          normalized: result.normalized,
+          rawText: trimmed,
+          heuristicNormalized: options.heuristicNormalized,
+        });
+
+        const combinedWarnings = new Set<string>([
+          ...result.warnings,
+          ...enrichment.warnings,
+        ]);
+        const combinedNotes = new Set<string>([
+          ...result.notes,
+          ...enrichment.notes,
+        ]);
+
+        return {
+          normalized: enrichment.normalized,
+          warnings: Array.from(combinedWarnings),
+          notes: Array.from(combinedNotes),
+        };
       }
 
       attemptErrors.push(`[maxTokens=${maxTokens}${useConcisePrompt ? ', concise' : ''}] ${errorSummary}`);

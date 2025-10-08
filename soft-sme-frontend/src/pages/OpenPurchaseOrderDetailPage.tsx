@@ -170,6 +170,13 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
   const [openPartDialog, setOpenPartDialog] = useState(false);
   const [partToAddIndex, setPartToAddIndex] = useState<number | null>(null);
   const [partNumberForModal, setPartNumberForModal] = useState(''); // New state for part modal
+  const [partDialogInitialPart, setPartDialogInitialPart] = useState<Partial<PartFormValues> | undefined>(undefined);
+  const [partDialogSource, setPartDialogSource] = useState<'manual' | 'ocr'>('manual');
+  interface PendingPartSuggestion {
+    index: number;
+    suggestion: Partial<PartFormValues>;
+  }
+  const [pendingPartCreations, setPendingPartCreations] = useState<PendingPartSuggestion[]>([]);
   // Advanced combobox state for Part Number fields
   const [partOpenIndex, setPartOpenIndex] = useState<number | null>(null);
   const [partTypingTimer, setPartTypingTimer] = useState<number | null>(null);
@@ -629,26 +636,80 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
     }]));
   };
 
-  const normalizeOcrLineItemsForForm = (items: PurchaseOrderOcrLineItem[]): PurchaseOrderLineItem[] => {
+  const normalizeOcrLineItemsForForm = (
+    items: PurchaseOrderOcrLineItem[],
+  ): { mapped: PurchaseOrderLineItem[]; pending: PendingPartSuggestion[] } => {
+    const mapped: PurchaseOrderLineItem[] = [];
+    const pending: PendingPartSuggestion[] = [];
+
     if (!items || items.length === 0) {
-      return [];
+      return { mapped, pending };
     }
 
-    return items
+    const normalizePartNumber = (value: string | null | undefined): string => {
+      if (!value) {
+        return '';
+      }
+      return value.trim().toUpperCase();
+    };
+
+    items
       .filter((item) => (item.description && item.description.trim().length > 0) || (item.partNumber && item.partNumber.trim().length > 0))
-      .map((item) => {
+      .forEach((item) => {
         const quantityValue = item.quantity ?? 0;
-        const unitCostValue = item.unitCost ?? 0;
-        return {
-          part_number: item.partNumber ?? '',
-          part_description: item.description || '',
+        const matchedUnitCost = item.match?.lastUnitCost ?? item.unitCost ?? 0;
+        const resolvedPartNumber = item.match?.status === 'existing'
+          ? normalizePartNumber(item.match?.matchedPartNumber || item.partNumber || item.match?.normalizedPartNumber || '')
+          : normalizePartNumber(item.match?.suggestedPartNumber || item.partNumber || item.normalizedPartNumber || '');
+        const resolvedDescription = item.description || item.match?.partDescription || '';
+        const resolvedUnit = item.match?.status === 'existing'
+          ? (item.match?.unit || item.unit || UNIT_OPTIONS[0])
+          : (item.unit || UNIT_OPTIONS[0]);
+        const resolvedUnitCost = item.match?.status === 'existing'
+          ? (item.match?.lastUnitCost != null ? String(item.match.lastUnitCost) : (item.unitCost != null ? String(item.unitCost) : ''))
+          : (item.unitCost != null ? String(item.unitCost) : '');
+
+        const purchaseLine: PurchaseOrderLineItem = {
+          part_number: resolvedPartNumber,
+          part_description: resolvedDescription,
           quantity: item.quantity !== null && item.quantity !== undefined ? String(item.quantity) : '',
-          unit: item.unit || UNIT_OPTIONS[0],
-          unit_cost: item.unitCost !== null && item.unitCost !== undefined ? String(item.unitCost) : '',
-          line_amount: calculateLineAmount(quantityValue, unitCostValue),
+          unit: resolvedUnit,
+          unit_cost: resolvedUnitCost,
+          line_amount: calculateLineAmount(quantityValue, matchedUnitCost),
           quantity_to_order: 0,
         };
+
+        const currentIndex = mapped.length;
+        mapped.push(purchaseLine);
+
+        if (item.match?.status === 'missing' && resolvedPartNumber) {
+          const suggestion: PendingPartSuggestion['suggestion'] = {
+            part_number: normalizePartNumber(item.match.suggestedPartNumber || resolvedPartNumber),
+            part_description: item.description || '',
+            unit: item.unit || UNIT_OPTIONS[0],
+            last_unit_cost: item.unitCost ?? '',
+            part_type: 'stock',
+            category: 'Uncategorized',
+          };
+          pending.push({ index: currentIndex, suggestion });
+        } else if (item.match?.status === 'existing' && item.match.descriptionMatches === false) {
+          const message = `Invoice description for part "${item.match.matchedPartNumber || resolvedPartNumber}" differs from inventory. Create a new part using the invoice details?`;
+          const shouldCreate = typeof window !== 'undefined' ? window.confirm(message) : false;
+          if (shouldCreate) {
+            const suggestion: PendingPartSuggestion['suggestion'] = {
+              part_number: normalizePartNumber(item.match.suggestedPartNumber || resolvedPartNumber),
+              part_description: item.description || '',
+              unit: item.unit || item.match?.unit || UNIT_OPTIONS[0],
+              last_unit_cost: item.unitCost ?? item.match?.lastUnitCost ?? '',
+              part_type: 'stock',
+              category: 'Uncategorized',
+            };
+            pending.push({ index: currentIndex, suggestion });
+          }
+        }
       });
+
+    return { mapped, pending };
   };
 
   const handleOcrFileSelected = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -689,14 +750,61 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
 
     const { normalized } = ocrUploadResult.ocr;
 
-    if (normalized.vendorName) {
-      const match = vendors.find((v) => v.label.toLowerCase() === normalized.vendorName!.toLowerCase());
+    const vendorMatch = normalized.vendorMatch;
+    const resolvedVendorName = vendorMatch?.vendorName || normalized.vendorName || '';
+    if (vendorMatch && vendorMatch.status === 'existing' && vendorMatch.vendorId) {
+      const existing = vendors.find((v) => v.id === vendorMatch.vendorId);
+      const resolvedLabel = vendorMatch.matchedVendorName || resolvedVendorName;
+      const resolvedEmail = vendorMatch.details?.email || '';
+      if (existing) {
+        setVendor(existing);
+        setVendorInput(existing.label);
+      } else {
+        const option = { label: resolvedLabel || resolvedVendorName, id: vendorMatch.vendorId, email: resolvedEmail };
+        setVendors((prev) => {
+          if (prev.some((v) => v.id === vendorMatch.vendorId)) {
+            return prev;
+          }
+          return [...prev, option];
+        });
+        setVendor(option);
+        setVendorInput(option.label);
+      }
+      if (resolvedLabel) {
+        toast.info(`Matched invoice vendor to "${resolvedLabel}".`);
+      }
+    } else if (vendorMatch && vendorMatch.status === 'missing' && resolvedVendorName) {
+      setVendor(null);
+      setVendorInput(resolvedVendorName);
+      const initialVendor: Partial<VendorFormValues> = {
+        vendor_name: resolvedVendorName,
+        street_address: vendorMatch.details?.streetAddress || '',
+        city: vendorMatch.details?.city || '',
+        province: vendorMatch.details?.province || '',
+        country: vendorMatch.details?.country || '',
+        postal_code: vendorMatch.details?.postalCode || '',
+        contact_person: vendorMatch.details?.contactPerson || '',
+        telephone_number: vendorMatch.details?.telephone || '',
+        email: vendorMatch.details?.email || '',
+        website: vendorMatch.details?.website || '',
+      };
+      setVendorDialogInitialValues(initialVendor);
+      const shouldOpen = typeof window !== 'undefined'
+        ? window.confirm(`Vendor "${resolvedVendorName}" was not found. Would you like to add this vendor now?`)
+        : false;
+      if (shouldOpen) {
+        setIsAddVendorModalOpen(true);
+      } else {
+        toast.warn(`Vendor "${resolvedVendorName}" is not in the system. Review the captured details before continuing.`);
+      }
+    } else if (resolvedVendorName) {
+      const match = vendors.find((v) => v.label.toLowerCase() === resolvedVendorName.toLowerCase());
       if (match) {
         setVendor(match);
         setVendorInput(match.label);
       } else {
         setVendor(null);
-        setVendorInput(normalized.vendorName);
+        setVendorInput(resolvedVendorName);
       }
     }
 
@@ -716,10 +824,14 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
     }
 
     if (normalized.lineItems?.length) {
-      const mapped = normalizeOcrLineItemsForForm(normalized.lineItems);
+      const { mapped, pending } = normalizeOcrLineItemsForForm(normalized.lineItems);
       if (mapped.length > 0) {
         setLineItems(mapped);
+        setLiveLineItems(mapped);
       }
+      setPendingPartCreations(pending);
+    } else {
+      setPendingPartCreations([]);
     }
 
     toast.success('OCR data applied. Please review the form before saving.');
@@ -815,6 +927,10 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
       } else if (typeof newValue !== 'string' && newValue.isNew) {
         console.log('Opening part dialog for new part');
         setPartToAddIndex(idx);
+        const inputValue = newValue.inputValue || '';
+        setPartNumberForModal(inputValue);
+        setPartDialogInitialPart({ part_number: inputValue.toUpperCase(), category: 'Uncategorized' });
+        setPartDialogSource('manual');
         setOpenPartDialog(true);
       } else if (typeof newValue === 'string') {
         const inv = findInventory(newValue);
@@ -1555,16 +1671,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
 
   // Add state for new vendor modal fields
   const [isAddVendorModalOpen, setIsAddVendorModalOpen] = useState(false);
-  const [newVendorName, setNewVendorName] = useState('');
-  const [newVendorContact, setNewVendorContact] = useState('');
-  const [newVendorEmail, setNewVendorEmail] = useState('');
-  const [newVendorPhone, setNewVendorPhone] = useState('');
-  const [newVendorStreetAddress, setNewVendorStreetAddress] = useState('');
-  const [newVendorCity, setNewVendorCity] = useState('');
-  const [newVendorProvince, setNewVendorProvince] = useState('');
-  const [newVendorCountry, setNewVendorCountry] = useState('');
-  const [newVendorPostalCode, setNewVendorPostalCode] = useState('');
-  const [newVendorWebsite, setNewVendorWebsite] = useState('');
+  const [vendorDialogInitialValues, setVendorDialogInitialValues] = useState<Partial<VendorFormValues>>({});
 
   // Normalization and ranking helpers for vendor combobox
   const normalizeString = (value: string): string => {
@@ -1646,7 +1753,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
       if (isEnter && event.ctrlKey && inputValue) {
         event.preventDefault();
         setVendorEnterPressed(true);
-        setNewVendorName(inputValue);
+        setVendorDialogInitialValues({ vendor_name: inputValue });
         setIsAddVendorModalOpen(true);
         setVendorOpen(false);
         return;
@@ -1660,7 +1767,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
             // Open the add-new modal only when the highlighted row is the special Add row
             event.preventDefault();
             setVendorEnterPressed(true);
-            setNewVendorName(inputValue);
+            setVendorDialogInitialValues({ vendor_name: inputValue });
             setIsAddVendorModalOpen(true);
             setVendorOpen(false);
           }
@@ -1678,7 +1785,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
         setVendorInput(match.label);
       } else {
         setVendorEnterPressed(true);
-        setNewVendorName(inputValue);
+        setVendorDialogInitialValues({ vendor_name: inputValue });
         setIsAddVendorModalOpen(true);
         setVendorOpen(false);
       }
@@ -1715,6 +1822,8 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
         setPartEnterPressedIndex(idx);
         setPartNumberForModal(inputValue);
         setPartToAddIndex(idx);
+        setPartDialogInitialPart({ part_number: inputValue.toUpperCase(), category: 'Uncategorized' });
+        setPartDialogSource('manual');
         setOpenPartDialog(true);
         setPartOpenIndex(null);
         return;
@@ -1729,6 +1838,8 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
         setPartEnterPressedIndex(idx);
         setPartNumberForModal(inputValue);
         setPartToAddIndex(idx);
+        setPartDialogInitialPart({ part_number: inputValue.toUpperCase(), category: 'Uncategorized' });
+        setPartDialogSource('manual');
         setOpenPartDialog(true);
         setPartOpenIndex(null);
       }
@@ -1738,6 +1849,9 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
   const handleClosePartDialog = () => {
     setOpenPartDialog(false);
     setPartToAddIndex(null); // Ensure partToAddIndex is reset on close
+    setPartDialogInitialPart(undefined);
+    setPartDialogSource('manual');
+    setPartNumberForModal('');
   };
 
   // Function to get vendor email when vendor is selected
@@ -1851,6 +1965,27 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
   useEffect(() => {
     console.log('Part modal state changed - openPartDialog:', openPartDialog, 'partNumberForModal:', partNumberForModal, 'partToAddIndex:', partToAddIndex);
   }, [openPartDialog, partNumberForModal, partToAddIndex]);
+
+  useEffect(() => {
+    if (!openPartDialog && pendingPartCreations.length > 0) {
+      const [next, ...rest] = pendingPartCreations;
+      setPendingPartCreations(rest);
+      setPartToAddIndex(next.index);
+      setPartNumberForModal(next.suggestion.part_number ? String(next.suggestion.part_number) : '');
+      setPartDialogInitialPart({
+        part_number: next.suggestion.part_number ?? '',
+        part_description: next.suggestion.part_description ?? '',
+        unit: next.suggestion.unit ?? UNIT_OPTIONS[0],
+        last_unit_cost: next.suggestion.last_unit_cost ?? '',
+        quantity_on_hand: next.suggestion.quantity_on_hand ?? '',
+        reorder_point: next.suggestion.reorder_point ?? '',
+        part_type: next.suggestion.part_type ?? 'stock',
+        category: next.suggestion.category ?? 'Uncategorized',
+      });
+      setPartDialogSource('ocr');
+      setOpenPartDialog(true);
+    }
+  }, [openPartDialog, pendingPartCreations]);
 
   // Ensure part dropdown closes when the Add New Part dialog opens
   useEffect(() => {
@@ -2294,7 +2429,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
                     }
                     if (newValue && (newValue as VendorOption).isNew) {
                       setIsAddVendorModalOpen(true);
-                      setNewVendorName(vendorInput);
+                      setVendorDialogInitialValues({ vendor_name: vendorInput });
                       setVendor(null);
                       setVendorInput('');
                     setVendorOpen(false);
@@ -2494,6 +2629,8 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
                           const inputValue = (newValue as any).inputValue || '';
                           setPartNumberForModal(inputValue);
                           setPartToAddIndex(idx);
+                          setPartDialogInitialPart({ part_number: inputValue.toUpperCase(), category: 'Uncategorized' });
+                          setPartDialogSource('manual');
                           setOpenPartDialog(true);
                           setPartOpenIndex(null);
                           setPartInputs(prev => ({ ...prev, [idx]: '' }));
@@ -3066,11 +3203,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
 
           <UnifiedPartDialog
             open={openPartDialog}
-            onClose={() => {
-              setOpenPartDialog(false);
-              setPartToAddIndex(null);
-              setPartNumberForModal('');
-            }}
+            onClose={handleClosePartDialog}
             onSave={async (partData: PartFormValues) => {
               try {
                 const response = await api.post('/api/inventory', partData);
@@ -3098,29 +3231,31 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
                     return updated;
                   });
                 }
-                setPartToAddIndex(null);
-                setPartNumberForModal('');
+                handleClosePartDialog();
               } catch (error) {
                 throw error; // Let the dialog handle the error
               }
             }}
-            title="Add New Part"
-            initialPart={{ part_number: partNumberForModal.toUpperCase(), category: 'Uncategorized' }}
+            title={partDialogSource === 'ocr' ? 'Add New Part from OCR' : 'Add New Part'}
+            initialPart={partDialogInitialPart ?? { part_number: partNumberForModal.toUpperCase(), category: 'Uncategorized' }}
           />
 
           <UnifiedVendorDialog
             open={isAddVendorModalOpen}
-            onClose={() => setIsAddVendorModalOpen(false)}
+            onClose={() => {
+              setIsAddVendorModalOpen(false);
+              setVendorDialogInitialValues({});
+            }}
             onSave={async (vendor: VendorFormValues) => {
               try {
                 const response = await api.post('/api/vendors', vendor);
                 const newVendor = response.data.vendor;
                 
                 // Update vendors list
-                setVendors(prev => [...prev, { label: newVendor.vendor_name, id: newVendor.vendor_id }]);
-                
+                setVendors(prev => [...prev, { label: newVendor.vendor_name, id: newVendor.vendor_id, email: newVendor.email }]);
+
                 // Set the new vendor as selected
-                setVendor({ label: newVendor.vendor_name, id: newVendor.vendor_id });
+                setVendor({ label: newVendor.vendor_name, id: newVendor.vendor_id, email: newVendor.email });
                 
                 // If we're editing an existing purchase order, update the purchase order data
                 if (!isCreationMode && purchaseOrder) {
@@ -3130,14 +3265,15 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
                     vendor_name: newVendor.vendor_name
                   } : prev);
                 }
-                
+
                 setIsAddVendorModalOpen(false);
+                setVendorDialogInitialValues({});
                 toast.success('Vendor added successfully!');
               } catch (err) {
                 toast.error('Failed to add vendor.');
               }
             }}
-            initialVendor={{ vendor_name: newVendorName }}
+            initialVendor={vendorDialogInitialValues}
             isEditMode={false}
           />
 
