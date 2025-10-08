@@ -1,5 +1,39 @@
 import api from '../api/axios';
 
+export interface PurchaseOrderOcrVendorDetails {
+  streetAddress?: string | null;
+  city?: string | null;
+  province?: string | null;
+  country?: string | null;
+  postalCode?: string | null;
+  contactPerson?: string | null;
+  telephone?: string | null;
+  email?: string | null;
+  website?: string | null;
+}
+
+export interface PurchaseOrderOcrVendorMatch {
+  status: 'existing' | 'missing';
+  vendorId?: number;
+  vendorName: string | null;
+  normalizedVendorName: string | null;
+  matchedVendorName?: string | null;
+  confidence: number;
+  details?: PurchaseOrderOcrVendorDetails | null;
+}
+
+export interface PurchaseOrderOcrLineItemMatch {
+  status: 'existing' | 'missing';
+  normalizedPartNumber: string | null;
+  matchedPartNumber?: string | null;
+  partId?: number;
+  partDescription?: string | null;
+  unit?: string | null;
+  lastUnitCost?: number | null;
+  descriptionMatches?: boolean;
+  suggestedPartNumber?: string | null;
+}
+
 export interface PurchaseOrderOcrLineItem {
   rawLine: string;
   partNumber: string | null;
@@ -8,6 +42,8 @@ export interface PurchaseOrderOcrLineItem {
   unit: string | null;
   unitCost: number | null;
   totalCost: number | null;
+  normalizedPartNumber?: string | null;
+  match?: PurchaseOrderOcrLineItemMatch | null;
 }
 
 export interface PurchaseOrderOcrNormalizedData {
@@ -20,6 +56,7 @@ export interface PurchaseOrderOcrNormalizedData {
   documentType: 'invoice' | 'packing_slip' | 'receipt' | 'unknown';
   detectedKeywords: string[];
   lineItems: PurchaseOrderOcrLineItem[];
+  vendorMatch?: PurchaseOrderOcrVendorMatch | null;
 }
 
 export interface PurchaseOrderOcrResponse {
