@@ -17,6 +17,24 @@ interface PurchaseOrderAiStructuredResponse {
 const DEFAULT_MODEL = process.env.AI_MODEL || 'gemini-2.5-flash';
 const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${DEFAULT_MODEL}:generateContent`;
 
+const parseMaxOutputTokens = (): number => {
+  const raw = process.env.AI_MAX_OUTPUT_TOKENS;
+  if (!raw) {
+    return 4096;
+  }
+
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    console.warn(`Invalid AI_MAX_OUTPUT_TOKENS value "${raw}". Falling back to default.`);
+    return 4096;
+  }
+
+  // Gemini 2.5 models support large outputs, but we cap at 8192 to avoid runaway responses.
+  return Math.max(512, Math.min(parsed, 8192));
+};
+
+const MAX_OUTPUT_TOKENS = parseMaxOutputTokens();
+
 const SYSTEM_INSTRUCTIONS = `You are helping an inventory specialist capture purchase order details.
 Extract structured data from raw invoice or packing slip text.
 Return a JSON object that exactly matches the following schema:
@@ -80,7 +98,7 @@ export class PurchaseOrderAiReviewService {
         temperature: 0.2,
         topK: 32,
         topP: 0.9,
-        maxOutputTokens: 2048,
+        maxOutputTokens: MAX_OUTPUT_TOKENS,
         responseMimeType: 'application/json',
       },
       safetySettings: [
