@@ -64,6 +64,9 @@ import aiAssistantService from './services/aiAssistantService';
 import partFinderRoutes from './routes/partFinderRoutes';
 import inventoryVendorRoutes from './routes/inventoryVendorRoutes';
 
+const enableAiAssistantEnv = process.env.ENABLE_AI_ASSISTANT?.toLowerCase();
+const shouldAutoStartAiAssistant = enableAiAssistantEnv === 'true';
+
 // Add error handling around chatRouter import
 let chatRouter: any;
 try {
@@ -463,15 +466,21 @@ if (process.env.ENABLE_VENDOR_CALLING !== 'false') {
 // Use the regular app for all functionality
 const server = app.listen(Number(PORT), '0.0.0.0', async () => {
   console.log(`Server is running on port ${PORT}`);
-  
-  // Start AI agent automatically
-  try {
-    console.log('Starting AI Assistant...');
-    await aiAssistantService.startAIAgent();
-    console.log('AI Assistant started successfully');
-  } catch (error) {
-    console.error('Failed to start AI Assistant:', error);
-    console.log('Server will continue without AI Assistant');
+
+  if (shouldAutoStartAiAssistant) {
+    // Start AI agent automatically
+    try {
+      console.log('Starting AI Assistant...');
+      await aiAssistantService.startAIAgent();
+      console.log('AI Assistant started successfully');
+    } catch (error) {
+      console.error('Failed to start AI Assistant:', error);
+      console.log('Server will continue without AI Assistant');
+    }
+  } else {
+    console.log(
+      'AI Assistant auto-start is disabled. Set ENABLE_AI_ASSISTANT=true to enable automatic startup.'
+    );
   }
 });
 
