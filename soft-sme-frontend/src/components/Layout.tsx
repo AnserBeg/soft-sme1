@@ -100,12 +100,7 @@ const Layout: React.FC = () => {
     [unreadConversationCount]
   );
 
-  const resolveNavigationPath = (targetPath: string): string => {
-    if (targetPath === '/tasks' || targetPath === '/messaging') {
-      return '/';
-    }
-    return targetPath;
-  };
+  const resolveNavigationPath = (targetPath: string): string => targetPath;
 
   const menuItems = useMemo<MenuEntry[]>(
     () => [
