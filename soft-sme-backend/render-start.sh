@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Resolve the directory containing this script so we can locate resources that
+# were installed during the build step (for example the portable apt tree).
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # Clean up stale temporary files without failing the deployment if the command
 # encounters permission issues.
 find /tmp -maxdepth 1 -mindepth 1 -mtime +1 -exec rm -rf {} + || true
