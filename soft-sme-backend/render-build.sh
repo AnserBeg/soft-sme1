@@ -69,30 +69,43 @@ function install_portable_apt() {
   local work_root="${SCRIPT_DIR}/.apt-work"
   local state_dir="${work_root}/state"
   local cache_dir="${work_root}/cache"
+  local apt_config="${work_root}/apt.conf"
 
   mkdir -p "${state_dir}/lists/partial" "${cache_dir}/archives/partial" "${portable_root}"
   touch "${state_dir}/status"
 
-  local apt_opts=(
-    "-o" "Dir::State=${state_dir}"
-    "-o" "Dir::State::Lists=${state_dir}/lists"
-    "-o" "Dir::State::Status=${state_dir}/status"
-    "-o" "Dir::Cache=${cache_dir}"
-    "-o" "Dir::Cache::Archives=${cache_dir}/archives"
-    "-o" "Dir::Etc::sourcelist=/etc/apt/sources.list"
-    "-o" "Dir::Etc::sourceparts=/etc/apt/sources.list.d"
-    "-o" "Dir::Etc::main=/etc/apt/apt.conf"
-    "-o" "Dir::Etc::trusted=/etc/apt/trusted.gpg"
-    "-o" "Dir::Etc::trustedparts=/etc/apt/trusted.gpg.d"
-  )
+  cat >"${apt_config}" <<EOF
+Dir "${work_root}";
+Dir::State "${state_dir}";
+Dir::State::status "${state_dir}/status";
+Dir::State::lists "${state_dir}/lists";
+Dir::State::lists::partial "${state_dir}/lists/partial";
+Dir::Cache "${cache_dir}";
+Dir::Cache::archives "${cache_dir}/archives";
+Dir::Cache::archives::partial "${cache_dir}/archives/partial";
+Dir::Etc::sourcelist "/etc/apt/sources.list";
+Dir::Etc::sourceparts "/etc/apt/sources.list.d";
+Dir::Etc::main "/etc/apt/apt.conf";
+Dir::Etc::trusted "/etc/apt/trusted.gpg";
+Dir::Etc::trustedparts "/etc/apt/trusted.gpg.d";
+DPkg::Post-Invoke "";
+DPkg::Post-Invoke-Success "";
+Acquire::Retries "3";
+EOF
+
+  cleanup_workdir() {
+    rm -rf "${work_root}"
+    trap - RETURN
+  }
+  trap cleanup_workdir RETURN
 
   log "Downloading apt packages into project-local .apt directory"
-  if ! apt-get "${apt_opts[@]}" update; then
+  if ! APT_CONFIG="${apt_config}" apt-get update; then
     log "Portable apt-get update failed"
     return 1
   fi
 
-  if ! apt-get "${apt_opts[@]}" install -y --no-install-recommends --download-only "${APT_PACKAGES[@]}"; then
+  if ! APT_CONFIG="${apt_config}" apt-get install -y --no-install-recommends --download-only "${APT_PACKAGES[@]}"; then
     log "Portable apt-get download failed"
     return 1
   fi
@@ -122,8 +135,6 @@ function install_portable_apt() {
   fi
 
   log "Extracted ${extracted} archives into ${portable_root}"
-
-  rm -rf "${work_root}"
 
   export PATH="${portable_root}/usr/bin:${PATH}"
   local portable_ld_paths="${portable_root}/usr/lib:${portable_root}/usr/lib/x86_64-linux-gnu"
