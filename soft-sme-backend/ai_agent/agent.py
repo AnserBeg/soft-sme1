@@ -139,7 +139,11 @@ class NeuraTaskAgent:
                 recent_messages = conversation_history[-3:]  # Last 3 messages
                 conversation_context = "\n\n**RECENT CONVERSATION CONTEXT:**\n"
                 for msg in recent_messages:
-                    if msg.get('isUser'):
+                    is_user = msg.get('isUser')
+                    if is_user is None:
+                        is_user = msg.get('is_user')
+
+                    if is_user:
                         conversation_context += f"User: {msg.get('text', '')}\n"
                     else:
                         conversation_context += f"Assistant: {msg.get('text', '')}\n"

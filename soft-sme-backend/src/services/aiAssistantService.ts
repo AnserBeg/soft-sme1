@@ -515,7 +515,34 @@ class AIAssistantService {
   async getConversationHistory(conversationId: string): Promise<ChatMessage[]> {
     try {
       const response = await axios.get(`${this.aiEndpoint}/conversation/${conversationId}`);
-      return response.data.messages || [];
+      const rawMessages = Array.isArray(response.data?.messages) ? response.data.messages : [];
+
+      return rawMessages.map((message: any) => {
+        const normalizedIsUser =
+          typeof message?.isUser === 'boolean'
+            ? message.isUser
+            : Boolean(message?.is_user);
+
+        const timestamp = message?.timestamp ? new Date(message.timestamp) : new Date();
+
+        return {
+          id: typeof message?.id === 'string' ? message.id : String(message?.id ?? crypto.randomUUID()),
+          text: typeof message?.text === 'string' ? message.text : '',
+          isUser: normalizedIsUser,
+          timestamp,
+          sources: Array.isArray(message?.sources) ? message.sources : undefined,
+          confidence:
+            typeof message?.confidence === 'number'
+              ? message.confidence
+              : undefined,
+          toolUsed:
+            typeof message?.toolUsed === 'string'
+              ? message.toolUsed
+              : typeof message?.tool_used === 'string'
+              ? message.tool_used
+              : undefined
+        };
+      });
     } catch (error) {
       console.error('Failed to get conversation history:', error);
       return [];
