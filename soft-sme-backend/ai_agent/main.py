@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-NeuraTask AI Agent Server
+Aiven AI Agent Server
 ========================
 
-FastAPI server that provides AI assistant capabilities for the NeuraTask application.
+FastAPI server that provides AI assistant capabilities for the Aiven application.
 This server runs as a child process of the main Node.js backend.
 """
 
@@ -20,7 +20,7 @@ from dotenv import load_dotenv
 # Add current directory to Python path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from agent import NeuraTaskAgent
+from agent import AivenAgent
 from conversation_manager import ConversationManager
 
 # Load environment variables
@@ -35,8 +35,8 @@ logger = logging.getLogger(__name__)
 
 # Initialize FastAPI app
 app = FastAPI(
-    title="NeuraTask AI Agent",
-    description="AI Assistant for NeuraTask Inventory Management System",
+    title="Aiven AI Agent",
+    description="AI Assistant for Aiven Inventory Management System",
     version="1.0.0"
 )
 
@@ -90,8 +90,8 @@ async def startup_event():
     """Initialize the AI agent on startup"""
     global ai_agent
     try:
-        logger.info("Starting NeuraTask AI Agent...")
-        ai_agent = NeuraTaskAgent()
+        logger.info("Starting Aiven AI Agent...")
+        ai_agent = AivenAgent()
         await ai_agent.initialize()
         logger.info("AI Agent initialized successfully")
         
@@ -154,7 +154,7 @@ async def initialize_agent():
         if ai_agent:
             await ai_agent.cleanup()
         
-        ai_agent = NeuraTaskAgent()
+        ai_agent = AivenAgent()
         await ai_agent.initialize()
         
         return InitializeResponse(

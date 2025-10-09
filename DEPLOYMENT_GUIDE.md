@@ -1,6 +1,6 @@
-# 🚀 NeuraTask Cloud Deployment Guide
+# 🚀 Aiven Cloud Deployment Guide
 
-This guide will help you deploy your NeuraTask business management application to the cloud.
+This guide will help you deploy your Aiven business management application to the cloud.
 
 ## 📋 Prerequisites
 
@@ -282,4 +282,4 @@ For deployment issues:
 3. Test each service individually
 4. Check your cloud provider's documentation
 
-Your NeuraTask application is now ready for cloud deployment! 🎉 
+Your Aiven application is now ready for cloud deployment! 🎉 

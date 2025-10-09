@@ -1,11 +1,11 @@
 #!/bin/bash
 
-# NeuraTask Deployment Script
+# Aiven Deployment Script
 # This script automates the deployment process
 
 set -e  # Exit on any error
 
-echo "🚀 Starting NeuraTask Deployment..."
+echo "🚀 Starting Aiven Deployment..."
 
 # Colors for output
 RED='\033[0;31m'

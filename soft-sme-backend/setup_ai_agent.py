@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Setup script for NeuraTask AI Agent
+Setup script for Aiven AI Agent
 ==================================
 
 This script sets up the AI agent by:
@@ -21,7 +21,7 @@ load_dotenv()
 # Add the ai_agent directory to the path
 sys.path.append(os.path.join(os.path.dirname(__file__), 'ai_agent'))
 
-from ai_agent.agent import NeuraTaskAgent
+from ai_agent.agent import AivenAgent
 from ai_agent.rag_tool import DocumentationRAGTool
 
 # Set up logging
@@ -31,10 +31,10 @@ logger = logging.getLogger(__name__)
 async def setup_ai_agent():
     """Set up the AI agent with documentation"""
     try:
-        logger.info("Setting up NeuraTask AI Agent...")
+        logger.info("Setting up Aiven AI Agent...")
         
         # Initialize the agent
-        agent = NeuraTaskAgent()
+        agent = AivenAgent()
         await agent.initialize()
         
         logger.info("AI Agent initialized successfully")
@@ -76,7 +76,7 @@ async def main():
     
     if success:
         logger.info("🎉 AI Agent setup completed successfully!")
-        logger.info("You can now use the AI assistant in the NeuraTask application.")
+        logger.info("You can now use the AI assistant in the Aiven application.")
     else:
         logger.error("❌ AI Agent setup failed!")
         sys.exit(1)

@@ -1,4 +1,4 @@
-# Deploying NeuraTask Frontend to Render
+# Deploying Aiven Frontend to Render
 
 ## Prerequisites
 - Backend already deployed at: `https://soft-sme-backend.onrender.com`

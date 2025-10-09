@@ -8,7 +8,7 @@ import pandas as pd
 
 def get_customer_list():
     """Fetch and display customer list directly"""
-    print("🔍 Fetching customer list from NeuraTask database...")
+    print("🔍 Fetching customer list from Aiven database...")
     
     try:
         # Connect directly to database
@@ -118,7 +118,7 @@ def get_business_overview():
         print(f"❌ Error fetching business overview: {e}")
 
 if __name__ == "__main__":
-    print("🚀 NeuraTask Customer Data Fetcher (Direct)")
+    print("🚀 Aiven Customer Data Fetcher (Direct)")
     print("=" * 50)
     
     # Get customer list

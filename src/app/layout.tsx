@@ -8,8 +8,8 @@ import { QueryProvider } from "@/providers/QueryProvider";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "NeuraTask",
-  description: "A modern business management solution",
+  title: "Aiven",
+  description: "Aiven – AI Driven ERP for modern business management",
 };
 
 export default function RootLayout({

@@ -1,4 +1,4 @@
-# Deploying NeuraTask Backend to Render
+# Deploying Aiven Backend to Render
 
 ## Prerequisites
 1. GitHub account with your code repository

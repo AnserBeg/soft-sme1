@@ -1,8 +1,8 @@
 @echo off
-REM NeuraTask Deployment Script for Windows
+REM Aiven Deployment Script for Windows
 REM This script automates the deployment process
 
-echo 🚀 Starting NeuraTask Deployment...
+echo 🚀 Starting Aiven Deployment...
 
 REM Check if Docker is installed
 docker --version >nul 2>&1

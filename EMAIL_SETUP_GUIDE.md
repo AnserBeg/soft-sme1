@@ -1,6 +1,6 @@
 # Email System Setup Guide
 
-This guide will help you set up and use the email functionality in your NeuraTask application.
+This guide will help you set up and use the email functionality in your Aiven application.
 
 ## Overview
 
@@ -353,4 +353,4 @@ If you encounter issues:
 4. Verify your email provider settings
 5. Check backend console for detailed error messages
 
-The email system is designed to be robust and user-friendly, providing professional email functionality throughout your NeuraTask application. 
+The email system is designed to be robust and user-friendly, providing professional email functionality throughout your Aiven application. 

@@ -1,10 +1,10 @@
-# NeuraTask AI Assistant Integration Guide
+# Aiven AI Assistant Integration Guide
 
 ## Overview
 
-The NeuraTask AI Assistant is a comprehensive AI system integrated directly into the backend that provides:
+The Aiven AI Assistant is a comprehensive AI system integrated directly into the backend that provides:
 
-1. **Documentation Q&A**: Answers questions about NeuraTask features using RAG (Retrieval-Augmented Generation)
+1. **Documentation Q&A**: Answers questions about Aiven features using RAG (Retrieval-Augmented Generation)
 2. **Live Data Queries**: Retrieves real-time inventory and order data from the database
 3. **Intelligent Routing**: Automatically routes queries to the appropriate tool
 4. **Conversation Management**: Maintains context across chat sessions
@@ -123,7 +123,7 @@ const response = await chatService.sendMessage("How do I create a purchase order
 
 console.log(response);
 // {
-//   response: "Based on the NeuraTask documentation...",
+//   response: "Based on the Aiven documentation...",
 //   sources: ["documentation"],
 //   confidence: 0.85,
 //   toolUsed: "documentation_search",
@@ -156,7 +156,7 @@ curl -X GET http://localhost:3001/api/ai-assistant/health \
 ### 1. Documentation Q&A
 
 The AI assistant can answer questions about:
-- How to use NeuraTask features
+- How to use Aiven features
 - Workflow processes
 - Button functions and locations
 - System configuration
@@ -330,4 +330,4 @@ For issues and questions:
 
 ## License
 
-This AI assistant is part of the NeuraTask application and follows the same licensing terms. 
+This AI assistant is part of the Aiven application and follows the same licensing terms. 

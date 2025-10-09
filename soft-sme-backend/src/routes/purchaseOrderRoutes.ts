@@ -544,7 +544,7 @@ router.post('/:id/export-to-qbo', async (req, res) => {
       },
       DocNumber: po.purchase_number,
       TxnDate: po.purchase_date || po.date,
-      PrivateNote: `Imported from NeuraTask - PO: ${po.purchase_number}`,
+      PrivateNote: `Imported from Aiven - PO: ${po.purchase_number}`,
       TotalAmt: parseFloat(po.total_amount)
     };
 
@@ -726,7 +726,7 @@ router.post('/:id/export-to-qbo-with-vendor', async (req, res) => {
       DocNumber: po.purchase_number,
       TxnDate: po.purchase_date,
       DueDate: po.purchase_date,
-      PrivateNote: `Exported from NeuraTask Purchase Order #${po.purchase_id}`
+      PrivateNote: `Exported from Aiven Purchase Order #${po.purchase_id}`
     };
 
     // Add GST line item if there's GST

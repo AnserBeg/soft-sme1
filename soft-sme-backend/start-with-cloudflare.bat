@@ -1,5 +1,5 @@
 @echo off
-echo Starting NeuraTask Backend with Cloudflare Tunnel...
+echo Starting Aiven Backend with Cloudflare Tunnel...
 echo.
 
 REM Start the backend server in the background

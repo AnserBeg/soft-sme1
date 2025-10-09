@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """
-Simple script to fetch and display customer data from NeuraTask database
+Simple script to fetch and display customer data from Aiven database
 """
 
 import os
 import sys
-from ai_database_connection_optimized import OptimizedNeuraTaskDatabase
+from ai_database_connection_optimized import OptimizedAivenDatabase
 
 def get_customer_list():
     """Fetch and display customer list"""
-    print("🔍 Fetching customer list from NeuraTask database...")
+    print("🔍 Fetching customer list from Aiven database...")
     
     # Initialize database connection
-    db = OptimizedNeuraTaskDatabase(
+    db = OptimizedAivenDatabase(
         max_connections=3,
         cache_size=50,
         cache_ttl=180
@@ -74,7 +74,7 @@ def get_customer_summary():
     """Get customer summary data"""
     print("\n📊 Fetching customer summary...")
     
-    db = OptimizedNeuraTaskDatabase()
+    db = OptimizedAivenDatabase()
     
     try:
         summary = db.get_customers_summary(10)
@@ -95,12 +95,12 @@ def get_customer_summary():
         db.cleanup()
 
 if __name__ == "__main__":
-    print("🚀 NeuraTask Customer Data Fetcher")
+    print("🚀 Aiven Customer Data Fetcher")
     print("=" * 50)
     
     # Check if database is accessible
     try:
-        test_db = OptimizedNeuraTaskDatabase()
+        test_db = OptimizedAivenDatabase()
         if not test_db.connect():
             print("❌ Cannot connect to database. Please check your database setup.")
             sys.exit(1)

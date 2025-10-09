@@ -57,7 +57,7 @@ function createWindow() {
     frame: true,
     titleBarStyle: 'default',
     icon: path.join(__dirname, '../build/icon.ico'), // Add icon for production
-    title: 'NeuraTask - Business Management System'
+    title: 'Aiven - Business Management System'
   });
 
   // Load the index.html from a url

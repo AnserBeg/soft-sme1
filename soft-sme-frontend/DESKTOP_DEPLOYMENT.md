@@ -1,7 +1,7 @@
-# NeuraTask Desktop App Deployment Guide
+# Aiven Desktop App Deployment Guide
 
 ## Overview
-This guide explains how to deploy the NeuraTask application as a desktop app that can be installed on multiple devices and connect to a centralized backend server.
+This guide explains how to deploy the Aiven application as a desktop app that can be installed on multiple devices and connect to a centralized backend server.
 
 ## Architecture
 - **Desktop App**: Electron-based application that runs on Windows, Mac, and Linux
@@ -95,8 +95,8 @@ The built applications will be in the `release` folder:
 
 ### Linux
 1. Download the `.AppImage` file
-2. Make it executable: `chmod +x NeuraTask.AppImage`
-3. Run: `./NeuraTask.AppImage`
+2. Make it executable: `chmod +x Aiven.AppImage`
+3. Run: `./Aiven.AppImage`
 
 ## Configuration for Different Environments
 

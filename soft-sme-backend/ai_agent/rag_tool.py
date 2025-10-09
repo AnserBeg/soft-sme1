@@ -3,7 +3,7 @@
 Documentation RAG Tool
 =====================
 
-RAG (Retrieval-Augmented Generation) tool for NeuraTask documentation.
+RAG (Retrieval-Augmented Generation) tool for Aiven documentation.
 Uses ChromaDB for vector storage and sentence-transformers for embeddings.
 """
 
@@ -38,10 +38,10 @@ def _ensure_hf_cache_dirs() -> None:
 logger = logging.getLogger(__name__)
 
 class DocumentationRAGTool(BaseTool):
-    """RAG tool for NeuraTask documentation"""
+    """RAG tool for Aiven documentation"""
     
     name: str = "documentation_search"
-    description: str = "Search NeuraTask documentation for answers to user questions about features, workflows, and system usage"
+    description: str = "Search Aiven documentation for answers to user questions about features, workflows, and system usage"
     db_path: str = "./chroma_db"
     client: Any = None
     collection: Any = None
@@ -71,7 +71,7 @@ class DocumentationRAGTool(BaseTool):
             # Get or create collection
             self.collection = self.client.get_or_create_collection(
                 name="soft_sme_docs",
-                metadata={"description": "NeuraTask Application Documentation"}
+                metadata={"description": "Aiven Application Documentation"}
             )
             
             # Initialize embedding model

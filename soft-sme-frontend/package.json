@@ -67,7 +67,7 @@
   },
   "build": {
     "appId": "com.soft-sme.app",
-    "productName": "NeuraTask",
+    "productName": "Aiven",
     "directories": {
       "output": "release"
     },
@@ -108,7 +108,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "NeuraTask"
+      "shortcutName": "Aiven"
     }
   }
 }
