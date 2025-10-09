@@ -37,6 +37,11 @@ def _ensure_hf_cache_dirs() -> None:
 
 logger = logging.getLogger(__name__)
 
+
+class EmbeddingModelLoadError(RuntimeError):
+    """Raised when the documentation embedding model cannot be loaded."""
+
+
 class DocumentationRAGTool(BaseTool):
     """RAG tool for NeuraTask documentation"""
     
@@ -76,11 +81,21 @@ class DocumentationRAGTool(BaseTool):
             
             # Initialize embedding model
             _ensure_hf_cache_dirs()
-            self.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
-            
+            try:
+                self.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+            except Exception as exc:
+                raise EmbeddingModelLoadError(
+                    "Failed to load sentence-transformer model 'all-MiniLM-L6-v2'. "
+                    "Ensure the model is available locally or that the environment has access "
+                    "to download it."
+                ) from exc
+
             self.initialized = True
             logger.info("Documentation RAG Tool initialized successfully")
-            
+
+        except EmbeddingModelLoadError as e:
+            logger.error(str(e))
+            raise
         except Exception as e:
             logger.error(f"Failed to initialize RAG Tool: {e}")
             raise

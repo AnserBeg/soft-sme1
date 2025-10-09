@@ -98,7 +98,15 @@ class NeuraTaskAgent:
         try:
             # Initialize RAG tool
             if self.documentation_enabled:
-                self.rag_tool = DocumentationRAGTool()
+                try:
+                    self.rag_tool = DocumentationRAGTool()
+                except Exception as e:
+                    logger.warning(
+                        "Documentation support disabled because RAG tool initialization failed: %s",
+                        e,
+                    )
+                    self.rag_tool = None
+                    self.documentation_enabled = False
             else:
                 logger.info("Documentation support disabled via AI_ENABLE_DOCUMENTATION")
 
@@ -561,7 +569,9 @@ Provide a helpful, complete answer."""
             }
             
             # Check RAG tool
-            if self.documentation_enabled and self.rag_tool:
+            if not self.rag_tool:
+                health_status["vector_db"] = "disabled"
+            elif self.documentation_enabled:
                 try:
                     rag_stats = self.rag_tool.get_stats()
                     health_status["vector_db"] = "healthy"
