@@ -13,7 +13,7 @@ const { SalesOrderService } = require('./dist/services/SalesOrderService');
 require('dotenv').config();
 
 const app = express();
-const port = process.env.PORT || 5000;
+const port = Number(process.env.PORT) || 10000;
 
 // Enable compression for better performance
 const compression = require('compression');
@@ -155,8 +155,11 @@ app.get('/api/auth/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// Basic route
-app.get('/', async (req, res) => {
+// Render health check route
+app.get('/', (_req, res) => res.status(200).send('OK'));
+
+// Database connectivity health check
+app.get('/health/db', async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM VendorMaster LIMIT 1');
     res.send('SME Inventory Backend is running and connected to the database. VendorMaster table check successful.');
@@ -2076,7 +2079,7 @@ app.get('/api/quotes/:id/pdf', async (req, res) => {
   }
 });
 
-app.listen(port, () => {
+app.listen(port, '0.0.0.0', () => {
   console.log(`Backend server listening on port ${port}`);
   console.log('Server successfully started and listening.');
 });
