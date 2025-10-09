@@ -24,7 +24,7 @@ Make sure your backend code is pushed to GitHub with these files:
    - **Root Directory**: `soft-sme-backend`
    - **Environment**: `Node`
    - **Build Command**: `./render-build.sh` (logs whether `apt.txt` was detected and runs the Node build)
-   - **Start Command**: `npm start`
+   - **Start Command**: `./render-start.sh`
    - **Plan**: Free (or choose paid plan)
 
 #### Option B: Using render.yaml (Blueprints)
@@ -49,7 +49,7 @@ If you plan to use the AI assistant features, the backend downloads the `sentenc
 2. In your service settings (or in `render.yaml`), attach that disk to the backend service.
 3. Point your chosen Hugging Face cache variables (for example `TRANSFORMERS_CACHE`, `HUGGINGFACE_HUB_CACHE`, `HF_HOME`, or `XDG_CACHE_HOME`) to `/var/lib/render/ai-cache/huggingface`.
 
-The backend will create that folder automatically if it doesn’t exist, ensuring the Hugging Face cache survives restarts and redeploys.
+The backend will create that folder automatically if it doesn’t exist, ensuring the Hugging Face cache survives restarts and redeploys. The `render-start.sh` script runs before `npm start` and takes care of provisioning any cache directories configured through these variables.
 
 ### 4. Database Setup
 1. In Render dashboard, go to your service
