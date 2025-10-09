@@ -1,4 +1,4 @@
-# NeuraTask Application - Navigation-Based Complete Documentation
+# Aiven Application - Navigation-Based Complete Documentation
 
 ## Table of Contents
 1. [Application Overview](#application-overview)
@@ -17,7 +17,7 @@
 
 ## Application Overview
 
-NeuraTask is a comprehensive business management application designed for small and medium enterprises. The application provides integrated modules for purchasing, sales, inventory management, employee management, time tracking, and financial operations with QuickBooks Online integration.
+Aiven is a comprehensive business management application designed for small and medium enterprises. The application provides integrated modules for purchasing, sales, inventory management, employee management, time tracking, and financial operations with QuickBooks Online integration.
 
 **Key Features:**
 - Multi-platform support (Web, Desktop via Electron, Mobile via Capacitor)
@@ -134,7 +134,7 @@ The application uses a hierarchical navigation system with the following main se
 **Features:**
 - **Connection Status**: Real-time QuickBooks connection monitoring
 - **Account Discovery**: Browse and search QuickBooks accounts
-- **Mapping Configuration**: Map NeuraTask operations to QBO accounts
+- **Mapping Configuration**: Map Aiven operations to QBO accounts
 - **Account Categories**: Organized by classification (Asset, Liability, Revenue, Expense)
 
 **Account Mappings:**

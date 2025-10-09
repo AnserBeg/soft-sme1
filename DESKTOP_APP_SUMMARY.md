@@ -1,4 +1,4 @@
-# NeuraTask Desktop App Setup Summary
+# Aiven Desktop App Setup Summary
 
 ## ✅ What's Been Configured
 
@@ -117,7 +117,7 @@ npm run build:desktop:win
 
 ## 🎯 Ready for Production
 
-Your NeuraTask application is now configured as a proper desktop app that can be:
+Your Aiven application is now configured as a proper desktop app that can be:
 - Installed on multiple devices
 - Connected to a centralized backend
 - Distributed to users as installers

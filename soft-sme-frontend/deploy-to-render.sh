@@ -1,9 +1,9 @@
 #!/bin/bash
 
-# Deploy NeuraTask Frontend to Render
+# Deploy Aiven Frontend to Render
 # This script helps prepare and deploy the frontend to Render
 
-echo "🚀 Deploying NeuraTask Frontend to Render..."
+echo "🚀 Deploying Aiven Frontend to Render..."
 
 # Check if we're in the right directory
 if [ ! -f "package.json" ]; then

@@ -1,5 +1,5 @@
 @echo off
-echo Starting NeuraTask Backend Server...
+echo Starting Aiven Backend Server...
 echo.
 
 cd /d "%~dp0soft-sme-backend"

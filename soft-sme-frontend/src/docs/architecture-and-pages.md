@@ -1,4 +1,4 @@
-# NeuraTask – Comprehensive System Documentation (AI-Agent Ready)
+# Aiven – Comprehensive System Documentation (AI-Agent Ready)
 
 ## Overview
 - Frontend: React 18 + MUI 5 + React Router v6 + Dayjs. Electron packaging supported.

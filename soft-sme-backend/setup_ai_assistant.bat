@@ -1,5 +1,5 @@
 @echo off
-echo Setting up NeuraTask AI Assistant...
+echo Setting up Aiven AI Assistant...
 echo =================================
 
 echo.
@@ -34,6 +34,6 @@ echo You can also start it manually by running: python ai_agent/main.py
 
 echo.
 echo Setup complete! 
-echo The AI assistant is now integrated into your NeuraTask backend.
+echo The AI assistant is now integrated into your Aiven backend.
 echo.
 pause 

@@ -183,7 +183,7 @@ const LandingPage: React.FC = () => {
         textAlign: 'center',
       }}>
         <Typography variant="h3" component="h1" gutterBottom sx={{ color: 'inherit' }}>
-          Welcome to NeuraTask
+          Welcome to Aiven
         </Typography>
         <Typography variant="h5" component="h2" gutterBottom sx={{ color: 'inherit', opacity: 0.85 }}>
           Your all-in-one business management solution

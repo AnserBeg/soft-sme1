@@ -1,8 +1,8 @@
 @echo off
-REM Deploy NeuraTask Frontend to Render
+REM Deploy Aiven Frontend to Render
 REM This script helps prepare and deploy the frontend to Render
 
-echo 🚀 Deploying NeuraTask Frontend to Render...
+echo 🚀 Deploying Aiven Frontend to Render...
 
 REM Check if we're in the right directory
 if not exist "package.json" (

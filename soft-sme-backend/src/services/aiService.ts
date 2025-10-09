@@ -1,4 +1,4 @@
-// Direct Gemini AI Service for NeuraTask
+// Direct Gemini AI Service for Aiven
 import dotenv from 'dotenv';
 import path from 'path';
 

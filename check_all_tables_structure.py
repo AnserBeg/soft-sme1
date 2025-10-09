@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Comprehensive table structure checker for NeuraTask database
+Comprehensive table structure checker for Aiven database
 Examines migration scripts and queries actual database structure
 """
 
@@ -155,7 +155,7 @@ def analyze_table(table_name, table_info):
 
 def main():
     """Main analysis function"""
-    print("🚀 NeuraTask Database Structure Analysis")
+    print("🚀 Aiven Database Structure Analysis")
     print("=" * 60)
     
     # Get tables from migrations

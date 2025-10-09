@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-NeuraTask AI Agent
+Aiven AI Agent
 =================
 
-Main AI agent class that orchestrates the LangGraph workflow for the NeuraTask application.
+Main AI agent class that orchestrates the LangGraph workflow for the Aiven application.
 Handles routing between documentation RAG and live database queries.
 """
 
@@ -19,8 +19,8 @@ from conversation_manager import ConversationManager
 
 logger = logging.getLogger(__name__)
 
-class NeuraTaskAgent:
-    """Main AI agent for NeuraTask application"""
+class AivenAgent:
+    """Main AI agent for Aiven application"""
     
     def __init__(self):
         self.llm = None
@@ -44,7 +44,7 @@ class NeuraTaskAgent:
     async def initialize(self):
         """Initialize the AI agent"""
         try:
-            logger.info("Initializing NeuraTask AI Agent...")
+            logger.info("Initializing Aiven AI Agent...")
             
             # Initialize LLM (using Gemini)
             from langchain_google_genai import ChatGoogleGenerativeAI
@@ -60,10 +60,10 @@ class NeuraTaskAgent:
             )
             
             # Set system prompt for consistent behavior
-            self.system_prompt = """You are an expert AI assistant for the NeuraTask inventory management application. 
+            self.system_prompt = """You are an expert AI assistant for the Aiven inventory management application. 
 
 **YOUR ROLE:**
-- Help users understand how to use the NeuraTask system
+- Help users understand how to use the Aiven system
 - Provide clear, direct answers
 - Answer questions about features, workflows, and processes
 - Present data in a helpful, organized way
@@ -188,7 +188,7 @@ class NeuraTaskAgent:
                 valid_tools.insert(0, "rag")
             tools_array_text = ", ".join(f'"{tool}"' for tool in valid_tools)
 
-            analysis_prompt = f"""You are an expert AI assistant for the NeuraTask inventory management system.
+            analysis_prompt = f"""You are an expert AI assistant for the Aiven inventory management system.
 
 **USER QUESTION:** {message}{conversation_context}
 
@@ -501,7 +501,7 @@ Provide a helpful, complete answer."""
                         conversation_context += f"Assistant: {msg.get('text', '')}\n"
             
             # Generate SQL
-            sql_prompt = f"""You are an expert SQL generator for the NeuraTask inventory management system.
+            sql_prompt = f"""You are an expert SQL generator for the Aiven inventory management system.
 
 **USER QUESTION:** {message}{conversation_context}
 

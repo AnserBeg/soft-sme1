@@ -3,7 +3,7 @@
 Inventory SQL Tool
 =================
 
-SQL tool for querying NeuraTask database for live inventory and order data.
+SQL tool for querying Aiven database for live inventory and order data.
 Includes natural language to SQL conversion and safety validation.
 """
 
@@ -21,10 +21,10 @@ import asyncio
 logger = logging.getLogger(__name__)
 
 class InventorySQLTool(BaseTool):
-    """SQL tool for NeuraTask inventory queries"""
+    """SQL tool for Aiven inventory queries"""
     
     name: str = "inventory_query"
-    description: str = "Query live inventory and order data from the NeuraTask database"
+    description: str = "Query live inventory and order data from the Aiven database"
     db_config: Dict[str, Any] = {}
     llm: Any = None
     safe_tables: set = set()
@@ -217,7 +217,7 @@ Only use SELECT statements. Do not modify data.
             prompt_template = PromptTemplate(
                 input_variables=["question", "schema_info"],
                 template="""
-You are a SQL expert for the NeuraTask inventory management system. 
+You are a SQL expert for the Aiven inventory management system. 
 Generate a safe, read-only SQL query based on the user's question.
 
 Available tables and their key columns:

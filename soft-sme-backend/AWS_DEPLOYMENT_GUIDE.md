@@ -1,4 +1,4 @@
-# AWS Deployment Guide for NeuraTask Backend
+# AWS Deployment Guide for Aiven Backend
 
 ## Prerequisites
 

@@ -1,6 +1,6 @@
 #!/bin/bash
 
-echo "Building NeuraTask Desktop App..."
+echo "Building Aiven Desktop App..."
 echo
 
 # Check if platform argument is provided

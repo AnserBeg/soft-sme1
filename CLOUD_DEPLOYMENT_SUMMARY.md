@@ -2,7 +2,7 @@
 
 ## 🎯 What We've Prepared
 
-Your NeuraTask business management application is now ready for cloud deployment! Here's what we've set up:
+Your Aiven business management application is now ready for cloud deployment! Here's what we've set up:
 
 ### ✅ Configuration Files Created
 

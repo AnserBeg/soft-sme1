@@ -39,7 +39,7 @@ The backup system now supports custom directories for storing and retrieving bac
 2. **Configure Backup Directory**:
    - Enter the full path to your desired backup directory
    - Examples:
-     - Windows: `C:\MyBackups\NeuraTask`
+     - Windows: `C:\MyBackups\Aiven`
      - macOS: `/Users/username/Documents/Backups`
      - Linux: `/home/username/backups`
 

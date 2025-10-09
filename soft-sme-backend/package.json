@@ -1,7 +1,7 @@
 {
   "name": "soft-sme-backend",
   "version": "1.0.0",
-  "description": "Backend for NeuraTask application",
+  "description": "Backend for Aiven application",
   "main": "dist/index.js",
   "scripts": {
     "start": "node dist/index.js",
