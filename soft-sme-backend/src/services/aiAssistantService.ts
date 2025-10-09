@@ -29,7 +29,7 @@ class AIAssistantService {
 
   constructor() {
     const configuredMode = process.env.AI_AGENT_MODE?.trim().toLowerCase();
-    const desiredMode: 'local' | 'remote' = configuredMode === 'remote' ? 'remote' : 'local';
+    const desiredMode: 'local' | 'remote' = configuredMode === 'local' ? 'local' : 'remote';
 
     const resolvedEndpoint = this.resolveAgentEndpoint(desiredMode);
     const endpointIsLocal = this.isLocalEndpoint(resolvedEndpoint);
@@ -53,6 +53,11 @@ class AIAssistantService {
   }
 
   private resolveAgentEndpoint(desiredMode: 'local' | 'remote'): string {
+    const urlOverride = process.env.AI_AGENT_URL?.trim();
+    if (urlOverride) {
+      return this.normalizeEndpoint(urlOverride);
+    }
+
     const configuredEndpoint = process.env.AI_AGENT_ENDPOINT?.trim();
     if (configuredEndpoint) {
       return this.normalizeEndpoint(configuredEndpoint);
@@ -76,22 +81,35 @@ class AIAssistantService {
     }
 
     if (desiredMode === 'local') {
-      return 'http://localhost:15000';
+      return this.normalizeEndpoint('http://127.0.0.1:15000');
     }
 
-    // In remote mode without explicit configuration we keep the legacy
-    // localhost endpoint for backward compatibility. A fallback to the
-    // direct Gemini integration will handle connection issues at runtime.
-    return 'http://localhost:15000';
+    const proxyPath = process.env.AI_AGENT_PROXY_PATH?.trim();
+    if (proxyPath) {
+      return this.normalizeEndpoint(proxyPath);
+    }
+
+    return this.normalizeEndpoint('/ai');
   }
 
   private normalizeEndpoint(endpoint: string): string {
     if (!endpoint) {
-      return 'http://localhost:15000';
+      return '/ai';
     }
 
-    // Remove trailing slash to avoid double slashes when composing URLs
-    return endpoint.replace(/\/$/, '');
+    const trimmed = endpoint.trim();
+
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+      return trimmed.replace(/\/+$/, '');
+    }
+
+    if (trimmed.startsWith('/')) {
+      const normalized = trimmed.replace(/\/+$/, '');
+      return normalized.length > 0 ? normalized : '/';
+    }
+
+    const withoutSlashes = trimmed.replace(/^\/+/, '').replace(/\/+$/, '');
+    return withoutSlashes.length > 0 ? `/${withoutSlashes}` : '/';
   }
 
   /**
