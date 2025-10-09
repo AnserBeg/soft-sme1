@@ -88,18 +88,44 @@ const HOST = process.env.HOST || '0.0.0.0';
 // Initialize express-ws for WebSocket support
 const wsInstance = expressWs(app);
 
-const allowedOrigins = [
-  'http://localhost:3000',
-  'http://localhost:5173',
-  'http://localhost:8080',
-  'https://softsme.phoenixtrailers.ca',
-  'https://soft-sme1.onrender.com',
-  'https://soft-sme-frontend.onrender.com',
-  process.env.CORS_ORIGIN,
-].filter(Boolean);
+const allowedOrigins = (
+  [
+    'http://localhost:3000',
+    'http://localhost:5173',
+    'http://localhost:8080',
+    'https://softsme.phoenixtrailers.ca',
+    'https://soft-sme1.onrender.com',
+    'https://soft-sme-frontend.onrender.com',
+    process.env.CORS_ORIGIN,
+  ] as (string | undefined)[]
+)
+  .filter((origin): origin is string => Boolean(origin))
+  .map((origin) => origin.trim().toLowerCase());
+
+const isAllowedOrigin = (originHeader?: string | null) => {
+  if (!originHeader) {
+    return true;
+  }
+
+  const normalizedOrigin = originHeader.trim().toLowerCase();
+
+  if (normalizedOrigin.endsWith('.trycloudflare.com')) {
+    return true;
+  }
+
+  return allowedOrigins.includes(normalizedOrigin);
+};
 
 const corsOptions: cors.CorsOptions = {
-  origin: true, // Allow all origins - disable CORS restrictions
+  origin: (origin, callback) => {
+    if (isAllowedOrigin(origin)) {
+      callback(null, true);
+      return;
+    }
+
+    console.warn(`[CORS] Blocked origin: ${origin ?? 'unknown'}`);
+    callback(new Error('Not allowed by CORS'));
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: [
@@ -112,6 +138,31 @@ const corsOptions: cors.CorsOptions = {
   ],
   optionsSuccessStatus: 204,
 };
+
+app.use((req, res, next) => {
+  const requestOrigin = req.headers.origin;
+
+  if (isAllowedOrigin(requestOrigin)) {
+    if (requestOrigin) {
+      res.header('Access-Control-Allow-Origin', requestOrigin);
+    }
+  }
+
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.header(
+    'Access-Control-Allow-Headers',
+    'Content-Type, Authorization, X-Requested-With, x-device-id, x-timezone, X-Timezone'
+  );
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+  res.header('Vary', 'Origin');
+
+  if (req.method === 'OPTIONS') {
+    res.status(204).send('');
+    return;
+  }
+
+  next();
+});
 
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
