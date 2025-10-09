@@ -82,7 +82,8 @@ try {
 // Subagent analytics removed - simplified AI implementation
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = Number(process.env.PORT) || 10000;
+const HOST = process.env.HOST || '0.0.0.0';
 
 // Initialize express-ws for WebSocket support
 const wsInstance = expressWs(app);
@@ -121,6 +122,11 @@ app.use('/uploads', express.static('uploads'));
 // Health check endpoint for connection warmup
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// Lightweight health check for platform probes
+app.get('/healthz', (_req, res) => {
+  res.status(200).send('ok');
 });
 
 // Public routes
@@ -464,7 +470,7 @@ if (process.env.ENABLE_VENDOR_CALLING !== 'false') {
 }
 
 // Use the regular app for all functionality
-const server = app.listen(Number(PORT), '0.0.0.0', async () => {
+const server = app.listen(PORT, HOST, async () => {
   console.log(`Server is running on port ${PORT}`);
 
   if (shouldAutoStartAiAssistant) {
