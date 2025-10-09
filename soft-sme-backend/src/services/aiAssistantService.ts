@@ -89,12 +89,12 @@ class AIAssistantService {
       return this.normalizeEndpoint(proxyPath);
     }
 
-    return this.normalizeEndpoint('/ai');
+    return this.normalizeEndpoint('/api/ai-assistant');
   }
 
   private normalizeEndpoint(endpoint: string): string {
     if (!endpoint) {
-      return '/ai';
+      return '/api/ai-assistant';
     }
 
     const trimmed = endpoint.trim();
