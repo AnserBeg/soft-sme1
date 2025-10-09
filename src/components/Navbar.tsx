@@ -11,8 +11,11 @@ export function Navbar() {
       <div className="container mx-auto px-4">
         <div className="flex h-16 items-center justify-between">
           <div className="flex items-center">
-            <Link href="./" className="text-xl font-bold text-gray-900">
-              NeuraTask
+            <Link href="./" className="text-xl font-bold text-gray-900 leading-tight">
+              <span className="block">Aiven</span>
+              <span className="block text-xs font-semibold uppercase tracking-[0.2em] text-blue-600">
+                AI Driven ERP
+              </span>
             </Link>
           </div>
 

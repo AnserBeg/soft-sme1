@@ -6,11 +6,14 @@ export default function Home() {
     <div className="flex flex-col items-center justify-center min-h-[calc(100vh-4rem)]">
       <div className="text-center">
         <h1 className="text-4xl font-bold tracking-tight text-gray-900 sm:text-6xl">
-          Welcome to NeuraTask
+          Welcome to Aiven
         </h1>
+        <p className="mt-2 text-xl font-semibold tracking-tight text-blue-600">
+          AI Driven ERP
+        </p>
         <p className="mt-6 text-lg leading-8 text-gray-600">
-          A modern business management solution designed to help small and medium enterprises
-          streamline their operations and grow their business.
+          Aiven is a modern, AI-driven business management solution designed to help small and
+          medium enterprises streamline their operations and grow their business.
         </p>
         <div className="mt-10 flex items-center justify-center gap-x-6">
           <Link
