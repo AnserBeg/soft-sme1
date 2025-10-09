@@ -3,6 +3,7 @@ services:
     name: soft-sme-backend
     runtime: docker
     plan: starter
+    startCommand: ./render-start.sh
     disk:
       name: ai-cache
       mountPath: /var/lib/render/ai-cache
