@@ -336,20 +336,125 @@ class AIAssistantService {
    * Send message to remote AI agent
    */
   private async sendToRemoteAgent(message: string, userId?: number, conversationId?: string): Promise<AIResponse> {
-    try {
-      const response = await axios.post(`${this.aiEndpoint}/chat`, {
-        message,
-        user_id: userId,
-        conversation_id: conversationId
-      }, {
-        timeout: 60000
-      });
+    const payload = {
+      message,
+      user_id: userId,
+      conversation_id: conversationId
+    };
 
-      return response.data;
-    } catch (error) {
-      console.error('Remote AI Agent error:', error);
-      throw error;
+    const attemptedEndpoints: string[] = [];
+    let lastError: unknown = null;
+
+    for (const endpoint of this.getRemoteEndpointCandidates()) {
+      const chatUrl = `${endpoint}/chat`;
+      attemptedEndpoints.push(chatUrl);
+
+      try {
+        const response = await axios.post(chatUrl, payload, {
+          timeout: 60000
+        });
+
+        if (endpoint !== this.aiEndpoint) {
+          console.warn(
+            `[AI Assistant] Remote endpoint ${this.aiEndpoint} returned 404. Switching to fallback endpoint ${endpoint}.`
+          );
+          this.aiEndpoint = endpoint;
+        }
+
+        return response.data;
+      } catch (error) {
+        lastError = error;
+
+        if (axios.isAxiosError(error) && error.response?.status === 404) {
+          console.warn(`[AI Assistant] Remote endpoint ${chatUrl} returned 404. Trying next fallback endpoint if available.`);
+          continue;
+        }
+
+        console.error('Remote AI Agent error:', error);
+        throw error;
+      }
     }
+
+    console.error('[AI Assistant] All remote AI agent endpoints failed:', attemptedEndpoints.join(', '));
+    if (lastError) {
+      throw lastError;
+    }
+
+    throw new Error('Remote AI agent is unavailable');
+  }
+
+  private getRemoteEndpointCandidates(): string[] {
+    const normalized = this.aiEndpoint.replace(/\/+$/, '') || '/';
+    const candidates = new Set<string>();
+    const currentPath = this.extractPathFromEndpoint(normalized);
+
+    const addCandidate = (endpoint: string | null) => {
+      if (!endpoint) {
+        return;
+      }
+      const sanitized = endpoint.replace(/\/+$/, '') || '/';
+      candidates.add(sanitized);
+    };
+
+    addCandidate(normalized);
+
+    const fallbackPaths = ['/api/ai-assistant', '/api/ai', '/ai-assistant'];
+
+    for (const path of fallbackPaths) {
+      if (currentPath === path) {
+        continue;
+      }
+
+      const fallback = this.replaceEndpointPath(normalized, path);
+      if (fallback) {
+        addCandidate(fallback);
+      }
+    }
+
+    return Array.from(candidates);
+  }
+
+  private extractPathFromEndpoint(endpoint: string): string | null {
+    if (!endpoint) {
+      return null;
+    }
+
+    if (endpoint.startsWith('http://') || endpoint.startsWith('https://')) {
+      try {
+        const url = new URL(endpoint);
+        return url.pathname.replace(/\/+$/, '') || '/';
+      } catch (error) {
+        console.warn('[AI Assistant] Unable to parse endpoint URL for path extraction:', error);
+        return null;
+      }
+    }
+
+    if (endpoint.startsWith('/')) {
+      return endpoint.replace(/\/+$/, '') || '/';
+    }
+
+    return null;
+  }
+
+  private replaceEndpointPath(endpoint: string, newPath: string): string | null {
+    const normalizedPath = newPath.startsWith('/') ? newPath : `/${newPath}`;
+
+    if (endpoint.startsWith('http://') || endpoint.startsWith('https://')) {
+      try {
+        const url = new URL(endpoint);
+        url.pathname = normalizedPath;
+        return url.toString().replace(/\/+$/, '');
+      } catch (error) {
+        console.warn('[AI Assistant] Unable to build fallback endpoint URL:', error);
+        return null;
+      }
+    }
+
+    if (endpoint.startsWith('/')) {
+      return normalizedPath.replace(/\/+$/, '') || '/';
+    }
+
+    return null;
   }
 
   /**
