@@ -38,13 +38,13 @@ services:
       - key: CORS_ORIGIN
         value: "*"
       - key: TRANSFORMERS_CACHE
-        value: "/var/lib/render/ai-cache/huggingface"
+        value: "/var/lib/render/ai-cache/hf/transformers"
       - key: HUGGINGFACE_HUB_CACHE
-        value: "/var/lib/render/ai-cache/huggingface"
+        value: "/var/lib/render/ai-cache/hf"
       - key: HF_HOME
-        value: "/var/lib/render/ai-cache/huggingface"
+        value: "/var/lib/render/ai-cache/hf"
       - key: XDG_CACHE_HOME
-        value: "/var/lib/render/ai-cache"
+        value: "/var/lib/render/ai-cache/xdg"
       - key: PIP_CACHE_DIR
         value: "/var/lib/render/ai-cache/pip"
       - key: UV_CACHE_DIR
