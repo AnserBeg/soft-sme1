@@ -59,6 +59,13 @@ AI_AGENT_PORT=5000
 AI_AGENT_HOST=127.0.0.1
 PYTHON_PATH=python
 
+# Remote mode authentication (optional)
+# Use when AI_AGENT_MODE=remote and the service requires authorization
+# Provide either a full Bearer token or the raw token (Bearer will be added automatically)
+AI_AGENT_SERVICE_TOKEN=
+# For services that expect an x-api-key header instead of Authorization
+AI_AGENT_SERVICE_API_KEY=
+
 # OpenAI Configuration
 OPENAI_API_KEY=your_openai_api_key_here
 OPENAI_MODEL=gpt-4o-mini
@@ -73,6 +80,27 @@ DB_PORT=5432
 # Optional: Vector Database Configuration
 CHROMA_DB_PATH=./ai_agent/chroma_db
 ```
+
+#### Environment Variable Reference
+
+Use the table below if you just need a quick reminder of which variables
+to set:
+
+| Variable | When to set it | What it does |
+| --- | --- | --- |
+| `AI_AGENT_MODE` | Always | `local` uses the bundled Python process, `remote` sends requests to an external service |
+| `AI_AGENT_ENDPOINT` | Remote mode | Base URL of the remote AI service (e.g. `https://my-ai-service.example.com`) |
+| `AI_AGENT_PORT` | Local mode | Port for the local Python agent to listen on |
+| `AI_AGENT_HOST` | Local mode | Hostname for the local Python agent |
+| `AI_AGENT_SERVICE_TOKEN` | Remote mode (when the remote service expects a Bearer token) | Token that will be sent in the `Authorization` header. You can paste the full `Bearer <token>` value or just the token string |
+| `AI_AGENT_SERVICE_API_KEY` | Remote mode (when the remote service expects an `x-api-key` header) | API key value that will be injected into the `x-api-key` header |
+| `OPENAI_API_KEY` | When using OpenAI tools | API key used by the assistant for OpenAI calls |
+| Database variables (`DB_HOST`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_PORT`) | When live data queries are enabled | Connection settings for the Postgres database |
+| `CHROMA_DB_PATH` | Optional | Filesystem path for the local Chroma vector store |
+
+> **Tip:** In most setups you either set `AI_AGENT_SERVICE_TOKEN` **or**
+> `AI_AGENT_SERVICE_API_KEY`—only configure the one that matches your
+> remote service authentication requirements.
 
 ### 3. Run Setup Script
 
@@ -203,6 +231,8 @@ The system automatically determines whether to:
 
 1. **Local Mode** (`AI_AGENT_MODE=local`): Runs as a child process of the main backend
 2. **Remote Mode** (`AI_AGENT_MODE=remote`): Connects to a separate AI agent server
+
+> ℹ️ **Remote Mode Tip**: Ensure `AI_AGENT_SERVICE_TOKEN` or `AI_AGENT_SERVICE_API_KEY` is set so the backend can authenticate with the remote AI agent. Without one of these values the remote server will reject requests with `401 Unauthorized`.
 
 ### Vector Database Options
 

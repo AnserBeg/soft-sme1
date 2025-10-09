@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios, { AxiosRequestConfig } from 'axios';
 import { spawn, spawnSync, ChildProcess } from 'child_process';
 import path from 'path';
 import fs from 'fs';
@@ -26,6 +26,7 @@ class AIAssistantService {
   private aiProcess: ChildProcess | null = null;
   private aiEndpoint: string;
   private isLocalMode: boolean;
+  private missingAuthWarningLogged = false;
 
   constructor() {
     const configuredMode = process.env.AI_AGENT_MODE?.trim().toLowerCase();
@@ -315,13 +316,17 @@ class AIAssistantService {
    */
   private async sendToLocalAgent(message: string, userId?: number, conversationId?: string): Promise<AIResponse> {
     try {
-      const response = await axios.post(`${this.aiEndpoint}/chat`, {
-        message,
-        user_id: userId,
-        conversation_id: conversationId
-      }, {
-        timeout: 60000 // 60 second timeout
-      });
+      const response = await axios.post(
+        `${this.aiEndpoint}/chat`,
+        {
+          message,
+          user_id: userId,
+          conversation_id: conversationId
+        },
+        this.createRequestConfig({
+          timeout: 60000 // 60 second timeout
+        })
+      );
 
       return response.data;
     } catch (error) {
@@ -350,9 +355,13 @@ class AIAssistantService {
       attemptedEndpoints.push(chatUrl);
 
       try {
-        const response = await axios.post(chatUrl, payload, {
-          timeout: 60000
-        });
+        const response = await axios.post(
+          chatUrl,
+          payload,
+          this.createRequestConfig({
+            timeout: 60000
+          })
+        );
 
         if (endpoint !== this.aiEndpoint) {
           console.warn(
@@ -465,9 +474,12 @@ class AIAssistantService {
       const healthUrl = `${this.aiEndpoint}/health`;
       console.log(`🔍 Health check: Attempting to access ${healthUrl}`);
       
-      const response = await axios.get(healthUrl, {
-        timeout: 5000
-      });
+      const response = await axios.get(
+        healthUrl,
+        this.createRequestConfig({
+          timeout: 5000
+        })
+      );
       
       console.log(`✅ Health check successful: ${response.status} - ${JSON.stringify(response.data)}`);
       
@@ -499,9 +511,13 @@ class AIAssistantService {
    */
   async initializeAI(): Promise<void> {
     try {
-      const response = await axios.post(`${this.aiEndpoint}/initialize`, {}, {
-        timeout: 60000 // 60 second timeout for initialization
-      });
+      const response = await axios.post(
+        `${this.aiEndpoint}/initialize`,
+        {},
+        this.createRequestConfig({
+          timeout: 60000 // 60 second timeout for initialization
+        })
+      );
       console.log('AI Agent initialized:', response.data);
     } catch (error) {
       console.error('Failed to initialize AI agent:', error);
@@ -514,7 +530,10 @@ class AIAssistantService {
    */
   async getConversationHistory(conversationId: string): Promise<ChatMessage[]> {
     try {
-      const response = await axios.get(`${this.aiEndpoint}/conversation/${conversationId}`);
+      const response = await axios.get(
+        `${this.aiEndpoint}/conversation/${conversationId}`,
+        this.createRequestConfig()
+      );
       const rawMessages = Array.isArray(response.data?.messages) ? response.data.messages : [];
 
       return rawMessages.map((message: any) => {
@@ -554,7 +573,10 @@ class AIAssistantService {
    */
   async clearConversationHistory(conversationId: string): Promise<void> {
     try {
-      await axios.delete(`${this.aiEndpoint}/conversation/${conversationId}`);
+      await axios.delete(
+        `${this.aiEndpoint}/conversation/${conversationId}`,
+        this.createRequestConfig()
+      );
     } catch (error) {
       console.error('Failed to clear conversation history:', error);
       throw error;
@@ -566,7 +588,10 @@ class AIAssistantService {
    */
   async getStatistics(): Promise<any> {
     try {
-      const response = await axios.get(`${this.aiEndpoint}/stats`);
+      const response = await axios.get(
+        `${this.aiEndpoint}/stats`,
+        this.createRequestConfig()
+      );
       return response.data;
     } catch (error) {
       console.error('Failed to get AI agent statistics:', error);
@@ -605,6 +630,55 @@ class AIAssistantService {
     }
 
     return false;
+  }
+
+  private createRequestConfig(config?: AxiosRequestConfig): AxiosRequestConfig {
+    const headers = this.getServiceAuthHeaders();
+
+    if (!headers) {
+      return config ?? {};
+    }
+
+    return {
+      ...(config ?? {}),
+      headers: {
+        ...(config?.headers ?? {}),
+        ...headers
+      }
+    };
+  }
+
+  private getServiceAuthHeaders(): Record<string, string> | undefined {
+    if (this.isLocalMode) {
+      return undefined;
+    }
+
+    const headers: Record<string, string> = {};
+    const bearerToken = process.env.AI_AGENT_SERVICE_TOKEN?.trim();
+    const apiKey = process.env.AI_AGENT_SERVICE_API_KEY?.trim();
+
+    if (bearerToken) {
+      headers['Authorization'] = bearerToken.startsWith('Bearer ')
+        ? bearerToken
+        : `Bearer ${bearerToken}`;
+    }
+
+    if (apiKey) {
+      headers['x-api-key'] = apiKey;
+    }
+
+    if (Object.keys(headers).length === 0) {
+      if (!this.missingAuthWarningLogged) {
+        console.warn(
+          '[AI Assistant] Remote mode enabled but no AI_AGENT_SERVICE_TOKEN or AI_AGENT_SERVICE_API_KEY set. ' +
+            'Remote requests may fail with 401 Unauthorized.'
+        );
+        this.missingAuthWarningLogged = true;
+      }
+      return undefined;
+    }
+
+    return headers;
   }
 
   private async createGeminiFallbackResponse(message: string, userId?: number): Promise<AIResponse> {
