@@ -93,11 +93,9 @@ DPkg::Post-Invoke-Success "";
 Acquire::Retries "3";
 EOF
 
-  cleanup_workdir() {
-    rm -rf "${work_root}"
-    trap - RETURN
-  }
-  trap cleanup_workdir RETURN
+  local cleanup_cmd
+  printf -v cleanup_cmd 'trap - RETURN; rm -rf -- %q' "${work_root}"
+  trap "${cleanup_cmd}" RETURN
 
   log "Downloading apt packages into project-local .apt directory"
   if ! APT_CONFIG="${apt_config}" apt-get update; then
