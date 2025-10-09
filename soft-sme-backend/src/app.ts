@@ -52,6 +52,7 @@ const allowedOrigins = [
   'http://localhost:8080', // allow dev server
   'https://mobile.phoenixtrailers.ca', // mobile app tunnel
   'https://clockwise-mobile.phoenixtrailers.ca', // alternative mobile tunnel
+  'https://softsme.phoenixtrailers.ca', // production frontend default
   process.env.CORS_ORIGIN, // production frontend (e.g., https://softsme.phoenixtrailers.ca)
 ].filter(Boolean);
 
