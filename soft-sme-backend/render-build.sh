@@ -33,12 +33,20 @@ function install_with_system_apt() {
     return 1
   fi
 
+  local apt_state_dirs=("/var/lib/apt/lists" "/var/cache/apt/archives")
+  for dir in "${apt_state_dirs[@]}"; do
+    if [[ -e "${dir}" && ! -w "${dir}" ]]; then
+      log "apt state directory ${dir} is not writable; skipping system apt-get installation"
+      return 1
+    fi
+  done
+
   log "Attempting system apt-get installation for packages: ${APT_PACKAGES[*]}"
   export DEBIAN_FRONTEND=noninteractive
 
   if apt-get update && apt-get install -y --no-install-recommends "${APT_PACKAGES[@]}"; then
     log "System apt-get installation completed"
-    rm -rf /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/* || true
     return 0
   fi
 
