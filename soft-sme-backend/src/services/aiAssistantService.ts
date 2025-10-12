@@ -5,6 +5,22 @@ import fs from 'fs';
 import crypto from 'crypto';
 import { AIService } from './aiService';
 
+const sanitizeEnvValue = (value?: string | null): string | undefined => {
+  if (!value) {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+
+  if (trimmed.length === 0) {
+    return undefined;
+  }
+
+  const withoutQuotes = trimmed.replace(/^['"](.+)['"]$/s, '$1').trim();
+
+  return withoutQuotes.length > 0 ? withoutQuotes : undefined;
+};
+
 interface AIResponse {
   response: string;
   sources: string[];
@@ -54,6 +70,13 @@ class AIAssistantService {
   }
 
   private resolveAgentEndpoint(desiredMode: 'local' | 'remote'): string {
+    const remoteUrlOverride = process.env.AI_AGENT_REMOTE_URL?.trim();
+    if (remoteUrlOverride) {
+      const normalizedRemote = this.normalizeEndpoint(remoteUrlOverride);
+      const withoutChatSuffix = normalizedRemote.replace(/\/chat$/i, '');
+      return withoutChatSuffix.length > 0 ? withoutChatSuffix : '/';
+    }
+
     const urlOverride = process.env.AI_AGENT_URL?.trim();
     if (urlOverride) {
       return this.normalizeEndpoint(urlOverride);
@@ -654,8 +677,8 @@ class AIAssistantService {
     }
 
     const headers: Record<string, string> = {};
-    const bearerToken = process.env.AI_AGENT_SERVICE_TOKEN?.trim();
-    const apiKey = process.env.AI_AGENT_SERVICE_API_KEY?.trim();
+    const bearerToken = sanitizeEnvValue(process.env.AI_AGENT_SERVICE_TOKEN);
+    const apiKey = sanitizeEnvValue(process.env.AI_AGENT_SERVICE_API_KEY);
 
     if (bearerToken) {
       headers['Authorization'] = bearerToken.startsWith('Bearer ')
