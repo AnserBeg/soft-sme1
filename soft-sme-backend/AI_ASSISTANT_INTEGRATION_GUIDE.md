@@ -90,6 +90,7 @@ to set:
 | --- | --- | --- |
 | `AI_AGENT_MODE` | Always | `local` uses the bundled Python process, `remote` sends requests to an external service |
 | `AI_AGENT_ENDPOINT` | Remote mode | Base URL of the remote AI service (e.g. `https://my-ai-service.example.com`) |
+| `AI_AGENT_REMOTE_URL` | Remote mode | Explicit override for the remote chat endpoint. You can supply either the base path or the full `/chat` URL from the external service. |
 | `AI_AGENT_PORT` | Local mode | Port for the local Python agent to listen on |
 | `AI_AGENT_HOST` | Local mode | Hostname for the local Python agent |
 | `AI_AGENT_SERVICE_TOKEN` | Remote mode (when the remote service expects a Bearer token) | Token that will be sent in the `Authorization` header. You can paste the full `Bearer <token>` value or just the token string |
@@ -101,6 +102,21 @@ to set:
 > **Tip:** In most setups you either set `AI_AGENT_SERVICE_TOKEN` **or**
 > `AI_AGENT_SERVICE_API_KEY`—only configure the one that matches your
 > remote service authentication requirements.
+>
+> **Gotcha Avoided:** The backend automatically trims surrounding quotes
+> from `AI_AGENT_SERVICE_TOKEN`/`AI_AGENT_SERVICE_API_KEY`, so values copied
+> from dashboards that include `"` characters will still match incoming
+> headers.
+
+> **Note:** When using `AI_AGENT_REMOTE_URL`, the backend will automatically
+> trim a trailing `/chat` segment so you can paste the exact endpoint URL
+> from your external service without additional formatting.
+
+When you rely on an API key (for example, using a Gemini key provided via
+`AI_AGENT_SERVICE_API_KEY`), make sure the remote caller sends it in the
+`x-api-key` header. The backend's authentication middleware will accept
+that header and skip the normal JWT session validation for trusted
+service-to-service calls.
 
 ### 3. Run Setup Script
 
