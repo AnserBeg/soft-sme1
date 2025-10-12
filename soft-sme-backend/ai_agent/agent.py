@@ -11,7 +11,7 @@ import os
 import logging
 import time
 from typing import Dict, Any, List, Optional
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
+from langchain_core.messages import HumanMessage, AIMessage
 
 from rag_tool import DocumentationRAGTool
 from sql_tool import InventorySQLTool
@@ -156,232 +156,71 @@ class AivenAgent:
                     else:
                         conversation_context += f"Assistant: {msg.get('text', '')}\n"
             
-            # STEP 1: Initial analysis and planning
-            tool_descriptions = []
-            decision_guidelines = []
-            examples = []
+            # STEP 1: Determine which tools are needed using lightweight heuristics
+            tools_needed = self._determine_tools_needed(message, conversation_history)
+            logger.info(f"Heuristic tool selection: {tools_needed}")
 
-            if self.documentation_enabled:
-                tool_descriptions.append("**RAG Tool** - Search system documentation for guidance, procedures, UI details, how-to instructions, button locations, form fields, workflow steps")
-                decision_guidelines.extend([
-                    "If user asks \"HOW to do something\" (buttons, menus, steps, procedures) → use RAG for UI instructions",
-                    "If user asks \"can I edit X\" or \"how can I edit X\" → use RAG for UI instructions",
-                ])
-                examples.extend([
-                    '"how do I create a quote" → RAG (get UI instructions)',
-                    '"can I edit attendance" → RAG (get UI instructions)',
-                    '"how can I edit attendance" → RAG (get UI instructions)',
-                    '"write me an email template" → RAG (for guidance) + LLM knowledge (for content)',
-                ])
-
-            tool_descriptions.append("**SQL Tool** - Query live database for current data, examples, history, existing content, records")
-            tool_descriptions.append("**LLM Knowledge** - Use your own expertise for general guidance, writing help, best practices, general business advice")
-
-            decision_guidelines.extend([
-                'If user asks "give me a list of X" or "show me X" → Consider SQL to get actual data',
-                'If user asks for "examples" or "existing content" → Consider SQL to find real examples',
-                'For general business advice, conceptual questions, or when you have sufficient knowledge → Use LLM knowledge only',
-                'IMPORTANT: Consider conversation context - if the user refers to something from previous messages, use that context',
-            ])
-
-            examples.extend([
-                '"give me a list of customers" → SQL (get actual customer data)',
-                '"what\'s the best business practice" → LLM knowledge only',
-                '"what is inventory management" → LLM knowledge only (conceptual)',
-                '"hello" or "how are you" → LLM knowledge only (conversational)',
-                '"what was the purchase order number" (after discussing a specific part) → SQL (get that specific purchase order)',
-            ])
-
-            available_tools_text = "\n".join(f"- {desc}" for desc in tool_descriptions)
-            decision_guidelines_text = "\n".join(f"- {guideline}" for guideline in decision_guidelines)
-            examples_text = "\n".join(f"- {example}" for example in examples)
-            valid_tools = ["sql", "llm_knowledge"]
-            if self.documentation_enabled:
-                valid_tools.insert(0, "rag")
-            tools_array_text = ", ".join(f'"{tool}"' for tool in valid_tools)
-
-            analysis_prompt = f"""You are an expert AI assistant for the Aiven inventory management system.
-
-**USER QUESTION:** {message}{conversation_context}
-
-**AVAILABLE TOOLS:**
-{available_tools_text}
-
-**DECISION GUIDELINES:**
-{decision_guidelines_text}
-
-**EXAMPLES:**
-{examples_text}
-
-**THINKING PROCESS:**
-1. **ANALYZE** what the user is asking for (consider conversation context)
-2. **PLAN** what tools you need to use
-3. **DETERMINE** the order of tool usage
-4. **IDENTIFY** what information you need to gather
-
-**RESPONSE FORMAT:**
-You MUST respond with ONLY a valid JSON object:
-{{
-    "tools_needed": [{tools_array_text}],
-    "reasoning": "Brief explanation of your plan",
-    "first_step": "What tool to use first and why"
-}}
-
-**RESPONSE:**"""
-            
-            # Get initial analysis
-            analysis_response = await self.llm.ainvoke(analysis_prompt)
-            analysis_content = analysis_response.content.strip()
-            
-            # Debug: Log the raw LLM response
-            logger.info(f"Raw LLM analysis response: {analysis_content}")
-            
-            # Clean up the response - remove markdown code blocks if present
-            cleaned_content = analysis_content
-            if analysis_content.startswith('```json'):
-                cleaned_content = analysis_content.replace('```json', '').replace('```', '').strip()
-            elif analysis_content.startswith('```'):
-                cleaned_content = analysis_content.replace('```', '').strip()
-            
-            # Try to parse JSON, fallback to simple approach if needed
-            try:
-                import json
-                analysis = json.loads(cleaned_content)
-                tools_needed = analysis.get("tools_needed", [])
-                reasoning = analysis.get("reasoning", "")
-                first_step = analysis.get("first_step", "")
-                logger.info(f"Successfully parsed JSON: {analysis}")
-            except Exception as e:
-                # Fallback: use LLM knowledge only if JSON parsing fails
-                logger.warning(f"JSON parsing failed: {e}. Raw response: {analysis_content}")
-                logger.warning(f"Cleaned content: {cleaned_content}")
-                logger.warning("Using LLM knowledge only due to parsing error.")
-                tools_needed = ["llm_knowledge"]
-                reasoning = "JSON parsing failed, using LLM knowledge only"
-                first_step = "Using LLM knowledge due to parsing error"
-            
-            logger.info(f"Analysis: {reasoning}")
             if not self.documentation_enabled:
                 tools_needed = [tool for tool in tools_needed if tool != "rag"]
-            logger.info(f"Tools needed: {tools_needed}")
-            logger.info(f"First step: {first_step}")
+            if not tools_needed:
+                tools_needed = ["llm_knowledge"]
+            logger.info(f"Filtered tools needed: {tools_needed}")
             
             # STEP 2: Iterative tool usage
             gathered_info = {}
             tool_usage_count = 0
-            max_iterations = 2  # Reduced further to prevent long processing
-            start_time_iteration = time.time()
-            max_iteration_time = 25  # 25 seconds max per iteration
-            
-            for iteration in range(max_iterations):
-                # Check if we're taking too long
-                if time.time() - start_time_iteration > max_iteration_time:
-                    logger.warning(f"Iteration {iteration + 1} taking too long, stopping")
-                    break
-                logger.info(f"Iteration {iteration + 1}: Using tools {tools_needed}")
-                
-                # Use RAG tool if needed
-                if self.documentation_enabled and self.rag_tool and "rag" in tools_needed and "documentation" not in gathered_info:
-                    try:
-                        # Create a more specific query for better RAG results
-                        if "edit" in message.lower() or "modify" in message.lower():
-                            if "attendance" in message.lower() or "clock" in message.lower():
-                                rag_query = f"time tracking reports page edit modify time entries attendance clock in clock out reports {message}"
-                            else:
-                                rag_query = f"how to edit modify time entries attendance clock in clock out {message}"
+
+            # Use RAG tool if needed
+            if (
+                self.documentation_enabled
+                and self.rag_tool
+                and "rag" in tools_needed
+                and "documentation" not in gathered_info
+            ):
+                try:
+                    # Create a more specific query for better RAG results
+                    if "edit" in message.lower() or "modify" in message.lower():
+                        if "attendance" in message.lower() or "clock" in message.lower():
+                            rag_query = f"time tracking reports page edit modify time entries attendance clock in clock out reports {message}"
                         else:
-                            rag_query = f"relevant documentation for: {message}"
-                        
-                        doc_result = await self.rag_tool.ainvoke(rag_query)
-                        gathered_info["documentation"] = doc_result
-                        self.stats["rag_queries"] += 1
-                        logger.info("RAG tool used successfully")
-                        logger.info(f"RAG query used: {rag_query}")
-                        logger.info(f"RAG result preview: {doc_result[:500]}...")
-                    except Exception as e:
-                        logger.error(f"RAG tool error: {e}")
-                        gathered_info["documentation"] = "No documentation found"
-                
-                # Use SQL tool if needed
-                if "sql" in tools_needed and "database_data" not in gathered_info:
-                    try:
-                        # Generate SQL query based on the message and conversation context
-                        sql_query = await self._generate_sql_query(message, conversation_history)
-                        if sql_query:
-                            # Add timeout for SQL queries
-                            import asyncio
-                            try:
-                                db_result = await asyncio.wait_for(
-                                    self.sql_tool.ainvoke(sql_query), 
-                                    timeout=10.0  # 10 second timeout for SQL
-                                )
-                                gathered_info["database_data"] = db_result
-                                self.stats["sql_queries"] += 1
-                                logger.info("SQL tool used successfully")
-                            except asyncio.TimeoutError:
-                                logger.warning("SQL query timed out, skipping")
-                                gathered_info["database_data"] = "SQL query timed out"
-                    except Exception as e:
-                        logger.error(f"SQL tool error: {e}")
-                        gathered_info["database_data"] = "No database data available"
-                
-                # Check if we have enough information (simplified logic)
-                if iteration == 0 and len(gathered_info) > 0:
-                    # First iteration with some data - proceed to answer
-                    ready_to_answer = True
-                    eval_reasoning = "Have sufficient information from first iteration"
-                elif iteration >= 1:
-                    # Second iteration or more - evaluate if we need more
-                    evaluation_prompt = f"""You are evaluating whether you have enough information to answer the user's question.
+                            rag_query = f"how to edit modify time entries attendance clock in clock out {message}"
+                    else:
+                        rag_query = f"relevant documentation for: {message}"
 
-**USER QUESTION:** {message}
+                    doc_result = await self.rag_tool.ainvoke(rag_query)
+                    gathered_info["documentation"] = doc_result
+                    self.stats["rag_queries"] += 1
+                    tool_usage_count += 1
+                    logger.info("RAG tool used successfully")
+                    logger.info(f"RAG query used: {rag_query}")
+                    logger.info(f"RAG result preview: {doc_result[:500]}...")
+                except Exception as e:
+                    logger.error(f"RAG tool error: {e}")
+                    gathered_info["documentation"] = "No documentation found"
 
-**INFORMATION GATHERED:**
-{gathered_info}
-
-**TOOLS USED:** {list(gathered_info.keys())}
-
-**THINKING:**
-1. Do you have enough information to provide a helpful answer?
-2. Do you need to use any additional tools?
-3. Are there any gaps in the information?
-
-**RESPONSE FORMAT:**
-Respond with a JSON object:
-{{
-    "ready_to_answer": true/false,
-    "additional_tools_needed": ["tool1", "tool2"],
-    "reasoning": "Why you're ready or what else you need"
-}}
-
-**RESPONSE:**"""
-                    
-                    evaluation_response = await self.llm.ainvoke(evaluation_prompt)
-                    try:
-                        evaluation = json.loads(evaluation_response.content.strip())
-                        ready_to_answer = evaluation.get("ready_to_answer", True)
-                        additional_tools = evaluation.get("additional_tools_needed", [])
-                        eval_reasoning = evaluation.get("reasoning", "")
-                    except:
-                        ready_to_answer = True
-                        additional_tools = []
-                        eval_reasoning = "Could not parse evaluation"
-                    
-                    logger.info(f"Evaluation: {eval_reasoning}")
-                    
-                    if ready_to_answer:
-                        break
-                    
-                    # Update tools needed for next iteration
-                    tools_needed = additional_tools
-                    if not self.documentation_enabled:
-                        tools_needed = [tool for tool in tools_needed if tool != "rag"]
-                    if not tools_needed:
-                        break
-                else:
-                    # No data gathered yet, continue
-                    ready_to_answer = False
-                    eval_reasoning = "No data gathered yet"
+            # Use SQL tool if needed
+            if "sql" in tools_needed and "database_data" not in gathered_info:
+                try:
+                    # Generate SQL query based on the message and conversation context
+                    sql_query = await self._generate_sql_query(message, conversation_history)
+                    if sql_query:
+                        # Add timeout for SQL queries
+                        import asyncio
+                        try:
+                            db_result = await asyncio.wait_for(
+                                self.sql_tool.ainvoke(sql_query),
+                                timeout=10.0  # 10 second timeout for SQL
+                            )
+                            gathered_info["database_data"] = db_result
+                            self.stats["sql_queries"] += 1
+                            tool_usage_count += 1
+                            logger.info("SQL tool used successfully")
+                        except asyncio.TimeoutError:
+                            logger.warning("SQL query timed out, skipping")
+                            gathered_info["database_data"] = "SQL query timed out"
+                except Exception as e:
+                    logger.error(f"SQL tool error: {e}")
+                    gathered_info["database_data"] = "No database data available"
             
             # STEP 3: Generate final response
             critical_requirements = []
@@ -486,10 +325,84 @@ Provide a helpful, complete answer."""
                 "processing_time": 0.0
             }
     
-    def _determine_tools_needed(self, message: str) -> List[str]:
-        """This method is deprecated - we use LLM-based routing instead"""
-        logger.warning("Keyword-based tool selection is deprecated. Using LLM knowledge only.")
-        return ["llm_knowledge"]
+    def _determine_tools_needed(self, message: str, conversation_history: List[Dict] = None) -> List[str]:
+        """Heuristically determine which tools are required for a message."""
+
+        message_lower = message.lower()
+        tools: List[str] = []
+
+        # Helper function to inspect recent conversation context for keywords
+        def history_contains(keywords: List[str]) -> bool:
+            if not conversation_history:
+                return False
+
+            for entry in conversation_history[-3:]:
+                text = entry.get("text", "").lower()
+                if any(keyword in text for keyword in keywords):
+                    return True
+            return False
+
+        # Decide on documentation usage
+        documentation_keywords = [
+            "how do i",
+            "how can i",
+            "steps",
+            "instructions",
+            "where do i",
+            "button",
+            "menu",
+            "navigate",
+            "screen",
+            "ui",
+            "page",
+            "workflow",
+        ]
+
+        if any(keyword in message_lower for keyword in documentation_keywords) or history_contains(documentation_keywords):
+            tools.append("rag")
+
+        # Decide on SQL usage
+        sql_keywords = [
+            "list",
+            "show",
+            "find",
+            "lookup",
+            "search",
+            "give me",
+            "how many",
+            "total",
+            "count",
+            "recent",
+            "last",
+            "example",
+            "existing",
+            "current",
+        ]
+
+        business_entities = [
+            "customer",
+            "vendor",
+            "quote",
+            "purchase order",
+            "sales order",
+            "inventory",
+            "part",
+            "item",
+            "invoice",
+            "user",
+        ]
+
+        wants_data = any(keyword in message_lower for keyword in sql_keywords)
+        references_entity = any(entity in message_lower for entity in business_entities)
+
+        if (wants_data and references_entity) or history_contains(business_entities):
+            tools.append("sql")
+
+        # Always ensure LLM knowledge is available as a baseline option
+        if "llm_knowledge" not in tools:
+            tools.append("llm_knowledge")
+
+        return tools
     
     async def _generate_sql_query(self, message: str, conversation_history: List[Dict] = None) -> str:
         """Generate SQL query based on message content and conversation context"""
