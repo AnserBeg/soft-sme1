@@ -7,17 +7,20 @@ Main AI agent class that orchestrates the LangGraph workflow for the Aiven appli
 Handles routing between documentation RAG and live database queries.
 """
 
+import json
 import os
 import json
 import logging
 import time
-from typing import Dict, Any, List, Optional
+from datetime import datetime
+from typing import Dict, Any, List, Optional, Tuple
 from langchain_core.messages import HumanMessage, AIMessage
 
 from rag_tool import DocumentationRAGTool
 from sql_tool import InventorySQLTool
 from action_tool import AgentActionTool
 from conversation_manager import ConversationManager
+from task_queue import TaskQueue
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +33,7 @@ class AivenAgent:
         self.rag_tool = None
         self.sql_tool = None
         self.conversation_manager = ConversationManager()
+        self.task_queue = TaskQueue()
         self.action_tool = None
         self.initialized = False
         self.messages = []  # Add messages list for conversation history
@@ -135,8 +139,89 @@ class AivenAgent:
         except Exception as e:
             logger.error(f"Failed to initialize tools: {e}")
             raise
-    
+
         # Note: Removed old LangGraph workflow methods as we're now using LLM-based routing
+
+    def _extract_follow_up_instructions(self, raw_message: str) -> Tuple[str, List[Dict[str, Any]]]:
+        """Parse structured follow-up task instructions embedded in the user message."""
+        if not raw_message:
+            return raw_message, []
+
+        stripped = raw_message.strip()
+        if not stripped.startswith('{'):
+            return raw_message, []
+
+        try:
+            payload = json.loads(stripped)
+        except json.JSONDecodeError:
+            return raw_message, []
+
+        follow_up_spec = payload.get('follow_up_tasks')
+        prompt_text = payload.get('prompt') or payload.get('message') or payload.get('query') or ''
+
+        tasks: List[Dict[str, Any]] = []
+        if isinstance(follow_up_spec, dict):
+            tasks.append(follow_up_spec)
+        elif isinstance(follow_up_spec, list):
+            tasks.extend([task for task in follow_up_spec if isinstance(task, dict)])
+
+        if not prompt_text:
+            prompt_text = payload.get('text') or raw_message
+
+        return prompt_text or raw_message, tasks
+
+    def _enqueue_follow_up_tasks(
+        self,
+        conversation_id: str,
+        tasks: List[Dict[str, Any]],
+        user_id: Optional[int] = None
+    ) -> None:
+        for task in tasks:
+            task_type = task.get('task_type') or 'agent_tool'
+            payload = task.get('payload') or {}
+            schedule_at = self._parse_schedule_at(task.get('schedule_for'))
+
+            if task_type == 'agent_tool':
+                tool_name = task.get('tool') or payload.get('tool')
+                if not tool_name:
+                    logger.warning('Skipping follow-up task without tool name: %s', task)
+                    continue
+
+                payload = {
+                    **payload,
+                    'tool': tool_name,
+                    'sessionId': task.get('sessionId') or payload.get('sessionId'),
+                    'args': task.get('args') or payload.get('args')
+                }
+
+            payload.setdefault('requestedBy', user_id)
+
+            try:
+                task_id = self.task_queue.enqueue(
+                    task_type,
+                    payload,
+                    conversation_id=conversation_id,
+                    scheduled_for=schedule_at
+                )
+                logger.info(
+                    'Queued follow-up task %s of type %s for conversation %s',
+                    task_id,
+                    task_type,
+                    conversation_id
+                )
+            except Exception as exc:
+                logger.error('Failed to enqueue follow-up task for conversation %s: %s', conversation_id, exc)
+
+    def _parse_schedule_at(self, value: Optional[str]) -> Optional[datetime]:
+        if not value or not isinstance(value, str):
+            return None
+
+        try:
+            normalized = value.replace('Z', '+00:00') if value.endswith('Z') else value
+            return datetime.fromisoformat(normalized)
+        except ValueError:
+            logger.warning('Invalid schedule_for value %s, defaulting to immediate execution', value)
+            return None
     
     async def process_message(
         self,
@@ -148,11 +233,13 @@ class AivenAgent:
         """Process a user message and return a response using flexible, iterative tool usage"""
         try:
             start_time = time.time()
-            
+
+            prompt_text, follow_up_specs = self._extract_follow_up_instructions(message)
+
             # Add user message to conversation
-            user_message = HumanMessage(content=message)
+            user_message = HumanMessage(content=prompt_text)
             self.messages.append(user_message)
-            
+
             # Build conversation context
             conversation_context = ""
             if conversation_history and len(conversation_history) > 0:
@@ -170,7 +257,7 @@ class AivenAgent:
                         conversation_context += f"Assistant: {msg.get('text', '')}\n"
             
             # STEP 1: Determine which tools are needed using lightweight heuristics
-            tools_needed = self._determine_tools_needed(message, conversation_history)
+            tools_needed = self._determine_tools_needed(prompt_text, conversation_history)
             logger.info(f"Heuristic tool selection: {tools_needed}")
 
             if not self.documentation_enabled:
@@ -216,13 +303,13 @@ class AivenAgent:
             ):
                 try:
                     # Create a more specific query for better RAG results
-                    if "edit" in message.lower() or "modify" in message.lower():
-                        if "attendance" in message.lower() or "clock" in message.lower():
-                            rag_query = f"time tracking reports page edit modify time entries attendance clock in clock out reports {message}"
+                    if "edit" in prompt_text.lower() or "modify" in prompt_text.lower():
+                        if "attendance" in prompt_text.lower() or "clock" in prompt_text.lower():
+                            rag_query = f"time tracking reports page edit modify time entries attendance clock in clock out reports {prompt_text}"
                         else:
-                            rag_query = f"how to edit modify time entries attendance clock in clock out {message}"
+                            rag_query = f"how to edit modify time entries attendance clock in clock out {prompt_text}"
                     else:
-                        rag_query = f"relevant documentation for: {message}"
+                        rag_query = f"relevant documentation for: {prompt_text}"
 
                     doc_result = await self.rag_tool.ainvoke(rag_query)
                     gathered_info["documentation"] = doc_result
@@ -239,7 +326,7 @@ class AivenAgent:
             if "sql" in tools_needed and "database_data" not in gathered_info:
                 try:
                     # Generate SQL query based on the message and conversation context
-                    sql_query = await self._generate_sql_query(message, conversation_history)
+                    sql_query = await self._generate_sql_query(prompt_text, conversation_history)
                     if sql_query:
                         # Add timeout for SQL queries
                         import asyncio
@@ -293,7 +380,7 @@ class AivenAgent:
 
 **TASK:** Provide a comprehensive, helpful answer to the user's question.
 
-**USER QUESTION:** {message}
+**USER QUESTION:** {prompt_text}
 
 **INFORMATION GATHERED:**
 {gathered_info_for_prompt}
@@ -349,7 +436,10 @@ Provide a helpful, complete answer."""
             # Add AI response to conversation
             ai_message = AIMessage(content=response)
             self.messages.append(ai_message)
-            
+
+            if follow_up_specs and conversation_id:
+                self._enqueue_follow_up_tasks(conversation_id, follow_up_specs, user_id=user_id)
+
             # Update statistics
             processing_time = time.time() - start_time
             self.stats["total_queries"] += 1

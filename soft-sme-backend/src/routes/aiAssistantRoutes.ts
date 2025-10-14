@@ -41,6 +41,7 @@ router.post('/chat', authMiddleware, async (req: Request, res: Response) => {
         sources: aiResponse.sources,
         confidence: aiResponse.confidence,
         toolUsed: aiResponse.tool_used,
+        conversationId: aiResponse.conversation_id,
         timestamp: new Date(),
         actions: aiResponse.actions || [],
         actionMessage: aiResponse.action_message || null,

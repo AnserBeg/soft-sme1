@@ -155,6 +155,30 @@ npm run dev
 - `POST /api/ai-assistant/start` - Start AI agent (admin only)
 - `POST /api/ai-assistant/stop` - Stop AI agent (admin only)
 
+## Database Persistence and Migrations
+
+The AI assistant now stores all conversations and follow-up jobs in PostgreSQL tables so that restarts do not erase context and
+background workers can operate on a shared queue. The migration `20250315_create_ai_assistant_tables.sql` creates the following tables:
+
+- **`ai_conversations`** – Conversation metadata (user, timestamps, status, metadata JSON).
+- **`ai_messages`** – Individual chat turns linked to a conversation.
+- **`ai_task_queue`** – Scheduled follow-up jobs requested by the agent.
+
+Apply the migration with `psql` or pgAdmin before deploying:
+
+```bash
+psql "$DATABASE_URL" -f migrations/20250315_create_ai_assistant_tables.sql
+```
+
+Restart the Node.js backend and Python agent after migrating so they reconnect using the new schema.
+
+## Background Task Worker
+
+When the agent needs to run a follow-up action it can enqueue a job (for example to call `AgentToolsV2`). The worker in
+`src/workers/aiTaskWorker.ts` polls `ai_task_queue`, invokes the requested tool, and posts success/failure summaries back into the
+originating conversation. Start the worker alongside the API (e.g. `ts-node src/workers/aiTaskWorker.ts` or via your process manager)
+to process queued tasks continuously.
+
 ## Usage Examples
 
 ### Frontend Integration
