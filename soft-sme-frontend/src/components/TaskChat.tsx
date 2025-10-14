@@ -18,11 +18,11 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import { toast } from 'react-toastify';
-
-dayjs.extend(relativeTime);
 import { taskChatService } from '../services/taskChatService';
 import { TaskMessage, TaskMessagesResponse, TaskParticipantSummary } from '../types/tasks';
 import { useAuth } from '../contexts/AuthContext';
+
+dayjs.extend(relativeTime);
 
 interface TaskChatProps {
   taskId: number;
