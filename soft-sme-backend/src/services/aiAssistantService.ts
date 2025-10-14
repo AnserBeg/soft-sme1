@@ -3,7 +3,9 @@ import { spawn, spawnSync, ChildProcess } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
+import { pool } from '../db';
 import { AIService } from './aiService';
+import { ConversationManager, ConversationMessage } from './aiConversationManager';
 
 const sanitizeEnvValue = (value?: string | null): string | undefined => {
   if (!value) {
@@ -26,6 +28,7 @@ interface AIResponse {
   sources: string[];
   confidence: number;
   tool_used: string;
+  conversation_id?: string;
 }
 
 interface ChatMessage {
@@ -36,6 +39,7 @@ interface ChatMessage {
   sources?: string[];
   confidence?: number;
   toolUsed?: string;
+  metadata?: Record<string, unknown>;
 }
 
 class AIAssistantService {
@@ -43,6 +47,7 @@ class AIAssistantService {
   private aiEndpoint: string;
   private isLocalMode: boolean;
   private missingAuthWarningLogged = false;
+  private conversationManager: ConversationManager;
 
   constructor() {
     const configuredMode = process.env.AI_AGENT_MODE?.trim().toLowerCase();
@@ -60,6 +65,7 @@ class AIAssistantService {
 
     this.isLocalMode = desiredMode === 'local' || endpointIsLocal;
     this.aiEndpoint = resolvedEndpoint;
+    this.conversationManager = new ConversationManager(pool);
 
     const modeNote = desiredMode === 'remote' && this.isLocalMode ? ' (auto-local mode)' : '';
 
@@ -311,40 +317,87 @@ class AIAssistantService {
    * Send message to AI agent and get response
    */
   async sendMessage(message: string, userId?: number, conversationId?: string): Promise<AIResponse> {
+    const resolvedConversationId = await this.conversationManager.ensureConversation(
+      conversationId,
+      userId ?? null
+    );
+
+    await this.conversationManager.addMessage(resolvedConversationId, 'user', message, {
+      userId: userId ?? null
+    });
+
+    const history = await this.conversationManager.getConversationHistory(resolvedConversationId);
+
     try {
-      if (this.isLocalMode) {
-        return await this.sendToLocalAgent(message, userId, conversationId);
-      } else {
-        return await this.sendToRemoteAgent(message, userId, conversationId);
-      }
+      const agentResponse = this.isLocalMode
+        ? await this.sendToLocalAgent(message, userId, resolvedConversationId, history)
+        : await this.sendToRemoteAgent(message, userId, resolvedConversationId, history);
+
+      await this.persistAssistantMessage(resolvedConversationId, agentResponse);
+
+      return {
+        ...agentResponse,
+        conversation_id: resolvedConversationId
+      };
     } catch (error) {
       if (this.shouldFallbackToGemini(error)) {
         console.warn('[AI Assistant] Primary AI agent unavailable. Falling back to direct Gemini service.');
 
         try {
-          return await this.createGeminiFallbackResponse(message, userId);
+          const fallback = await this.createGeminiFallbackResponse(message, userId);
+          await this.persistAssistantMessage(resolvedConversationId, fallback);
+          return {
+            ...fallback,
+            conversation_id: resolvedConversationId
+          };
         } catch (fallbackError) {
           console.error('[AI Assistant] Gemini fallback failed:', fallbackError);
           throw new Error('AI assistant is currently unavailable. Please try again later.');
         }
       }
 
+      await this.conversationManager.addMessage(
+        resolvedConversationId,
+        'assistant',
+        'I encountered an error processing your request. Please try again shortly.',
+        { error: error instanceof Error ? error.message : 'Unknown error' }
+      );
+
       console.error('Error sending message to AI agent:', error);
       throw new Error('Failed to get response from AI assistant');
     }
   }
 
+  private async persistAssistantMessage(conversationId: string, response: AIResponse): Promise<void> {
+    await this.conversationManager.addMessage(
+      conversationId,
+      'assistant',
+      response.response,
+      {
+        sources: response.sources,
+        confidence: response.confidence,
+        tool_used: response.tool_used
+      }
+    );
+  }
+
   /**
    * Send message to local AI agent via HTTP
    */
-  private async sendToLocalAgent(message: string, userId?: number, conversationId?: string): Promise<AIResponse> {
+  private async sendToLocalAgent(
+    message: string,
+    userId: number | undefined,
+    conversationId: string,
+    history: ConversationMessage[]
+  ): Promise<AIResponse> {
     try {
       const response = await axios.post(
         `${this.aiEndpoint}/chat`,
         {
           message,
           user_id: userId,
-          conversation_id: conversationId
+          conversation_id: conversationId,
+          conversation_history: this.serializeHistory(history)
         },
         this.createRequestConfig({
           timeout: 60000 // 60 second timeout
@@ -363,11 +416,17 @@ class AIAssistantService {
   /**
    * Send message to remote AI agent
    */
-  private async sendToRemoteAgent(message: string, userId?: number, conversationId?: string): Promise<AIResponse> {
+  private async sendToRemoteAgent(
+    message: string,
+    userId: number | undefined,
+    conversationId: string,
+    history: ConversationMessage[]
+  ): Promise<AIResponse> {
     const payload = {
       message,
       user_id: userId,
-      conversation_id: conversationId
+      conversation_id: conversationId,
+      conversation_history: this.serializeHistory(history)
     };
 
     const attemptedEndpoints: string[] = [];
@@ -552,73 +611,62 @@ class AIAssistantService {
    * Get conversation history
    */
   async getConversationHistory(conversationId: string): Promise<ChatMessage[]> {
-    try {
-      const response = await axios.get(
-        `${this.aiEndpoint}/conversation/${conversationId}`,
-        this.createRequestConfig()
-      );
-      const rawMessages = Array.isArray(response.data?.messages) ? response.data.messages : [];
+    const messages = await this.conversationManager.getConversationHistory(conversationId, 200);
 
-      return rawMessages.map((message: any) => {
-        const normalizedIsUser =
-          typeof message?.isUser === 'boolean'
-            ? message.isUser
-            : Boolean(message?.is_user);
-
-        const timestamp = message?.timestamp ? new Date(message.timestamp) : new Date();
-
-        return {
-          id: typeof message?.id === 'string' ? message.id : String(message?.id ?? crypto.randomUUID()),
-          text: typeof message?.text === 'string' ? message.text : '',
-          isUser: normalizedIsUser,
-          timestamp,
-          sources: Array.isArray(message?.sources) ? message.sources : undefined,
-          confidence:
-            typeof message?.confidence === 'number'
-              ? message.confidence
-              : undefined,
-          toolUsed:
-            typeof message?.toolUsed === 'string'
-              ? message.toolUsed
-              : typeof message?.tool_used === 'string'
-              ? message.tool_used
-              : undefined
-        };
-      });
-    } catch (error) {
-      console.error('Failed to get conversation history:', error);
-      return [];
-    }
+    return messages.map(message => ({
+      id: message.id,
+      text: message.content,
+      isUser: message.role === 'user',
+      timestamp: message.createdAt,
+      sources: Array.isArray(message.metadata?.sources as string[])
+        ? (message.metadata?.sources as string[])
+        : undefined,
+      confidence:
+        typeof message.metadata?.confidence === 'number'
+          ? (message.metadata?.confidence as number)
+          : undefined,
+      toolUsed:
+        typeof message.metadata?.tool_used === 'string'
+          ? (message.metadata?.tool_used as string)
+          : undefined,
+      metadata: message.metadata
+    }));
   }
 
   /**
    * Clear conversation history
    */
   async clearConversationHistory(conversationId: string): Promise<void> {
-    try {
-      await axios.delete(
-        `${this.aiEndpoint}/conversation/${conversationId}`,
-        this.createRequestConfig()
-      );
-    } catch (error) {
-      console.error('Failed to clear conversation history:', error);
-      throw error;
-    }
+    await this.conversationManager.clearConversation(conversationId);
   }
 
   /**
    * Get AI agent statistics
    */
   async getStatistics(): Promise<any> {
+    const conversationStats = await this.conversationManager.getStatistics();
+    const statsWithLegacyKeys = {
+      total_conversations: conversationStats.totalConversations,
+      total_messages: conversationStats.totalMessages,
+      active_conversations: conversationStats.activeConversations
+    };
+
+    if (!this.isLocalMode) {
+      return statsWithLegacyKeys;
+    }
+
     try {
       const response = await axios.get(
         `${this.aiEndpoint}/stats`,
         this.createRequestConfig()
       );
-      return response.data;
+      return {
+        ...response.data,
+        ...statsWithLegacyKeys
+      };
     } catch (error) {
       console.error('Failed to get AI agent statistics:', error);
-      return {};
+      return statsWithLegacyKeys;
     }
   }
 
@@ -653,6 +701,17 @@ class AIAssistantService {
     }
 
     return false;
+  }
+
+  private serializeHistory(history: ConversationMessage[]): any[] {
+    return history.map(message => ({
+      id: message.id,
+      text: message.content,
+      is_user: message.role === 'user',
+      isUser: message.role === 'user',
+      timestamp: message.createdAt.toISOString(),
+      metadata: message.metadata ?? {}
+    }));
   }
 
   private createRequestConfig(config?: AxiosRequestConfig): AxiosRequestConfig {

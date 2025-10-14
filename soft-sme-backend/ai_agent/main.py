@@ -10,7 +10,7 @@ This server runs as a child process of the main Node.js backend.
 import os
 import sys
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, List, Optional
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -58,6 +58,7 @@ class ChatRequest(BaseModel):
     message: str
     user_id: Optional[int] = None
     conversation_id: Optional[str] = None
+    conversation_history: Optional[List[Dict[str, Any]]] = None
 
 class ChatResponse(BaseModel):
     response: str
@@ -173,39 +174,43 @@ async def chat(request: ChatRequest):
         if not ai_agent:
             raise HTTPException(status_code=503, detail="AI Agent not initialized")
         
-        # Get or create conversation
-        conversation_id = request.conversation_id or conversation_manager.create_conversation(
-            user_id=request.user_id
-        )
-        
-        # Add user message to conversation
-        conversation_manager.add_message(
-            conversation_id=conversation_id,
-            message=request.message,
-            is_user=True
-        )
-        
-        # Get conversation history
-        history = conversation_manager.get_conversation_history(conversation_id)
-        
+        supplied_history = request.conversation_history or []
+        persist_locally = len(supplied_history) == 0
+
+        if request.conversation_id:
+            conversation_id = request.conversation_id
+        else:
+            conversation_id = conversation_manager.create_conversation(user_id=request.user_id)
+
+        if persist_locally:
+            conversation_manager.add_message(
+                conversation_id=conversation_id,
+                message=request.message,
+                is_user=True
+            )
+            history = conversation_manager.get_conversation_history(conversation_id)
+        else:
+            history = supplied_history
+
         # Process with AI agent
         response = await ai_agent.process_message(
             message=request.message,
             conversation_history=history,
-            user_id=request.user_id
+            user_id=request.user_id,
+            conversation_id=conversation_id
         )
-        
-        # Add AI response to conversation
-        conversation_manager.add_message(
-            conversation_id=conversation_id,
-            message=response["response"],
-            is_user=False,
-            metadata={
-                "sources": response["sources"],
-                "confidence": response["confidence"],
-                "tool_used": response["tool_used"]
-            }
-        )
+
+        if persist_locally:
+            conversation_manager.add_message(
+                conversation_id=conversation_id,
+                message=response["response"],
+                is_user=False,
+                metadata={
+                    "sources": response["sources"],
+                    "confidence": response["confidence"],
+                    "tool_used": response["tool_used"]
+                }
+            )
         
         return ChatResponse(
             response=response["response"],
