@@ -1,7 +1,7 @@
 import express, { Request, Response } from 'express';
 import { pool } from '../db';
 import { authMiddleware } from '../middleware/authMiddleware';
-import { AgentOrchestratorV2 } from '../services/agentV2/orchestrator';
+import { AgentOrchestratorV2, AgentToolRegistry } from '../services/agentV2/orchestrator';
 import { AgentToolsV2 } from '../services/agentV2/tools';
 
 const router = express.Router();
@@ -43,12 +43,17 @@ router.post('/chat', authMiddleware, async (req: Request, res: Response) => {
     };
     const orchestrator = new AgentOrchestratorV2(pool, registry);
     const reply = await orchestrator.handleMessage(sessionId, message);
-    await pool.query('INSERT INTO agent_messages (session_id, role, content) VALUES ($1, $2, $3)', [sessionId, 'assistant', reply]);
-    res.json({ reply: JSON.parse(reply) ?? reply });
+    await pool.query('INSERT INTO agent_messages (session_id, role, content) VALUES ($1, $2, $3)', [sessionId, 'assistant', JSON.stringify(reply)]);
+    res.json({ reply });
   } catch (err) {
     console.error('agentV2: chat error', err);
     res.status(500).json({ error: 'Failed to process chat' });
   }
+});
+
+router.get('/tools', authMiddleware, async (_req: Request, res: Response) => {
+  const orchestrator = new AgentOrchestratorV2(pool, {} as AgentToolRegistry);
+  res.json({ tools: orchestrator.getToolCatalog() });
 });
 
 // Admin: record a tool invocation (for testing the pipeline)
