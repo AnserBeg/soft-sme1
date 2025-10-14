@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { ChatMessage } from '../components/ChatMessage';
 import { chatService } from '../services/chatService';
 import { toast } from 'react-toastify';
+import { VoiceCallArtifact } from '../types/voice';
 
 const STORAGE_KEY = 'chat_messages';
 
@@ -75,17 +76,18 @@ export const useChat = () => {
     try {
       // Get AI response
       const aiResponse = await chatService.sendMessage(text);
-      
-      console.log('AI Response in useChat:', aiResponse);
-      console.log('AI Response type:', typeof aiResponse);
-      console.log('AI Response keys:', Object.keys(aiResponse));
-      
-      // Add AI message
+
+      const { cleanedText, artifacts } = extractVoiceArtifacts(
+        aiResponse.response || 'No response received',
+        aiResponse.callArtifacts
+      );
+
       const aiMessage: ChatMessage = {
         id: (Date.now() + 1).toString(),
-        text: aiResponse.response || 'No response received',
+        text: cleanedText,
         sender: 'ai',
         timestamp: new Date(),
+        callArtifacts: artifacts,
       };
       
       addMessage(aiMessage);
@@ -150,4 +152,26 @@ export const useChat = () => {
     openChat,
     acknowledgeMessages,
   };
+};
+
+const extractVoiceArtifacts = (text: string, provided?: VoiceCallArtifact[] | undefined) => {
+  let cleanedText = text;
+  let artifacts: VoiceCallArtifact[] | undefined = provided?.length ? provided : undefined;
+
+  if (!artifacts) {
+    const match = text.match(/\{\"type\":\"vendor_call_summary\"[\s\S]*\}$/);
+    if (match) {
+      try {
+        const parsed = JSON.parse(match[0]);
+        if (parsed && parsed.type === 'vendor_call_summary') {
+          artifacts = [parsed];
+          cleanedText = text.replace(match[0], '').trim();
+        }
+      } catch (error) {
+        console.warn('Failed to parse vendor call summary payload', error);
+      }
+    }
+  }
+
+  return { cleanedText, artifacts };
 };

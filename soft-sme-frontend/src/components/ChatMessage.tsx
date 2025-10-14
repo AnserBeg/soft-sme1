@@ -1,13 +1,16 @@
 import React from 'react';
-import { Box, Typography, Paper, Avatar, Stack } from '@mui/material';
+import { Box, Typography, Paper, Avatar, Stack, Divider } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import { Person as PersonIcon, SmartToy as AIIcon } from '@mui/icons-material';
+import { VoiceCallArtifact } from '../types/voice';
+import VoiceCallSummaryList from './VoiceCallSummaryList';
 
 export interface ChatMessage {
   id: string;
   text: string;
   sender: 'user' | 'ai';
   timestamp: Date;
+  callArtifacts?: VoiceCallArtifact[];
 }
 
 interface ChatMessageProps {
@@ -104,6 +107,12 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
         >
           {message.text}
         </Typography>
+        {!isUser && message.callArtifacts?.length ? (
+          <Box sx={{ mt: 2 }}>
+            <Divider sx={{ mb: 2, opacity: 0.4 }} />
+            <VoiceCallSummaryList artifacts={message.callArtifacts} />
+          </Box>
+        ) : null}
       </Paper>
 
       {isUser && (
