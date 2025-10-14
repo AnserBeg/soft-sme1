@@ -93,6 +93,9 @@ export class AgentOrchestratorV2 {
     if (m.includes('update') && (m.includes('purchase order') || m.includes('po'))) return { tool: 'updatePurchaseOrder', args: {} };
     if ((m.includes('close') || m.includes('complete')) && (m.includes('purchase order') || m.includes('po'))) return { tool: 'closePurchaseOrder', args: {} };
     if (m.includes('email') && (m.includes('purchase order') || m.includes('po'))) return { tool: 'emailPurchaseOrder', args: {} };
+    if (m.includes('call') && m.includes('vendor')) return { tool: 'initiateVendorCall', args: {} };
+    if ((m.includes('call') && m.includes('status')) || m.includes('call update')) return { tool: 'pollVendorCall', args: {} };
+    if (m.includes('send') && m.includes('po') && m.includes('email') && m.includes('call')) return { tool: 'sendVendorCallEmail', args: {} };
     if (m.includes('create') && m.includes('quote')) return { tool: 'createQuote', args: {} };
     if (m.includes('update') && m.includes('quote')) return { tool: 'updateQuote', args: {} };
     if (m.includes('email') && m.includes('quote')) return { tool: 'emailQuote', args: {} };

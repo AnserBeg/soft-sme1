@@ -40,6 +40,9 @@ router.post('/chat', authMiddleware, async (req: Request, res: Response) => {
       updateQuote: async (args: any) => tools.updateQuote(sessionId, args?.quote_id || args?.id, args?.patch || args),
       emailQuote: async (args: any) => tools.emailQuote(sessionId, args?.quote_id || args?.id, args?.to),
       convertQuoteToSO: async (args: any) => tools.convertQuoteToSO(sessionId, args?.quote_id || args?.id),
+      initiateVendorCall: async (args: any) => tools.initiateVendorCall(sessionId, Number(args?.purchase_id || args?.purchaseId || args?.id || args)),
+      pollVendorCall: async (args: any) => tools.pollVendorCall(sessionId, Number(args?.session_id || args?.call_session_id || args?.sessionId || args?.id || args)),
+      sendVendorCallEmail: async (args: any) => tools.sendVendorCallEmail(sessionId, Number(args?.session_id || args?.call_session_id || args?.sessionId || args?.id || args), args?.override_email || args?.email),
     };
     const orchestrator = new AgentOrchestratorV2(pool, registry);
     const reply = await orchestrator.handleMessage(sessionId, message);

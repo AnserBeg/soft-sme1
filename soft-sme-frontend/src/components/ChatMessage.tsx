@@ -1,17 +1,16 @@
 import React from 'react';
-import { Box, Typography, Paper, Avatar, Stack, Chip, Link } from '@mui/material';
+import { Box, Typography, Paper, Avatar, Stack, Divider } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import { Person as PersonIcon, SmartToy as AIIcon } from '@mui/icons-material';
-import { Link as RouterLink } from 'react-router-dom';
-import { ActionTrace } from '../types/chat';
+import { VoiceCallArtifact } from '../types/voice';
+import VoiceCallSummaryList from './VoiceCallSummaryList';
 
 export interface ChatMessage {
   id: string;
   text: string;
   sender: 'user' | 'ai';
   timestamp: Date;
-  actions?: ActionTrace[];
-  actionMessage?: string | null;
+  callArtifacts?: VoiceCallArtifact[];
 }
 
 interface ChatMessageProps {
@@ -134,61 +133,12 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
         >
           {message.text}
         </Typography>
-
-        {message.sender === 'ai' && message.actionMessage && (
-          <Typography variant="body2" sx={{ mt: 1.25, fontWeight: 600 }}>
-            {message.actionMessage}
-          </Typography>
-        )}
-
-        {message.actions && message.actions.length > 0 && (
-          <Stack spacing={1.25} sx={{ mt: 1.5 }}>
-            {message.actions.map((action, index) => (
-              <Paper
-                key={`${action.tool}-${index}`}
-                variant="outlined"
-                sx={{
-                  p: 1.5,
-                  borderRadius: 2,
-                  borderColor: action.success ? 'success.light' : 'error.light',
-                  bgcolor: isUser ? 'rgba(255,255,255,0.1)' : 'background.paper',
-                }}
-              >
-                <Stack spacing={0.75}>
-                  <Stack direction="row" spacing={1} alignItems="center">
-                    <Chip
-                      size="small"
-                      label={action.success ? 'Success' : 'Failed'}
-                      color={action.success ? 'success' : 'error'}
-                      variant={action.success ? 'filled' : 'outlined'}
-                    />
-                    <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
-                      {formatToolName(action.tool)}
-                    </Typography>
-                  </Stack>
-                  <Typography variant="body2" color="text.primary">
-                    {action.summary || action.message}
-                  </Typography>
-                  {!action.success && action.error && (
-                    <Typography variant="body2" color="error.main">
-                      {action.error}
-                    </Typography>
-                  )}
-                  {action.link && (
-                    <Link
-                      component={RouterLink}
-                      to={action.link}
-                      underline="hover"
-                      sx={{ fontWeight: 600 }}
-                    >
-                      {action.link_label || 'View record'}
-                    </Link>
-                  )}
-                </Stack>
-              </Paper>
-            ))}
-          </Stack>
-        )}
+        {!isUser && message.callArtifacts?.length ? (
+          <Box sx={{ mt: 2 }}>
+            <Divider sx={{ mb: 2, opacity: 0.4 }} />
+            <VoiceCallSummaryList artifacts={message.callArtifacts} />
+          </Box>
+        ) : null}
       </Paper>
 
       {isUser && (
