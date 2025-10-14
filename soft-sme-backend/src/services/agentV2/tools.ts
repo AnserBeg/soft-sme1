@@ -3,17 +3,20 @@ import { SalesOrderService } from '../SalesOrderService';
 import { EmailService } from '../emailService';
 import { PDFService } from '../pdfService';
 import { AgentTaskEvent, AgentTaskFacade } from './AgentTaskFacade';
+import { VoiceService } from '../voice/VoiceService';
 
 export class AgentToolsV2 {
   private soService: SalesOrderService;
   private emailService: EmailService;
   private pdfService: PDFService;
   private taskFacade: AgentTaskFacade;
+  private voiceService: VoiceService;
   constructor(private pool: Pool) {
     this.soService = new SalesOrderService(pool);
     this.emailService = new EmailService(pool);
     this.pdfService = new PDFService(pool);
     this.taskFacade = new AgentTaskFacade(pool);
+    this.voiceService = new VoiceService(pool);
   }
 
   private toBoolean(value: any): boolean {
@@ -529,6 +532,60 @@ export class AgentToolsV2 {
     }, lineItems: [] });
     await this.audit(sessionId,'convertQuoteToSO',{quoteId},so,true);
     return so;
+  }
+
+  // Voice call management
+  async initiateVendorCall(sessionId: number, purchaseId: number) {
+    try {
+      const session = await this.voiceService.initiateVendorCall(purchaseId, { agentSessionId: sessionId });
+      const payload = {
+        message: `Initiated vendor call for PO ${session.purchase_number || purchaseId}.`,
+        session,
+      };
+      await this.audit(sessionId, 'initiateVendorCall', { purchaseId }, payload, true);
+      return payload;
+    } catch (error: any) {
+      await this.audit(sessionId, 'initiateVendorCall', { purchaseId }, { error: error.message }, false);
+      throw error;
+    }
+  }
+
+  async pollVendorCall(sessionId: number, callSessionId: number) {
+    try {
+      const session = await this.voiceService.getSession(callSessionId, { includeEvents: true });
+      const payload = {
+        message: `Vendor call status: ${session.status}`,
+        session,
+      };
+      await this.audit(sessionId, 'pollVendorCall', { callSessionId }, payload, true);
+      return payload;
+    } catch (error: any) {
+      await this.audit(sessionId, 'pollVendorCall', { callSessionId }, { error: error.message }, false);
+      throw error;
+    }
+  }
+
+  async sendVendorCallEmail(sessionId: number, callSessionId: number, overrideEmail?: string) {
+    try {
+      const result = await this.voiceService.sendPurchaseOrderEmail(callSessionId, overrideEmail);
+      await this.audit(
+        sessionId,
+        'sendVendorCallEmail',
+        { callSessionId, overrideEmail },
+        result,
+        true
+      );
+      return result;
+    } catch (error: any) {
+      await this.audit(
+        sessionId,
+        'sendVendorCallEmail',
+        { callSessionId, overrideEmail },
+        { error: error.message },
+        false
+      );
+      throw error;
+    }
   }
 }
 

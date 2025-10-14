@@ -1,7 +1,7 @@
 import express, { Request, Response } from 'express';
 import { pool } from '../db';
 import { authMiddleware } from '../middleware/authMiddleware';
-import { AgentOrchestratorV2 } from '../services/agentV2/orchestrator';
+import { AgentOrchestratorV2, AgentToolRegistry } from '../services/agentV2/orchestrator';
 import { AgentToolsV2 } from '../services/agentV2/tools';
 
 const router = express.Router();
@@ -86,6 +86,14 @@ router.post('/chat', authMiddleware, async (req: Request, res: Response) => {
     }
 
     res.json(agentResponse);
+      initiateVendorCall: async (args: any) => tools.initiateVendorCall(sessionId, Number(args?.purchase_id || args?.purchaseId || args?.id || args)),
+      pollVendorCall: async (args: any) => tools.pollVendorCall(sessionId, Number(args?.session_id || args?.call_session_id || args?.sessionId || args?.id || args)),
+      sendVendorCallEmail: async (args: any) => tools.sendVendorCallEmail(sessionId, Number(args?.session_id || args?.call_session_id || args?.sessionId || args?.id || args), args?.override_email || args?.email),
+    };
+    const orchestrator = new AgentOrchestratorV2(pool, registry);
+    const reply = await orchestrator.handleMessage(sessionId, message);
+    await pool.query('INSERT INTO agent_messages (session_id, role, content) VALUES ($1, $2, $3)', [sessionId, 'assistant', JSON.stringify(reply)]);
+    res.json({ reply });
   } catch (err) {
     console.error('agentV2: chat error', err);
     res.status(500).json({ error: 'Failed to process chat' });
@@ -126,6 +134,9 @@ router.get('/session/:sessionId/messages', authMiddleware, async (req: Request, 
     console.error('agentV2: list messages error', err);
     res.status(500).json({ error: 'Failed to load agent messages' });
   }
+router.get('/tools', authMiddleware, async (_req: Request, res: Response) => {
+  const orchestrator = new AgentOrchestratorV2(pool, {} as AgentToolRegistry);
+  res.json({ tools: orchestrator.getToolCatalog() });
 });
 
 // Admin: record a tool invocation (for testing the pipeline)

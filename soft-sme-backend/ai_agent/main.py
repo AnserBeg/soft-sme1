@@ -10,7 +10,7 @@ This server runs as a child process of the main Node.js backend.
 import os
 import sys
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, List, Optional
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -58,6 +58,7 @@ class ChatRequest(BaseModel):
     message: str
     user_id: Optional[int] = None
     conversation_id: Optional[str] = None
+    conversation_history: Optional[List[Dict[str, Any]]] = None
 
 class ChatResponse(BaseModel):
     response: str
@@ -65,6 +66,9 @@ class ChatResponse(BaseModel):
     confidence: float
     tool_used: str
     conversation_id: str
+    actions: list[Dict[str, Any]] | None = None
+    action_message: Optional[str] = None
+    action_catalog: list[Dict[str, Any]] | None = None
 
 class InitializeResponse(BaseModel):
     status: str
@@ -173,26 +177,44 @@ async def chat(request: ChatRequest):
         if not ai_agent:
             raise HTTPException(status_code=503, detail="AI Agent not initialized")
         
-        # Get or create conversation
-        conversation_id = request.conversation_id or conversation_manager.create_conversation(
-            user_id=request.user_id
-        )
-        
-        # Add user message to conversation
-        conversation_manager.add_message(
-            conversation_id=conversation_id,
-            message=request.message,
-            is_user=True
-        )
-        
-        # Get conversation history
-        history = conversation_manager.get_conversation_history(conversation_id)
-        
+        supplied_history = request.conversation_history or []
+        persist_locally = len(supplied_history) == 0
+
+        if request.conversation_id:
+            conversation_id = request.conversation_id
+        else:
+            conversation_id = conversation_manager.create_conversation(user_id=request.user_id)
+
+        if persist_locally:
+            conversation_manager.add_message(
+                conversation_id=conversation_id,
+                message=request.message,
+                is_user=True
+            )
+            history = conversation_manager.get_conversation_history(conversation_id)
+        else:
+            history = supplied_history
+
         # Process with AI agent
         response = await ai_agent.process_message(
             message=request.message,
             conversation_history=history,
-            user_id=request.user_id
+            user_id=request.user_id,
+            conversation_id=conversation_id
+        )
+
+        if persist_locally:
+            conversation_manager.add_message(
+                conversation_id=conversation_id,
+                message=response["response"],
+                is_user=False,
+                metadata={
+                    "sources": response["sources"],
+                    "confidence": response["confidence"],
+                    "tool_used": response["tool_used"]
+                }
+            )
+        
         )
         
         # Add AI response to conversation
@@ -203,16 +225,21 @@ async def chat(request: ChatRequest):
             metadata={
                 "sources": response["sources"],
                 "confidence": response["confidence"],
-                "tool_used": response["tool_used"]
+                "tool_used": response["tool_used"],
+                "actions": response.get("actions", []),
+                "action_message": response.get("action_message"),
             }
         )
-        
+
         return ChatResponse(
             response=response["response"],
             sources=response["sources"],
             confidence=response["confidence"],
             tool_used=response["tool_used"],
-            conversation_id=conversation_id
+            conversation_id=conversation_id,
+            actions=response.get("actions", []),
+            action_message=response.get("action_message"),
+            action_catalog=response.get("action_catalog", [])
         )
         
     except Exception as e:

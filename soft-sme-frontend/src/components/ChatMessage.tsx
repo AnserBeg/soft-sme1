@@ -18,6 +18,18 @@ export interface ChatMessageItem {
   chunks?: any[];
   timestamp?: string;
   createdAt?: string;
+import { Box, Typography, Paper, Avatar, Stack, Divider } from '@mui/material';
+import { alpha } from '@mui/material/styles';
+import { Person as PersonIcon, SmartToy as AIIcon } from '@mui/icons-material';
+import { VoiceCallArtifact } from '../types/voice';
+import VoiceCallSummaryList from './VoiceCallSummaryList';
+
+export interface ChatMessage {
+  id: string;
+  text: string;
+  sender: 'user' | 'ai';
+  timestamp: Date;
+  callArtifacts?: VoiceCallArtifact[];
 }
 
 interface ChatMessageProps {
@@ -28,6 +40,30 @@ const formatTimestamp = (value?: string) => {
   if (!value) return '';
   const parsed = dayjs(value);
   return parsed.isValid() ? parsed.format('MMM D, YYYY h:mm A') : '';
+const formatToolName = (tool?: string) => {
+  if (!tool) return 'Action';
+  const mapping: Record<string, string> = {
+    createPurchaseOrder: 'Create purchase order',
+    updatePurchaseOrder: 'Update purchase order',
+    closePurchaseOrder: 'Close purchase order',
+    emailPurchaseOrder: 'Email purchase order',
+    createSalesOrder: 'Create sales order',
+    updateSalesOrder: 'Update sales order',
+    createQuote: 'Create quote',
+    updateQuote: 'Update quote',
+    emailQuote: 'Email quote',
+    convertQuoteToSO: 'Convert quote to sales order',
+    updatePickupDetails: 'Update pickup details',
+    getPickupDetails: 'Get pickup details',
+  };
+  return (
+    mapping[tool] ||
+    tool
+      .replace(/[_-]+/g, ' ')
+      .replace(/([A-Z])/g, ' $1')
+      .replace(/\s+/g, ' ')
+      .trim()
+  );
 };
 
 const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
@@ -206,6 +242,21 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
         </Box>
 
         {renderContent()}
+        <Typography
+          variant="body2"
+          sx={{
+            whiteSpace: 'pre-wrap',
+            lineHeight: 1.7,
+          }}
+        >
+          {message.text}
+        </Typography>
+        {!isUser && message.callArtifacts?.length ? (
+          <Box sx={{ mt: 2 }}>
+            <Divider sx={{ mb: 2, opacity: 0.4 }} />
+            <VoiceCallSummaryList artifacts={message.callArtifacts} />
+          </Box>
+        ) : null}
       </Paper>
 
       {isUser && (

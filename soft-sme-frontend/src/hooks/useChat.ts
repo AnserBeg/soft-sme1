@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { chatService, AgentChatEvent, AgentChatMessage } from '../services/chatService';
 import { toast } from 'react-toastify';
 import { ChatMessageItem } from '../components/ChatMessage';
+import { VoiceCallArtifact } from '../types/voice';
 
 const STORAGE_KEY = 'agent_v2_session_id';
 const POLL_INTERVAL_MS = 45000;
@@ -199,6 +200,41 @@ export const useChat = () => {
         type: 'user_text',
         content: trimmed,
         timestamp: new Date().toISOString(),
+    
+    addMessage(userMessage);
+    setIsLoading(true);
+
+    try {
+      // Get AI response
+      const aiResponse = await chatService.sendMessage(text);
+
+      const { cleanedText, artifacts } = extractVoiceArtifacts(
+        aiResponse.response || 'No response received',
+        aiResponse.callArtifacts
+      );
+
+      const aiMessage: ChatMessage = {
+        id: (Date.now() + 1).toString(),
+        text: cleanedText,
+        sender: 'ai',
+        timestamp: new Date(),
+        callArtifacts: artifacts,
+        actions: aiResponse.actions ?? [],
+        actionMessage: aiResponse.actionMessage ?? null,
+      };
+      
+      addMessage(aiMessage);
+    } catch (error) {
+      console.error('Error sending message:', error);
+      
+      // Add error message
+      const errorMessage: ChatMessage = {
+        id: (Date.now() + 1).toString(),
+        text: 'Sorry, I encountered an error. Please try again.',
+        sender: 'ai',
+        timestamp: new Date(),
+        actions: [],
+        actionMessage: null,
       };
       setMessages((current) => [...current, userMessage]);
       setIsLoading(true);
@@ -258,4 +294,26 @@ export const useChat = () => {
     openChat,
     acknowledgeMessages,
   };
+};
+
+const extractVoiceArtifacts = (text: string, provided?: VoiceCallArtifact[] | undefined) => {
+  let cleanedText = text;
+  let artifacts: VoiceCallArtifact[] | undefined = provided?.length ? provided : undefined;
+
+  if (!artifacts) {
+    const match = text.match(/\{\"type\":\"vendor_call_summary\"[\s\S]*\}$/);
+    if (match) {
+      try {
+        const parsed = JSON.parse(match[0]);
+        if (parsed && parsed.type === 'vendor_call_summary') {
+          artifacts = [parsed];
+          cleanedText = text.replace(match[0], '').trim();
+        }
+      } catch (error) {
+        console.warn('Failed to parse vendor call summary payload', error);
+      }
+    }
+  }
+
+  return { cleanedText, artifacts };
 };
