@@ -2,17 +2,20 @@ import { Pool } from 'pg';
 import { SalesOrderService } from '../SalesOrderService';
 import { EmailService } from '../emailService';
 import { PDFService } from '../pdfService';
+import { AgentTaskEvent, AgentTaskFacade } from './AgentTaskFacade';
 import { VoiceService } from '../voice/VoiceService';
 
 export class AgentToolsV2 {
   private soService: SalesOrderService;
   private emailService: EmailService;
   private pdfService: PDFService;
+  private taskFacade: AgentTaskFacade;
   private voiceService: VoiceService;
   constructor(private pool: Pool) {
     this.soService = new SalesOrderService(pool);
     this.emailService = new EmailService(pool);
     this.pdfService = new PDFService(pool);
+    this.taskFacade = new AgentTaskFacade(pool);
     this.voiceService = new VoiceService(pool);
   }
 
@@ -42,6 +45,28 @@ export class AgentToolsV2 {
     return null;
   }
 
+  private normalizeAssigneeIds(value: any): number[] {
+    if (value == null) {
+      return [];
+    }
+
+    const source = Array.isArray(value) ? value : [value];
+    const normalized = source
+      .map((item) => {
+        if (typeof item === 'number') {
+          return Number.isFinite(item) ? item : NaN;
+        }
+        if (typeof item === 'string' && item.trim().length > 0) {
+          const parsed = Number(item);
+          return Number.isFinite(parsed) ? parsed : NaN;
+        }
+        return NaN;
+      })
+      .filter((id) => Number.isFinite(id)) as number[];
+
+    return Array.from(new Set(normalized));
+  }
+
   // Utility to audit tool execution
   private async audit(sessionId: number, tool: string, input: any, output: any, success = true) {
     await this.pool.query(
@@ -58,6 +83,117 @@ export class AgentToolsV2 {
     const params = terms.map(t => `%${t}%`);
     const res = await this.pool.query(`SELECT path, section, chunk FROM agent_docs WHERE ${like} LIMIT ${k}`, params);
     return res.rows;
+  }
+
+  // Tasks
+  async createAgentTask(
+    sessionId: number,
+    companyId: number,
+    userId: number,
+    payload: any
+  ): Promise<AgentTaskEvent> {
+    const titleSource = typeof payload?.title === 'string' && payload.title.trim().length > 0
+      ? payload.title.trim()
+      : typeof payload?.subject === 'string' && payload.subject.trim().length > 0
+        ? payload.subject.trim()
+        : 'Follow-up task';
+
+    const taskPayload = {
+      title: titleSource,
+      description: typeof payload?.description === 'string' ? payload.description : undefined,
+      status: typeof payload?.status === 'string' ? payload.status : undefined,
+      dueDate:
+        payload?.dueDate === null
+          ? null
+          : typeof payload?.dueDate === 'string'
+            ? payload.dueDate
+            : undefined,
+      assigneeIds: this.normalizeAssigneeIds(payload?.assigneeIds ?? payload?.assignees),
+      initialNote: typeof payload?.initialNote === 'string' ? payload.initialNote : undefined,
+      followUp: typeof payload?.followUp === 'string' ? payload.followUp : undefined,
+    };
+
+    try {
+      const event = await this.taskFacade.createTask(sessionId, companyId, userId, taskPayload);
+      await this.audit(sessionId, 'createTask', payload, { taskId: event.task.id }, true);
+      return event;
+    } catch (error: any) {
+      await this.audit(sessionId, 'createTask', payload, { error: error?.message ?? String(error) }, false);
+      throw error;
+    }
+  }
+
+  async updateAgentTask(
+    sessionId: number,
+    companyId: number,
+    userId: number,
+    payload: any
+  ): Promise<AgentTaskEvent> {
+    const taskId = Number(payload?.taskId ?? payload?.id);
+    if (!Number.isFinite(taskId)) {
+      throw new Error('Task id is required to update a task');
+    }
+
+    const updates: { status?: string; dueDate?: string | null; note?: string } = {};
+    if (typeof payload?.status === 'string' && payload.status.trim().length > 0) {
+      updates.status = payload.status.trim();
+    }
+    if (Object.prototype.hasOwnProperty.call(payload ?? {}, 'dueDate')) {
+      updates.dueDate = payload?.dueDate === null ? null : typeof payload?.dueDate === 'string' ? payload.dueDate : undefined;
+    }
+    if (typeof payload?.note === 'string' && payload.note.trim().length > 0) {
+      updates.note = payload.note.trim();
+    }
+
+    try {
+      const event = await this.taskFacade.updateTask(sessionId, companyId, userId, taskId, updates);
+      await this.audit(sessionId, 'updateTask', payload, { taskId: event.task.id }, true);
+      return event;
+    } catch (error: any) {
+      await this.audit(sessionId, 'updateTask', payload, { error: error?.message ?? String(error) }, false);
+      throw error;
+    }
+  }
+
+  async postAgentTaskMessage(
+    sessionId: number,
+    companyId: number,
+    userId: number,
+    payload: any
+  ): Promise<AgentTaskEvent> {
+    const taskId = Number(payload?.taskId ?? payload?.id);
+    if (!Number.isFinite(taskId)) {
+      throw new Error('Task id is required to post a task message');
+    }
+
+    const contentSource =
+      typeof payload?.content === 'string'
+        ? payload.content
+        : typeof payload?.message === 'string'
+          ? payload.message
+          : '';
+
+    if (!contentSource || contentSource.trim().length === 0) {
+      throw new Error('Message content is required');
+    }
+
+    const reason = typeof payload?.reason === 'string' ? payload.reason : 'agent_comment';
+
+    try {
+      const event = await this.taskFacade.postMessage(
+        sessionId,
+        companyId,
+        userId,
+        taskId,
+        contentSource,
+        reason
+      );
+      await this.audit(sessionId, 'postTaskMessage', payload, { taskId: event.task.id }, true);
+      return event;
+    } catch (error: any) {
+      await this.audit(sessionId, 'postTaskMessage', payload, { error: error?.message ?? String(error) }, false);
+      throw error;
+    }
   }
 
   // Sales Orders

@@ -548,10 +548,10 @@ router.get('/:taskId', async (req: Request, res: Response) => {
     }
 
     const taskResult = await pool.query(
-      `SELECT id, title, description, status, priority, due_date, created_at, updated_at, created_by
+      `SELECT id, title, description, status, priority, due_date, created_at, updated_at, created_by, created_by_agent, agent_session_id
        FROM tasks
-       WHERE id = $1
-         AND company_id = $2`,
+        WHERE id = $1
+          AND company_id = $2`,
       [taskId, companyId]
     );
 
@@ -590,6 +590,8 @@ router.get('/:taskId', async (req: Request, res: Response) => {
         createdAt: taskRow.created_at ? new Date(taskRow.created_at).toISOString() : null,
         updatedAt: taskRow.updated_at ? new Date(taskRow.updated_at).toISOString() : null,
         createdBy: taskRow.created_by != null ? Number(taskRow.created_by) : null,
+        createdByAgent: Boolean(taskRow.created_by_agent),
+        agentSessionId: taskRow.agent_session_id != null ? Number(taskRow.agent_session_id) : null,
       },
       participant,
       participants: participantsResult.rows.map((row) => ({

@@ -4,6 +4,13 @@ export interface AgentToolRegistry {
   [name: string]: (args: any) => Promise<any>;
 }
 
+export type AgentEvent =
+  | { type: 'text'; content: string }
+  | { type: 'docs'; info: string; chunks: any[] }
+  | { type: 'task_created' | 'task_updated' | 'task_message'; summary: string; task: any; link: string };
+
+export interface AgentResponse {
+  events: AgentEvent[];
 export interface ToolCatalogEntry {
   name: string;
   description: string;
@@ -45,9 +52,39 @@ export class AgentOrchestratorV2 {
       catalog: this.toolCatalog,
     };
 
+  async handleMessage(
+    sessionId: number,
+    message: string,
+    _context?: { companyId?: number | null; userId?: number | null }
+  ): Promise<AgentResponse> {
+    const events: AgentEvent[] = [];
     const intent = this.classifyIntent(message);
 
     if (intent && this.tools[intent.tool]) {
+      const result = await this.tools[intent.tool](intent.args);
+      if (intent.tool === 'retrieveDocs') {
+        events.push({ type: 'docs', info: 'Relevant docs', chunks: result });
+      } else if (result && result.task && result.summary) {
+        const link = `/tasks/${result.task.id}`;
+        const type = result.type ?? 'task_updated';
+        events.push({ type, summary: result.summary, task: result.task, link });
+      } else if (typeof result === 'string') {
+        events.push({ type: 'text', content: result });
+      } else {
+        events.push({ type: 'text', content: JSON.stringify(result) });
+      }
+    } else if (this.tools['retrieveDocs']) {
+      const result = await this.tools['retrieveDocs']({ query: message });
+      events.push({ type: 'docs', info: 'Relevant docs', chunks: result });
+    }
+
+    if (events.length === 0) {
+      events.push({
+        type: 'text',
+        content: `I can help with sales orders, purchase orders, quotes, tasks, and emails. What would you like to do?`,
+      });
+    }
+    return { events };
       try {
         const result = await this.tools[intent.tool](intent.args);
         const trace = this.buildTrace(intent.tool, true, intent.args, result);
@@ -111,6 +148,30 @@ export class AgentOrchestratorV2 {
     if (m.includes('get') && m.includes('pickup')) return { tool: 'getPickupDetails', args: {} };
     
     if (m.includes('doc') || m.includes('how do i')) return { tool: 'retrieveDocs', args: { query: message } };
+
+    const reminderKeywords = [
+      'remind',
+      'reminder',
+      'follow up',
+      'follow-up',
+      'todo',
+      'to-do',
+      'task for me',
+      'keep an eye',
+      'watch this',
+      'handle in the background',
+      'background work',
+    ];
+    if (reminderKeywords.some((keyword) => m.includes(keyword))) {
+      return {
+        tool: 'createTask',
+        args: {
+          title: message,
+          description: message,
+        },
+      };
+    }
+
     return null;
   }
 

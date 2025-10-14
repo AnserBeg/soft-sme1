@@ -16,12 +16,14 @@ describe('TaskService validation', () => {
   });
 
   it('rejects an invalid status update', async () => {
+    mockPool.query.mockResolvedValueOnce({ rowCount: 1, rows: [{ status: 'pending' }] });
     await expect(
       service.updateTask(1, 1, { status: 'invalid-status' as any })
     ).rejects.toThrow('Invalid task status');
   });
 
   it('rejects update requests without fields', async () => {
+    mockPool.query.mockResolvedValueOnce({ rowCount: 1, rows: [{ status: 'pending' }] });
     await expect(service.updateTask(1, 1, {})).rejects.toThrow('No updates provided');
   });
 

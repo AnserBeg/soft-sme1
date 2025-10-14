@@ -148,12 +148,13 @@ export class TaskMessageService {
     participant: TaskParticipant,
     content: string,
     metadata: Record<string, any> = {},
-    attachments: any[] = []
+    attachments: any[] = [],
+    isSystem = false
   ): Promise<TaskMessage> {
     const insertResult = await this.db.query(
       `WITH inserted AS (
-        INSERT INTO task_messages (task_id, participant_id, content, metadata, attachments)
-        VALUES ($1, $2, $3, $4, $5)
+        INSERT INTO task_messages (task_id, participant_id, content, metadata, attachments, is_system)
+        VALUES ($1, $2, $3, $4, $5, $6)
         RETURNING *
       )
       SELECT
@@ -172,7 +173,7 @@ export class TaskMessageService {
       FROM inserted i
       INNER JOIN task_participants tp ON tp.id = i.participant_id
       LEFT JOIN users u ON u.id = tp.user_id`,
-      [taskId, participant.id, content, metadata, attachments]
+      [taskId, participant.id, content, metadata, attachments, isSystem]
     );
 
     const row = insertResult.rows[0];
