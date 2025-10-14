@@ -1,6 +1,7 @@
 // Chat service that calls the backend API
 // All AI configuration is now managed securely on the backend
 import api from '../api/axios';
+import { ActionTrace } from '../types/chat';
 
 export interface ChatResponse {
   response: string;
@@ -8,6 +9,9 @@ export interface ChatResponse {
   confidence: number;
   toolUsed: string;
   timestamp: string;
+  actions: ActionTrace[];
+  actionMessage: string | null;
+  actionCatalog: any[];
 }
 
 export interface ChatRequest {
@@ -42,7 +46,17 @@ export const chatService = {
       console.log('AI Assistant Response:', response.data);
       
       if (response.data.success) {
-        return response.data.data;
+        const data = response.data.data || {};
+        return {
+          response: data.response,
+          sources: Array.isArray(data.sources) ? data.sources : [],
+          confidence: typeof data.confidence === 'number' ? data.confidence : 0,
+          toolUsed: data.toolUsed ?? 'unknown',
+          timestamp: data.timestamp ?? new Date().toISOString(),
+          actions: Array.isArray(data.actions) ? data.actions : [],
+          actionMessage: data.actionMessage ?? null,
+          actionCatalog: Array.isArray(data.actionCatalog) ? data.actionCatalog : [],
+        };
       } else {
         throw new Error(response.data.message || 'Failed to get response from AI assistant');
       }
@@ -55,7 +69,10 @@ export const chatService = {
         sources: ['fallback'],
         confidence: 0.5,
         toolUsed: 'fallback',
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        actions: [],
+        actionMessage: null,
+        actionCatalog: [],
       };
     }
   },

@@ -66,6 +66,9 @@ class ChatResponse(BaseModel):
     confidence: float
     tool_used: str
     conversation_id: str
+    actions: list[Dict[str, Any]] | None = None
+    action_message: Optional[str] = None
+    action_catalog: list[Dict[str, Any]] | None = None
 
 class InitializeResponse(BaseModel):
     status: str
@@ -212,12 +215,31 @@ async def chat(request: ChatRequest):
                 }
             )
         
+        )
+        
+        # Add AI response to conversation
+        conversation_manager.add_message(
+            conversation_id=conversation_id,
+            message=response["response"],
+            is_user=False,
+            metadata={
+                "sources": response["sources"],
+                "confidence": response["confidence"],
+                "tool_used": response["tool_used"],
+                "actions": response.get("actions", []),
+                "action_message": response.get("action_message"),
+            }
+        )
+
         return ChatResponse(
             response=response["response"],
             sources=response["sources"],
             confidence=response["confidence"],
             tool_used=response["tool_used"],
-            conversation_id=conversation_id
+            conversation_id=conversation_id,
+            actions=response.get("actions", []),
+            action_message=response.get("action_message"),
+            action_catalog=response.get("action_catalog", [])
         )
         
     except Exception as e:

@@ -29,6 +29,9 @@ interface AIResponse {
   confidence: number;
   tool_used: string;
   conversation_id?: string;
+  actions?: any[];
+  action_message?: string | null;
+  action_catalog?: any[];
 }
 
 interface ChatMessage {
@@ -770,7 +773,10 @@ class AIAssistantService {
       response: fallbackResponse,
       sources: ['gemini'],
       confidence: 0.6,
-      tool_used: 'gemini_direct'
+      tool_used: 'gemini_direct',
+      actions: [],
+      action_message: null,
+      action_catalog: []
     };
   }
 }

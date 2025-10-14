@@ -9,6 +9,7 @@ Handles routing between documentation RAG and live database queries.
 
 import json
 import os
+import json
 import logging
 import time
 from datetime import datetime
@@ -17,6 +18,7 @@ from langchain_core.messages import HumanMessage, AIMessage
 
 from rag_tool import DocumentationRAGTool
 from sql_tool import InventorySQLTool
+from action_tool import AgentActionTool
 from conversation_manager import ConversationManager
 from task_queue import TaskQueue
 
@@ -32,6 +34,7 @@ class AivenAgent:
         self.sql_tool = None
         self.conversation_manager = ConversationManager()
         self.task_queue = TaskQueue()
+        self.action_tool = None
         self.initialized = False
         self.messages = []  # Add messages list for conversation history
         self.documentation_enabled = os.getenv("AI_ENABLE_DOCUMENTATION", "true").lower() == "true"
@@ -41,6 +44,7 @@ class AivenAgent:
             "total_queries": 0,
             "rag_queries": 0,
             "sql_queries": 0,
+            "action_queries": 0,
             "average_response_time": 0.0,
             "total_response_time": 0.0
         }
@@ -98,7 +102,7 @@ class AivenAgent:
             raise
     
     async def _initialize_tools(self):
-        """Initialize RAG and SQL tools"""
+        """Initialize RAG, SQL, and action tools"""
         try:
             # Initialize RAG tool
             if self.documentation_enabled:
@@ -124,8 +128,11 @@ class AivenAgent:
             }
             self.sql_tool = InventorySQLTool(db_config)
 
+            # Initialize action tool client
+            self.action_tool = AgentActionTool()
+
             # Setup tools
-            self.tools = [tool for tool in [self.rag_tool, self.sql_tool] if tool is not None]
+            self.tools = [tool for tool in [self.rag_tool, self.sql_tool, self.action_tool] if tool is not None]
             
             logger.info("Tools initialized successfully")
             
@@ -262,6 +269,30 @@ class AivenAgent:
             # STEP 2: Iterative tool usage
             gathered_info = {}
             tool_usage_count = 0
+            actions_summary: Dict[str, Any] = {}
+
+            # Use Action tool if needed
+            if "action" in tools_needed and self.action_tool and "actions" not in gathered_info:
+                try:
+                    action_result = await self.action_tool.invoke(message, conversation_id)
+                    if action_result.get("actions"):
+                        gathered_info["actions"] = action_result
+                        actions_summary = action_result
+                        self.stats["action_queries"] += 1
+                        tool_usage_count += 1
+                        logger.info("Action tool used successfully")
+                except Exception as action_error:
+                    logger.error(f"Action tool error: {action_error}")
+                    gathered_info["actions"] = {
+                        "actions": [
+                            {
+                                "tool": "agent_v2",
+                                "success": False,
+                                "message": f"Action execution failed: {action_error}",
+                            }
+                        ]
+                    }
+                    actions_summary = gathered_info["actions"]
 
             # Use RAG tool if needed
             if (
@@ -336,8 +367,14 @@ class AivenAgent:
                 ])
                 response_format.append("Only mention UI elements that are explicitly in the documentation")
 
+            if actions_summary.get("actions"):
+                critical_requirements.append("Report the outcome of any actions, including relevant record numbers or errors.")
+                response_format.append("Summarize any actions performed and provide follow-up guidance.")
+
             critical_requirements_text = "\n".join(f"- {item}" for item in critical_requirements) if critical_requirements else "- Provide accurate information based on available data"
             response_format_text = "\n".join(f"- {item}" for item in response_format)
+
+            gathered_info_for_prompt = json.dumps(gathered_info, indent=2, default=str)
 
             response_prompt = f"""{self.system_prompt}
 
@@ -346,7 +383,7 @@ class AivenAgent:
 **USER QUESTION:** {prompt_text}
 
 **INFORMATION GATHERED:**
-{gathered_info}
+{gathered_info_for_prompt}
 
 **THINKING PROCESS:**
 1. **ANALYZE** what the user asked for
@@ -369,7 +406,13 @@ Provide a helpful, complete answer."""
             
             # Determine tool used based on what was actually used
             tools_used = list(gathered_info.keys())
-            if not tools_used:
+            if actions_summary.get("actions"):
+                additional = [tool for tool in tools_used if tool != "actions"]
+                if additional:
+                    tool_used = "action+" + "+".join(additional)
+                else:
+                    tool_used = "action"
+            elif not tools_used:
                 tool_used = "llm_knowledge"
             elif len(tools_used) == 1:
                 tool_used = tools_used[0]
@@ -382,6 +425,8 @@ Provide a helpful, complete answer."""
                 sources.append("documentation")
             if "database_data" in gathered_info:
                 sources.append("database")
+            if actions_summary.get("actions"):
+                sources.append("actions")
             if not sources:
                 sources.append("llm_knowledge")
             
@@ -408,7 +453,10 @@ Provide a helpful, complete answer."""
                 "sources": sources,
                 "confidence": confidence,
                 "tool_used": tool_used,
-                "processing_time": processing_time
+                "processing_time": processing_time,
+                "actions": actions_summary.get("actions", []),
+                "action_message": actions_summary.get("message"),
+                "action_catalog": actions_summary.get("catalog", [])
             }
             
         except Exception as e:
@@ -418,7 +466,10 @@ Provide a helpful, complete answer."""
                 "sources": [],
                 "confidence": 0.0,
                 "tool_used": "error",
-                "processing_time": 0.0
+                "processing_time": 0.0,
+                "actions": [],
+                "action_message": None,
+                "action_catalog": []
             }
     
     def _determine_tools_needed(self, message: str, conversation_history: List[Dict] = None) -> List[str]:
@@ -494,6 +545,37 @@ Provide a helpful, complete answer."""
         if (wants_data and references_entity) or history_contains(business_entities):
             tools.append("sql")
 
+        action_keywords = [
+            "create",
+            "open",
+            "start",
+            "generate",
+            "update",
+            "change",
+            "modify",
+            "close",
+            "email",
+            "send",
+            "convert",
+            "complete",
+        ]
+
+        action_entities = [
+            "purchase order",
+            "po",
+            "sales order",
+            "so",
+            "quote",
+            "pickup",
+            "order",
+        ]
+
+        wants_action = any(keyword in message_lower for keyword in action_keywords)
+        targets_entity = any(entity in message_lower for entity in action_entities)
+
+        if (wants_action and targets_entity) or history_contains(action_entities):
+            tools.append("action")
+
         # Always ensure LLM knowledge is available as a baseline option
         if "llm_knowledge" not in tools:
             tools.append("llm_knowledge")
@@ -563,7 +645,19 @@ Provide a helpful, complete answer."""
         
         if "database_data" in gathered_info and "No database data available" not in gathered_info.get("database_data", ""):
             confidence += 0.2
-        
+
+        actions_info = gathered_info.get("actions")
+        if isinstance(actions_info, dict):
+            action_traces = actions_info.get("actions")
+            if isinstance(action_traces, list) and action_traces:
+                successes = sum(1 for trace in action_traces if trace.get("success"))
+                if successes == len(action_traces):
+                    confidence += 0.25
+                elif successes > 0:
+                    confidence += 0.1
+                else:
+                    confidence -= 0.15
+
         # Reduce confidence if too many tool calls (might indicate confusion)
         if tool_usage_count > 3:
             confidence -= 0.1
@@ -640,7 +734,8 @@ Provide a helpful, complete answer."""
             "average_response_time": self.stats["average_response_time"],
             "tools_used": {
                 "documentation_search": self.stats["rag_queries"],
-                "inventory_query": self.stats["sql_queries"]
+                "inventory_query": self.stats["sql_queries"],
+                "action_workflows": self.stats["action_queries"]
             }
         }
     
@@ -661,7 +756,9 @@ Provide a helpful, complete answer."""
         try:
             logger.info("Cleaning up AI Agent resources...")
             # Add any cleanup logic here
+            if self.action_tool:
+                await self.action_tool.cleanup()
             self.initialized = False
             logger.info("AI Agent cleanup completed")
         except Exception as e:
-            logger.error(f"Cleanup error: {e}") 
+            logger.error(f"Cleanup error: {e}")
