@@ -1,10 +1,12 @@
 import React from 'react';
-import { Box, Typography, Paper, Avatar, Stack, Button, Chip } from '@mui/material';
+import { Box, Typography, Paper, Avatar, Stack, Button, Chip, Divider } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import { Person as PersonIcon, SmartToy as AIIcon, TaskAlt as TaskIcon } from '@mui/icons-material';
 import { Link as RouterLink } from 'react-router-dom';
 import dayjs from 'dayjs';
 import { Task } from '../types/task';
+import { VoiceCallArtifact } from '../types/voice';
+import VoiceCallSummaryList from './VoiceCallSummaryList';
 
 export interface ChatMessageItem {
   id: number | string;
@@ -18,17 +20,6 @@ export interface ChatMessageItem {
   chunks?: any[];
   timestamp?: string;
   createdAt?: string;
-import { Box, Typography, Paper, Avatar, Stack, Divider } from '@mui/material';
-import { alpha } from '@mui/material/styles';
-import { Person as PersonIcon, SmartToy as AIIcon } from '@mui/icons-material';
-import { VoiceCallArtifact } from '../types/voice';
-import VoiceCallSummaryList from './VoiceCallSummaryList';
-
-export interface ChatMessage {
-  id: string;
-  text: string;
-  sender: 'user' | 'ai';
-  timestamp: Date;
   callArtifacts?: VoiceCallArtifact[];
 }
 
@@ -40,30 +31,6 @@ const formatTimestamp = (value?: string) => {
   if (!value) return '';
   const parsed = dayjs(value);
   return parsed.isValid() ? parsed.format('MMM D, YYYY h:mm A') : '';
-const formatToolName = (tool?: string) => {
-  if (!tool) return 'Action';
-  const mapping: Record<string, string> = {
-    createPurchaseOrder: 'Create purchase order',
-    updatePurchaseOrder: 'Update purchase order',
-    closePurchaseOrder: 'Close purchase order',
-    emailPurchaseOrder: 'Email purchase order',
-    createSalesOrder: 'Create sales order',
-    updateSalesOrder: 'Update sales order',
-    createQuote: 'Create quote',
-    updateQuote: 'Update quote',
-    emailQuote: 'Email quote',
-    convertQuoteToSO: 'Convert quote to sales order',
-    updatePickupDetails: 'Update pickup details',
-    getPickupDetails: 'Get pickup details',
-  };
-  return (
-    mapping[tool] ||
-    tool
-      .replace(/[_-]+/g, ' ')
-      .replace(/([A-Z])/g, ' $1')
-      .replace(/\s+/g, ' ')
-      .trim()
-  );
 };
 
 const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
@@ -200,9 +167,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
               ? `linear-gradient(135deg, ${alpha(theme.palette.primary.main, 0.95)} 0%, ${theme.palette.primary.main} 100%)`
               : 'rgba(255, 255, 255, 0.92)',
           color: isUser ? 'common.white' : 'text.primary',
-          border: isUser
-            ? 'none'
-            : '1px solid rgba(148, 163, 184, 0.25)',
+          border: isUser ? 'none' : '1px solid rgba(148, 163, 184, 0.25)',
           boxShadow: isUser
             ? '0 18px 32px -24px rgba(64, 132, 253, 0.65)'
             : '0 12px 28px -22px rgba(15, 23, 42, 0.35)',
@@ -242,15 +207,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
         </Box>
 
         {renderContent()}
-        <Typography
-          variant="body2"
-          sx={{
-            whiteSpace: 'pre-wrap',
-            lineHeight: 1.7,
-          }}
-        >
-          {message.text}
-        </Typography>
+
         {!isUser && message.callArtifacts?.length ? (
           <Box sx={{ mt: 2 }}>
             <Divider sx={{ mb: 2, opacity: 0.4 }} />

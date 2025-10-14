@@ -6,7 +6,7 @@ import { AgentToolsV2 } from '../services/agentV2/tools';
 
 const router = express.Router();
 
-const parseNumeric = (value: any): number | null => {
+const parseNumeric = (value: unknown): number | null => {
   if (value === null || value === undefined) {
     return null;
   }
@@ -14,14 +14,84 @@ const parseNumeric = (value: any): number | null => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
-// Session management
+const coerceId = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === 'string' && value.trim().length > 0) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+};
+
+const requireId = (value: unknown, label: string): number => {
+  const parsed = coerceId(value);
+  if (parsed == null) {
+    throw new Error(`${label} is required`);
+  }
+  return parsed;
+};
+
+const buildToolRegistry = (
+  tools: AgentToolsV2,
+  sessionId: number,
+  companyId: number,
+  userId: number
+): AgentToolRegistry => ({
+  retrieveDocs: async ({ query }: any) => tools.retrieveDocs(query),
+  createSalesOrder: async (args: any) => tools.createSalesOrder(sessionId, args),
+  updateSalesOrder: async (args: any) =>
+    tools.updateSalesOrder(sessionId, requireId(args?.sales_order_id ?? args?.id, 'sales_order_id'), args?.patch ?? args),
+  createPurchaseOrder: async (args: any) => tools.createPurchaseOrder(sessionId, args),
+  updatePurchaseOrder: async (args: any) =>
+    tools.updatePurchaseOrder(sessionId, requireId(args?.purchase_id ?? args?.id, 'purchase_id'), args?.patch ?? args),
+  closePurchaseOrder: async (args: any) =>
+    tools.closePurchaseOrder(sessionId, requireId(args?.purchase_id ?? args?.id, 'purchase_id')),
+  emailPurchaseOrder: async (args: any) =>
+    tools.emailPurchaseOrder(
+      sessionId,
+      requireId(args?.purchase_id ?? args?.id, 'purchase_id'),
+      args?.to,
+      args?.message
+    ),
+  createQuote: async (args: any) => tools.createQuote(sessionId, args),
+  updateQuote: async (args: any) =>
+    tools.updateQuote(sessionId, requireId(args?.quote_id ?? args?.id, 'quote_id'), args?.patch ?? args),
+  emailQuote: async (args: any) =>
+    tools.emailQuote(sessionId, requireId(args?.quote_id ?? args?.id, 'quote_id'), args?.to),
+  convertQuoteToSO: async (args: any) =>
+    tools.convertQuoteToSO(sessionId, requireId(args?.quote_id ?? args?.id, 'quote_id')),
+  createTask: async (args: any) => tools.createAgentTask(sessionId, companyId, userId, args),
+  updateTask: async (args: any) => tools.updateAgentTask(sessionId, companyId, userId, args),
+  postTaskMessage: async (args: any) => tools.postAgentTaskMessage(sessionId, companyId, userId, args),
+  updatePickupDetails: async (args: any) =>
+    tools.updatePickupDetails(
+      sessionId,
+      requireId(args?.purchase_id ?? args?.purchaseId ?? args?.id ?? args, 'purchase_id'),
+      args
+    ),
+  getPickupDetails: async (args: any) =>
+    tools.getPickupDetails(sessionId, requireId(args?.purchase_id ?? args?.purchaseId ?? args?.id ?? args, 'purchase_id')),
+  initiateVendorCall: async (args: any) =>
+    tools.initiateVendorCall(sessionId, requireId(args?.purchase_id ?? args?.purchaseId ?? args?.id ?? args, 'purchase_id')),
+  pollVendorCall: async (args: any) =>
+    tools.pollVendorCall(
+      sessionId,
+      requireId(args?.session_id ?? args?.call_session_id ?? args?.sessionId ?? args?.id ?? args, 'session_id')
+    ),
+  sendVendorCallEmail: async (args: any) =>
+    tools.sendVendorCallEmail(
+      sessionId,
+      requireId(args?.session_id ?? args?.call_session_id ?? args?.sessionId ?? args?.id ?? args, 'session_id'),
+      args?.override_email ?? args?.email
+    ),
+});
+
 router.post('/session', authMiddleware, async (req: Request, res: Response) => {
   try {
     const userId = parseNumeric(req.user?.id);
-    const result = await pool.query(
-      'INSERT INTO agent_sessions (user_id) VALUES ($1) RETURNING id',
-      [userId]
-    );
+    const result = await pool.query('INSERT INTO agent_sessions (user_id) VALUES ($1) RETURNING id', [userId]);
     res.json({ sessionId: result.rows[0].id });
   } catch (err) {
     console.error('agentV2: create session error', err);
@@ -29,11 +99,13 @@ router.post('/session', authMiddleware, async (req: Request, res: Response) => {
   }
 });
 
-// Ingest a message and get response via orchestrator
 router.post('/chat', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { sessionId, message } = req.body || {};
-    if (!sessionId || !message) return res.status(400).json({ error: 'sessionId and message required' });
+    if (!sessionId || !message) {
+      return res.status(400).json({ error: 'sessionId and message required' });
+    }
+
     const userId = parseNumeric(req.user?.id);
     const companyId = parseNumeric(req.user?.company_id);
 
@@ -50,50 +122,38 @@ router.post('/chat', authMiddleware, async (req: Request, res: Response) => {
       content: message,
       timestamp,
     };
-    await pool.query(
-      'INSERT INTO agent_messages (session_id, role, content) VALUES ($1, $2, $3)',
-      [sessionId, 'user', JSON.stringify(userPayload)]
-    );
+    await pool.query('INSERT INTO agent_messages (session_id, role, content) VALUES ($1, $2, $3)', [
+      sessionId,
+      'user',
+      JSON.stringify(userPayload),
+    ]);
 
     const tools = new AgentToolsV2(pool);
-    const registry = {
-      retrieveDocs: async ({ query }: any) => tools.retrieveDocs(query),
-      createSalesOrder: async (args: any) => tools.createSalesOrder(sessionId, args),
-      updateSalesOrder: async (args: any) => tools.updateSalesOrder(sessionId, args?.sales_order_id || args?.id, args?.patch || args),
-      createPurchaseOrder: async (args: any) => tools.createPurchaseOrder(sessionId, args),
-      closePurchaseOrder: async (args: any) => tools.closePurchaseOrder(sessionId, args?.purchase_id || args?.id),
-      emailPurchaseOrder: async (args: any) => tools.emailPurchaseOrder(sessionId, args?.purchase_id || args?.id, args?.to, args?.message),
-      createQuote: async (args: any) => tools.createQuote(sessionId, args),
-      updateQuote: async (args: any) => tools.updateQuote(sessionId, args?.quote_id || args?.id, args?.patch || args),
-      emailQuote: async (args: any) => tools.emailQuote(sessionId, args?.quote_id || args?.id, args?.to),
-      convertQuoteToSO: async (args: any) => tools.convertQuoteToSO(sessionId, args?.quote_id || args?.id),
-      createTask: async (args: any) => tools.createAgentTask(sessionId, companyId, userId, args),
-      updateTask: async (args: any) => tools.updateAgentTask(sessionId, companyId, userId, args),
-      postTaskMessage: async (args: any) => tools.postAgentTaskMessage(sessionId, companyId, userId, args),
-    };
+    const registry = buildToolRegistry(tools, Number(sessionId), companyId, userId);
     const orchestrator = new AgentOrchestratorV2(pool, registry);
-    const agentResponse = await orchestrator.handleMessage(sessionId, message, { companyId, userId });
+    let agentResponse;
+    try {
+      agentResponse = await orchestrator.handleMessage(Number(sessionId), message, { companyId, userId });
+    } catch (error: any) {
+      if (error instanceof Error && /is required/i.test(error.message)) {
+        return res.status(400).json({ error: error.message });
+      }
+      throw error;
+    }
 
     for (const event of agentResponse.events) {
       const payload = {
         ...event,
-        timestamp: new Date().toISOString(),
+        timestamp: event.timestamp ?? new Date().toISOString(),
       };
-      await pool.query(
-        'INSERT INTO agent_messages (session_id, role, content) VALUES ($1, $2, $3)',
-        [sessionId, 'assistant', JSON.stringify(payload)]
-      );
+      await pool.query('INSERT INTO agent_messages (session_id, role, content) VALUES ($1, $2, $3)', [
+        sessionId,
+        'assistant',
+        JSON.stringify(payload),
+      ]);
     }
 
     res.json(agentResponse);
-      initiateVendorCall: async (args: any) => tools.initiateVendorCall(sessionId, Number(args?.purchase_id || args?.purchaseId || args?.id || args)),
-      pollVendorCall: async (args: any) => tools.pollVendorCall(sessionId, Number(args?.session_id || args?.call_session_id || args?.sessionId || args?.id || args)),
-      sendVendorCallEmail: async (args: any) => tools.sendVendorCallEmail(sessionId, Number(args?.session_id || args?.call_session_id || args?.sessionId || args?.id || args), args?.override_email || args?.email),
-    };
-    const orchestrator = new AgentOrchestratorV2(pool, registry);
-    const reply = await orchestrator.handleMessage(sessionId, message);
-    await pool.query('INSERT INTO agent_messages (session_id, role, content) VALUES ($1, $2, $3)', [sessionId, 'assistant', JSON.stringify(reply)]);
-    res.json({ reply });
   } catch (err) {
     console.error('agentV2: chat error', err);
     res.status(500).json({ error: 'Failed to process chat' });
@@ -134,17 +194,20 @@ router.get('/session/:sessionId/messages', authMiddleware, async (req: Request, 
     console.error('agentV2: list messages error', err);
     res.status(500).json({ error: 'Failed to load agent messages' });
   }
+});
+
 router.get('/tools', authMiddleware, async (_req: Request, res: Response) => {
   const orchestrator = new AgentOrchestratorV2(pool, {} as AgentToolRegistry);
   res.json({ tools: orchestrator.getToolCatalog() });
 });
 
-// Admin: record a tool invocation (for testing the pipeline)
 router.post('/tools/:tool/invoke', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { sessionId, input, output, success } = req.body || {};
     const tool = req.params.tool;
-    if (!sessionId) return res.status(400).json({ error: 'sessionId required' });
+    if (!sessionId) {
+      return res.status(400).json({ error: 'sessionId required' });
+    }
     const result = await pool.query(
       'INSERT INTO agent_tool_invocations (session_id, tool, input, output, success) VALUES ($1, $2, $3, $4, $5) RETURNING id',
       [sessionId, tool, input || null, output || null, success !== false]
@@ -157,5 +220,3 @@ router.post('/tools/:tool/invoke', authMiddleware, async (req: Request, res: Res
 });
 
 export default router;
-
-

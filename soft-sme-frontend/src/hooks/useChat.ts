@@ -1,25 +1,63 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { chatService, AgentChatEvent, AgentChatMessage } from '../services/chatService';
 import { toast } from 'react-toastify';
+import { chatService, AgentChatEvent, AgentChatMessage } from '../services/chatService';
 import { ChatMessageItem } from '../components/ChatMessage';
 import { VoiceCallArtifact } from '../types/voice';
 
 const STORAGE_KEY = 'agent_v2_session_id';
 const POLL_INTERVAL_MS = 45000;
 
-const normalizeMessage = (message: AgentChatMessage): ChatMessageItem => ({
-  id: message.id,
-  role: message.role,
-  type: message.type || (message.role === 'user' ? 'user_text' : 'text'),
-  content: message.content,
-  summary: message.summary,
-  task: message.task,
-  link: message.link,
-  info: message.info,
-  chunks: message.chunks,
-  timestamp: message.timestamp,
-  createdAt: message.createdAt,
-});
+const extractVoiceArtifacts = (
+  text: string | undefined,
+  provided?: VoiceCallArtifact[] | null
+): { content?: string; artifacts?: VoiceCallArtifact[] } => {
+  if (provided && provided.length) {
+    return { content: text, artifacts: provided };
+  }
+
+  if (!text) {
+    return { content: text, artifacts: undefined };
+  }
+
+  const match = text.match(/\{"type":"vendor_call_summary"[\s\S]*\}$/);
+  if (!match) {
+    return { content: text, artifacts: undefined };
+  }
+
+  try {
+    const parsed = JSON.parse(match[0]);
+    if (parsed && parsed.type === 'vendor_call_summary') {
+      const cleaned = text.replace(match[0], '').trim();
+      return { content: cleaned, artifacts: [parsed] };
+    }
+  } catch (error) {
+    console.warn('Failed to parse vendor call summary payload', error);
+  }
+
+  return { content: text, artifacts: undefined };
+};
+
+const normalizeMessage = (message: AgentChatMessage): ChatMessageItem => {
+  const { content, artifacts } = extractVoiceArtifacts(
+    message.type === 'text' ? message.content : undefined,
+    message.callArtifacts
+  );
+
+  return {
+    id: message.id,
+    role: message.role,
+    type: message.type || (message.role === 'user' ? 'user_text' : 'text'),
+    content: message.type === 'text' ? content ?? message.content : message.content,
+    summary: message.summary,
+    task: message.task,
+    link: message.link,
+    info: message.info,
+    chunks: message.chunks,
+    timestamp: message.timestamp,
+    createdAt: message.createdAt,
+    callArtifacts: artifacts ?? message.callArtifacts,
+  };
+};
 
 export const useChat = () => {
   const [messages, setMessages] = useState<ChatMessageItem[]>([]);
@@ -102,6 +140,11 @@ export const useChat = () => {
           const normalized = serverMessages.map(normalizeMessage);
           setMessages(normalized);
           applyUnreadTracking(normalized);
+        } catch (error) {
+          console.error('Failed to load chat history', error);
+          if (!opts?.showSpinner) {
+            toast.error('Unable to load chat messages.');
+          }
         } finally {
           if (opts?.showSpinner) {
             setIsLoading(false);
@@ -166,18 +209,23 @@ export const useChat = () => {
       setMessages((current) => {
         const appended = [
           ...current,
-          ...events.map((event, index) => ({
-            id: `${Date.now()}-${index}`,
-            role: 'assistant' as const,
-            type: event.type,
-            content: event.content,
-            summary: event.summary,
-            task: event.task,
-            link: event.link,
-            info: event.info,
-            chunks: event.chunks,
-            timestamp: event.timestamp,
-          })),
+          ...events.map((event, index) => {
+            const baseContent = event.type === 'text' ? event.content : undefined;
+            const { content, artifacts } = extractVoiceArtifacts(baseContent, event.callArtifacts);
+            return {
+              id: `${Date.now()}-${index}`,
+              role: 'assistant' as const,
+              type: event.type,
+              content: event.type === 'text' ? content ?? event.content : event.content,
+              summary: event.summary,
+              task: event.task,
+              link: event.link,
+              info: event.info,
+              chunks: event.chunks,
+              timestamp: event.timestamp ?? new Date().toISOString(),
+              callArtifacts: artifacts ?? event.callArtifacts,
+            } as ChatMessageItem;
+          }),
         ];
         applyUnreadTracking(appended);
         return appended;
@@ -200,44 +248,11 @@ export const useChat = () => {
         type: 'user_text',
         content: trimmed,
         timestamp: new Date().toISOString(),
-    
-    addMessage(userMessage);
-    setIsLoading(true);
-
-    try {
-      // Get AI response
-      const aiResponse = await chatService.sendMessage(text);
-
-      const { cleanedText, artifacts } = extractVoiceArtifacts(
-        aiResponse.response || 'No response received',
-        aiResponse.callArtifacts
-      );
-
-      const aiMessage: ChatMessage = {
-        id: (Date.now() + 1).toString(),
-        text: cleanedText,
-        sender: 'ai',
-        timestamp: new Date(),
-        callArtifacts: artifacts,
-        actions: aiResponse.actions ?? [],
-        actionMessage: aiResponse.actionMessage ?? null,
       };
-      
-      addMessage(aiMessage);
-    } catch (error) {
-      console.error('Error sending message:', error);
-      
-      // Add error message
-      const errorMessage: ChatMessage = {
-        id: (Date.now() + 1).toString(),
-        text: 'Sorry, I encountered an error. Please try again.',
-        sender: 'ai',
-        timestamp: new Date(),
-        actions: [],
-        actionMessage: null,
-      };
+
       setMessages((current) => [...current, userMessage]);
       setIsLoading(true);
+
       try {
         const events = await chatService.sendMessage(id, trimmed);
         addEventMessages(events);
@@ -294,26 +309,4 @@ export const useChat = () => {
     openChat,
     acknowledgeMessages,
   };
-};
-
-const extractVoiceArtifacts = (text: string, provided?: VoiceCallArtifact[] | undefined) => {
-  let cleanedText = text;
-  let artifacts: VoiceCallArtifact[] | undefined = provided?.length ? provided : undefined;
-
-  if (!artifacts) {
-    const match = text.match(/\{\"type\":\"vendor_call_summary\"[\s\S]*\}$/);
-    if (match) {
-      try {
-        const parsed = JSON.parse(match[0]);
-        if (parsed && parsed.type === 'vendor_call_summary') {
-          artifacts = [parsed];
-          cleanedText = text.replace(match[0], '').trim();
-        }
-      } catch (error) {
-        console.warn('Failed to parse vendor call summary payload', error);
-      }
-    }
-  }
-
-  return { cleanedText, artifacts };
 };
