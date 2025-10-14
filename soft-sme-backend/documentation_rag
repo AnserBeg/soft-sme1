@@ -1,0 +1,113 @@
+Aiven Application — RAG‑Ready Documentation (No External Links)
+
+1) Overview
+Aiven is an AI‑assisted ERP for SMBs. It combines inventory, purchasing, sales orders, quotes, time tracking, and admin/config features. Front‑end: React 18 + TypeScript + Material‑UI, packaged for web and optionally Electron desktop. Back‑end: Node.js (Express) with PostgreSQL. Auth via JWT. Optional integrations: QuickBooks Online (QBO) for accounting and AI features (text/voice query). Offline queue/sync lets users keep working during brief outages.
+
+2) Core Concepts & Data
+• Inventory items (“parts”) have: part_number, description, unit, quantity_on_hand, last_unit_cost, reorder_point, part_type (“stock” or “supply”), category, timestamps.
+• Vendors supply parts; vendor mappings store vendor_part_number (per vendor per part), a preferred flag, usage_count, last_used_at.
+• Sales orders (header + line items) record demand; quotes are pre‑orders convertible to sales orders.
+• Purchase orders (header + line items) record supply from vendors.
+• Customers, employees/users, time entries, margin schedule, overhead distribution, email settings/templates are additional entities.
+
+3) Navigation (Major Routes)
+• Dashboard: landing overview after login.
+• Inventory: manage stock parts.
+• Supply: manage supply‑type parts.
+• Customers & Products: master data for client records and non‑inventory product catalog.
+• Purchase Orders: open list and detail editor; PDF/email; optional export to QBO.
+• Sales Orders: open list and detail editor; PDF/email; export to QBO.
+• Worker Sales Orders: simplified editor for technicians (time‑tracking role).
+• Quotes: list + editor; convert quote → sales order.
+• Time Tracking & Attendance: clock‑in/out, attendance status, reports.
+• Employees: manage user accounts and roles (admin only).
+• Settings & Ops: Business Profile, QBO Account Mapping, Margin Schedule, Overhead Management, Parts to Order, Backup Management, Mobile User Access, User Email Settings, Email Templates.
+
+4) Roles & Access Control
+• Admin: full access to all pages.
+• Sales & Purchase: sales orders, purchase orders, parts‑to‑order, related flows (typically inventory read; finance exports).
+• Quotes: quotes module only.
+• Time Tracking: attendance/time pages and “worker” sales orders. Dashboard redirects them to Attendance.
+The layout filters menu items by role; protected routes prevent unauthorized access.
+
+5) Inventory & Supply
+• Inventory list shows key fields with inline edit (role‑based). Create/update/delete parts via a unified dialog.
+• Supply page mirrors inventory but filters part_type = "supply" (quantity may be NA in some setups).
+• CSV bulk import: upload a CSV to create/update parts with validation and duplicate merging. Template download provided. Result summarizes created/updated counts, errors, warnings.
+• Cleanup/normalize: preview and apply part number normalization (uppercase, trim, remove illegal chars, standardize fractions) and merge duplicates; unit mismatches flagged.
+• Vendor mappings per part: add/edit/delete vendor‑specific part numbers; mark preferred; usage counts help auto‑selection on POs.
+• Search & Part Finder: fast filtering with tokenization; optional AI text/voice query to extract keywords (materials, sizes) and apply as filters.
+
+6) Purchasing (POs)
+• PO list: search, sort, create new, navigate to detail, delete drafts, export actions (CSV/PDF), and QBO export for closed POs.
+• PO detail: select vendor, add line items (part, qty, unit cost). Duplicate bill/invoice number check to avoid double entries.
+• Vendor part number swapping: when a vendor is selected, line item part numbers auto‑swap to that vendor’s code if mapped (preferred > most‑used > fallback to internal).
+• Save vs Close: save keeps PO open; closing implies receiving/fulfillment rules are met (and may adjust inventory). Unsaved‑changes guard prevents accidental loss.
+
+7) Sales Orders & Quotes
+• SO list: filter by status (open/closed), search by number/customer; actions include create, close/reopen (with validation), export CSV, export to QBO (closed orders).
+• SO detail: full editor with rules—no duplicate part lines; special codes LABOUR/OVERHEAD/SUPPLY; availability checks raise negative‑stock banners with “transfer to Parts‑to‑Order.” Closing requires no outstanding shortfalls and valid quantities.
+• Worker SO: simplified UI for technicians—bigger inputs, fewer columns (hide prices), integrated Part Finder; merges duplicate parts on save.
+• Quotes: list + editor; PDF/email; convert to SO. VIN and other domain validations enforced as applicable.
+
+8) Parts to Order
+Aggregates shortages across open sales orders. Shows part number, description, shortfall quantity, and (optionally) preferred vendor. Used by purchasing to create POs. Items drop off as POs are created/received and inventory updates.
+
+9) Admin & Config
+• Business Profile: company name, address, logo, tax IDs used in documents.
+• QBO Account Mapping: connect to QuickBooks, fetch accounts, map required categories (inventory asset, AP/AR, GST/VAT, income, COGS for materials/labour/overhead). Mappings are used on QBO export.
+• Margin Schedule: cost bands → margin/markup rules to suggest selling prices.
+• Overhead Management: distribute overhead percentages across expense accounts; used when exporting COGS to QBO.
+• Backup Management: list/create backups (DB dump and relevant assets); optional restore flow (admin‑only, destructive).
+• Mobile User Access: enable/disable mobile app access for employees; device linking if supported.
+• Email Settings: per‑user SMTP (provider presets or custom host/port, secure flag). “Test connection” to validate creds. Leave password blank on update to retain existing.
+• Email Templates: CRUD of reusable templates (quote, sales order, PO, custom). Mark defaults; optional placeholders if supported by server.
+
+10) Offline & Reliability
+• Offline indicator shows when server is unreachable and number of queued operations.
+• Pending actions are queued locally; a background poll attempts sync when connectivity returns. Manual debug trigger available for forced sync.
+• Shared calculation utilities ensure totals (subtotals, taxes) match across UI, PDFs, and exports.
+
+11) Back‑End API Surface (Representative)
+• Inventory: GET/POST/PUT/DELETE /api/inventory; CSV: POST /api/inventory/upload-csv, GET /api/inventory/csv-template; Vendor mappings: /api/inventory/:partNumber/vendors (GET/POST/PUT/DELETE) and usage increment endpoint.
+• Vendors & Customers: standard CRUD.
+• Sales Orders: GET /api/sales-orders?status=open|closed|all; GET/POST/PUT /api/sales-orders/:id; PDF; POST /api/sales-orders/:id/export-to-qbo.
+• Quotes: GET/POST/PUT/DELETE /api/quotes and GET /api/quotes/:id/pdf; convert to SO via new SO create with quote data.
+• Purchase Orders: GET/POST/PUT /api/purchase-orders and GET /api/purchase-orders/:id/pdf.
+• Time/Attendance: endpoints to clock in/out and list entries or reports.
+• Employees/Auth: user CRUD (admin), auth login/register/refresh; JWT protected middleware.
+• Settings: business profile, margin schedule, overhead distribution, email settings/templates, QBO accounts/mapping.
+• Voice/Text Search: endpoints that accept audio/text to produce structured search tokens used by Part Finder (requires AI key).
+• Optional voice call to vendor: stubbed endpoint pending full LiveKit/Telnyx integration.
+
+12) Business Rules & Invariants
+• Inventory part_type limited to “stock” or “supply”; unique part_number normalization encouraged.
+• Sales Orders: single line per unique part; cannot close with negative availability; special lines (LABOUR/OVERHEAD/SUPPLY) have custom handling (e.g., auto‑supply from labour rate).
+• Purchase Orders: warn or block duplicate vendor bill numbers; vendor PN swap logic on vendor change; close only when receiving/fulfillment complete.
+• Vendor usage: increment mapping usage on PO finalization to drive “most‑used” selection.
+• Consistent total calculations across UI/PDF/export; robust server‑side validation with informative errors.
+
+13) Typical Workflows
+A) Quote → Sales Order → Purchase Order → Fulfillment → QBO Export
+1. Create quote; email PDF to customer; convert accepted quote to SO.
+2. Edit SO; resolve negative availability by transferring shortfalls to Parts‑to‑Order.
+3. From Parts‑to‑Order, create POs per vendor; vendor PN swap applies automatically.
+4. Receive goods and close POs; inventory increases accordingly.
+5. Close SO when no shortages remain; export to QBO; email invoice if desired.
+
+B) Inventory Initialization & Cleanup
+1. Download CSV template; prepare inventory file.
+2. Upload CSV; review summary; fix any errors/warnings and re‑upload if needed.
+3. Run cleanup preview; apply normalization and merge duplicates.
+4. Add vendor mappings (preferred vendor codes) to improve PO accuracy.
+
+C) Email & Templates
+1. Set user SMTP (provider or custom); test connection.
+2. Create default templates for quotes, SOs, POs.
+3. Email PDFs directly from editor pages using templates.
+
+14) RAG Ingestion Notes
+• Chunk by headings 1–14; each section is semantically cohesive.
+• Keep code names stable (route names, special part codes) to improve retrieval precision.
+• Avoid embedding transient data (secrets, hostnames) in chunks.
+• Use this doc as the primary knowledge source; exclude deprecated or experimental modules not surfaced in the UI.
