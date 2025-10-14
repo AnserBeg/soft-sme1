@@ -2,6 +2,7 @@
 // All AI configuration is now managed securely on the backend
 import api from '../api/axios';
 import { VoiceCallArtifact } from '../types/voice';
+import { ActionTrace } from '../types/chat';
 
 export interface ChatResponse {
   response: string;
@@ -10,6 +11,9 @@ export interface ChatResponse {
   toolUsed: string;
   timestamp: string;
   callArtifacts?: VoiceCallArtifact[];
+  actions: ActionTrace[];
+  actionMessage: string | null;
+  actionCatalog: any[];
 }
 
 export interface ChatRequest {
@@ -53,6 +57,17 @@ export const chatService = {
           timestamp: data.timestamp || new Date().toISOString(),
           callArtifacts: data.callArtifacts || data.call_artifacts || [],
         } as ChatResponse;
+        const data = response.data.data || {};
+        return {
+          response: data.response,
+          sources: Array.isArray(data.sources) ? data.sources : [],
+          confidence: typeof data.confidence === 'number' ? data.confidence : 0,
+          toolUsed: data.toolUsed ?? 'unknown',
+          timestamp: data.timestamp ?? new Date().toISOString(),
+          actions: Array.isArray(data.actions) ? data.actions : [],
+          actionMessage: data.actionMessage ?? null,
+          actionCatalog: Array.isArray(data.actionCatalog) ? data.actionCatalog : [],
+        };
       } else {
         throw new Error(response.data.message || 'Failed to get response from AI assistant');
       }
@@ -67,6 +82,9 @@ export const chatService = {
         toolUsed: 'fallback',
         timestamp: new Date().toISOString(),
         callArtifacts: [],
+        actions: [],
+        actionMessage: null,
+        actionCatalog: [],
       };
     }
   },

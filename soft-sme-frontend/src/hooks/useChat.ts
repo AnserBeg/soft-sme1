@@ -88,6 +88,8 @@ export const useChat = () => {
         sender: 'ai',
         timestamp: new Date(),
         callArtifacts: artifacts,
+        actions: aiResponse.actions ?? [],
+        actionMessage: aiResponse.actionMessage ?? null,
       };
       
       addMessage(aiMessage);
@@ -100,6 +102,8 @@ export const useChat = () => {
         text: 'Sorry, I encountered an error. Please try again.',
         sender: 'ai',
         timestamp: new Date(),
+        actions: [],
+        actionMessage: null,
       };
       
       addMessage(errorMessage);

@@ -17,6 +17,32 @@ interface ChatMessageProps {
   message: ChatMessage;
 }
 
+const formatToolName = (tool?: string) => {
+  if (!tool) return 'Action';
+  const mapping: Record<string, string> = {
+    createPurchaseOrder: 'Create purchase order',
+    updatePurchaseOrder: 'Update purchase order',
+    closePurchaseOrder: 'Close purchase order',
+    emailPurchaseOrder: 'Email purchase order',
+    createSalesOrder: 'Create sales order',
+    updateSalesOrder: 'Update sales order',
+    createQuote: 'Create quote',
+    updateQuote: 'Update quote',
+    emailQuote: 'Email quote',
+    convertQuoteToSO: 'Convert quote to sales order',
+    updatePickupDetails: 'Update pickup details',
+    getPickupDetails: 'Get pickup details',
+  };
+  return (
+    mapping[tool] ||
+    tool
+      .replace(/[_-]+/g, ' ')
+      .replace(/([A-Z])/g, ' $1')
+      .replace(/\s+/g, ' ')
+      .trim()
+  );
+};
+
 const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
   const isUser = message.sender === 'user';
 

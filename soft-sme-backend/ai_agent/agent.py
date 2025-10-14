@@ -7,15 +7,20 @@ Main AI agent class that orchestrates the LangGraph workflow for the Aiven appli
 Handles routing between documentation RAG and live database queries.
 """
 
+import json
 import os
+import json
 import logging
 import time
-from typing import Dict, Any, List, Optional
+from datetime import datetime
+from typing import Dict, Any, List, Optional, Tuple
 from langchain_core.messages import HumanMessage, AIMessage
 
 from rag_tool import DocumentationRAGTool
 from sql_tool import InventorySQLTool
+from action_tool import AgentActionTool
 from conversation_manager import ConversationManager
+from task_queue import TaskQueue
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +33,8 @@ class AivenAgent:
         self.rag_tool = None
         self.sql_tool = None
         self.conversation_manager = ConversationManager()
+        self.task_queue = TaskQueue()
+        self.action_tool = None
         self.initialized = False
         self.messages = []  # Add messages list for conversation history
         self.documentation_enabled = os.getenv("AI_ENABLE_DOCUMENTATION", "true").lower() == "true"
@@ -37,6 +44,7 @@ class AivenAgent:
             "total_queries": 0,
             "rag_queries": 0,
             "sql_queries": 0,
+            "action_queries": 0,
             "average_response_time": 0.0,
             "total_response_time": 0.0
         }
@@ -94,7 +102,7 @@ class AivenAgent:
             raise
     
     async def _initialize_tools(self):
-        """Initialize RAG and SQL tools"""
+        """Initialize RAG, SQL, and action tools"""
         try:
             # Initialize RAG tool
             if self.documentation_enabled:
@@ -120,26 +128,118 @@ class AivenAgent:
             }
             self.sql_tool = InventorySQLTool(db_config)
 
+            # Initialize action tool client
+            self.action_tool = AgentActionTool()
+
             # Setup tools
-            self.tools = [tool for tool in [self.rag_tool, self.sql_tool] if tool is not None]
+            self.tools = [tool for tool in [self.rag_tool, self.sql_tool, self.action_tool] if tool is not None]
             
             logger.info("Tools initialized successfully")
             
         except Exception as e:
             logger.error(f"Failed to initialize tools: {e}")
             raise
-    
+
         # Note: Removed old LangGraph workflow methods as we're now using LLM-based routing
+
+    def _extract_follow_up_instructions(self, raw_message: str) -> Tuple[str, List[Dict[str, Any]]]:
+        """Parse structured follow-up task instructions embedded in the user message."""
+        if not raw_message:
+            return raw_message, []
+
+        stripped = raw_message.strip()
+        if not stripped.startswith('{'):
+            return raw_message, []
+
+        try:
+            payload = json.loads(stripped)
+        except json.JSONDecodeError:
+            return raw_message, []
+
+        follow_up_spec = payload.get('follow_up_tasks')
+        prompt_text = payload.get('prompt') or payload.get('message') or payload.get('query') or ''
+
+        tasks: List[Dict[str, Any]] = []
+        if isinstance(follow_up_spec, dict):
+            tasks.append(follow_up_spec)
+        elif isinstance(follow_up_spec, list):
+            tasks.extend([task for task in follow_up_spec if isinstance(task, dict)])
+
+        if not prompt_text:
+            prompt_text = payload.get('text') or raw_message
+
+        return prompt_text or raw_message, tasks
+
+    def _enqueue_follow_up_tasks(
+        self,
+        conversation_id: str,
+        tasks: List[Dict[str, Any]],
+        user_id: Optional[int] = None
+    ) -> None:
+        for task in tasks:
+            task_type = task.get('task_type') or 'agent_tool'
+            payload = task.get('payload') or {}
+            schedule_at = self._parse_schedule_at(task.get('schedule_for'))
+
+            if task_type == 'agent_tool':
+                tool_name = task.get('tool') or payload.get('tool')
+                if not tool_name:
+                    logger.warning('Skipping follow-up task without tool name: %s', task)
+                    continue
+
+                payload = {
+                    **payload,
+                    'tool': tool_name,
+                    'sessionId': task.get('sessionId') or payload.get('sessionId'),
+                    'args': task.get('args') or payload.get('args')
+                }
+
+            payload.setdefault('requestedBy', user_id)
+
+            try:
+                task_id = self.task_queue.enqueue(
+                    task_type,
+                    payload,
+                    conversation_id=conversation_id,
+                    scheduled_for=schedule_at
+                )
+                logger.info(
+                    'Queued follow-up task %s of type %s for conversation %s',
+                    task_id,
+                    task_type,
+                    conversation_id
+                )
+            except Exception as exc:
+                logger.error('Failed to enqueue follow-up task for conversation %s: %s', conversation_id, exc)
+
+    def _parse_schedule_at(self, value: Optional[str]) -> Optional[datetime]:
+        if not value or not isinstance(value, str):
+            return None
+
+        try:
+            normalized = value.replace('Z', '+00:00') if value.endswith('Z') else value
+            return datetime.fromisoformat(normalized)
+        except ValueError:
+            logger.warning('Invalid schedule_for value %s, defaulting to immediate execution', value)
+            return None
     
-    async def process_message(self, message: str, conversation_history: List[Dict] = None, user_id: Optional[int] = None) -> Dict[str, Any]:
+    async def process_message(
+        self,
+        message: str,
+        conversation_history: List[Dict] = None,
+        user_id: Optional[int] = None,
+        conversation_id: Optional[str] = None
+    ) -> Dict[str, Any]:
         """Process a user message and return a response using flexible, iterative tool usage"""
         try:
             start_time = time.time()
-            
+
+            prompt_text, follow_up_specs = self._extract_follow_up_instructions(message)
+
             # Add user message to conversation
-            user_message = HumanMessage(content=message)
+            user_message = HumanMessage(content=prompt_text)
             self.messages.append(user_message)
-            
+
             # Build conversation context
             conversation_context = ""
             if conversation_history and len(conversation_history) > 0:
@@ -157,7 +257,7 @@ class AivenAgent:
                         conversation_context += f"Assistant: {msg.get('text', '')}\n"
             
             # STEP 1: Determine which tools are needed using lightweight heuristics
-            tools_needed = self._determine_tools_needed(message, conversation_history)
+            tools_needed = self._determine_tools_needed(prompt_text, conversation_history)
             logger.info(f"Heuristic tool selection: {tools_needed}")
 
             if not self.documentation_enabled:
@@ -169,6 +269,30 @@ class AivenAgent:
             # STEP 2: Iterative tool usage
             gathered_info = {}
             tool_usage_count = 0
+            actions_summary: Dict[str, Any] = {}
+
+            # Use Action tool if needed
+            if "action" in tools_needed and self.action_tool and "actions" not in gathered_info:
+                try:
+                    action_result = await self.action_tool.invoke(message, conversation_id)
+                    if action_result.get("actions"):
+                        gathered_info["actions"] = action_result
+                        actions_summary = action_result
+                        self.stats["action_queries"] += 1
+                        tool_usage_count += 1
+                        logger.info("Action tool used successfully")
+                except Exception as action_error:
+                    logger.error(f"Action tool error: {action_error}")
+                    gathered_info["actions"] = {
+                        "actions": [
+                            {
+                                "tool": "agent_v2",
+                                "success": False,
+                                "message": f"Action execution failed: {action_error}",
+                            }
+                        ]
+                    }
+                    actions_summary = gathered_info["actions"]
 
             # Use RAG tool if needed
             if (
@@ -179,13 +303,13 @@ class AivenAgent:
             ):
                 try:
                     # Create a more specific query for better RAG results
-                    if "edit" in message.lower() or "modify" in message.lower():
-                        if "attendance" in message.lower() or "clock" in message.lower():
-                            rag_query = f"time tracking reports page edit modify time entries attendance clock in clock out reports {message}"
+                    if "edit" in prompt_text.lower() or "modify" in prompt_text.lower():
+                        if "attendance" in prompt_text.lower() or "clock" in prompt_text.lower():
+                            rag_query = f"time tracking reports page edit modify time entries attendance clock in clock out reports {prompt_text}"
                         else:
-                            rag_query = f"how to edit modify time entries attendance clock in clock out {message}"
+                            rag_query = f"how to edit modify time entries attendance clock in clock out {prompt_text}"
                     else:
-                        rag_query = f"relevant documentation for: {message}"
+                        rag_query = f"relevant documentation for: {prompt_text}"
 
                     doc_result = await self.rag_tool.ainvoke(rag_query)
                     gathered_info["documentation"] = doc_result
@@ -202,7 +326,7 @@ class AivenAgent:
             if "sql" in tools_needed and "database_data" not in gathered_info:
                 try:
                     # Generate SQL query based on the message and conversation context
-                    sql_query = await self._generate_sql_query(message, conversation_history)
+                    sql_query = await self._generate_sql_query(prompt_text, conversation_history)
                     if sql_query:
                         # Add timeout for SQL queries
                         import asyncio
@@ -243,17 +367,23 @@ class AivenAgent:
                 ])
                 response_format.append("Only mention UI elements that are explicitly in the documentation")
 
+            if actions_summary.get("actions"):
+                critical_requirements.append("Report the outcome of any actions, including relevant record numbers or errors.")
+                response_format.append("Summarize any actions performed and provide follow-up guidance.")
+
             critical_requirements_text = "\n".join(f"- {item}" for item in critical_requirements) if critical_requirements else "- Provide accurate information based on available data"
             response_format_text = "\n".join(f"- {item}" for item in response_format)
+
+            gathered_info_for_prompt = json.dumps(gathered_info, indent=2, default=str)
 
             response_prompt = f"""{self.system_prompt}
 
 **TASK:** Provide a comprehensive, helpful answer to the user's question.
 
-**USER QUESTION:** {message}
+**USER QUESTION:** {prompt_text}
 
 **INFORMATION GATHERED:**
-{gathered_info}
+{gathered_info_for_prompt}
 
 **THINKING PROCESS:**
 1. **ANALYZE** what the user asked for
@@ -276,7 +406,13 @@ Provide a helpful, complete answer."""
             
             # Determine tool used based on what was actually used
             tools_used = list(gathered_info.keys())
-            if not tools_used:
+            if actions_summary.get("actions"):
+                additional = [tool for tool in tools_used if tool != "actions"]
+                if additional:
+                    tool_used = "action+" + "+".join(additional)
+                else:
+                    tool_used = "action"
+            elif not tools_used:
                 tool_used = "llm_knowledge"
             elif len(tools_used) == 1:
                 tool_used = tools_used[0]
@@ -289,6 +425,8 @@ Provide a helpful, complete answer."""
                 sources.append("documentation")
             if "database_data" in gathered_info:
                 sources.append("database")
+            if actions_summary.get("actions"):
+                sources.append("actions")
             if not sources:
                 sources.append("llm_knowledge")
             
@@ -298,7 +436,10 @@ Provide a helpful, complete answer."""
             # Add AI response to conversation
             ai_message = AIMessage(content=response)
             self.messages.append(ai_message)
-            
+
+            if follow_up_specs and conversation_id:
+                self._enqueue_follow_up_tasks(conversation_id, follow_up_specs, user_id=user_id)
+
             # Update statistics
             processing_time = time.time() - start_time
             self.stats["total_queries"] += 1
@@ -312,7 +453,10 @@ Provide a helpful, complete answer."""
                 "sources": sources,
                 "confidence": confidence,
                 "tool_used": tool_used,
-                "processing_time": processing_time
+                "processing_time": processing_time,
+                "actions": actions_summary.get("actions", []),
+                "action_message": actions_summary.get("message"),
+                "action_catalog": actions_summary.get("catalog", [])
             }
             
         except Exception as e:
@@ -322,7 +466,10 @@ Provide a helpful, complete answer."""
                 "sources": [],
                 "confidence": 0.0,
                 "tool_used": "error",
-                "processing_time": 0.0
+                "processing_time": 0.0,
+                "actions": [],
+                "action_message": None,
+                "action_catalog": []
             }
     
     def _determine_tools_needed(self, message: str, conversation_history: List[Dict] = None) -> List[str]:
@@ -398,6 +545,37 @@ Provide a helpful, complete answer."""
         if (wants_data and references_entity) or history_contains(business_entities):
             tools.append("sql")
 
+        action_keywords = [
+            "create",
+            "open",
+            "start",
+            "generate",
+            "update",
+            "change",
+            "modify",
+            "close",
+            "email",
+            "send",
+            "convert",
+            "complete",
+        ]
+
+        action_entities = [
+            "purchase order",
+            "po",
+            "sales order",
+            "so",
+            "quote",
+            "pickup",
+            "order",
+        ]
+
+        wants_action = any(keyword in message_lower for keyword in action_keywords)
+        targets_entity = any(entity in message_lower for entity in action_entities)
+
+        if (wants_action and targets_entity) or history_contains(action_entities):
+            tools.append("action")
+
         # Always ensure LLM knowledge is available as a baseline option
         if "llm_knowledge" not in tools:
             tools.append("llm_knowledge")
@@ -467,7 +645,19 @@ Provide a helpful, complete answer."""
         
         if "database_data" in gathered_info and "No database data available" not in gathered_info.get("database_data", ""):
             confidence += 0.2
-        
+
+        actions_info = gathered_info.get("actions")
+        if isinstance(actions_info, dict):
+            action_traces = actions_info.get("actions")
+            if isinstance(action_traces, list) and action_traces:
+                successes = sum(1 for trace in action_traces if trace.get("success"))
+                if successes == len(action_traces):
+                    confidence += 0.25
+                elif successes > 0:
+                    confidence += 0.1
+                else:
+                    confidence -= 0.15
+
         # Reduce confidence if too many tool calls (might indicate confusion)
         if tool_usage_count > 3:
             confidence -= 0.1
@@ -544,7 +734,8 @@ Provide a helpful, complete answer."""
             "average_response_time": self.stats["average_response_time"],
             "tools_used": {
                 "documentation_search": self.stats["rag_queries"],
-                "inventory_query": self.stats["sql_queries"]
+                "inventory_query": self.stats["sql_queries"],
+                "action_workflows": self.stats["action_queries"]
             }
         }
     
@@ -565,7 +756,9 @@ Provide a helpful, complete answer."""
         try:
             logger.info("Cleaning up AI Agent resources...")
             # Add any cleanup logic here
+            if self.action_tool:
+                await self.action_tool.cleanup()
             self.initialized = False
             logger.info("AI Agent cleanup completed")
         except Exception as e:
-            logger.error(f"Cleanup error: {e}") 
+            logger.error(f"Cleanup error: {e}")
