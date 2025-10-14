@@ -84,6 +84,8 @@ public
 # Temporary folders
 tmp/
 temp/
+"$CACHE_ROOT"/
+**/"$CACHE_ROOT"/
 
 # Editor directories and files
 .vscode/

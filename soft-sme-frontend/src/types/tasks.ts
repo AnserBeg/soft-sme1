@@ -8,6 +8,8 @@ export interface TaskSummary {
   createdAt?: string | null;
   updatedAt?: string | null;
   createdBy?: number | null;
+  createdByAgent?: boolean;
+  agentSessionId?: number | null;
 }
 
 export interface TaskParticipantSummary {

@@ -1,114 +1,223 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { ChatMessage } from '../components/ChatMessage';
-import { chatService } from '../services/chatService';
+import { chatService, AgentChatEvent, AgentChatMessage } from '../services/chatService';
 import { toast } from 'react-toastify';
+import { ChatMessageItem } from '../components/ChatMessage';
 
-const STORAGE_KEY = 'chat_messages';
+const STORAGE_KEY = 'agent_v2_session_id';
+const POLL_INTERVAL_MS = 45000;
+
+const normalizeMessage = (message: AgentChatMessage): ChatMessageItem => ({
+  id: message.id,
+  role: message.role,
+  type: message.type || (message.role === 'user' ? 'user_text' : 'text'),
+  content: message.content,
+  summary: message.summary,
+  task: message.task,
+  link: message.link,
+  info: message.info,
+  chunks: message.chunks,
+  timestamp: message.timestamp,
+  createdAt: message.createdAt,
+});
 
 export const useChat = () => {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<ChatMessageItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
-  const previousMessageCountRef = useRef(0);
+  const [sessionId, setSessionId] = useState<number | null>(() => {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (!stored) return null;
+    const parsed = Number(stored);
+    return Number.isFinite(parsed) ? parsed : null;
+  });
 
-  // Load messages from localStorage on mount
-  useEffect(() => {
-    const savedMessages = localStorage.getItem(STORAGE_KEY);
-    if (savedMessages) {
-      try {
-        const parsedMessages = JSON.parse(savedMessages);
-        // Convert timestamp strings back to Date objects
-        const messagesWithDates = parsedMessages.map((msg: any) => ({
-          ...msg,
-          timestamp: new Date(msg.timestamp),
-        }));
-        setMessages(messagesWithDates);
-      } catch (error) {
-        console.error('Error loading chat messages:', error);
-      }
+  const lastAssistantMessageIdRef = useRef<number | null>(null);
+  const pollTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const pendingFetchRef = useRef<Promise<void> | null>(null);
+
+  const ensureSession = useCallback(async (): Promise<number> => {
+    if (sessionId) {
+      return sessionId;
     }
-  }, []);
+    const newSessionId = await chatService.createSession();
+    localStorage.setItem(STORAGE_KEY, String(newSessionId));
+    setSessionId(newSessionId);
+    return newSessionId;
+  }, [sessionId]);
 
-  // Save messages to localStorage whenever messages change
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
-  }, [messages]);
-
-  useEffect(() => {
-    if (messages.length > previousMessageCountRef.current) {
-      const newMessages = messages.slice(previousMessageCountRef.current);
-      const unreadMessages = newMessages.filter((msg) => msg.sender !== 'user');
-
-      if (unreadMessages.length > 0) {
-        if (!isOpen) {
-          setUnreadCount((prev) => prev + unreadMessages.length);
-          const label = unreadMessages.length > 1 ? `${unreadMessages.length} new replies` : 'Workspace Copilot replied';
-          toast.info(label, { toastId: 'chat-unread' });
-        } else {
-          setUnreadCount(0);
+  const applyUnreadTracking = useCallback(
+    (nextMessages: ChatMessageItem[]) => {
+      const assistantMessages = nextMessages.filter((msg) => msg.role === 'assistant');
+      const latestAssistantId = assistantMessages.reduce<number | null>((acc, msg) => {
+        const numericId = typeof msg.id === 'number' ? msg.id : Number(msg.id);
+        if (!Number.isFinite(numericId)) {
+          return acc;
         }
+        if (acc == null || numericId > acc) {
+          return numericId;
+        }
+        return acc;
+      }, null);
+
+      const previous = lastAssistantMessageIdRef.current;
+      if (latestAssistantId != null) {
+        if (previous != null && latestAssistantId > previous && !isOpen) {
+          const newMessages = assistantMessages.filter((msg) => {
+            const numericId = typeof msg.id === 'number' ? msg.id : Number(msg.id);
+            return Number.isFinite(numericId) && numericId > previous;
+          });
+          if (newMessages.length > 0) {
+            setUnreadCount((count) => count + newMessages.length);
+            const label =
+              newMessages.length === 1
+                ? 'Workspace Copilot posted an update'
+                : `Workspace Copilot posted ${newMessages.length} updates`;
+            toast.info(label, { toastId: 'chat-unread' });
+          }
+        }
+        lastAssistantMessageIdRef.current = latestAssistantId;
       }
-    } else if (isOpen && unreadCount !== 0) {
-      setUnreadCount(0);
+
+      if (isOpen) {
+        setUnreadCount(0);
+      }
+    },
+    [isOpen]
+  );
+
+  const fetchMessages = useCallback(
+    async (opts?: { showSpinner?: boolean }) => {
+      if (pendingFetchRef.current) {
+        return pendingFetchRef.current;
+      }
+      const run = (async () => {
+        const id = await ensureSession();
+        if (opts?.showSpinner) {
+          setIsLoading(true);
+        }
+        try {
+          const serverMessages = await chatService.fetchMessages(id);
+          const normalized = serverMessages.map(normalizeMessage);
+          setMessages(normalized);
+          applyUnreadTracking(normalized);
+        } finally {
+          if (opts?.showSpinner) {
+            setIsLoading(false);
+          }
+          pendingFetchRef.current = null;
+        }
+      })();
+      pendingFetchRef.current = run;
+      return run;
+    },
+    [applyUnreadTracking, ensureSession]
+  );
+
+  useEffect(() => {
+    ensureSession().catch((error) => {
+      console.error('Failed to initialize agent session', error);
+      toast.error('Unable to start AI assistant session.');
+    });
+  }, [ensureSession]);
+
+  useEffect(() => {
+    if (!sessionId) {
+      return;
     }
+    fetchMessages({ showSpinner: true }).catch((error) => {
+      console.error('Failed to load chat history', error);
+    });
+  }, [fetchMessages, sessionId]);
 
-    previousMessageCountRef.current = messages.length;
-  }, [messages, isOpen, unreadCount]);
-
-  const addMessage = useCallback((message: ChatMessage) => {
-    setMessages((prev) => [...prev, message]);
-  }, []);
-
-  const sendMessage = useCallback(async (text: string) => {
-    // Add user message immediately
-    const userMessage: ChatMessage = {
-      id: Date.now().toString(),
-      text,
-      sender: 'user',
-      timestamp: new Date(),
+  useEffect(() => {
+    if (pollTimerRef.current) {
+      clearInterval(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
+    const startPolling = async () => {
+      try {
+        await ensureSession();
+      } catch (error) {
+        console.error('Failed to ensure chat session', error);
+        return;
+      }
+      pollTimerRef.current = setInterval(() => {
+        fetchMessages().catch((error) => {
+          console.error('Failed to poll chat messages', error);
+        });
+      }, POLL_INTERVAL_MS);
     };
-    
-    addMessage(userMessage);
-    setIsLoading(true);
+    startPolling();
+    return () => {
+      if (pollTimerRef.current) {
+        clearInterval(pollTimerRef.current);
+        pollTimerRef.current = null;
+      }
+    };
+  }, [ensureSession, fetchMessages]);
 
-    try {
-      // Get AI response
-      const aiResponse = await chatService.sendMessage(text);
-      
-      console.log('AI Response in useChat:', aiResponse);
-      console.log('AI Response type:', typeof aiResponse);
-      console.log('AI Response keys:', Object.keys(aiResponse));
-      
-      // Add AI message
-      const aiMessage: ChatMessage = {
-        id: (Date.now() + 1).toString(),
-        text: aiResponse.response || 'No response received',
-        sender: 'ai',
-        timestamp: new Date(),
+  const addEventMessages = useCallback(
+    (events: AgentChatEvent[]) => {
+      if (!events || events.length === 0) {
+        return;
+      }
+      setMessages((current) => {
+        const appended = [
+          ...current,
+          ...events.map((event, index) => ({
+            id: `${Date.now()}-${index}`,
+            role: 'assistant' as const,
+            type: event.type,
+            content: event.content,
+            summary: event.summary,
+            task: event.task,
+            link: event.link,
+            info: event.info,
+            chunks: event.chunks,
+            timestamp: event.timestamp,
+          })),
+        ];
+        applyUnreadTracking(appended);
+        return appended;
+      });
+    },
+    [applyUnreadTracking]
+  );
+
+  const sendMessage = useCallback(
+    async (text: string) => {
+      const trimmed = text.trim();
+      if (!trimmed) {
+        return;
+      }
+      const id = await ensureSession();
+
+      const userMessage: ChatMessageItem = {
+        id: `${Date.now()}-user`,
+        role: 'user',
+        type: 'user_text',
+        content: trimmed,
+        timestamp: new Date().toISOString(),
       };
-      
-      addMessage(aiMessage);
-    } catch (error) {
-      console.error('Error sending message:', error);
-      
-      // Add error message
-      const errorMessage: ChatMessage = {
-        id: (Date.now() + 1).toString(),
-        text: 'Sorry, I encountered an error. Please try again.',
-        sender: 'ai',
-        timestamp: new Date(),
-      };
-      
-      addMessage(errorMessage);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [addMessage]);
+      setMessages((current) => [...current, userMessage]);
+      setIsLoading(true);
+      try {
+        const events = await chatService.sendMessage(id, trimmed);
+        addEventMessages(events);
+        await fetchMessages();
+      } catch (error) {
+        console.error('Error sending message:', error);
+        toast.error('Sorry, the Workspace Copilot encountered an error.');
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [addEventMessages, ensureSession, fetchMessages]
+  );
 
   const clearMessages = useCallback(() => {
     setMessages([]);
-    localStorage.removeItem(STORAGE_KEY);
     setUnreadCount(0);
   }, []);
 
@@ -117,10 +226,11 @@ export const useChat = () => {
       const next = !prev;
       if (next) {
         setUnreadCount(0);
+        fetchMessages().catch(() => undefined);
       }
       return next;
     });
-  }, []);
+  }, [fetchMessages]);
 
   const closeChat = useCallback(() => {
     setIsOpen(false);
@@ -129,10 +239,8 @@ export const useChat = () => {
   const openChat = useCallback(async () => {
     setIsOpen(true);
     setUnreadCount(0);
-    // Test API connection when chat is opened
-    const isConnected = await chatService.testConnection();
-    console.log('API Connection Test:', isConnected ? 'SUCCESS' : 'FAILED');
-  }, []);
+    await fetchMessages();
+  }, [fetchMessages]);
 
   const acknowledgeMessages = useCallback(() => {
     setUnreadCount(0);

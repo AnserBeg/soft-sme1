@@ -143,7 +143,7 @@ describe('TaskMessageService', () => {
 
     const message = await service.createMessage(participant.taskId, participant, 'New update');
     expect(mockDb.queryFn).toHaveBeenCalledTimes(3);
-    expect(mockDb.queryFn.mock.calls[0][0]).toContain('WITH inserted AS');
+    expect(mockDb.queryFn.mock.calls[0][0]).toContain('INSERT INTO task_messages');
     expect(mockDb.queryFn.mock.calls[1][0]).toContain('UPDATE tasks');
     expect(mockDb.queryFn.mock.calls[2][0]).toContain('UPDATE task_participants');
     expect(message.content).toBe('New update');

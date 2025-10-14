@@ -103,6 +103,9 @@ const TaskDetailPage: React.FC = () => {
             {task.dueDate && (
               <Chip label={`Due ${dayjs(task.dueDate).format('MMM D, YYYY')}`} color="warning" />
             )}
+            {task.createdByAgent && (
+              <Chip label="Created by Workspace Copilot" color="info" variant="outlined" />
+            )}
             {unreadCount > 0 && <Chip label={`${unreadCount} unread`} color="secondary" />}
           </Box>
         </Box>
@@ -163,7 +166,7 @@ const TaskDetailPage: React.FC = () => {
           </Paper>
         </Grid>
         <Grid item xs={12} md={8}>
-          <TaskChat taskId={taskId} onUnreadChange={handleUnreadChange} />
+          <TaskChat taskId={taskId} onUnreadChange={handleUnreadChange} createdByAgent={Boolean(task.createdByAgent)} />
         </Grid>
       </Grid>
     </Box>
