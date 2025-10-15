@@ -1,0 +1,116 @@
+{
+  "timestamp": "2024-08-01T12:00:00.000Z",
+  "commit": "1111111111111111111111111111111111111111",
+  "scenario": {
+    "title": "planner-stub-echo",
+    "phase": "planner",
+    "criticality": "low",
+    "regression_type": "core",
+    "context": {
+      "session_id": 42,
+      "company_id": 92,
+      "user_id": 731,
+      "locale": "en-US"
+    },
+    "assertions": {
+      "latency_budget_ms": 500,
+      "required_steps": [
+        "message"
+      ],
+      "telemetry_flags": [
+        "planner.plan.generated"
+      ],
+      "telemetry_expectations": [
+        {
+          "event": "planner.request.received",
+          "fields": {
+            "message": "Can you confirm the planner stub is alive?",
+            "context": {
+              "company_id": 92,
+              "user_id": 731,
+              "locale": "en-US"
+            }
+          }
+        },
+        {
+          "event": "planner.plan.generated",
+          "fields": {
+            "step_types": [
+              "message"
+            ],
+            "planner_model": "stub",
+            "planner_version": "0.2"
+          }
+        }
+      ]
+    }
+  },
+  "outcome": {
+    "passed": true,
+    "latency_ms": 132,
+    "diffs": [],
+    "missing_steps": [],
+    "missing_telemetry": [],
+    "subagent_diffs": [],
+    "missing_subagent_calls": [],
+    "unexpected_subagent_calls": []
+  },
+  "request": {
+    "session_id": 42,
+    "message": "Can you confirm the planner stub is alive?",
+    "context": {
+      "company_id": 92,
+      "user_id": 731,
+      "locale": "en-US"
+    },
+    "timestamp": "2024-08-01T12:00:00.000Z"
+  },
+  "response": {
+    "session_id": 42,
+    "steps": [
+      {
+        "id": "0f758bbf-0b5a-45a1-9778-9cb8f7198fba",
+        "type": "message",
+        "description": "Planner service stub – replace with real planning logic.",
+        "payload": {
+          "channel": "assistant",
+          "content": "Planner service is connected, but planning logic has not been implemented yet. Echoing the latest utterance for observability.",
+          "summary": "Planner stub reached",
+          "metadata": {
+            "echo": "Can you confirm the planner stub is alive?"
+          }
+        },
+        "depends_on": []
+      }
+    ],
+    "metadata": {
+      "model": "stub",
+      "rationale": "Planner skeleton ready for schema contract iteration.",
+      "version": "0.2"
+    }
+  },
+  "telemetry_events": [
+    {
+      "event": "planner.request.received",
+      "trace_id": "f88a5f52-c9d0-4a80-846f-1899ee5a8875",
+      "session_id": 42,
+      "message": "Can you confirm the planner stub is alive?",
+      "context": {
+        "company_id": 92,
+        "user_id": 731,
+        "locale": "en-US"
+      }
+    },
+    {
+      "event": "planner.plan.generated",
+      "trace_id": "f88a5f52-c9d0-4a80-846f-1899ee5a8875",
+      "session_id": 42,
+      "latency_ms": 132,
+      "step_types": [
+        "message"
+      ],
+      "planner_version": "0.2",
+      "planner_model": "stub"
+    }
+  ]
+}

@@ -46,7 +46,7 @@
   - [x] Scenario taxonomy and blueprint format documented (see `reports/phase4-synthetic-conversation-suite.md`)
   - [x] Harness prototype implemented (`planner_service/tests/synthetic_suite.py`)
   - [x] Subagent mocking & telemetry assertions
-- [ ] Regression dashboard
+- [x] Regression dashboard
 - [ ] Feedback loop
 
 ## Cross-cutting Tasks
@@ -56,4 +56,4 @@
 - [ ] Security review
 
 ### Recommended next task
-Stand up the **regression dashboard** to visualize synthetic suite runs and surface planner/subagent drift proactively.
+Operationalize the **feedback loop** so planner and subagent owners receive actionable alerts when regression runs fail.

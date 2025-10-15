@@ -29,6 +29,12 @@ export function Navbar() {
                   Dashboard
                 </Link>
                 <Link
+                  href="/regressions"
+                  className="text-gray-600 hover:text-gray-900"
+                >
+                  Regression Dashboard
+                </Link>
+                <Link
                   href="/tasks"
                   className="text-gray-600 hover:text-gray-900"
                 >

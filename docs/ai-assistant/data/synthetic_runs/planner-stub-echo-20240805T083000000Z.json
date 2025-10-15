@@ -1,0 +1,98 @@
+{
+  "timestamp": "2024-08-05T08:30:00.000Z",
+  "commit": "2222222222222222222222222222222222222222",
+  "scenario": {
+    "title": "planner-stub-echo",
+    "phase": "planner",
+    "criticality": "low",
+    "regression_type": "core",
+    "context": {
+      "session_id": 42,
+      "company_id": 92,
+      "user_id": 731,
+      "locale": "en-US"
+    },
+    "assertions": {
+      "latency_budget_ms": 500,
+      "required_steps": [
+        "message"
+      ],
+      "telemetry_flags": [
+        "planner.plan.generated"
+      ],
+      "telemetry_expectations": [
+        {
+          "event": "planner.plan.generated",
+          "fields": {
+            "step_types": [
+              "message"
+            ],
+            "planner_model": "stub",
+            "planner_version": "0.2"
+          }
+        }
+      ]
+    }
+  },
+  "outcome": {
+    "passed": false,
+    "latency_ms": 612,
+    "diffs": [
+      "Latency budget exceeded: observed 612ms (budget 500ms)"
+    ],
+    "missing_steps": [],
+    "missing_telemetry": [
+      "planner.plan.generated"
+    ],
+    "subagent_diffs": [],
+    "missing_subagent_calls": [],
+    "unexpected_subagent_calls": []
+  },
+  "request": {
+    "session_id": 42,
+    "message": "Can you confirm the planner stub is alive?",
+    "context": {
+      "company_id": 92,
+      "user_id": 731,
+      "locale": "en-US"
+    },
+    "timestamp": "2024-08-05T08:30:00.000Z"
+  },
+  "response": {
+    "session_id": 42,
+    "steps": [
+      {
+        "id": "5d239220-5755-4ccb-b947-1d27aab9b915",
+        "type": "message",
+        "description": "Planner service stub – replace with real planning logic.",
+        "payload": {
+          "channel": "assistant",
+          "content": "Planner service is connected, but planning logic has not been implemented yet. Echoing the latest utterance for observability.",
+          "summary": "Planner stub reached",
+          "metadata": {
+            "echo": "Can you confirm the planner stub is alive?"
+          }
+        },
+        "depends_on": []
+      }
+    ],
+    "metadata": {
+      "model": "stub",
+      "rationale": "Planner skeleton ready for schema contract iteration.",
+      "version": "0.2"
+    }
+  },
+  "telemetry_events": [
+    {
+      "event": "planner.request.received",
+      "trace_id": "7150b67d-1bd5-4e58-9204-3da6ab0eb4c3",
+      "session_id": 42,
+      "message": "Can you confirm the planner stub is alive?",
+      "context": {
+        "company_id": 92,
+        "user_id": 731,
+        "locale": "en-US"
+      }
+    }
+  ]
+}
