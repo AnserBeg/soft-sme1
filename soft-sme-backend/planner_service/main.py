@@ -15,6 +15,8 @@ from .schemas import (
     PlannerResponse,
     PlannerStep,
     PlannerStepType,
+    SafetySeverity,
+    SafetyStepPayload,
 )
 from .telemetry import telemetry
 
@@ -54,6 +56,20 @@ def generate_plan(request: PlannerRequest) -> PlannerResponse:
     )
 
     try:
+        safety_step = PlannerStep(
+            id=str(uuid4()),
+            type=PlannerStepType.SAFETY,
+            description="Execute baseline policy checks before fulfilling the request.",
+            payload=SafetyStepPayload(
+                check_name="default-policy-screen",
+                severity=SafetySeverity.INFO,
+                policy_tags=["baseline"],
+                detected_issues=[],
+                requires_manual_review=False,
+                resolution="No policy violations detected; proceed with response.",
+            ),
+        )
+
         placeholder_step = PlannerStep(
             id=str(uuid4()),
             type=PlannerStepType.MESSAGE,
@@ -67,15 +83,17 @@ def generate_plan(request: PlannerRequest) -> PlannerResponse:
                 summary="Planner stub reached",
                 metadata={"echo": request.message},
             ),
+            depends_on=[safety_step.id],
         )
 
         response_metadata = PlannerMetadata(
-            model="stub", rationale="Planner skeleton ready for schema contract iteration."
+            model="stub",
+            rationale="Planner skeleton ready for schema contract iteration with safety guardrails.",
         )
 
         response = PlannerResponse(
             session_id=request.session_id,
-            steps=[placeholder_step],
+            steps=[safety_step, placeholder_step],
             metadata=response_metadata,
         )
 

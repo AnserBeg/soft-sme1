@@ -24,6 +24,7 @@ class PlannerStepType(str, Enum):
     MESSAGE = "message"
     LOOKUP = "lookup"
     ACTION = "action"
+    SAFETY = "safety"
 
 
 class ToolStepPayload(BaseModel):
@@ -107,11 +108,52 @@ class ActionStepPayload(BaseModel):
     )
 
 
+class SafetySeverity(str, Enum):
+    """Severity levels emitted by the safety/policy subagent."""
+
+    INFO = "info"
+    WARN = "warn"
+    BLOCK = "block"
+
+
+class SafetyStepPayload(BaseModel):
+    """Payload describing safety or policy evaluation outcomes."""
+
+    check_name: str = Field(
+        ..., description="Identifier for the policy or guardrail check that was executed."
+    )
+    severity: SafetySeverity = Field(
+        default=SafetySeverity.INFO,
+        description="Highest severity observed during evaluation.",
+    )
+    policy_tags: List[str] = Field(
+        default_factory=list,
+        description="Policy or guardrail tags associated with the detected issues.",
+    )
+    detected_issues: List[str] = Field(
+        default_factory=list,
+        description="Human-readable descriptions of any violations that were found.",
+    )
+    requires_manual_review: bool = Field(
+        default=False,
+        description="Whether the orchestrator must route to a human for follow-up.",
+    )
+    resolution: Optional[str] = Field(
+        default=None,
+        description="Optional guidance for downstream handlers when issues are detected.",
+    )
+    fallback_step: Optional[str] = Field(
+        default=None,
+        description="Optional plan step identifier to execute when the request is blocked.",
+    )
+
+
 PlannerStepPayload = Union[
     ToolStepPayload,
     MessageStepPayload,
     LookupStepPayload,
     ActionStepPayload,
+    SafetyStepPayload,
 ]
 
 
@@ -140,6 +182,7 @@ class PlannerStep(BaseModel):
             PlannerStepType.MESSAGE: MessageStepPayload,
             PlannerStepType.LOOKUP: LookupStepPayload,
             PlannerStepType.ACTION: ActionStepPayload,
+            PlannerStepType.SAFETY: SafetyStepPayload,
         }
 
         payload_model = expected_payload[self.type]
@@ -164,7 +207,7 @@ class PlannerMetadata(BaseModel):
 
     model: Optional[str] = Field(default=None, description="Model or strategy identifier used to generate the plan.")
     rationale: Optional[str] = Field(default=None, description="High level reasoning trace for debugging.")
-    version: str = Field(default="0.2", description="Planner schema version.")
+    version: str = Field(default="0.3", description="Planner schema version.")
 
 
 class PlannerResponse(BaseModel):
@@ -182,6 +225,8 @@ __all__ = [
     "MessageStepPayload",
     "LookupStepPayload",
     "ActionStepPayload",
+    "SafetySeverity",
+    "SafetyStepPayload",
     "PlannerStepPayload",
     "PlannerStep",
     "PlannerRequest",
