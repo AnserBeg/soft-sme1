@@ -25,6 +25,10 @@
   - [x] Stub executor implemented
   - [x] Planner routing tests
 - [ ] Voice/call subagent
+  - [x] Inventory existing telephony entry points
+  - [x] Draft call-handling contract for planner integration
+  - [x] Define telemetry requirements to keep sessions observable
+  - [ ] Implement execution harness + retries
 - [ ] Safety/policy subagent (optional)
 
 ## Phase 3 – Aggregation & UX
@@ -44,4 +48,4 @@
 - [ ] Security review
 
 ### Recommended next task
-Kick off **Phase 2 – Voice/call subagent** discovery: inventory telephony entry points, propose a call-handling contract, and draft telemetry requirements so planner outputs remain observable.
+Prototype the **voice/call subagent execution harness** that implements the proposed contract, including retry/backoff for call initiation and callback fan-out to the planner.
