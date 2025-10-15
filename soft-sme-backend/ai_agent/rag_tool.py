@@ -169,13 +169,7 @@ class DocumentationRAGTool(BaseTool):
             
             # List of documentation files to ingest
             doc_files = [
-                "PURCHASE_ORDER_SYSTEM_GUIDE.md",
-                "QUOTE_SYSTEM_GUIDE.md",
-                "SALES_ORDER_SYSTEM_GUIDE.md",
-                "TIME_TRACKING_SYSTEM_GUIDE.md",
-                "SETTINGS_SYSTEM_GUIDE.md",
-                "SOFT_SME_MASTER_DOCUMENTATION.md",
-                "SOFT_SME_DATABASE_STRUCTURE.md"
+                "documentation_rag"
             ]
             
             total_chunks = 0

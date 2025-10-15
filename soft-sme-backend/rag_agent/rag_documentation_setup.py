@@ -422,12 +422,7 @@ def load_documentation_files(docs_dir: str = ".") -> List[Dict[str, str]]:
     """Load all documentation files from the directory"""
     docs = []
     doc_files = [
-        "PURCHASE_ORDER_SYSTEM_GUIDE.md",
-        "QUOTE_SYSTEM_GUIDE.md", 
-        "SALES_ORDER_SYSTEM_GUIDE.md",
-        "TIME_TRACKING_SYSTEM_GUIDE.md",
-        "SETTINGS_SYSTEM_GUIDE.md",
-        "SOFT_SME_MASTER_DOCUMENTATION.md"
+        "documentation_rag"
     ]
     
     for filename in doc_files:
