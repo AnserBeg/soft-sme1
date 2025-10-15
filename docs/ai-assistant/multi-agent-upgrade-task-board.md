@@ -9,7 +9,7 @@
 - [x] Create `planner-service` package
 - [x] Planner schema contract
 - [x] Gateway integration
-- [ ] Planner telemetry
+- [x] Planner telemetry
 
 ## Phase 2 – Subagent Refactors
 - [ ] Documentation QA subagent
@@ -35,4 +35,4 @@
 - [ ] Security review
 
 ### Recommended next task
-Focus on **Phase 1 – Planner telemetry** so the new gateway integration emits traceable plan events and metrics before moving on to additional subagent work.
+Shift to **Phase 2 – Documentation QA subagent** to start building out the first specialized worker now that planner telemetry is in place for observability.
