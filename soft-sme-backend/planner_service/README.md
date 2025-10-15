@@ -24,4 +24,6 @@ curl -X POST http://localhost:8000/plan \
 ```
 
 The `/plan` endpoint currently returns a placeholder plan so that orchestrator integration work can proceed while
-the actual planning logic, schema contract refinements, and telemetry hooks are implemented in subsequent tasks.
+the actual planning logic and telemetry hooks are implemented in subsequent tasks. Refer to
+[`docs/ai-assistant/planner-schema-contract.md`](../../docs/ai-assistant/planner-schema-contract.md) for the
+formal request/response contract, including the structured payloads emitted for each planner step type.
