@@ -10,6 +10,8 @@ consistent timeline even when subagents execute concurrently.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import json
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -375,9 +377,144 @@ class AggregationCoordinator:
             await self._result_cache.clear(key)
 
 
+class StreamMux:
+    """Multiplexes coordinator events into SSE frames with heartbeat batching."""
+
+    def __init__(
+        self,
+        coordinator: AggregationCoordinator,
+        *,
+        heartbeat_interval: float = 15.0,
+        max_batch_size: int = 5,
+        flush_interval: float = 0.25,
+    ) -> None:
+        if heartbeat_interval <= 0:
+            raise ValueError("heartbeat_interval must be positive")
+        if max_batch_size <= 0:
+            raise ValueError("max_batch_size must be positive")
+        if flush_interval <= 0:
+            raise ValueError("flush_interval must be positive")
+
+        self._coordinator = coordinator
+        self._heartbeat_interval = heartbeat_interval
+        self._max_batch_size = max_batch_size
+        self._flush_interval = flush_interval
+
+    async def stream_sse(
+        self,
+        *,
+        session_id: str,
+        plan_step_id: str,
+        last_event_id: Optional[str] = None,
+    ) -> AsyncIterator[str]:
+        """Yield SSE-formatted strings for the requested session step."""
+
+        event_iter = self._coordinator.stream_events(
+            session_id=session_id,
+            plan_step_id=plan_step_id,
+            last_sequence_id=last_event_id,
+        )
+
+        iterator = event_iter.__aiter__()
+        next_event_task = asyncio.create_task(iterator.__anext__())
+        heartbeat_task = asyncio.create_task(asyncio.sleep(self._heartbeat_interval))
+        last_sequence: Optional[int] = None
+        try:
+            if last_event_id is not None:
+                with contextlib.suppress(ValueError):
+                    last_sequence = int(last_event_id)
+
+            batch: List[AggregatedEvent] = []
+
+            while True:
+                done, _ = await asyncio.wait(
+                    {next_event_task, heartbeat_task},
+                    timeout=self._flush_interval,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+
+                if not done:
+                    if batch:
+                        yield self._format_batch(batch, last_sequence)
+                        batch = []
+                    continue
+
+                if next_event_task in done:
+                    try:
+                        event = next_event_task.result()
+                    except StopAsyncIteration:
+                        if batch:
+                            yield self._format_batch(batch, last_sequence)
+                        break
+
+                    if last_sequence is not None and event.sequence <= last_sequence:
+                        next_event_task = asyncio.create_task(iterator.__anext__())
+                        continue
+
+                    last_sequence = event.sequence
+                    batch.append(event)
+                    if len(batch) >= self._max_batch_size:
+                        yield self._format_batch(batch, last_sequence)
+                        batch = []
+
+                    next_event_task = asyncio.create_task(iterator.__anext__())
+
+                if heartbeat_task in done:
+                    heartbeat_task = asyncio.create_task(
+                        asyncio.sleep(self._heartbeat_interval)
+                    )
+                    if batch:
+                        yield self._format_batch(batch, last_sequence)
+                        batch = []
+                    yield self._format_heartbeat(last_sequence)
+        finally:
+            next_event_task.cancel()
+            heartbeat_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, StopAsyncIteration):
+                await next_event_task
+            with contextlib.suppress(asyncio.CancelledError):
+                await heartbeat_task
+
+    def _format_batch(
+        self, batch: List[AggregatedEvent], last_sequence: Optional[int]
+    ) -> str:
+        payload = {
+            "type": "event_batch",
+            "batch_sequence": last_sequence,
+            "events": [event.to_dict() for event in batch],
+        }
+        event_id = str(last_sequence) if last_sequence is not None else None
+        return self._format_sse(event_type="planner_stream", event_id=event_id, data=payload)
+
+    def _format_heartbeat(self, last_sequence: Optional[int]) -> str:
+        payload = {
+            "type": "heartbeat",
+            "sequence": last_sequence,
+        }
+        event_id = str(last_sequence) if last_sequence is not None else None
+        return self._format_sse(event_type="heartbeat", event_id=event_id, data=payload)
+
+    def _format_sse(
+        self,
+        *,
+        event_type: str,
+        data: Dict[str, Any],
+        event_id: Optional[str],
+    ) -> str:
+        body = json.dumps(data, separators=(",", ":"))
+        lines = []
+        if event_id is not None:
+            lines.append(f"id: {event_id}")
+        lines.append(f"event: {event_type}")
+        for line in body.splitlines():
+            lines.append(f"data: {line}")
+        return "\n".join(lines) + "\n\n"
+
+
 __all__ = [
     "AggregatedEvent",
     "AggregationCoordinator",
+    "StreamMux",
     "TelemetryContextStore",
     "ResultCache",
     "SubagentExpectation",
