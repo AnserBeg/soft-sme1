@@ -69,6 +69,7 @@ class ChatResponse(BaseModel):
     actions: list[Dict[str, Any]] | None = None
     action_message: Optional[str] = None
     action_catalog: list[Dict[str, Any]] | None = None
+    planner_plan: Optional[Dict[str, Any]] = None
 
 class InitializeResponse(BaseModel):
     status: str
@@ -211,12 +212,11 @@ async def chat(request: ChatRequest):
                 metadata={
                     "sources": response["sources"],
                     "confidence": response["confidence"],
-                    "tool_used": response["tool_used"]
+                    "tool_used": response["tool_used"],
+                    "planner_plan": response.get("planner_plan"),
                 }
             )
-        
-        )
-        
+
         # Add AI response to conversation
         conversation_manager.add_message(
             conversation_id=conversation_id,
@@ -228,6 +228,7 @@ async def chat(request: ChatRequest):
                 "tool_used": response["tool_used"],
                 "actions": response.get("actions", []),
                 "action_message": response.get("action_message"),
+                "planner_plan": response.get("planner_plan"),
             }
         )
 
@@ -239,7 +240,8 @@ async def chat(request: ChatRequest):
             conversation_id=conversation_id,
             actions=response.get("actions", []),
             action_message=response.get("action_message"),
-            action_catalog=response.get("action_catalog", [])
+            action_catalog=response.get("action_catalog", []),
+            planner_plan=response.get("planner_plan"),
         )
         
     except Exception as e:

@@ -8,7 +8,7 @@
 ## Phase 1 – Planner Skeleton (In progress)
 - [x] Create `planner-service` package
 - [x] Planner schema contract
-- [ ] Gateway integration
+- [x] Gateway integration
 - [ ] Planner telemetry
 
 ## Phase 2 – Subagent Refactors
@@ -35,4 +35,4 @@
 - [ ] Security review
 
 ### Recommended next task
-Focus on **Phase 1 – Gateway integration** to wire the new schema contract into the orchestrator and validate end-to-end request/response handling before instrumenting telemetry.
+Focus on **Phase 1 – Planner telemetry** so the new gateway integration emits traceable plan events and metrics before moving on to additional subagent work.
