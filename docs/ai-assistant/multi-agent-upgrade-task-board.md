@@ -36,8 +36,8 @@
 - [x] Streaming response updates _(SSE batching wired through planner stream hook and conversation UI progress panel)_
 - [ ] Conversation UI enhancements
   - [x] Draft actionable controls & transcript alignment design _(see `conversation-ui-enhancements.md`)_
-  - [ ] Implement acknowledge/dismiss controls in conversation UI
-  - [ ] Wire telemetry-preserving action handlers
+  - [x] Implement acknowledge/dismiss controls in conversation UI
+  - [x] Wire telemetry-preserving action handlers
   - [ ] Regression tests for replay + optimistic updates
 - [ ] Task queue fan-out
 
@@ -52,4 +52,4 @@
 - [ ] Security review
 
 ### Recommended next task
-Implement the **acknowledge/dismiss controls** defined in the conversation UI design and connect them to planner action endpoints while preserving telemetry metadata.
+Add regression coverage for **replay + optimistic update flows** now that acknowledge/dismiss controls are live.

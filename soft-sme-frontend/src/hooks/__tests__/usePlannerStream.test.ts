@@ -63,6 +63,7 @@ describe('applyPlannerEvents', () => {
         status: 'completed',
         payload: { answer: 'Ready' },
         revision: 2,
+        result_key: 'docs-final',
       },
     });
 
@@ -73,6 +74,7 @@ describe('applyPlannerEvents', () => {
       status: 'completed',
       payload: { answer: 'Ready' },
       revision: 2,
+      resultKey: 'docs-final',
     });
     expect(summary.events.map((event) => event.sequence)).toEqual([1, 2]);
   });

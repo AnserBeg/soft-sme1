@@ -194,12 +194,14 @@ export const applyPlannerEvents = (
         ensureOrderIncludes(key);
         const prior = byKey[key];
         const payloadValue = event.content?.payload;
+        const resultKeyCandidate =
+          event.content?.resultKey ?? event.content?.result_key ?? prior?.resultKey ?? null;
         byKey = {
           ...byKey,
           [key]: {
             key,
             status: typeof event.content?.status === 'string' ? event.content.status : prior?.status ?? 'pending',
-            resultKey: prior?.resultKey ?? null,
+            resultKey: resultKeyCandidate,
             payload: payloadValue && typeof payloadValue === 'object' ? payloadValue : prior?.payload ?? null,
             revision: typeof event.content?.revision === 'number' ? event.content.revision : prior?.revision,
             lastUpdated: event.timestamp || nowIso(),
