@@ -38,7 +38,7 @@
   - [x] Draft actionable controls & transcript alignment design _(see `conversation-ui-enhancements.md`)_
   - [x] Implement acknowledge/dismiss controls in conversation UI
   - [x] Wire telemetry-preserving action handlers
-  - [ ] Regression tests for replay + optimistic updates
+  - [x] Regression tests for replay + optimistic updates
 - [ ] Task queue fan-out
 
 ## Phase 4 – Continuous Evaluation
@@ -52,4 +52,4 @@
 - [ ] Security review
 
 ### Recommended next task
-Add regression coverage for **replay + optimistic update flows** now that acknowledge/dismiss controls are live.
+Implement **task queue fan-out** so planner updates can notify downstream workers in parallel.

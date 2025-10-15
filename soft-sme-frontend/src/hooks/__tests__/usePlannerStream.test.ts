@@ -94,4 +94,53 @@ describe('applyPlannerEvents', () => {
     expect(summary.stepStatus).toBe('success');
     expect(summary.completedPayload).toEqual({ summary: 'done' });
   });
+
+  it('ignores replayed events with duplicate sequence numbers', () => {
+    const resultEvent = buildEvent({
+      sequence: 4,
+      type: 'subagent_result',
+      content: {
+        stage: 'action',
+        status: 'completed',
+      },
+    });
+
+    const firstPass = applyPlannerEvents(baseSummary, [resultEvent]);
+    const replayed = applyPlannerEvents(firstPass, [resultEvent]);
+
+    expect(replayed.events).toHaveLength(1);
+    expect(replayed.events[0].sequence).toBe(4);
+    expect(replayed.subagentsByKey.action).toMatchObject({ status: 'completed' });
+  });
+
+  it('retains newer optimistic payloads when replay arrives with older status', () => {
+    const pending = buildEvent({
+      sequence: 5,
+      type: 'subagent_result',
+      content: {
+        stage: 'documentation',
+        status: 'partial',
+        payload: { summary: 'Draft 1' },
+      },
+    });
+
+    const completed = buildEvent({
+      sequence: 6,
+      type: 'subagent_result',
+      content: {
+        stage: 'documentation',
+        status: 'completed',
+        payload: { summary: 'Final copy' },
+      },
+    });
+
+    const summary = applyPlannerEvents(baseSummary, [pending, completed]);
+    const replayedPending = applyPlannerEvents(summary, [pending]);
+
+    expect(replayedPending.subagentsByKey.documentation).toMatchObject({
+      status: 'completed',
+      payload: { summary: 'Final copy' },
+    });
+    expect(replayedPending.events.map((event) => event.sequence)).toEqual([5, 6]);
+  });
 });
