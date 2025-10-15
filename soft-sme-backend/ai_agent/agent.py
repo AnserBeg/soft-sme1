@@ -7,11 +7,12 @@ Main AI agent class that orchestrates the LangGraph workflow for the Aiven appli
 Handles routing between documentation RAG and live database queries.
 """
 
+import hashlib
 import json
 import os
-import json
 import logging
 import time
+import uuid
 from datetime import datetime
 from typing import Dict, Any, List, Optional, Tuple
 from langchain_core.messages import HumanMessage, AIMessage
@@ -22,6 +23,7 @@ from action_tool import AgentActionTool
 from conversation_manager import ConversationManager
 from task_queue import TaskQueue
 from analytics_sink import AnalyticsSink
+from planner_client import PlannerClient, PlannerServiceError
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +42,8 @@ class AivenAgent:
         self.messages = []  # Add messages list for conversation history
         self.documentation_enabled = os.getenv("AI_ENABLE_DOCUMENTATION", "true").lower() == "true"
         self.analytics_sink = AnalyticsSink()
+        self.planner_client = PlannerClient()
+        self.default_locale = self._sanitize_env(os.getenv("AI_AGENT_DEFAULT_LOCALE"))
         
         # Statistics
         self.stats = {
@@ -137,7 +141,7 @@ class AivenAgent:
             self.tools = [tool for tool in [self.rag_tool, self.sql_tool, self.action_tool] if tool is not None]
             
             logger.info("Tools initialized successfully")
-            
+
         except Exception as e:
             logger.error(f"Failed to initialize tools: {e}")
             raise
@@ -267,9 +271,24 @@ class AivenAgent:
             if not tools_needed:
                 tools_needed = ["llm_knowledge"]
             logger.info(f"Filtered tools needed: {tools_needed}")
-            
+
+            planner_plan = await self._maybe_generate_plan(
+                prompt_text,
+                conversation_id=conversation_id,
+                user_id=user_id,
+            )
+
+            if planner_plan:
+                planner_tools = self._map_planner_steps_to_tools(planner_plan)
+                if planner_tools:
+                    combined = list(dict.fromkeys(planner_tools + tools_needed))
+                    logger.info("Planner suggested tool adjustments: %s", combined)
+                    tools_needed = combined
+
             # STEP 2: Iterative tool usage
             gathered_info = {}
+            if planner_plan:
+                gathered_info["planner_plan"] = planner_plan
             tool_usage_count = 0
             actions_summary: Dict[str, Any] = {}
 
@@ -484,9 +503,10 @@ Provide a helpful, complete answer."""
                 "processing_time": processing_time,
                 "actions": actions_summary.get("actions", []),
                 "action_message": actions_summary.get("message"),
-                "action_catalog": actions_summary.get("catalog", [])
+                "action_catalog": actions_summary.get("catalog", []),
+                "planner_plan": planner_plan,
             }
-            
+
         except Exception as e:
             logger.error(f"Message processing error: {e}")
             return {
@@ -497,9 +517,146 @@ Provide a helpful, complete answer."""
                 "processing_time": 0.0,
                 "actions": [],
                 "action_message": None,
-                "action_catalog": []
+                "action_catalog": [],
+                "planner_plan": None,
             }
-    
+
+    async def _maybe_generate_plan(
+        self,
+        message: str,
+        *,
+        conversation_id: Optional[str] = None,
+        user_id: Optional[int] = None,
+    ) -> Optional[Dict[str, Any]]:
+        if not self.planner_client.is_enabled:
+            return None
+
+        session_id = self._resolve_session_id(message, conversation_id, user_id)
+        context = self._build_planner_context(user_id)
+
+        try:
+            plan = await self.planner_client.generate_plan(
+                session_id=session_id,
+                message=message,
+                context=context,
+            )
+        except PlannerServiceError as exc:
+            logger.warning("Planner service request failed: %s", exc)
+            await self.analytics_sink.log_event(
+                "planner_plan_generated",
+                conversation_id=conversation_id,
+                session_id=session_id,
+                tool="planner_service",
+                status="failed",
+                error_message=str(exc),
+            )
+            return None
+
+        if plan is None:
+            return None
+
+        metadata = plan.get("metadata", {}) if isinstance(plan, dict) else {}
+        await self.analytics_sink.log_event(
+            "planner_plan_generated",
+            conversation_id=conversation_id,
+            session_id=session_id,
+            tool="planner_service",
+            status="success",
+            metadata={
+                "model": metadata.get("model"),
+                "version": metadata.get("version"),
+                "rationale": metadata.get("rationale"),
+                "step_count": len(plan.get("steps", [])) if isinstance(plan, dict) else 0,
+            },
+        )
+
+        return plan
+
+    def _map_planner_steps_to_tools(self, plan: Dict[str, Any]) -> List[str]:
+        suggested: List[str] = []
+        steps = plan.get("steps", []) if isinstance(plan, dict) else []
+
+        for step in steps:
+            if not isinstance(step, dict):
+                continue
+
+            step_type = (step.get("type") or "").lower()
+            if step_type != "tool":
+                continue
+
+            payload = step.get("payload") or {}
+            if not isinstance(payload, dict):
+                continue
+
+            tool_name = (payload.get("tool_name") or "").lower()
+            mapped = self._map_tool_name(tool_name)
+            if mapped:
+                suggested.append(mapped)
+
+        return suggested
+
+    def _map_tool_name(self, tool_name: str) -> Optional[str]:
+        if not tool_name:
+            return None
+
+        if "rag" in tool_name or "doc" in tool_name:
+            return "rag"
+        if any(keyword in tool_name for keyword in ("sql", "db", "database")):
+            return "sql"
+        if any(keyword in tool_name for keyword in ("action", "workflow", "task")):
+            return "action"
+
+        return None
+
+    def _build_planner_context(self, user_id: Optional[int]) -> Dict[str, Any]:
+        context: Dict[str, Any] = {}
+        if user_id is not None:
+            context["user_id"] = user_id
+        if self.default_locale:
+            context["locale"] = self.default_locale
+        return context
+
+    def _resolve_session_id(
+        self,
+        message: str,
+        conversation_id: Optional[str],
+        user_id: Optional[int],
+    ) -> int:
+        if conversation_id:
+            digits = "".join(ch for ch in conversation_id if ch.isdigit())
+            if digits:
+                try:
+                    return int(digits[:9])
+                except ValueError:
+                    pass
+
+            try:
+                conv_uuid = uuid.UUID(conversation_id)
+                return conv_uuid.int % 1_000_000_000
+            except ValueError:
+                pass
+
+        if user_id is not None:
+            try:
+                return int(user_id)
+            except (TypeError, ValueError):
+                pass
+
+        digest = hashlib.sha1(f"{conversation_id}:{message}".encode("utf-8")).digest()
+        fallback = int.from_bytes(digest[:6], "big")
+        return fallback % 1_000_000_000
+
+    @staticmethod
+    def _sanitize_env(value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        stripped = value.strip()
+        if not stripped:
+            return None
+        if stripped[0] in {'"', "'"} and stripped[-1] == stripped[0]:
+            stripped = stripped[1:-1].strip()
+        return stripped or None
+
     def _determine_tools_needed(self, message: str, conversation_history: List[Dict] = None) -> List[str]:
         """Heuristically determine which tools are required for a message."""
 
@@ -788,6 +945,8 @@ Provide a helpful, complete answer."""
                 await self.action_tool.cleanup()
             if self.analytics_sink:
                 await self.analytics_sink.aclose()
+            if self.planner_client:
+                await self.planner_client.aclose()
             self.initialized = False
             logger.info("AI Agent cleanup completed")
         except Exception as e:
