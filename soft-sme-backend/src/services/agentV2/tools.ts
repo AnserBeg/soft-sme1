@@ -4,6 +4,7 @@ import { EmailService } from '../emailService';
 import { PDFService } from '../pdfService';
 import { AgentTaskEvent, AgentTaskFacade } from './AgentTaskFacade';
 import { VoiceService } from '../voice/VoiceService';
+import { TaskInput, TaskStatus } from '../TaskService';
 
 export class AgentToolsV2 {
   private soService: SalesOrderService;
@@ -67,6 +68,65 @@ export class AgentToolsV2 {
     return Array.from(new Set(normalized));
   }
 
+  private normalizeTaskStatus(value: any): TaskStatus | undefined {
+    if (value === null || value === undefined) {
+      return undefined;
+    }
+
+    if (typeof value !== 'string') {
+      return undefined;
+    }
+
+    const normalized = value.trim().toLowerCase();
+    if (!normalized) {
+      return undefined;
+    }
+
+    const canonical = normalized.replace(/[\s-]+/g, '_');
+
+    const direct: Record<string, TaskStatus> = {
+      pending: 'pending',
+      in_progress: 'in_progress',
+      completed: 'completed',
+      archived: 'archived',
+    };
+
+    if (canonical in direct) {
+      return direct[canonical];
+    }
+
+    const synonymMap: Record<string, TaskStatus> = {
+      todo: 'pending',
+      to_do: 'pending',
+      open: 'pending',
+      new: 'pending',
+      not_started: 'pending',
+      waiting: 'pending',
+      backlog: 'pending',
+      started: 'in_progress',
+      working: 'in_progress',
+      active: 'in_progress',
+      progressing: 'in_progress',
+      processing: 'in_progress',
+      underway: 'in_progress',
+      done: 'completed',
+      complete: 'completed',
+      finished: 'completed',
+      resolved: 'completed',
+      closed: 'archived',
+      archive: 'archived',
+      archived_task: 'archived',
+      cancelled: 'archived',
+      canceled: 'archived',
+    };
+
+    if (canonical in synonymMap) {
+      return synonymMap[canonical];
+    }
+
+    throw new Error(`Invalid task status: ${value}`);
+  }
+
   // Utility to audit tool execution
   private async audit(sessionId: number, tool: string, input: any, output: any, success = true) {
     await this.pool.query(
@@ -98,10 +158,12 @@ export class AgentToolsV2 {
         ? payload.subject.trim()
         : 'Follow-up task';
 
-    const taskPayload = {
+    const status = this.normalizeTaskStatus(payload?.status);
+
+    const taskPayload: TaskInput = {
       title: titleSource,
       description: typeof payload?.description === 'string' ? payload.description : undefined,
-      status: typeof payload?.status === 'string' ? payload.status : undefined,
+      status,
       dueDate:
         payload?.dueDate === null
           ? null
@@ -110,11 +172,15 @@ export class AgentToolsV2 {
             : undefined,
       assigneeIds: this.normalizeAssigneeIds(payload?.assigneeIds ?? payload?.assignees),
       initialNote: typeof payload?.initialNote === 'string' ? payload.initialNote : undefined,
-      followUp: typeof payload?.followUp === 'string' ? payload.followUp : undefined,
     };
 
+    const followUp = typeof payload?.followUp === 'string' ? payload.followUp : undefined;
+
     try {
-      const event = await this.taskFacade.createTask(sessionId, companyId, userId, taskPayload);
+      const event = await this.taskFacade.createTask(sessionId, companyId, userId, {
+        ...taskPayload,
+        followUp,
+      });
       await this.audit(sessionId, 'createTask', payload, { taskId: event.task.id }, true);
       return event;
     } catch (error: any) {
@@ -134,9 +200,9 @@ export class AgentToolsV2 {
       throw new Error('Task id is required to update a task');
     }
 
-    const updates: { status?: string; dueDate?: string | null; note?: string } = {};
+    const updates: { status?: TaskStatus; dueDate?: string | null; note?: string } = {};
     if (typeof payload?.status === 'string' && payload.status.trim().length > 0) {
-      updates.status = payload.status.trim();
+      updates.status = this.normalizeTaskStatus(payload.status);
     }
     if (Object.prototype.hasOwnProperty.call(payload ?? {}, 'dueDate')) {
       updates.dueDate = payload?.dueDate === null ? null : typeof payload?.dueDate === 'string' ? payload.dueDate : undefined;
