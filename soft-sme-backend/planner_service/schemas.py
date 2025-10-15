@@ -23,6 +23,7 @@ class PlannerStepType(str, Enum):
     TOOL = "tool"
     MESSAGE = "message"
     LOOKUP = "lookup"
+    ACTION = "action"
 
 
 class ToolStepPayload(BaseModel):
@@ -80,7 +81,38 @@ class LookupStepPayload(BaseModel):
     )
 
 
-PlannerStepPayload = Union[ToolStepPayload, MessageStepPayload, LookupStepPayload]
+class ActionStepPayload(BaseModel):
+    """Payload for dispatching workflow actions handled by dedicated subagents."""
+
+    action_name: str = Field(..., description="Canonical action or workflow identifier.")
+    parameters: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Structured parameters supplied to the workflow executor.",
+    )
+    execution_mode: Literal["queue", "sync", "manual"] = Field(
+        default="queue",
+        description=(
+            "Execution strategy requested by the planner. `queue` enqueues background work,"
+            " `sync` attempts immediate execution when available, and `manual` records"
+            " a human follow-up task."
+        ),
+    )
+    result_key: Optional[str] = Field(
+        default=None,
+        description="Optional key allowing later steps to reference execution output.",
+    )
+    conversation_id: Optional[str] = Field(
+        default=None,
+        description="Conversation identifier to correlate background tasks or direct invocations.",
+    )
+
+
+PlannerStepPayload = Union[
+    ToolStepPayload,
+    MessageStepPayload,
+    LookupStepPayload,
+    ActionStepPayload,
+]
 
 
 class PlannerStep(BaseModel):
@@ -107,6 +139,7 @@ class PlannerStep(BaseModel):
             PlannerStepType.TOOL: ToolStepPayload,
             PlannerStepType.MESSAGE: MessageStepPayload,
             PlannerStepType.LOOKUP: LookupStepPayload,
+            PlannerStepType.ACTION: ActionStepPayload,
         }
 
         payload_model = expected_payload[self.type]
@@ -131,7 +164,7 @@ class PlannerMetadata(BaseModel):
 
     model: Optional[str] = Field(default=None, description="Model or strategy identifier used to generate the plan.")
     rationale: Optional[str] = Field(default=None, description="High level reasoning trace for debugging.")
-    version: str = Field(default="0.1", description="Planner schema version.")
+    version: str = Field(default="0.2", description="Planner schema version.")
 
 
 class PlannerResponse(BaseModel):
@@ -148,6 +181,7 @@ __all__ = [
     "ToolStepPayload",
     "MessageStepPayload",
     "LookupStepPayload",
+    "ActionStepPayload",
     "PlannerStepPayload",
     "PlannerStep",
     "PlannerRequest",
