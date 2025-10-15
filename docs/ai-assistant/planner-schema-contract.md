@@ -2,7 +2,7 @@
 
 This document captures the canonical request and response schema shared between the orchestrator and the
 `planner-service`. The contract is implemented in `soft-sme-backend/planner_service/schemas.py` and versioned via the
-`PlannerMetadata.version` field. The current version is **0.1**.
+`PlannerMetadata.version` field. The current version is **0.2**.
 
 ## Request payload (`POST /plan`)
 
@@ -49,6 +49,7 @@ in `schemas.py`, ensuring downstream services always receive a predictable struc
 | `tool` | [`ToolStepPayload`](#toolsteppayload) | Invoke a registered tool/workflow with structured arguments. |
 | `message` | [`MessageStepPayload`](#messagesteppayload) | Emit a conversational message back to the UI. |
 | `lookup` | [`LookupStepPayload`](#lookupsteppayload) | Perform a knowledge/data lookup whose results can feed later steps. |
+| `action` | [`ActionStepPayload`](#actionsteppayload) | Dispatch a side-effectful workflow that the orchestrator should execute carefully. |
 
 #### `ToolStepPayload`
 
@@ -77,6 +78,16 @@ in `schemas.py`, ensuring downstream services always receive a predictable struc
 | `filters` | object | ❌ | Structured filters to scope the lookup domain. |
 | `result_key` | string | ❌ | Identifier that later steps can reference. |
 
+#### `ActionStepPayload`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `action_name` | string | ✅ | Canonical workflow identifier (e.g., `create_purchase_order`). |
+| `parameters` | object | ❌ | Structured parameters forwarded to the workflow executor. |
+| `execution_mode` | enum(`queue`, `sync`, `manual`) | ❌ | How the orchestrator should execute the action. Defaults to queuing. |
+| `result_key` | string | ❌ | Identifier that later steps can reference. |
+| `conversation_id` | string | ❌ | Conversation identifier for correlating background tasks. |
+
 ### Example response
 
 ```json
@@ -95,15 +106,16 @@ in `schemas.py`, ensuring downstream services always receive a predictable struc
     },
     {
       "id": "step-2",
-      "type": "tool",
-      "description": "Create purchase order from quote results",
+      "type": "action",
+      "description": "Queue purchase order creation workflow",
       "depends_on": ["step-1"],
       "payload": {
-        "tool_name": "create_purchase_order",
+        "action_name": "create_purchase_order",
         "arguments": {
           "quote": "{{results.quote_details}}",
           "notify_sales_rep": true
         },
+        "execution_mode": "queue",
         "result_key": "po_draft"
       }
     },
@@ -120,11 +132,11 @@ in `schemas.py`, ensuring downstream services always receive a predictable struc
       }
     }
   ],
-  "metadata": {
-    "model": "planner-gpt-2024-05",
-    "rationale": "Tool-first plan because quote context exists in CRM",
-    "version": "0.1"
-  }
+    "metadata": {
+      "model": "planner-gpt-2024-05",
+      "rationale": "Tool-first plan because quote context exists in CRM",
+      "version": "0.2"
+    }
 }
 ```
 

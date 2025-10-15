@@ -26,7 +26,9 @@ curl -X POST http://localhost:8000/plan \
 The `/plan` endpoint currently returns a placeholder plan so that orchestrator integration work can proceed while
 the actual planning logic and telemetry hooks are implemented in subsequent tasks. Refer to
 [`docs/ai-assistant/planner-schema-contract.md`](../../docs/ai-assistant/planner-schema-contract.md) for the
-formal request/response contract, including the structured payloads emitted for each planner step type.
+formal request/response contract, including the structured payloads emitted for each planner step type. Version 0.2 of
+the contract introduces the `action` step payload used by the action/workflow subagent to queue side-effectful
+operations safely.
 
 ## Telemetry
 

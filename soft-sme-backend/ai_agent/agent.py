@@ -26,7 +26,11 @@ try:  # pragma: no cover - support direct execution and package import
     from .task_queue import TaskQueue
     from .analytics_sink import AnalyticsSink
     from .planner_client import PlannerClient, PlannerServiceError
-    from .subagents import DocumentationQASubagent, RowSelectionSubagent
+    from .subagents import (
+        ActionWorkflowSubagent,
+        DocumentationQASubagent,
+        RowSelectionSubagent,
+    )
 except ImportError:  # pragma: no cover - fallback when executed as script
     from rag_tool import DocumentationRAGTool
     from sql_tool import InventorySQLTool
@@ -35,7 +39,11 @@ except ImportError:  # pragma: no cover - fallback when executed as script
     from task_queue import TaskQueue
     from analytics_sink import AnalyticsSink
     from planner_client import PlannerClient, PlannerServiceError
-    from subagents import DocumentationQASubagent, RowSelectionSubagent
+    from subagents import (
+        ActionWorkflowSubagent,
+        DocumentationQASubagent,
+        RowSelectionSubagent,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +74,11 @@ class AivenAgent:
             in {"1", "true", "yes", "on"}
         )
         self.row_selection_subagent: Optional[RowSelectionSubagent] = None
+        self.action_workflow_subagent_enabled = (
+            os.getenv("AI_ENABLE_ACTION_WORKFLOW_SUBAGENT", "false").strip().lower()
+            in {"1", "true", "yes", "on"}
+        )
+        self.action_workflow_subagent: Optional[ActionWorkflowSubagent] = None
         
         # Statistics
         self.stats = {
@@ -176,33 +189,28 @@ class AivenAgent:
 
         self.documentation_qa_subagent = None
         self.row_selection_subagent = None
+        self.action_workflow_subagent = None
 
-        if not self.documentation_subagent_enabled:
+        if self.documentation_subagent_enabled:
+            if not self.documentation_enabled:
+                logger.info("Documentation QA subagent skipped because documentation support is disabled")
+            elif not self.rag_tool:
+                logger.warning(
+                    "Documentation QA subagent unavailable because the documentation RAG tool failed to initialize",
+                )
+            elif not self.llm:
+                logger.warning(
+                    "Documentation QA subagent unavailable because the LLM client is not configured",
+                )
+            else:
+                self.documentation_qa_subagent = DocumentationQASubagent(
+                    rag_tool=self.rag_tool,
+                    llm=self.llm,
+                    analytics_sink=self.analytics_sink,
+                )
+                logger.info("Documentation QA subagent initialized")
+        else:
             logger.info("Documentation QA subagent disabled via feature flag")
-            return
-
-        if not self.documentation_enabled:
-            logger.info("Documentation QA subagent skipped because documentation support is disabled")
-            return
-
-        if not self.rag_tool:
-            logger.warning(
-                "Documentation QA subagent unavailable because the documentation RAG tool failed to initialize",
-            )
-            return
-
-        if not self.llm:
-            logger.warning(
-                "Documentation QA subagent unavailable because the LLM client is not configured",
-            )
-            return
-
-        self.documentation_qa_subagent = DocumentationQASubagent(
-            rag_tool=self.rag_tool,
-            llm=self.llm,
-            analytics_sink=self.analytics_sink,
-        )
-        logger.info("Documentation QA subagent initialized")
 
         if self.row_selection_subagent_enabled:
             self.row_selection_subagent = RowSelectionSubagent(
@@ -211,6 +219,16 @@ class AivenAgent:
             logger.info("Row selection subagent initialized")
         else:
             logger.info("Row selection subagent disabled via feature flag")
+
+        if self.action_workflow_subagent_enabled:
+            self.action_workflow_subagent = ActionWorkflowSubagent(
+                analytics_sink=self.analytics_sink,
+                task_queue=self.task_queue,
+                action_tool=self.action_tool,
+            )
+            logger.info("Action workflow subagent initialized")
+        else:
+            logger.info("Action workflow subagent disabled via feature flag")
 
     def _extract_follow_up_instructions(self, raw_message: str) -> Tuple[str, List[Dict[str, Any]]]:
         """Parse structured follow-up task instructions embedded in the user message."""
@@ -430,6 +448,41 @@ class AivenAgent:
                 tools_needed = [
                     tool for tool in tools_needed if tool != "row_selection_subagent"
                 ]
+
+            action_workflow_results: List[Dict[str, Any]] = []
+            if planner_plan and self.action_workflow_subagent:
+                action_workflow_results = await self._execute_action_workflow_steps(
+                    planner_plan,
+                    conversation_history=conversation_history,
+                    conversation_id=conversation_id,
+                    session_id=planner_session_id,
+                )
+
+            if action_workflow_results:
+                gathered_info["action_workflow_subagent"] = action_workflow_results
+                actionable_results = [
+                    result
+                    for result in action_workflow_results
+                    if result.get("status") not in {"error", "manual"}
+                ]
+                if actionable_results:
+                    tool_usage_count += len(actionable_results)
+                    if not gathered_info.get("actions"):
+                        actions_summary = {
+                            "actions": [
+                                {
+                                    "tool": result.get("action"),
+                                    "success": result.get("status") not in {"error", "manual"},
+                                    "message": result.get("message"),
+                                    "queuedTaskId": result.get("queued_task_id"),
+                                    "status": result.get("status"),
+                                }
+                                for result in action_workflow_results
+                            ],
+                            "message": actionable_results[0].get("message"),
+                        }
+                        gathered_info["actions"] = actions_summary
+                tools_needed = [tool for tool in tools_needed if tool != "action"]
 
             # Use Action tool if needed
             if "action" in tools_needed and self.action_tool and "actions" not in gathered_info:
@@ -736,6 +789,13 @@ Provide a helpful, complete answer."""
                 mapped = self._map_tool_name(tool_name)
                 if mapped:
                     suggested.append(mapped)
+                    if mapped == "action":
+                        suggested.append("action_workflow_subagent")
+                continue
+
+            if step_type == "action":
+                suggested.append("action")
+                suggested.append("action_workflow_subagent")
                 continue
 
             if step_type == "lookup":
@@ -859,6 +919,61 @@ Provide a helpful, complete answer."""
                 question=str(payload.get("query") or ""),
                 filters=filters,
                 planner_payload=planner_payload,
+                session_id=session_id,
+            )
+
+            results.append(asdict(result))
+
+        return results
+
+    async def _execute_action_workflow_steps(
+        self,
+        plan: Dict[str, Any],
+        *,
+        conversation_history: Optional[List[Dict[str, Any]]],
+        conversation_id: Optional[str],
+        session_id: Optional[int],
+    ) -> List[Dict[str, Any]]:
+        del conversation_history  # current stub does not rely on chat history
+
+        if not self.action_workflow_subagent:
+            return []
+
+        steps = plan.get("steps", []) if isinstance(plan, dict) else []
+        if not steps:
+            return []
+
+        results: List[Dict[str, Any]] = []
+        for step in steps:
+            if not isinstance(step, dict) or not self.action_workflow_subagent.supports_step(step):
+                continue
+
+            payload = step.get("payload") or {}
+            if not isinstance(payload, dict):
+                payload = {}
+
+            arguments = payload.get("arguments") or {}
+            if not isinstance(arguments, dict):
+                arguments = {}
+
+            action_name = (
+                payload.get("action_name")
+                or payload.get("tool_name")
+                or arguments.get("action_name")
+                or "workflow_action"
+            )
+
+            planner_payload = dict(payload)
+            planner_payload.pop("arguments", None)
+
+            result = await self.action_workflow_subagent.execute(
+                step_id=str(step.get("id") or action_name),
+                action=str(action_name),
+                parameters=arguments,
+                planner_payload=planner_payload,
+                conversation_id=conversation_id
+                or planner_payload.get("conversation_id")
+                or arguments.get("conversation_id"),
                 session_id=session_id,
             )
 

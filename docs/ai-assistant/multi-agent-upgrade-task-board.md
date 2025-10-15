@@ -20,7 +20,10 @@
   - [x] Table-selection heuristics codified
   - [x] Execution scaffold with analytics instrumentation
   - [x] Planner integration tests covering lookup → SQL routing
-- [ ] Action/workflow subagent
+- [x] Action/workflow subagent
+  - [x] Contract defined
+  - [x] Stub executor implemented
+  - [x] Planner routing tests
 - [ ] Voice/call subagent
 - [ ] Safety/policy subagent (optional)
 
@@ -41,4 +44,4 @@
 - [ ] Security review
 
 ### Recommended next task
-Begin **Phase 2 – Action/workflow subagent** design: outline the action execution contract, stand up a stub executor, and draft planner tests that validate routing for side-effectful workflows before turning on production flags.
+Kick off **Phase 2 – Voice/call subagent** discovery: inventory telephony entry points, propose a call-handling contract, and draft telemetry requirements so planner outputs remain observable.
