@@ -13,11 +13,12 @@ from collections.abc import Mapping as MappingType
 from collections.abc import Sequence as SequenceType
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Optional, Union, List
 
 import httpx
 
 from ..analytics_sink import AnalyticsSink
+from ..task_queue import TaskQueue, TaskQueueFanoutTarget, TaskQueueSpec
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +28,11 @@ _DEFAULT_MAX_RETRIES = 3
 _DEFAULT_INITIAL_BACKOFF = 0.75
 _DEFAULT_BACKOFF_MULTIPLIER = 2.0
 
-CallbackType = Union[str, CallableType[[Dict[str, Any], Dict[str, Any]], Union[AwaitableType[None], None]]]
+CallbackType = Union[
+    str,
+    CallableType[[Dict[str, Any], Dict[str, Any]], Union[AwaitableType[None], None]],
+    TaskQueueFanoutTarget,
+]
 
 
 @dataclass(slots=True)
@@ -61,6 +66,7 @@ class VoiceCallSubagent:
         backoff_initial: Optional[float] = None,
         backoff_multiplier: Optional[float] = None,
         http_client: Optional[httpx.AsyncClient] = None,
+        task_queue: Optional[TaskQueue] = None,
     ) -> None:
         env_base = (os.getenv("VOICE_SERVICE_BASE_URL") or "").strip()
         self.base_url = (base_url or env_base or _DEFAULT_BASE_URL).rstrip("/")
@@ -83,6 +89,7 @@ class VoiceCallSubagent:
         self._owns_client = http_client is None
         self._service_token = self._sanitize(os.getenv("AI_AGENT_SERVICE_TOKEN"))
         self._service_api_key = self._sanitize(os.getenv("AI_AGENT_SERVICE_API_KEY"))
+        self._task_queue = task_queue
 
     def supports_step(self, plan_step: MappingType[str, Any]) -> bool:
         """Return True when the planner step should be handled by this subagent."""
@@ -356,7 +363,9 @@ class VoiceCallSubagent:
             return
 
         for target in targets:
-            if isinstance(target, str):
+            if isinstance(target, TaskQueueFanoutTarget):
+                await self._enqueue_callback_task(callback_name, target, payload, metadata)
+            elif isinstance(target, str):
                 await self._invoke_callback_url(callback_name, target, payload, metadata)
             elif isinstance(target, CallableType):
                 await self._invoke_callback_callable(callback_name, target, payload, metadata)
@@ -427,6 +436,64 @@ class VoiceCallSubagent:
                 },
             )
 
+    async def _enqueue_callback_task(
+        self,
+        callback_name: str,
+        target: TaskQueueFanoutTarget,
+        payload: Dict[str, Any],
+        metadata: Dict[str, Any],
+    ) -> None:
+        if self._task_queue is None:
+            logger.warning(
+                "Voice callback %s requested task queue fan-out but no queue is configured", callback_name
+            )
+            await self._analytics.log_event(
+                "voice_callback_dispatched",
+                tool="voice_call",
+                status="error",
+                metadata={
+                    **metadata,
+                    "callback": callback_name,
+                    "target": "task_queue",
+                    "error": "task queue not configured",
+                },
+            )
+            return
+
+        spec: TaskQueueSpec = target.build_spec(payload, metadata)
+        try:
+            task_ids = self._task_queue.fan_out([spec])
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.warning(
+                "Voice callback %s failed to enqueue task queue notification: %s", callback_name, exc
+            )
+            await self._analytics.log_event(
+                "voice_callback_dispatched",
+                tool="voice_call",
+                status="error",
+                metadata={
+                    **metadata,
+                    "callback": callback_name,
+                    "target": "task_queue",
+                    "task_type": spec.task_type,
+                    "error": str(exc),
+                },
+            )
+            return
+
+        await self._analytics.log_event(
+            "voice_callback_dispatched",
+            tool="voice_call",
+            status="success",
+            metadata={
+                **metadata,
+                "callback": callback_name,
+                "target": "task_queue",
+                "task_type": spec.task_type,
+                "queued_task_ids": task_ids,
+            },
+        )
+
     def _build_status_payload(
         self,
         status: str,
@@ -474,18 +541,38 @@ class VoiceCallSubagent:
         callbacks: Dict[str, SequenceType[CallbackType]] = {}
         if not isinstance(raw_callbacks, MappingType):
             return callbacks
+
+        def _normalize(target: Any) -> Optional[CallbackType]:
+            if isinstance(target, (str, TaskQueueFanoutTarget)):
+                return target
+            if isinstance(target, MappingType):
+                parsed = TaskQueueFanoutTarget.from_mapping(target)
+                if parsed:
+                    return parsed
+                return None
+            if callable(target):
+                return target
+            return None
+
         for key in ("onStatusChange", "onStructuredUpdate"):
             value = raw_callbacks.get(key)
             if value is None:
                 continue
+
+            normalized: List[CallbackType] = []
             if isinstance(value, (list, tuple)):
-                callbacks[key] = [
-                    item
-                    for item in value
-                    if isinstance(item, (str, CallableType))
-                ]
+                for item in value:
+                    parsed = _normalize(item)
+                    if parsed is not None:
+                        normalized.append(parsed)
             else:
-                callbacks[key] = [value]
+                parsed = _normalize(value)
+                if parsed is not None:
+                    normalized.append(parsed)
+
+            if normalized:
+                callbacks[key] = normalized
+
         return callbacks
 
     def _build_headers(self) -> Dict[str, str]:
