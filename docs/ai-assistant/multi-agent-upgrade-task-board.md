@@ -33,7 +33,7 @@
 
 ## Phase 3 – Aggregation & UX
 - [x] Aggregator module
-- [ ] Streaming response updates
+- [ ] Streaming response updates _(rollout plan drafted; implementation pending)_
 - [ ] Conversation UI enhancements
 - [ ] Task queue fan-out
 
@@ -48,4 +48,4 @@
 - [ ] Security review
 
 ### Recommended next task
-Deliver **streaming response updates** so the planner can push partial aggregator events to the frontend, enabling immediate visibility into subagent progress and failures.
+Begin **AggregationCoordinator streaming hooks** implementation to emit planner/subagent events and wire the new SSE endpoint defined in the streaming rollout plan.
