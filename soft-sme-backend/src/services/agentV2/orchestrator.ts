@@ -224,6 +224,22 @@ export class AgentOrchestratorV2 {
 
     const includesAny = (keywords: string[]): boolean => keywords.some((keyword) => containsKeyword(keyword));
 
+    const howToPhrases = [
+      'how do i',
+      'how do we',
+      'how to',
+      'steps to',
+      'instructions',
+      'process to',
+      'guide me',
+      'can you guide',
+      'walk me through',
+    ];
+
+    if (normalized.includes('doc') || normalized.includes('documentation') || includesAny(howToPhrases)) {
+      return { tool: 'retrieveDocs', args: { query: message } };
+    }
+
     const mentionsPurchaseOrder =
       containsKeyword('purchase order') ||
       normalized.includes('purchase-order') ||
@@ -305,10 +321,6 @@ export class AgentOrchestratorV2 {
       if (containsKeyword('instructions')) return { tool: 'updatePickupDetails', args: { pickup_instructions: message } };
       if (containsKeyword('notes')) return { tool: 'updatePickupDetails', args: { pickup_notes: message } };
       if (containsKeyword('get')) return { tool: 'getPickupDetails', args: {} };
-    }
-
-    if (normalized.includes('doc') || normalized.includes('how do i')) {
-      return { tool: 'retrieveDocs', args: { query: message } };
     }
 
     const reminderKeywords = ['remind', 'reminder', 'follow up', 'follow-up', 'todo', 'to-do', 'task for me', 'keep an eye'];
