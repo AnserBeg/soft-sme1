@@ -21,6 +21,7 @@ from sql_tool import InventorySQLTool
 from action_tool import AgentActionTool
 from conversation_manager import ConversationManager
 from task_queue import TaskQueue
+from analytics_sink import AnalyticsSink
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,7 @@ class AivenAgent:
         self.initialized = False
         self.messages = []  # Add messages list for conversation history
         self.documentation_enabled = os.getenv("AI_ENABLE_DOCUMENTATION", "true").lower() == "true"
+        self.analytics_sink = AnalyticsSink()
         
         # Statistics
         self.stats = {
@@ -129,7 +131,7 @@ class AivenAgent:
             self.sql_tool = InventorySQLTool(db_config)
 
             # Initialize action tool client
-            self.action_tool = AgentActionTool()
+            self.action_tool = AgentActionTool(self.analytics_sink)
 
             # Setup tools
             self.tools = [tool for tool in [self.rag_tool, self.sql_tool, self.action_tool] if tool is not None]
@@ -283,6 +285,14 @@ class AivenAgent:
                         logger.info("Action tool used successfully")
                 except Exception as action_error:
                     logger.error(f"Action tool error: {action_error}")
+                    await self.analytics_sink.log_event(
+                        "tool_failure",
+                        tool="agent_v2",
+                        conversation_id=conversation_id,
+                        status="failed",
+                        error_message=str(action_error),
+                        metadata={"stage": "agent_wrapper"},
+                    )
                     gathered_info["actions"] = {
                         "actions": [
                             {
@@ -295,6 +305,7 @@ class AivenAgent:
                     actions_summary = gathered_info["actions"]
 
             # Use RAG tool if needed
+            rag_query = None
             if (
                 self.documentation_enabled
                 and self.rag_tool
@@ -320,6 +331,16 @@ class AivenAgent:
                     logger.info(f"RAG result preview: {doc_result[:500]}...")
                 except Exception as e:
                     logger.error(f"RAG tool error: {e}")
+                    await self.analytics_sink.log_event(
+                        "tool_failure",
+                        tool="documentation_rag",
+                        conversation_id=conversation_id,
+                        status="failed",
+                        error_message=str(e),
+                        metadata={
+                            "query": rag_query,
+                        },
+                    )
                     gathered_info["documentation"] = "No documentation found"
 
             # Use SQL tool if needed
@@ -344,6 +365,13 @@ class AivenAgent:
                             gathered_info["database_data"] = "SQL query timed out"
                 except Exception as e:
                     logger.error(f"SQL tool error: {e}")
+                    await self.analytics_sink.log_event(
+                        "tool_failure",
+                        tool="inventory_sql",
+                        conversation_id=conversation_id,
+                        status="failed",
+                        error_message=str(e),
+                    )
                     gathered_info["database_data"] = "No database data available"
             
             # STEP 3: Generate final response
@@ -758,6 +786,8 @@ Provide a helpful, complete answer."""
             # Add any cleanup logic here
             if self.action_tool:
                 await self.action_tool.cleanup()
+            if self.analytics_sink:
+                await self.analytics_sink.aclose()
             self.initialized = False
             logger.info("AI Agent cleanup completed")
         except Exception as e:
