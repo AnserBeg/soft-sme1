@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Dict, List, Literal, Optional
+from enum import Enum
+from typing import Any, Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class PlannerContext(BaseModel):
@@ -16,22 +17,104 @@ class PlannerContext(BaseModel):
     locale: Optional[str] = Field(default=None, description="Locale hint that may impact tool selection or copy.")
 
 
+class PlannerStepType(str, Enum):
+    """Enumeration of supported planner step categories."""
+
+    TOOL = "tool"
+    MESSAGE = "message"
+    LOOKUP = "lookup"
+
+
+class ToolStepPayload(BaseModel):
+    """Payload for invoking a downstream tool or workflow."""
+
+    tool_name: str = Field(..., description="Registered tool identifier to invoke.")
+    arguments: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Structured arguments that will be forwarded to the tool invocation.",
+    )
+    result_key: Optional[str] = Field(
+        default=None,
+        description=(
+            "Optional key used by downstream steps to reference the observation emitted by this tool."
+        ),
+    )
+    escalate_on_failure: bool = Field(
+        default=False,
+        description="Whether the orchestrator should short-circuit on tool errors instead of attempting recovery.",
+    )
+
+
+class MessageStepPayload(BaseModel):
+    """Payload for emitting a message back to the user or UI."""
+
+    channel: Literal["assistant", "system", "user"] = Field(
+        ...,
+        description="Logical channel that should display the message.",
+    )
+    content: str = Field(..., description="Message body that will be rendered in the conversation UI.")
+    summary: Optional[str] = Field(
+        default=None, description="Optional short summary for analytics and notifications."
+    )
+    metadata: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Arbitrary key/value metadata preserved for telemetry or UI hints.",
+    )
+
+
+class LookupStepPayload(BaseModel):
+    """Payload for knowledge or data lookups executed by subagents."""
+
+    query: str = Field(..., description="Canonical query or question to execute against the target system.")
+    target: Literal["knowledge_base", "database", "api"] = Field(
+        ...,
+        description="Downstream target that should satisfy the lookup request.",
+    )
+    filters: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Additional filters that scope the lookup domain.",
+    )
+    result_key: Optional[str] = Field(
+        default=None,
+        description="Optional key allowing later steps to reference lookup results.",
+    )
+
+
+PlannerStepPayload = Union[ToolStepPayload, MessageStepPayload, LookupStepPayload]
+
+
 class PlannerStep(BaseModel):
     """Represents a single step in a generated plan."""
 
     id: str = Field(..., description="Stable identifier for correlating downstream telemetry events.")
-    type: Literal["tool", "message", "lookup"] = Field(
+    type: PlannerStepType = Field(
         ..., description="Planner step classification used by the orchestrator pipeline."
     )
     description: str = Field(..., description="Short natural language summary of the action to perform.")
-    payload: Dict[str, Any] = Field(
-        default_factory=dict,
-        description="Arbitrary structured payload that downstream subagents can interpret.",
+    payload: PlannerStepPayload = Field(
+        ..., description="Structured payload that downstream subagents can interpret.",
     )
     depends_on: List[str] = Field(
         default_factory=list,
         description="Optional list of step IDs that must be completed before this step executes.",
     )
+
+    @model_validator(mode="after")
+    def _validate_payload_alignment(self) -> "PlannerStep":
+        """Ensure the payload model matches the declared step type."""
+
+        expected_payload = {
+            PlannerStepType.TOOL: ToolStepPayload,
+            PlannerStepType.MESSAGE: MessageStepPayload,
+            PlannerStepType.LOOKUP: LookupStepPayload,
+        }
+
+        payload_model = expected_payload[self.type]
+        if not isinstance(self.payload, payload_model):
+            # Pydantic may supply a raw dict during validation. We attempt coercion before failing.
+            self.payload = payload_model.model_validate(self.payload)  # type: ignore[assignment]
+
+        return self
 
 
 class PlannerRequest(BaseModel):
@@ -61,6 +144,11 @@ class PlannerResponse(BaseModel):
 
 __all__ = [
     "PlannerContext",
+    "PlannerStepType",
+    "ToolStepPayload",
+    "MessageStepPayload",
+    "LookupStepPayload",
+    "PlannerStepPayload",
     "PlannerStep",
     "PlannerRequest",
     "PlannerMetadata",

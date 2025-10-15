@@ -7,7 +7,7 @@
 
 ## Phase 1 – Planner Skeleton (In progress)
 - [x] Create `planner-service` package
-- [ ] Planner schema contract
+- [x] Planner schema contract
 - [ ] Gateway integration
 - [ ] Planner telemetry
 
@@ -35,4 +35,4 @@
 - [ ] Security review
 
 ### Recommended next task
-Focus on **Phase 1 – Planner schema contract** so the orchestrator and downstream services can align on payload structure before wiring in integrations and telemetry.
+Focus on **Phase 1 – Gateway integration** to wire the new schema contract into the orchestrator and validate end-to-end request/response handling before instrumenting telemetry.

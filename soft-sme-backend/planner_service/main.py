@@ -6,7 +6,14 @@ from uuid import uuid4
 
 from fastapi import FastAPI
 
-from .schemas import PlannerMetadata, PlannerRequest, PlannerResponse, PlannerStep
+from .schemas import (
+    MessageStepPayload,
+    PlannerMetadata,
+    PlannerRequest,
+    PlannerResponse,
+    PlannerStep,
+    PlannerStepType,
+)
 
 app = FastAPI(
     title="Planner Service",
@@ -32,12 +39,17 @@ def generate_plan(request: PlannerRequest) -> PlannerResponse:
 
     placeholder_step = PlannerStep(
         id=str(uuid4()),
-        type="message",
+        type=PlannerStepType.MESSAGE,
         description="Planner service stub – replace with real planning logic.",
-        payload={
-            "summary": "Planner service is connected, but planning logic has not been implemented yet.",
-            "echo": request.message,
-        },
+        payload=MessageStepPayload(
+            channel="assistant",
+            content=(
+                "Planner service is connected, but planning logic has not been implemented yet. "
+                "Echoing the latest utterance for observability."
+            ),
+            summary="Planner stub reached",
+            metadata={"echo": request.message},
+        ),
     )
 
     response_metadata = PlannerMetadata(
