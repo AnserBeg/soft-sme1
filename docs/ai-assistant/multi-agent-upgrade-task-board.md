@@ -47,7 +47,9 @@
   - [x] Harness prototype implemented (`planner_service/tests/synthetic_suite.py`)
   - [x] Subagent mocking & telemetry assertions
 - [x] Regression dashboard
-- [ ] Feedback loop
+- [x] Feedback loop
+  - [x] Persist nightly regression summaries with owner routing metadata (`/api/regressions/alerts`).
+  - [x] Provide actionable remediation guidance per failure category to unblock planner/subagent teams quickly.
 
 ## Cross-cutting Tasks
 - [ ] Documentation
@@ -56,4 +58,4 @@
 - [ ] Security review
 
 ### Recommended next task
-Operationalize the **feedback loop** so planner and subagent owners receive actionable alerts when regression runs fail.
+Triage unassigned regression failures and expand coverage to the optional **safety/policy subagent**.

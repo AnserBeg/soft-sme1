@@ -1,0 +1,29 @@
+{
+  "owners": [
+    {
+      "id": "planner-core",
+      "name": "Planner Core Oncall",
+      "emails": ["planner-core-oncall@example.com"],
+      "slackChannels": ["#planner-core-alerts"],
+      "scenarioSlugs": ["planner-stub-echo"],
+      "regressionTypes": ["core"],
+      "phases": ["planner"],
+      "minCriticality": "low"
+    },
+    {
+      "id": "subagent-shared",
+      "name": "Subagent Integration Guild",
+      "emails": ["subagent-guild@example.com"],
+      "slackChannels": ["#subagent-regressions"],
+      "regressionTypes": ["workflow", "retrieval"],
+      "phases": ["execution", "post-processing"],
+      "minCriticality": "medium"
+    }
+  ],
+  "fallback": {
+    "name": "Agent Platform Duty",
+    "emails": ["agent-platform-duty@example.com"],
+    "slackChannels": ["#agent-platform"],
+    "minCriticality": "low"
+  }
+}
