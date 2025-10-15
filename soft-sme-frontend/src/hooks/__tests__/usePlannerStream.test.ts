@@ -1,0 +1,95 @@
+import {
+  applyPlannerEvents,
+  initialPlannerStreamSummary,
+  PlannerStreamEvent,
+} from '../usePlannerStream';
+
+describe('applyPlannerEvents', () => {
+  const baseSummary = initialPlannerStreamSummary;
+
+  const buildEvent = (overrides: Partial<PlannerStreamEvent>): PlannerStreamEvent => ({
+    sessionId: '123',
+    planStepId: 'step-1',
+    sequence: overrides.sequence ?? 1,
+    type: overrides.type ?? 'subagent_result',
+    timestamp: overrides.timestamp ?? '2024-01-01T00:00:00Z',
+    content: overrides.content ?? {},
+    telemetry: overrides.telemetry ?? {},
+  });
+
+  it('hydrates expected subagents on step_started', () => {
+    const stepEvent = buildEvent({
+      sequence: 1,
+      type: 'step_started',
+      content: {
+        status: 'pending',
+        expected_subagents: [
+          { key: 'documentation', result_key: 'docs' },
+          { key: 'row_selection', result_key: null },
+        ],
+      },
+    });
+
+    const summary = applyPlannerEvents(baseSummary, [stepEvent]);
+
+    expect(summary.subagentOrder).toEqual(['documentation', 'row_selection']);
+    expect(summary.subagentsByKey.documentation).toMatchObject({
+      key: 'documentation',
+      status: 'pending',
+      resultKey: 'docs',
+    });
+    expect(summary.subagentsByKey.row_selection).toMatchObject({
+      key: 'row_selection',
+      status: 'pending',
+    });
+    expect(summary.stepStatus).toBe('pending');
+  });
+
+  it('updates subagent status and payload on subagent_result', () => {
+    const startEvent = buildEvent({
+      sequence: 1,
+      type: 'step_started',
+      content: {
+        status: 'pending',
+        expected_subagents: [{ key: 'documentation' }],
+      },
+    });
+
+    const resultEvent = buildEvent({
+      sequence: 2,
+      type: 'subagent_result',
+      content: {
+        stage: 'documentation',
+        status: 'completed',
+        payload: { answer: 'Ready' },
+        revision: 2,
+      },
+    });
+
+    const summary = applyPlannerEvents(baseSummary, [startEvent, resultEvent]);
+
+    expect(summary.subagentsByKey.documentation).toMatchObject({
+      key: 'documentation',
+      status: 'completed',
+      payload: { answer: 'Ready' },
+      revision: 2,
+    });
+    expect(summary.events.map((event) => event.sequence)).toEqual([1, 2]);
+  });
+
+  it('records completion payload on plan_step_completed', () => {
+    const completionEvent = buildEvent({
+      sequence: 3,
+      type: 'plan_step_completed',
+      content: {
+        status: 'success',
+        payload: { summary: 'done' },
+      },
+    });
+
+    const summary = applyPlannerEvents(baseSummary, [completionEvent]);
+
+    expect(summary.stepStatus).toBe('success');
+    expect(summary.completedPayload).toEqual({ summary: 'done' });
+  });
+});

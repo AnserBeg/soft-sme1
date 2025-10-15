@@ -5,6 +5,7 @@ interface ImportMetaEnv {
   readonly VITE_CLOUDFLARE_URL: string
   readonly NODE_ENV: string
   readonly MODE: string
+  readonly VITE_AI_ENABLE_AGGREGATOR_STREAMING?: string
 }
 
 interface ImportMeta {
