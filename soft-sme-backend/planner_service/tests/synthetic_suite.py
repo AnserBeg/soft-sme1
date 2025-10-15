@@ -12,6 +12,13 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any, Dict, Iterable, List, Optional
 
+try:  # pragma: no cover - optional dependency used when scenarios require subagent mocks
+    import httpx
+except ImportError:  # pragma: no cover - defensive guard for environments without httpx
+    httpx = None
+
+from unittest import mock
+
 import yaml
 from fastapi.testclient import TestClient
 from pydantic import BaseModel, Field, ValidationError, model_validator
@@ -54,6 +61,28 @@ class ScenarioAssertions(BaseModel):
     latency_budget_ms: Optional[int] = Field(default=None)
     required_steps: List[str] = Field(default_factory=list)
     telemetry_flags: List[str] = Field(default_factory=list)
+    telemetry_expectations: List["TelemetryExpectation"] = Field(default_factory=list)
+
+
+class TelemetryExpectation(BaseModel):
+    """Expectation that a telemetry event is emitted with required fields."""
+
+    event: str
+    fields: Dict[str, Any] = Field(default_factory=dict)
+
+
+class SubagentMock(BaseModel):
+    """Definition of an expected subagent HTTP interaction."""
+
+    name: Optional[str] = None
+    method: str = Field(default="POST")
+    url: str
+    request_json: Optional[Dict[str, Any]] = None
+    response_json: Dict[str, Any] = Field(default_factory=dict)
+    response_text: Optional[str] = None
+    status_code: int = Field(default=200)
+    headers: Dict[str, str] = Field(default_factory=dict)
+    repeat: int = Field(default=1, ge=1)
 
 
 class ScenarioTurn(BaseModel):
@@ -82,6 +111,7 @@ class SyntheticScenario(BaseModel):
     context: ScenarioContext
     turns: List[ScenarioTurn]
     assertions: ScenarioAssertions = Field(default_factory=ScenarioAssertions)
+    subagent_mocks: List[SubagentMock] = Field(default_factory=list)
 
     @property
     def slug(self) -> str:
@@ -110,6 +140,9 @@ class ScenarioResult:
     diffs: List[str] = field(default_factory=list)
     missing_telemetry: List[str] = field(default_factory=list)
     missing_steps: List[str] = field(default_factory=list)
+    subagent_diffs: List[str] = field(default_factory=list)
+    missing_subagent_calls: List[str] = field(default_factory=list)
+    unexpected_subagent_calls: List[str] = field(default_factory=list)
     telemetry_events: List[Dict[str, Any]] = field(default_factory=list)
     request: Optional[PlannerRequest] = None
     response: Optional[PlannerResponse] = None
@@ -273,6 +306,137 @@ def _release_telemetry(handler: _MemoryLogHandler, logger: logging.Logger, level
     return events
 
 
+class _SubagentExpectation:
+    """Internal representation of an expected subagent HTTP call."""
+
+    def __init__(self, definition: SubagentMock, ordinal: int) -> None:
+        self.definition = definition
+        self.ordinal = ordinal
+
+    @property
+    def label(self) -> str:
+        name = self.definition.name or self.definition.url
+        if self.definition.repeat > 1:
+            return f"{name}#{self.ordinal}"
+        return name
+
+
+class _SubagentMocker:
+    """Context manager that intercepts httpx requests for subagent mocking."""
+
+    def __init__(self, expectations: List[SubagentMock]):
+        expanded: List[_SubagentExpectation] = []
+        for definition in expectations:
+            for index in range(definition.repeat):
+                expanded.append(_SubagentExpectation(definition, ordinal=index + 1))
+
+        self._expectations = expanded
+        self._patcher: Optional[Any] = None
+        self.subagent_diffs: List[str] = []
+        self.unexpected_calls: List[str] = []
+
+    def __enter__(self) -> "_SubagentMocker":
+        if not self._expectations:
+            return self
+
+        if httpx is None:
+            raise RuntimeError(
+                "httpx is required to use subagent_mocks in synthetic scenarios"
+            )
+
+        self._patcher = mock.patch("httpx.AsyncClient.request", new=self._mock_request)
+        self._patcher.start()
+        return self
+
+    def __exit__(self, exc_type, exc, exc_tb) -> None:  # pragma: no cover - thin wrapper
+        if self._patcher:
+            self._patcher.stop()
+
+    def remaining_expectations(self) -> List[str]:
+        return [
+            f"{item.definition.method.upper()} {item.definition.url} ({item.label})"
+            for item in self._expectations
+        ]
+
+    async def _mock_request(self, client: "httpx.AsyncClient", method: str, url: str, **kwargs):
+        if not self._expectations:
+            message = f"Unexpected subagent call: {method.upper()} {url}"
+            self.unexpected_calls.append(message)
+            raise AssertionError(message)
+
+        expectation = self._expectations[0]
+        expected_method = expectation.definition.method.upper()
+        if expected_method != method.upper() or expectation.definition.url != url:
+            message = (
+                f"Unexpected subagent call: received {method.upper()} {url} but "
+                f"expected {expected_method} {expectation.definition.url}"
+            )
+            self.unexpected_calls.append(message)
+            raise AssertionError(message)
+
+        self._expectations.pop(0)
+
+        expected_payload = expectation.definition.request_json
+        actual_payload = kwargs.get("json")
+        if expected_payload is not None:
+            diffs = _diff_payload(expected_payload, actual_payload, path="request")
+            self.subagent_diffs.extend(diffs)
+
+        if expectation.definition.response_text is not None:
+            response = httpx.Response(  # type: ignore[union-attr]
+                expectation.definition.status_code,
+                text=expectation.definition.response_text,
+                headers=expectation.definition.headers,
+                request=httpx.Request(method, url),
+            )
+        else:
+            response = httpx.Response(  # type: ignore[union-attr]
+                expectation.definition.status_code,
+                json=expectation.definition.response_json,
+                headers=expectation.definition.headers,
+                request=httpx.Request(method, url),
+            )
+
+        return response
+
+
+def _evaluate_telemetry_assertions(
+    assertions: ScenarioAssertions,
+    telemetry_events: List[Dict[str, Any]],
+    placeholder_context: Dict[str, Any],
+) -> List[str]:
+    """Return a list of telemetry assertion failures for a scenario."""
+
+    missing: List[str] = []
+    if assertions.telemetry_flags:
+        emitted_events = {event.get("event") for event in telemetry_events}
+        for flag in assertions.telemetry_flags:
+            if flag not in emitted_events:
+                missing.append(flag)
+
+    for expectation in assertions.telemetry_expectations:
+        expected_fields = resolve_placeholders(expectation.fields, placeholder_context)
+        matched = False
+        for event in telemetry_events:
+            if event.get("event") != expectation.event:
+                continue
+            diffs = _diff_payload(expected_fields, event, path="telemetry")
+            if diffs:
+                continue
+            matched = True
+            break
+
+        if not matched:
+            if expected_fields:
+                missing.append(
+                    f"{expectation.event} missing expected fields {expected_fields}"
+                )
+            else:
+                missing.append(expectation.event)
+
+    return missing
+
+
 def run_scenario(scenario: SyntheticScenario, client: TestClient) -> ScenarioResult:
     """Execute a synthetic scenario and return the evaluation result."""
 
@@ -287,44 +451,87 @@ def run_scenario(scenario: SyntheticScenario, client: TestClient) -> ScenarioRes
         context=planner_context,
     )
 
+    placeholder_context: Dict[str, Any] = {
+        "request": request.model_dump(mode="json"),
+        "scenario": scenario.model_dump(mode="json"),
+        "context": scenario.context.model_dump(mode="json"),
+    }
+
+    resolved_mocks = [
+        SubagentMock.model_validate(
+            resolve_placeholders(mock.model_dump(mode="python"), placeholder_context)
+        )
+        for mock in scenario.subagent_mocks
+    ]
+    subagent_mocker = _SubagentMocker(resolved_mocks)
+
     telemetry_handler, telemetry_logger, previous_level = _capture_telemetry()
     start = perf_counter()
-    response = client.post("/plan", json=request.model_dump(mode="json"))
+    response: Optional[Any] = None
+    error: Optional[Exception] = None
+
+    try:
+        with subagent_mocker:
+            response = client.post("/plan", json=request.model_dump(mode="json"))
+        response.raise_for_status()
+    except Exception as exc:  # pragma: no cover - defensive aggregation for CLI usage
+        error = exc
+
     latency_ms = int((perf_counter() - start) * 1000)
-    telemetry_events = _release_telemetry(telemetry_handler, telemetry_logger, previous_level)
-
-    response.raise_for_status()
-    planner_response = PlannerResponse.model_validate(response.json())
-
-    placeholder_context = {"request": request.model_dump(mode="json")}
-    diffs = compare_plan(
-        scenario.planner_plan(),
-        planner_response.steps,
-        placeholder_context=placeholder_context,
+    telemetry_events = _release_telemetry(
+        telemetry_handler, telemetry_logger, previous_level
     )
 
-    latency_budget = scenario.assertions.latency_budget_ms
-    if latency_budget is not None and latency_ms > latency_budget:
-        diffs.append(
-            f"Latency budget exceeded: observed {latency_ms}ms (budget {latency_budget}ms)"
+    missing_steps: List[str] = []
+    diffs: List[str] = []
+    planner_response: Optional[PlannerResponse] = None
+
+    if error or response is None:
+        if error is not None:
+            diffs.append(
+                f"Planner execution raised {error.__class__.__name__}: {error}"
+            )
+        else:
+            diffs.append("Planner did not return a response")
+        missing_steps = list(scenario.assertions.required_steps)
+    else:
+        planner_response = PlannerResponse.model_validate(response.json())
+
+        diffs = compare_plan(
+            scenario.planner_plan(),
+            planner_response.steps,
+            placeholder_context=placeholder_context,
         )
 
-    missing_steps: List[str] = []
-    if scenario.assertions.required_steps:
-        actual_ids = {step.id for step in planner_response.steps}
-        actual_types = {step.type.value for step in planner_response.steps}
-        for required in scenario.assertions.required_steps:
-            if required not in actual_ids and required not in actual_types:
-                missing_steps.append(required)
+        latency_budget = scenario.assertions.latency_budget_ms
+        if latency_budget is not None and latency_ms > latency_budget:
+            diffs.append(
+                f"Latency budget exceeded: observed {latency_ms}ms (budget {latency_budget}ms)"
+            )
 
-    missing_telemetry: List[str] = []
-    if scenario.assertions.telemetry_flags:
-        emitted_events = {event.get("event") for event in telemetry_events}
-        for flag in scenario.assertions.telemetry_flags:
-            if flag not in emitted_events:
-                missing_telemetry.append(flag)
+        if scenario.assertions.required_steps:
+            actual_ids = {step.id for step in planner_response.steps}
+            actual_types = {step.type.value for step in planner_response.steps}
+            for required in scenario.assertions.required_steps:
+                if required not in actual_ids and required not in actual_types:
+                    missing_steps.append(required)
 
-    passed = not diffs and not missing_steps and not missing_telemetry
+    missing_telemetry = _evaluate_telemetry_assertions(
+        scenario.assertions, telemetry_events, placeholder_context
+    )
+
+    subagent_diffs = subagent_mocker.subagent_diffs
+    missing_subagent_calls = subagent_mocker.remaining_expectations()
+    unexpected_subagent_calls = subagent_mocker.unexpected_calls
+
+    passed = (
+        not diffs
+        and not missing_steps
+        and not missing_telemetry
+        and not subagent_diffs
+        and not missing_subagent_calls
+        and not unexpected_subagent_calls
+    )
 
     return ScenarioResult(
         scenario=scenario,
@@ -333,6 +540,9 @@ def run_scenario(scenario: SyntheticScenario, client: TestClient) -> ScenarioRes
         diffs=diffs,
         missing_steps=missing_steps,
         missing_telemetry=missing_telemetry,
+        subagent_diffs=subagent_diffs,
+        missing_subagent_calls=missing_subagent_calls,
+        unexpected_subagent_calls=unexpected_subagent_calls,
         telemetry_events=telemetry_events,
         request=request,
         response=planner_response,
@@ -372,6 +582,9 @@ def persist_result(result: ScenarioResult) -> Path:
             "diffs": result.diffs,
             "missing_steps": result.missing_steps,
             "missing_telemetry": result.missing_telemetry,
+            "subagent_diffs": result.subagent_diffs,
+            "missing_subagent_calls": result.missing_subagent_calls,
+            "unexpected_subagent_calls": result.unexpected_subagent_calls,
         },
         "request": result.request.model_dump(mode="json") if result.request else None,
         "response": result.response.model_dump(mode="json") if result.response else None,
@@ -393,6 +606,12 @@ def format_result(result: ScenarioResult) -> str:
         lines.append(f"  missing-step: {step}")
     for flag in result.missing_telemetry:
         lines.append(f"  missing-telemetry: {flag}")
+    for diff in result.subagent_diffs:
+        lines.append(f"  subagent-diff: {diff}")
+    for missing in result.missing_subagent_calls:
+        lines.append(f"  missing-subagent: {missing}")
+    for unexpected in result.unexpected_subagent_calls:
+        lines.append(f"  unexpected-subagent: {unexpected}")
     return "\n".join(lines)
 
 

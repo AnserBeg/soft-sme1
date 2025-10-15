@@ -27,3 +27,17 @@ assertions:
     - message
   telemetry_flags:
     - planner.plan.generated
+  telemetry_expectations:
+    - event: planner.request.received
+      fields:
+        message: "{{request.message}}"
+        context:
+          company_id: 92
+          user_id: 731
+          locale: en-US
+    - event: planner.plan.generated
+      fields:
+        step_types:
+          - message
+        planner_model: stub
+        planner_version: "0.2"

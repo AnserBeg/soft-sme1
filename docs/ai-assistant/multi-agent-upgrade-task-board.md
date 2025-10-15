@@ -42,10 +42,10 @@
 - [x] Task queue fan-out
 
 ## Phase 4 – Continuous Evaluation
-- [ ] Synthetic conversation suite
+- [x] Synthetic conversation suite
   - [x] Scenario taxonomy and blueprint format documented (see `reports/phase4-synthetic-conversation-suite.md`)
   - [x] Harness prototype implemented (`planner_service/tests/synthetic_suite.py`)
-  - [ ] Subagent mocking & telemetry assertions
+  - [x] Subagent mocking & telemetry assertions
 - [ ] Regression dashboard
 - [ ] Feedback loop
 
@@ -56,4 +56,4 @@
 - [ ] Security review
 
 ### Recommended next task
-Extend the **synthetic suite harness** with subagent mocking and richer telemetry assertions to cover downstream integrations.
+Stand up the **regression dashboard** to visualize synthetic suite runs and surface planner/subagent drift proactively.
