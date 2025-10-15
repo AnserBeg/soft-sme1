@@ -32,7 +32,7 @@
 - [ ] Safety/policy subagent (optional)
 
 ## Phase 3 – Aggregation & UX
-- [ ] Aggregator module
+- [x] Aggregator module
 - [ ] Streaming response updates
 - [ ] Conversation UI enhancements
 - [ ] Task queue fan-out
@@ -48,4 +48,4 @@
 - [ ] Security review
 
 ### Recommended next task
-Implement the **aggregator module** that consolidates subagent outputs (documentation, row selection, voice, actions) into a streamable planner response while preserving telemetry context.
+Deliver **streaming response updates** so the planner can push partial aggregator events to the frontend, enabling immediate visibility into subagent progress and failures.
