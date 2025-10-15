@@ -5,8 +5,8 @@
 - [x] Trace instrumentation for orchestrator → subservice calls
 - [x] Conversation dataset export (last 30 days, anonymized)
 
-## Phase 1 – Planner Skeleton (Next up)
-- [ ] Create `planner-service` package
+## Phase 1 – Planner Skeleton (In progress)
+- [x] Create `planner-service` package
 - [ ] Planner schema contract
 - [ ] Gateway integration
 - [ ] Planner telemetry
@@ -35,4 +35,4 @@
 - [ ] Security review
 
 ### Recommended next task
-Start **Phase 1 – Create `planner-service` package** to unlock schema contract discussions and downstream integrations.
+Focus on **Phase 1 – Planner schema contract** so the orchestrator and downstream services can align on payload structure before wiring in integrations and telemetry.
