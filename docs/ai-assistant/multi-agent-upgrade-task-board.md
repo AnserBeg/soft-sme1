@@ -35,6 +35,10 @@
 - [x] Aggregator module
 - [x] Streaming response updates _(SSE batching wired through planner stream hook and conversation UI progress panel)_
 - [ ] Conversation UI enhancements
+  - [x] Draft actionable controls & transcript alignment design _(see `conversation-ui-enhancements.md`)_
+  - [ ] Implement acknowledge/dismiss controls in conversation UI
+  - [ ] Wire telemetry-preserving action handlers
+  - [ ] Regression tests for replay + optimistic updates
 - [ ] Task queue fan-out
 
 ## Phase 4 – Continuous Evaluation
@@ -48,4 +52,4 @@
 - [ ] Security review
 
 ### Recommended next task
-Expand the **conversation UI enhancements** to incorporate actionable controls (acknowledge/dismiss) for planner updates and align transcript rendering with streamed subagent states.
+Implement the **acknowledge/dismiss controls** defined in the conversation UI design and connect them to planner action endpoints while preserving telemetry metadata.
