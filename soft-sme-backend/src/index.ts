@@ -63,6 +63,7 @@ import taskRoutes from './routes/taskRoutes';
 import aiAssistantService from './services/aiAssistantService';
 import partFinderRoutes from './routes/partFinderRoutes';
 import inventoryVendorRoutes from './routes/inventoryVendorRoutes';
+import plannerRoutes from './routes/plannerRoutes';
 
 const enableAiAssistantEnv = process.env.ENABLE_AI_ASSISTANT?.toLowerCase();
 const shouldAutoStartAiAssistant = enableAiAssistantEnv === 'true';
@@ -255,6 +256,10 @@ console.log('Registered overhead routes');
 // AI Assistant routes
 app.use('/api/ai-assistant', aiAssistantRoutes);
 console.log('Registered AI assistant routes');
+
+// Planner streaming routes
+app.use('/api/planner', plannerRoutes);
+console.log('Registered planner routes');
 
 // Part Finder (SO-specific stats)
 app.use('/api/part-finder', authMiddleware, partFinderRoutes);

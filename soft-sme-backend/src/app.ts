@@ -27,6 +27,7 @@ import emailRouter from './routes/emailRoutes';
 import profileDocumentRouter from './routes/profileDocumentRoutes';
 import taskRouter from './routes/taskRoutes';
 import messagingRouter from './routes/messagingRoutes';
+import plannerRoutes from './routes/plannerRoutes';
 
 import chatRouter from './routes/chatRoutes';
 
@@ -198,6 +199,9 @@ console.log('Registered chat routes');
 
 app.use('/api/ai-assistant', aiAssistantRouter);
 console.log('Registered AI assistant routes');
+
+app.use('/api/planner', plannerRoutes);
+console.log('Registered planner routes');
 
 app.use('/api/email', authMiddleware, emailRouter);
 console.log('Registered email routes');
