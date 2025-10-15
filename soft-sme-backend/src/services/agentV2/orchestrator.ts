@@ -1,4 +1,5 @@
 import { Pool } from 'pg';
+import { AIService } from '../aiService';
 
 export interface AgentToolRegistry {
   [name: string]: (args: any) => Promise<any>;
@@ -93,11 +94,22 @@ export class AgentOrchestratorV2 {
     }
 
     if (events.length === 0) {
-      events.push({
-        type: 'text',
-        content: 'I can help with sales orders, purchase orders, quotes, vendor calls, and tasks. What would you like to do?',
-        timestamp: new Date().toISOString(),
-      });
+      try {
+        const aiReply = await AIService.sendMessage(message, _context?.userId ?? undefined);
+        events.push({
+          type: 'text',
+          content: aiReply,
+          timestamp: new Date().toISOString(),
+        });
+      } catch (error) {
+        console.error('agentV2: AIService fallback error', error);
+        events.push({
+          type: 'text',
+          content:
+            'I can help with sales orders, purchase orders, quotes, vendor calls, and tasks. What would you like to do?',
+          timestamp: new Date().toISOString(),
+        });
+      }
     }
 
     return { events };

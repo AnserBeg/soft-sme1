@@ -116,6 +116,13 @@ router.post('/chat', authMiddleware, async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Company context is required for agent chat' });
     }
 
+    console.log('agentV2: chat request', {
+      sessionId,
+      userId,
+      companyId,
+      messagePreview: typeof message === 'string' ? `${message.slice(0, 120)}${message.length > 120 ? '…' : ''}` : '',
+    });
+
     const timestamp = new Date().toISOString();
     const userPayload = {
       type: 'user_text',
@@ -138,6 +145,7 @@ router.post('/chat', authMiddleware, async (req: Request, res: Response) => {
       if (error instanceof Error && /is required/i.test(error.message)) {
         return res.status(400).json({ error: error.message });
       }
+      console.error('agentV2: orchestrator error', error);
       throw error;
     }
 
@@ -153,10 +161,19 @@ router.post('/chat', authMiddleware, async (req: Request, res: Response) => {
       ]);
     }
 
+    console.log('agentV2: chat response', {
+      sessionId,
+      userId,
+      eventCount: agentResponse.events.length,
+      eventTypes: agentResponse.events.map((event) => event.type),
+    });
+
     res.json(agentResponse);
   } catch (err) {
     console.error('agentV2: chat error', err);
-    res.status(500).json({ error: 'Failed to process chat' });
+    const status = err instanceof Error && /gemini/i.test(err.message) ? 502 : 500;
+    const errorMessage = err instanceof Error ? err.message : 'Failed to process chat';
+    res.status(status).json({ error: errorMessage });
   }
 });
 
