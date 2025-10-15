@@ -194,39 +194,113 @@ export class AgentOrchestratorV2 {
   }
 
   private classifyIntent(message: string): { tool: string; args: any } | null {
-    const m = message.toLowerCase();
-    if (m.includes('create') && m.includes('sales order')) return { tool: 'createSalesOrder', args: {} };
-    if (m.includes('update') && m.includes('sales order')) return { tool: 'updateSalesOrder', args: {} };
-    if (m.includes('create') && (m.includes('purchase order') || m.includes('po'))) return { tool: 'createPurchaseOrder', args: {} };
-    if (m.includes('update') && (m.includes('purchase order') || m.includes('po'))) return { tool: 'updatePurchaseOrder', args: {} };
-    if ((m.includes('close') || m.includes('complete')) && (m.includes('purchase order') || m.includes('po')))
-      return { tool: 'closePurchaseOrder', args: {} };
-    if (m.includes('email') && (m.includes('purchase order') || m.includes('po'))) return { tool: 'emailPurchaseOrder', args: {} };
-    if (m.includes('call') && m.includes('vendor')) return { tool: 'initiateVendorCall', args: {} };
-    if ((m.includes('call') && m.includes('status')) || m.includes('call update')) return { tool: 'pollVendorCall', args: {} };
-    if (m.includes('send') && m.includes('po') && m.includes('email') && m.includes('call'))
-      return { tool: 'sendVendorCallEmail', args: {} };
-    if (m.includes('create') && m.includes('quote')) return { tool: 'createQuote', args: {} };
-    if (m.includes('update') && m.includes('quote')) return { tool: 'updateQuote', args: {} };
-    if (m.includes('email') && m.includes('quote')) return { tool: 'emailQuote', args: {} };
-    if (m.includes('convert') && m.includes('quote') && (m.includes('sales order') || m.includes('so')))
-      return { tool: 'convertQuoteToSO', args: {} };
+    const normalized = message.toLowerCase();
 
-    if (m.includes('pickup') && m.includes('time')) return { tool: 'updatePickupDetails', args: { pickup_time: message } };
-    if (m.includes('pickup') && m.includes('location'))
-      return { tool: 'updatePickupDetails', args: { pickup_location: message } };
-    if (m.includes('pickup') && m.includes('contact'))
-      return { tool: 'updatePickupDetails', args: { pickup_contact_person: message } };
-    if (m.includes('pickup') && m.includes('phone')) return { tool: 'updatePickupDetails', args: { pickup_phone: message } };
-    if (m.includes('pickup') && m.includes('instructions'))
-      return { tool: 'updatePickupDetails', args: { pickup_instructions: message } };
-    if (m.includes('pickup') && m.includes('notes')) return { tool: 'updatePickupDetails', args: { pickup_notes: message } };
-    if (m.includes('get') && m.includes('pickup')) return { tool: 'getPickupDetails', args: {} };
+    const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-    if (m.includes('doc') || m.includes('how do i')) return { tool: 'retrieveDocs', args: { query: message } };
+    const containsKeyword = (keyword: string): boolean => {
+      const trimmed = keyword.trim().toLowerCase();
+      if (!trimmed) {
+        return false;
+      }
+      if (trimmed.includes(' ')) {
+        return normalized.includes(trimmed);
+      }
+      const pattern = new RegExp(`\\b${escapeRegExp(trimmed)}\\b`);
+      return pattern.test(normalized);
+    };
+
+    const includesAny = (keywords: string[]): boolean => keywords.some((keyword) => containsKeyword(keyword));
+
+    const mentionsPurchaseOrder =
+      containsKeyword('purchase order') ||
+      normalized.includes('purchase-order') ||
+      containsKeyword('po') ||
+      normalized.includes('p/o') ||
+      normalized.includes('p.o.');
+    const mentionsSalesOrder =
+      containsKeyword('sales order') ||
+      normalized.includes('sales-order') ||
+      normalized.includes('s/o') ||
+      normalized.includes('s.o.') ||
+      /\bso\s*(?:#|no\.?|number)?\s*\d+\b/.test(normalized);
+    const mentionsQuote = containsKeyword('quote') || containsKeyword('quotes');
+
+    const createKeywords = ['create', 'make', 'build', 'start', 'begin', 'open', 'set up', 'setup', 'generate', 'draft', 'issue', 'raise', 'new'];
+    const updateKeywords = ['update', 'change', 'modify', 'edit', 'adjust', 'fix', 'tweak'];
+    const closeKeywords = ['close', 'complete', 'finish', 'wrap up', 'wrap-up', 'finalize', 'shut', 'cancel', 'done'];
+    const emailKeywords = ['email', 'send', 'mail', 'forward', 'deliver'];
+
+    if (mentionsSalesOrder) {
+      if (includesAny(createKeywords)) {
+        return { tool: 'createSalesOrder', args: {} };
+      }
+      if (includesAny(updateKeywords)) {
+        return { tool: 'updateSalesOrder', args: {} };
+      }
+    }
+
+    if (mentionsPurchaseOrder) {
+      if (includesAny(emailKeywords)) {
+        return { tool: 'emailPurchaseOrder', args: {} };
+      }
+      if (includesAny(closeKeywords)) {
+        return { tool: 'closePurchaseOrder', args: {} };
+      }
+      if (includesAny(updateKeywords)) {
+        return { tool: 'updatePurchaseOrder', args: {} };
+      }
+      if (includesAny(createKeywords) || /need\s+(?:a|to create|to make)\s+(purchase order|po)\b/.test(normalized)) {
+        return { tool: 'createPurchaseOrder', args: {} };
+      }
+    }
+
+    if (mentionsQuote) {
+      if (includesAny(emailKeywords)) {
+        return { tool: 'emailQuote', args: {} };
+      }
+      if (includesAny(createKeywords)) {
+        return { tool: 'createQuote', args: {} };
+      }
+      if (includesAny(updateKeywords)) {
+        return { tool: 'updateQuote', args: {} };
+      }
+      const referencesSalesOrder =
+        mentionsSalesOrder ||
+        /\bto\s+so\b/.test(normalized) ||
+        normalized.includes('to s/o') ||
+        normalized.includes('to s.o.');
+      if (containsKeyword('convert') && referencesSalesOrder) {
+        return { tool: 'convertQuoteToSO', args: {} };
+      }
+    }
+
+    if (containsKeyword('call') && containsKeyword('vendor')) {
+      if (containsKeyword('status') || normalized.includes('call update')) {
+        return { tool: 'pollVendorCall', args: {} };
+      }
+      if (includesAny(emailKeywords)) {
+        return { tool: 'sendVendorCallEmail', args: {} };
+      }
+      return { tool: 'initiateVendorCall', args: {} };
+    }
+
+    if (containsKeyword('pickup')) {
+      if (containsKeyword('time')) return { tool: 'updatePickupDetails', args: { pickup_time: message } };
+      if (containsKeyword('location')) return { tool: 'updatePickupDetails', args: { pickup_location: message } };
+      if (containsKeyword('contact')) return { tool: 'updatePickupDetails', args: { pickup_contact_person: message } };
+      if (containsKeyword('phone')) return { tool: 'updatePickupDetails', args: { pickup_phone: message } };
+      if (containsKeyword('instructions')) return { tool: 'updatePickupDetails', args: { pickup_instructions: message } };
+      if (containsKeyword('notes')) return { tool: 'updatePickupDetails', args: { pickup_notes: message } };
+      if (containsKeyword('get')) return { tool: 'getPickupDetails', args: {} };
+    }
+
+    if (normalized.includes('doc') || normalized.includes('how do i')) {
+      return { tool: 'retrieveDocs', args: { query: message } };
+    }
 
     const reminderKeywords = ['remind', 'reminder', 'follow up', 'follow-up', 'todo', 'to-do', 'task for me', 'keep an eye'];
-    if (reminderKeywords.some((keyword) => m.includes(keyword))) {
+    if (reminderKeywords.some((keyword) => normalized.includes(keyword))) {
       return {
         tool: 'createTask',
         args: {
