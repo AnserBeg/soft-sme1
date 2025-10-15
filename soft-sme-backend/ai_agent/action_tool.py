@@ -8,6 +8,8 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
+from analytics_sink import AnalyticsSink
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_BASE_URL = "http://127.0.0.1:5000/api/agent/v2"
@@ -16,13 +18,14 @@ DEFAULT_BASE_URL = "http://127.0.0.1:5000/api/agent/v2"
 class AgentActionTool:
     """Client wrapper that bridges the Python agent with the Node.js Agent V2 orchestrator."""
 
-    def __init__(self):
+    def __init__(self, analytics_sink: Optional[AnalyticsSink] = None):
         self.base_url = os.getenv("AGENT_V2_API_URL", DEFAULT_BASE_URL).rstrip("/")
         self.service_token = self._sanitize(os.getenv("AI_AGENT_SERVICE_TOKEN"))
         self.service_api_key = self._sanitize(os.getenv("AI_AGENT_SERVICE_API_KEY"))
         self.timeout = float(os.getenv("AGENT_V2_HTTP_TIMEOUT", "15"))
         self._session_map: Dict[str, int] = {}
         self._client: Optional[httpx.AsyncClient] = None
+        self.analytics_sink = analytics_sink
         logger.info("AgentActionTool configured for base URL %s", self.base_url)
 
     async def ensure_client(self) -> httpx.AsyncClient:
@@ -53,6 +56,12 @@ class AgentActionTool:
             return session_id
         except Exception as exc:  # pylint: disable=broad-except
             logger.error("Failed to create agent V2 session: %s", exc)
+            await self._log_failure(
+                conversation_id,
+                None,
+                "session_initialization",
+                exc,
+            )
             return None
 
     async def invoke(self, message: str, conversation_id: Optional[str] = None) -> Dict[str, Any]:
@@ -82,6 +91,14 @@ class AgentActionTool:
         except httpx.HTTPStatusError as http_err:
             logger.error("Agent V2 HTTP error: %s", http_err)
             error_detail = self._extract_error(http_err)
+            await self._log_failure(
+                conversation_id,
+                session_id,
+                "invoke_http_error",
+                http_err,
+                extra={"status_code": http_err.response.status_code if http_err.response else None},
+                error_message=error_detail,
+            )
             return {
                 "actions": [
                     {
@@ -96,6 +113,12 @@ class AgentActionTool:
             }
         except Exception as exc:  # pylint: disable=broad-except
             logger.error("Agent V2 invocation error: %s", exc)
+            await self._log_failure(
+                conversation_id,
+                session_id,
+                "invoke_exception",
+                exc,
+            )
             return {
                 "actions": [
                     {
@@ -113,6 +136,37 @@ class AgentActionTool:
         if self._client:
             await self._client.aclose()
             self._client = None
+
+    async def _log_failure(
+        self,
+        conversation_id: Optional[str],
+        session_id: Optional[int],
+        stage: str,
+        error: Exception,
+        *,
+        extra: Optional[Dict[str, Any]] = None,
+        error_message: Optional[str] = None,
+    ) -> None:
+        if not self.analytics_sink:
+            return
+
+        metadata: Dict[str, Any] = {"stage": stage}
+        if conversation_id:
+            metadata["conversation_id"] = conversation_id
+        if extra:
+            metadata.update(extra)
+
+        message = error_message if error_message is not None else str(error)
+
+        await self.analytics_sink.log_event(
+            "tool_failure",
+            tool="agent_v2",
+            session_id=session_id,
+            conversation_id=conversation_id,
+            status="failed",
+            error_message=message,
+            metadata=metadata,
+        )
 
     def _build_headers(self) -> Dict[str, str]:
         headers = {"Content-Type": "application/json"}

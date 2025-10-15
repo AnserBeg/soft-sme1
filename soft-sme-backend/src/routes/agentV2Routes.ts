@@ -2,9 +2,11 @@ import express, { Request, Response } from 'express';
 import { pool } from '../db';
 import { authMiddleware } from '../middleware/authMiddleware';
 import { AgentOrchestratorV2, AgentToolRegistry } from '../services/agentV2/orchestrator';
+import { AgentAnalyticsLogger } from '../services/agentV2/analyticsLogger';
 import { AgentToolsV2 } from '../services/agentV2/tools';
 
 const router = express.Router();
+const analyticsLogger = new AgentAnalyticsLogger(pool);
 
 const parseNumeric = (value: unknown): number | null => {
   if (value === null || value === undefined) {
@@ -96,6 +98,54 @@ router.post('/session', authMiddleware, async (req: Request, res: Response) => {
   } catch (err) {
     console.error('agentV2: create session error', err);
     res.status(500).json({ error: 'Failed to create session' });
+  }
+});
+
+router.post('/analytics/events', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const authContext = (req as any).auth;
+    if (!authContext || authContext.kind !== 'service') {
+      return res.status(403).json({ error: 'Service credentials required' });
+    }
+
+    const {
+      source = 'python_agent',
+      sessionId,
+      conversationId,
+      tool,
+      eventType,
+      status,
+      errorCode,
+      errorMessage,
+      traceId,
+      latencyMs,
+      metadata,
+      occurredAt,
+    } = req.body || {};
+
+    if (!eventType || typeof eventType !== 'string') {
+      return res.status(400).json({ error: 'eventType is required' });
+    }
+
+    await analyticsLogger.logEvent({
+      source,
+      sessionId: typeof sessionId === 'number' ? sessionId : undefined,
+      conversationId: typeof conversationId === 'string' ? conversationId : undefined,
+      tool: typeof tool === 'string' ? tool : undefined,
+      eventType,
+      status: typeof status === 'string' ? status : undefined,
+      errorCode: typeof errorCode === 'string' ? errorCode : undefined,
+      errorMessage: typeof errorMessage === 'string' ? errorMessage : undefined,
+      traceId: typeof traceId === 'string' ? traceId : undefined,
+      latencyMs: typeof latencyMs === 'number' ? latencyMs : undefined,
+      metadata: metadata && typeof metadata === 'object' ? metadata : undefined,
+      occurredAt: occurredAt ? new Date(occurredAt) : undefined,
+    });
+
+    res.json({ status: 'ok' });
+  } catch (error) {
+    console.error('agentV2: analytics event error', error);
+    res.status(500).json({ error: 'Failed to record analytics event' });
   }
 });
 

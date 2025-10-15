@@ -117,6 +117,9 @@ Thumbs.db
 uploads/
 */uploads/
 
+# Analytics exports
+soft-sme-backend/analytics_exports/
+
 # SSL certificates
 *.pem
 *.key

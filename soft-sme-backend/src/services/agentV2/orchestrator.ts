@@ -1,5 +1,7 @@
 import { Pool } from 'pg';
+import { randomUUID } from 'crypto';
 import { AIService } from '../aiService';
+import { AgentAnalyticsLogger } from './analyticsLogger';
 
 export interface AgentToolRegistry {
   [name: string]: (args: any) => Promise<any>;
@@ -47,9 +49,11 @@ export interface ToolCatalogEntry {
 
 export class AgentOrchestratorV2 {
   private readonly toolCatalog: ToolCatalogEntry[];
+  private readonly analytics: AgentAnalyticsLogger;
 
   constructor(private pool: Pool, private tools: AgentToolRegistry) {
     this.toolCatalog = this.buildToolCatalog();
+    this.analytics = new AgentAnalyticsLogger(pool);
   }
 
   getToolCatalog(): ToolCatalogEntry[] {
@@ -64,11 +68,16 @@ export class AgentOrchestratorV2 {
     const events: AgentEvent[] = [];
     const intent = this.classifyIntent(message);
 
+    const matchedIntent = intent?.tool ?? null;
+
     if (intent && this.tools[intent.tool]) {
+      const trace = this.analytics.startToolTrace(sessionId, intent.tool, intent.args);
       try {
         const result = await this.tools[intent.tool](intent.args);
+        await this.analytics.finishToolTrace(trace, { status: 'success', output: result });
         events.push(...this.normalizeToolResult(intent.tool, result));
       } catch (error: any) {
+        await this.analytics.finishToolTrace(trace, { status: 'failure', error });
         events.push({
           type: 'text',
           content: this.describeActionOutcome(intent.tool, false, undefined, error),
@@ -76,8 +85,17 @@ export class AgentOrchestratorV2 {
         });
       }
     } else if (this.tools['retrieveDocs']) {
+      const trace = this.analytics.startToolTrace(sessionId, 'retrieveDocs', {
+        query: message,
+        matched_intent: matchedIntent,
+      });
       try {
         const result = await this.tools['retrieveDocs']({ query: message });
+        await this.analytics.finishToolTrace(trace, { status: 'success', output: Array.isArray(result) ? result : [] });
+        await this.analytics.logFallback(sessionId, 'documentation', {
+          reason: intent ? 'tool_not_available' : 'no_intent_match',
+          matched_intent: matchedIntent,
+        });
         events.push({
           type: 'docs',
           info: 'Relevant docs',
@@ -85,6 +103,12 @@ export class AgentOrchestratorV2 {
           timestamp: new Date().toISOString(),
         });
       } catch (error: any) {
+        await this.analytics.finishToolTrace(trace, { status: 'failure', error });
+        await this.analytics.logFallback(sessionId, 'documentation', {
+          reason: 'docs_error',
+          matched_intent: matchedIntent,
+          error: error instanceof Error ? error.message : String(error),
+        });
         events.push({
           type: 'text',
           content: 'Unable to search documentation at the moment.',
@@ -95,7 +119,18 @@ export class AgentOrchestratorV2 {
 
     if (events.length === 0) {
       try {
+        const fallbackTraceId = randomUUID();
         const aiReply = await AIService.sendMessage(message, _context?.userId ?? undefined);
+        await this.analytics.logEvent({
+          source: 'orchestrator',
+          sessionId,
+          eventType: 'fallback',
+          status: 'llm_fallback',
+          traceId: fallbackTraceId,
+          metadata: {
+            reason: 'no_tool_match',
+          },
+        });
         events.push({
           type: 'text',
           content: aiReply,
@@ -103,6 +138,13 @@ export class AgentOrchestratorV2 {
         });
       } catch (error) {
         console.error('agentV2: AIService fallback error', error);
+        await this.analytics.logEvent({
+          source: 'orchestrator',
+          sessionId,
+          eventType: 'fallback',
+          status: 'llm_fallback_error',
+          errorMessage: error instanceof Error ? error.message : String(error),
+        });
         events.push({
           type: 'text',
           content:
@@ -110,6 +152,23 @@ export class AgentOrchestratorV2 {
           timestamp: new Date().toISOString(),
         });
       }
+    }
+
+    if (!intent) {
+      await this.analytics.logRoutingMiss(sessionId, message, {
+        fallback: this.tools['retrieveDocs'] ? 'documentation' : 'llm',
+      });
+    } else if (!this.tools[intent.tool]) {
+      await this.analytics.logEvent({
+        source: 'orchestrator',
+        sessionId,
+        tool: intent.tool,
+        eventType: 'tool_unavailable',
+        status: 'missing',
+        metadata: {
+          reason: 'tool_not_registered',
+        },
+      });
     }
 
     return { events };

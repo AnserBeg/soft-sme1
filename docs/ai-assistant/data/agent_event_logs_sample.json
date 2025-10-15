@@ -1,0 +1,92 @@
+[
+  {
+    "source": "orchestrator",
+    "event_type": "routing_miss",
+    "status": "missed",
+    "tool": null,
+    "error_message": null,
+    "metadata": {"fallback": "documentation", "message_preview": "Need to make a PO for vendor", "message_length": 27},
+    "occurred_at": "2025-03-01T12:00:00Z"
+  },
+  {
+    "source": "orchestrator",
+    "event_type": "routing_miss",
+    "status": "missed",
+    "tool": null,
+    "error_message": null,
+    "metadata": {"fallback": "documentation", "message_preview": "instructions for vendor calls", "message_length": 30},
+    "occurred_at": "2025-03-01T13:00:00Z"
+  },
+  {
+    "source": "orchestrator",
+    "event_type": "routing_miss",
+    "status": "missed",
+    "tool": null,
+    "error_message": null,
+    "metadata": {"fallback": "llm", "message_preview": "hello", "message_length": 5},
+    "occurred_at": "2025-03-02T09:15:00Z"
+  },
+  {
+    "source": "orchestrator",
+    "event_type": "routing_miss",
+    "status": "missed",
+    "tool": null,
+    "error_message": null,
+    "metadata": {"fallback": "documentation", "message_preview": "Need how-to for quote workflow", "message_length": 32},
+    "occurred_at": "2025-03-03T10:30:00Z"
+  },
+  {
+    "source": "orchestrator",
+    "event_type": "routing_miss",
+    "status": "missed",
+    "tool": null,
+    "error_message": null,
+    "metadata": {"fallback": "documentation", "message_preview": "Guide me through inventory audit", "message_length": 33},
+    "occurred_at": "2025-03-04T08:45:00Z"
+  },
+  {
+    "source": "orchestrator",
+    "event_type": "tool_unavailable",
+    "status": "missing",
+    "tool": "updateQuote",
+    "error_message": "Tool not registered",
+    "metadata": {"reason": "tool_not_registered"},
+    "occurred_at": "2025-03-04T09:00:00Z"
+  },
+  {
+    "source": "python_agent",
+    "event_type": "tool_failure",
+    "status": "failed",
+    "tool": "agent_v2",
+    "error_message": "Unable to contact action orchestrator",
+    "metadata": {"stage": "invoke_exception", "conversation_id": "conv-1"},
+    "occurred_at": "2025-03-02T15:10:00Z"
+  },
+  {
+    "source": "python_agent",
+    "event_type": "tool_failure",
+    "status": "failed",
+    "tool": "agent_v2",
+    "error_message": "Action request failed: 500",
+    "metadata": {"stage": "invoke_http_error", "status_code": 500},
+    "occurred_at": "2025-03-03T11:11:00Z"
+  },
+  {
+    "source": "python_agent",
+    "event_type": "tool_failure",
+    "status": "failed",
+    "tool": "documentation_rag",
+    "error_message": "RAG index missing",
+    "metadata": {"stage": "agent_wrapper", "query": "how to close PO"},
+    "occurred_at": "2025-03-04T18:22:00Z"
+  },
+  {
+    "source": "python_agent",
+    "event_type": "tool_failure",
+    "status": "failed",
+    "tool": "inventory_sql",
+    "error_message": "relation \"inventory\" does not exist",
+    "metadata": {"stage": "agent_wrapper"},
+    "occurred_at": "2025-03-05T09:42:00Z"
+  }
+]
