@@ -41,9 +41,9 @@ Deliver incremental streaming responses from the planner/aggregator pipeline to 
 
 ## Rollout Steps
 1. **Backend**
-   - Implement AggregationCoordinator stream hooks and Result Cache writes.
+   - Implement AggregationCoordinator stream hooks and Result Cache writes. ✅ Initial hooks live in `soft-sme-backend/ai_agent/aggregation.py`.
    - Build StreamMux SSE endpoint and cover with unit tests simulating multi-subagent concurrency.
-   - Wire gateway route and authentication middleware.
+   - Wire gateway route and authentication middleware. ✅ `/api/planner/sessions/:sessionId/stream` SSE proxy forwards planner events behind auth.
 2. **Frontend**
    - Add stream hook, UI components, and integration tests verifying incremental rendering.
    - Feature flag behind `AI_ENABLE_AGGREGATOR_STREAMING` to allow staged rollout.

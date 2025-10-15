@@ -125,7 +125,7 @@ AggregationCoordinator
 ## Implementation Tasks
 - [x] Draft architecture/design document (this file).
 - [x] Publish Phase 3 streaming rollout plan (see `reports/phase3-streaming-response-updates.md`).
-- [ ] Implement `AggregationCoordinator` class inside `soft-sme-backend/ai_agent/aggregation.py` with live stream emission hooks.
+- [x] Implement `AggregationCoordinator` class inside `soft-sme-backend/ai_agent/aggregation.py` with live stream emission hooks.
 - [ ] Implement `TelemetryContextStore` using Redis (primary) with in-memory fallback for local dev.
 - [ ] Implement `StreamMux` with SSE first, then extend to WebSocket.
 - [ ] Build adapters for documentation QA, row-selection, action/workflow, and voice subagents.
