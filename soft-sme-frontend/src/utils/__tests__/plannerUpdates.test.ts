@@ -100,4 +100,65 @@ describe('buildPlannerUpdates', () => {
     expect(update.resultKey).toBe('action');
     expect(update.message).toBe('Performed action');
   });
+
+  it('normalizes latest revision updates with stable identifiers', () => {
+    const events: PlannerStreamEvent[] = [
+      baseEvent({
+        sequence: 6,
+        content: {
+          stage: 'workflow',
+          status: 'completed',
+          summary: 'Ready for review',
+        },
+      }),
+      baseEvent({
+        sequence: 7,
+        content: {
+          stage: 'workflow',
+          status: 'completed',
+          summary: 'Ready for review',
+        },
+      }),
+    ];
+
+    const updates = buildPlannerUpdates(events);
+    expect(updates).toHaveLength(1);
+    expect(updates[0]).toMatchObject({
+      id: 'plan-1::workflow::latest',
+      resultKey: 'workflow',
+      summary: 'Ready for review',
+      sequence: 7,
+    });
+  });
+
+  it('preserves latest sequence when replayed events arrive out of order', () => {
+    const replayedEvents: PlannerStreamEvent[] = [
+      baseEvent({
+        sequence: 10,
+        content: {
+          stage: 'documentation',
+          status: 'completed',
+          revision: 3,
+          summary: 'Final answer',
+        },
+      }),
+      baseEvent({
+        sequence: 8,
+        content: {
+          stage: 'documentation',
+          status: 'partial',
+          revision: 3,
+          summary: 'Stale replay',
+        },
+      }),
+    ];
+
+    const updates = buildPlannerUpdates(replayedEvents);
+    expect(updates).toHaveLength(1);
+    expect(updates[0]).toMatchObject({
+      summary: 'Final answer',
+      sequence: 10,
+      revision: 3,
+    });
+  });
 });
