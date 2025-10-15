@@ -2,7 +2,7 @@
 
 This document captures the canonical request and response schema shared between the orchestrator and the
 `planner-service`. The contract is implemented in `soft-sme-backend/planner_service/schemas.py` and versioned via the
-`PlannerMetadata.version` field. The current version is **0.2**.
+`PlannerMetadata.version` field. The current version is **0.3**.
 
 ## Request payload (`POST /plan`)
 
@@ -50,6 +50,7 @@ in `schemas.py`, ensuring downstream services always receive a predictable struc
 | `message` | [`MessageStepPayload`](#messagesteppayload) | Emit a conversational message back to the UI. |
 | `lookup` | [`LookupStepPayload`](#lookupsteppayload) | Perform a knowledge/data lookup whose results can feed later steps. |
 | `action` | [`ActionStepPayload`](#actionsteppayload) | Dispatch a side-effectful workflow that the orchestrator should execute carefully. |
+| `safety` | [`SafetyStepPayload`](#safetysteppayload) | Evaluate safety/policy guardrails before executing subsequent steps. |
 
 #### `ToolStepPayload`
 
@@ -88,12 +89,36 @@ in `schemas.py`, ensuring downstream services always receive a predictable struc
 | `result_key` | string | ❌ | Identifier that later steps can reference. |
 | `conversation_id` | string | ❌ | Conversation identifier for correlating background tasks. |
 
+#### `SafetyStepPayload`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `check_name` | string | ✅ | Identifier of the policy or guardrail routine that ran. |
+| `severity` | enum(`info`, `warn`, `block`) | ❌ | Highest severity detected. Defaults to `info`. |
+| `policy_tags` | array[string] | ❌ | Policy categories or labels that matched (e.g., `privacy`, `abuse`). |
+| `detected_issues` | array[string] | ❌ | Human-readable descriptions of each violation. |
+| `requires_manual_review` | boolean | ❌ | When `true`, orchestrator must escalate to a human reviewer. |
+| `resolution` | string | ❌ | Guidance for resolving or communicating the violation. |
+| `fallback_step` | string | ❌ | Optional plan step ID the orchestrator should run instead of the blocked step. |
+
 ### Example response
 
 ```json
 {
   "session_id": 4815162342,
   "steps": [
+    {
+      "id": "step-0",
+      "type": "safety",
+      "description": "Run baseline policy checks",
+      "payload": {
+        "check_name": "default-policy-screen",
+        "severity": "info",
+        "policy_tags": ["baseline"],
+        "detected_issues": [],
+        "requires_manual_review": false
+      }
+    },
     {
       "id": "step-1",
       "type": "tool",
@@ -132,11 +157,11 @@ in `schemas.py`, ensuring downstream services always receive a predictable struc
       }
     }
   ],
-    "metadata": {
-      "model": "planner-gpt-2024-05",
-      "rationale": "Tool-first plan because quote context exists in CRM",
-      "version": "0.2"
-    }
+  "metadata": {
+    "model": "planner-gpt-2024-05",
+    "rationale": "Tool-first plan because quote context exists in CRM",
+    "version": "0.3"
+  }
 }
 ```
 
