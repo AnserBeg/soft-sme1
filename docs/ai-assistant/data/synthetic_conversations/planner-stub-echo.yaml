@@ -1,0 +1,29 @@
+title: planner-stub-echo
+phase: planner
+criticality: low
+regression_type: core
+context:
+  session_id: 42
+  company_id: 92
+  user_id: 731
+  locale: en-US
+turns:
+  - actor: user
+    content: "Can you confirm the planner stub is alive?"
+  - actor: planner
+    expected_plan:
+      steps:
+        - type: message
+          description: "Planner service stub – replace with real planning logic."
+          payload:
+            channel: assistant
+            content: "Planner service is connected, but planning logic has not been implemented yet. Echoing the latest utterance for observability."
+            summary: "Planner stub reached"
+            metadata:
+              echo: "{{request.message}}"
+assertions:
+  latency_budget_ms: 500
+  required_steps:
+    - message
+  telemetry_flags:
+    - planner.plan.generated
