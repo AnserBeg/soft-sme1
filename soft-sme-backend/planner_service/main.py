@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+from time import perf_counter
 from uuid import uuid4
 
 from fastapi import FastAPI
@@ -14,6 +16,10 @@ from .schemas import (
     PlannerStep,
     PlannerStepType,
 )
+from .telemetry import telemetry
+
+
+logger = logging.getLogger("planner_service")
 
 app = FastAPI(
     title="Planner Service",
@@ -37,26 +43,64 @@ def healthcheck() -> dict[str, str]:
 def generate_plan(request: PlannerRequest) -> PlannerResponse:
     """Generate a placeholder plan for the provided conversation input."""
 
-    placeholder_step = PlannerStep(
-        id=str(uuid4()),
-        type=PlannerStepType.MESSAGE,
-        description="Planner service stub – replace with real planning logic.",
-        payload=MessageStepPayload(
-            channel="assistant",
-            content=(
-                "Planner service is connected, but planning logic has not been implemented yet. "
-                "Echoing the latest utterance for observability."
+    trace_id = str(uuid4())
+    start_time = perf_counter()
+
+    telemetry.plan_request(
+        trace_id=trace_id,
+        session_id=request.session_id,
+        message=request.message,
+        context=request.context.model_dump(exclude_none=True),
+    )
+
+    try:
+        placeholder_step = PlannerStep(
+            id=str(uuid4()),
+            type=PlannerStepType.MESSAGE,
+            description="Planner service stub – replace with real planning logic.",
+            payload=MessageStepPayload(
+                channel="assistant",
+                content=(
+                    "Planner service is connected, but planning logic has not been implemented yet. "
+                    "Echoing the latest utterance for observability."
+                ),
+                summary="Planner stub reached",
+                metadata={"echo": request.message},
             ),
-            summary="Planner stub reached",
-            metadata={"echo": request.message},
-        ),
-    )
+        )
 
-    response_metadata = PlannerMetadata(
-        model="stub", rationale="Planner skeleton ready for schema contract iteration."
-    )
+        response_metadata = PlannerMetadata(
+            model="stub", rationale="Planner skeleton ready for schema contract iteration."
+        )
 
-    return PlannerResponse(session_id=request.session_id, steps=[placeholder_step], metadata=response_metadata)
+        response = PlannerResponse(
+            session_id=request.session_id,
+            steps=[placeholder_step],
+            metadata=response_metadata,
+        )
+
+        latency_ms = int((perf_counter() - start_time) * 1000)
+
+        telemetry.plan_success(
+            trace_id=trace_id,
+            session_id=request.session_id,
+            latency_ms=latency_ms,
+            step_types=[step.type.value for step in response.steps],
+            planner_version=response.metadata.version,
+            planner_model=response.metadata.model,
+        )
+
+        return response
+    except Exception as exc:  # pragma: no cover - defensive logging
+        latency_ms = int((perf_counter() - start_time) * 1000)
+        logger.exception("Planner request failed: session_id=%s", request.session_id)
+        telemetry.plan_failure(
+            trace_id=trace_id,
+            session_id=request.session_id,
+            latency_ms=latency_ms,
+            error=str(exc),
+        )
+        raise
 
 
 __all__ = ["app", "generate_plan"]

@@ -27,3 +27,11 @@ The `/plan` endpoint currently returns a placeholder plan so that orchestrator i
 the actual planning logic and telemetry hooks are implemented in subsequent tasks. Refer to
 [`docs/ai-assistant/planner-schema-contract.md`](../../docs/ai-assistant/planner-schema-contract.md) for the
 formal request/response contract, including the structured payloads emitted for each planner step type.
+
+## Telemetry
+
+Planner requests automatically emit JSON-formatted telemetry events (request received, plan generated, plan
+failed) to the service logger. These events include a trace identifier, session ID, latency metrics, and plan
+metadata so downstream collectors can ship them to the existing analytics pipeline. Configure the deployment's
+logging sink (e.g., Datadog, ELK) to capture log lines from the `planner_service.telemetry` logger in order to
+visualize planner health and investigate failures.
