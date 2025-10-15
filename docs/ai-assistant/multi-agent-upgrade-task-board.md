@@ -12,7 +12,7 @@
 - [x] Planner telemetry
 
 ## Phase 2 – Subagent Refactors
-- [ ] Documentation QA subagent
+- [x] Documentation QA subagent
   - [x] Architecture/contract drafted
   - [x] Execution scaffold module created
   - [x] Planner integration & endpoint wiring
@@ -38,4 +38,4 @@
 - [ ] Security review
 
 ### Recommended next task
-Focus on **Phase 2 – Documentation QA subagent** follow-ups: add targeted unit tests and a no-answer escalation runbook to harden the newly wired endpoint before onboarding additional subagents.
+Shift to **Phase 2 – Row-selection subagent** enablement: define the table-selection heuristics, create an execution scaffold, and add planner integration tests so structured queries can move off the orchestrator fallback path.
