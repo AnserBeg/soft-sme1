@@ -21,6 +21,7 @@ import ChatInput from './ChatInput';
 import { useChat } from '../hooks/useChat';
 import { SxProps, Theme } from '@mui/material/styles';
 import PlannerProgressPanel from './PlannerProgressPanel';
+import PlannerUpdateList from './planner/PlannerUpdateList';
 import usePlannerStream from '../hooks/usePlannerStream';
 import { isPlannerStreamingEnabled } from '../utils/featureFlags';
 
@@ -205,6 +206,13 @@ export const ChatBoard: React.FC<ChatBoardProps> = ({ variant = 'drawer', onClos
             replayComplete={streamState.replayComplete}
             lastHeartbeatAt={streamState.lastHeartbeatAt}
             isTerminal={streamState.isTerminal}
+          />
+        )}
+        {showPlannerPanel && (
+          <PlannerUpdateList
+            sessionId={plannerStream?.sessionId}
+            planStepId={plannerStream?.planStepId}
+            events={streamState.events}
           />
         )}
         {messages.length === 0 ? (

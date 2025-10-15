@@ -9,18 +9,15 @@ import {
   Typography,
   ChipProps,
 } from '@mui/material';
-import CheckCircleIcon from '@mui/icons-material/CheckCircleOutline';
-import ErrorIcon from '@mui/icons-material/ErrorOutline';
-import HourglassIcon from '@mui/icons-material/HourglassEmpty';
-import PendingIcon from '@mui/icons-material/Pending';
-import WarningIcon from '@mui/icons-material/WarningAmber';
-import FiberManualRecordIcon from '@mui/icons-material/FiberManualRecord';
-import AutorenewIcon from '@mui/icons-material/Autorenew';
 import dayjs from 'dayjs';
 import {
   PlannerStreamConnectionState,
   PlannerSubagentState,
 } from '../hooks/usePlannerStream';
+import {
+  formatPlannerStageLabel,
+  resolvePlannerStatusVisual,
+} from '../utils/plannerStatus';
 
 interface PlannerProgressPanelProps {
   subagents: PlannerSubagentState[];
@@ -40,45 +37,6 @@ const connectionChip: Record<PlannerStreamConnectionState, { label: string; colo
   reconnecting: { label: 'Reconnecting…', color: 'warning' },
   closed: { label: 'Closed', color: 'default' },
   error: { label: 'Error', color: 'error' },
-};
-
-const statusIconFor = (status: string | undefined) => {
-  const normalized = (status || '').toLowerCase();
-  switch (normalized) {
-    case 'pending':
-      return { icon: <PendingIcon fontSize="small" />, color: 'default' as const, label: 'Pending' };
-    case 'in_progress':
-    case 'running':
-      return { icon: <AutorenewIcon fontSize="small" />, color: 'info' as const, label: 'In progress' };
-    case 'partial':
-    case 'partial_success':
-      return { icon: <WarningIcon fontSize="small" />, color: 'warning' as const, label: 'Partial' };
-    case 'completed':
-    case 'success':
-      return { icon: <CheckCircleIcon fontSize="small" />, color: 'success' as const, label: 'Completed' };
-    case 'timeout':
-      return { icon: <HourglassIcon fontSize="small" />, color: 'warning' as const, label: 'Timed out' };
-    case 'error':
-    case 'failed':
-    case 'failure':
-      return { icon: <ErrorIcon fontSize="small" />, color: 'error' as const, label: 'Error' };
-    case 'degraded':
-      return { icon: <WarningIcon fontSize="small" />, color: 'warning' as const, label: 'Degraded' };
-    case 'cancelled':
-    case 'canceled':
-      return { icon: <WarningIcon fontSize="small" />, color: 'warning' as const, label: 'Cancelled' };
-    default:
-      return { icon: <FiberManualRecordIcon fontSize="small" />, color: 'default' as const, label: status || 'Unknown' };
-  }
-};
-
-const formatStageLabel = (value: string): string => {
-  if (!value) {
-    return 'Subagent';
-  }
-  return value
-    .replace(/[_-]+/g, ' ')
-    .replace(/\b\w/g, (char) => char.toUpperCase());
 };
 
 const formatTimestamp = (value?: string | null): string | null => {
@@ -106,7 +64,7 @@ const PlannerProgressPanel: React.FC<PlannerProgressPanelProps> = ({
   const hasSubagents = subagents.length > 0;
   const heartbeatLabel = formatTimestamp(lastHeartbeatAt);
 
-  const overallStatus = stepStatus ? statusIconFor(stepStatus) : null;
+  const overallStatus = stepStatus ? resolvePlannerStatusVisual(stepStatus) : null;
 
   return (
     <Paper
@@ -149,7 +107,7 @@ const PlannerProgressPanel: React.FC<PlannerProgressPanelProps> = ({
         <Stack spacing={1.25}>
           {hasSubagents ? (
             subagents.map((subagent) => {
-              const details = statusIconFor(subagent.status);
+              const details = resolvePlannerStatusVisual(subagent.status);
               return (
                 <Paper
                   key={subagent.key}
@@ -182,7 +140,7 @@ const PlannerProgressPanel: React.FC<PlannerProgressPanelProps> = ({
                       </Box>
                       <Box>
                         <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                          {formatStageLabel(subagent.key)}
+                          {formatPlannerStageLabel(subagent.key)}
                         </Typography>
                         <Typography variant="caption" color="text.secondary">
                           {details.label}
