@@ -16,7 +16,10 @@
   - [x] Architecture/contract drafted
   - [x] Execution scaffold module created
   - [x] Planner integration & endpoint wiring
-- [ ] Row-selection subagent
+- [x] Row-selection subagent
+  - [x] Table-selection heuristics codified
+  - [x] Execution scaffold with analytics instrumentation
+  - [x] Planner integration tests covering lookup → SQL routing
 - [ ] Action/workflow subagent
 - [ ] Voice/call subagent
 - [ ] Safety/policy subagent (optional)
@@ -38,4 +41,4 @@
 - [ ] Security review
 
 ### Recommended next task
-Shift to **Phase 2 – Row-selection subagent** enablement: define the table-selection heuristics, create an execution scaffold, and add planner integration tests so structured queries can move off the orchestrator fallback path.
+Begin **Phase 2 – Action/workflow subagent** design: outline the action execution contract, stand up a stub executor, and draft planner tests that validate routing for side-effectful workflows before turning on production flags.

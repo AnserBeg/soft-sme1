@@ -15,17 +15,27 @@ import time
 import uuid
 from dataclasses import asdict
 from datetime import datetime
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional, Sequence, Tuple
 from langchain_core.messages import HumanMessage, AIMessage
 
-from rag_tool import DocumentationRAGTool
-from sql_tool import InventorySQLTool
-from action_tool import AgentActionTool
-from conversation_manager import ConversationManager
-from task_queue import TaskQueue
-from analytics_sink import AnalyticsSink
-from planner_client import PlannerClient, PlannerServiceError
-from subagents import DocumentationQASubagent
+try:  # pragma: no cover - support direct execution and package import
+    from .rag_tool import DocumentationRAGTool
+    from .sql_tool import InventorySQLTool
+    from .action_tool import AgentActionTool
+    from .conversation_manager import ConversationManager
+    from .task_queue import TaskQueue
+    from .analytics_sink import AnalyticsSink
+    from .planner_client import PlannerClient, PlannerServiceError
+    from .subagents import DocumentationQASubagent, RowSelectionSubagent
+except ImportError:  # pragma: no cover - fallback when executed as script
+    from rag_tool import DocumentationRAGTool
+    from sql_tool import InventorySQLTool
+    from action_tool import AgentActionTool
+    from conversation_manager import ConversationManager
+    from task_queue import TaskQueue
+    from analytics_sink import AnalyticsSink
+    from planner_client import PlannerClient, PlannerServiceError
+    from subagents import DocumentationQASubagent, RowSelectionSubagent
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +61,11 @@ class AivenAgent:
             in {"1", "true", "yes", "on"}
         )
         self.documentation_qa_subagent: Optional[DocumentationQASubagent] = None
+        self.row_selection_subagent_enabled = (
+            os.getenv("AI_ENABLE_ROW_SELECTION_SUBAGENT", "false").strip().lower()
+            in {"1", "true", "yes", "on"}
+        )
+        self.row_selection_subagent: Optional[RowSelectionSubagent] = None
         
         # Statistics
         self.stats = {
@@ -160,6 +175,7 @@ class AivenAgent:
         """Instantiate planner-integrated subagents under feature flags."""
 
         self.documentation_qa_subagent = None
+        self.row_selection_subagent = None
 
         if not self.documentation_subagent_enabled:
             logger.info("Documentation QA subagent disabled via feature flag")
@@ -187,6 +203,14 @@ class AivenAgent:
             analytics_sink=self.analytics_sink,
         )
         logger.info("Documentation QA subagent initialized")
+
+        if self.row_selection_subagent_enabled:
+            self.row_selection_subagent = RowSelectionSubagent(
+                analytics_sink=self.analytics_sink,
+            )
+            logger.info("Row selection subagent initialized")
+        else:
+            logger.info("Row selection subagent disabled via feature flag")
 
     def _extract_follow_up_instructions(self, raw_message: str) -> Tuple[str, List[Dict[str, Any]]]:
         """Parse structured follow-up task instructions embedded in the user message."""
@@ -367,6 +391,46 @@ class AivenAgent:
                 tool_usage_count += len(documentation_results)
                 tools_needed = [tool for tool in tools_needed if tool != "rag"]
 
+            row_selection_results: List[Dict[str, Any]] = []
+            row_selection_candidates: List[str] = []
+            if planner_plan and self.row_selection_subagent:
+                row_selection_results = await self._execute_row_selection_steps(
+                    planner_plan,
+                    conversation_history=conversation_history,
+                    session_id=planner_session_id,
+                )
+
+            if row_selection_results:
+                gathered_info["row_selection_subagent"] = row_selection_results
+                successful_row_selection = next(
+                    (
+                        result
+                        for result in row_selection_results
+                        if result.get("status") == "success"
+                        and isinstance(result.get("table_candidates"), list)
+                        and result.get("table_candidates")
+                    ),
+                    None,
+                )
+                if successful_row_selection:
+                    row_selection_candidates = [
+                        str(candidate)
+                        for candidate in successful_row_selection.get("table_candidates", [])
+                        if isinstance(candidate, str) and candidate
+                    ]
+                    gathered_info["row_selection_summary"] = {
+                        "table_candidates": row_selection_candidates,
+                        "reasoning": successful_row_selection.get("reasoning"),
+                    }
+
+                non_error_results = [
+                    result for result in row_selection_results if result.get("status") != "error"
+                ]
+                tool_usage_count += len(non_error_results)
+                tools_needed = [
+                    tool for tool in tools_needed if tool != "row_selection_subagent"
+                ]
+
             # Use Action tool if needed
             if "action" in tools_needed and self.action_tool and "actions" not in gathered_info:
                 try:
@@ -441,7 +505,11 @@ class AivenAgent:
             if "sql" in tools_needed and "database_data" not in gathered_info:
                 try:
                     # Generate SQL query based on the message and conversation context
-                    sql_query = await self._generate_sql_query(prompt_text, conversation_history)
+                    sql_query = await self._generate_sql_query(
+                        prompt_text,
+                        conversation_history,
+                        table_hints=row_selection_candidates,
+                    )
                     if sql_query:
                         # Add timeout for SQL queries
                         import asyncio
@@ -659,17 +727,31 @@ Provide a helpful, complete answer."""
                 continue
 
             step_type = (step.get("type") or "").lower()
-            if step_type != "tool":
-                continue
-
             payload = step.get("payload") or {}
             if not isinstance(payload, dict):
+                payload = {}
+
+            if step_type == "tool":
+                tool_name = (payload.get("tool_name") or "").lower()
+                mapped = self._map_tool_name(tool_name)
+                if mapped:
+                    suggested.append(mapped)
                 continue
 
-            tool_name = (payload.get("tool_name") or "").lower()
-            mapped = self._map_tool_name(tool_name)
-            if mapped:
-                suggested.append(mapped)
+            if step_type == "lookup":
+                target = (payload.get("target") or "").lower()
+                if target in {"database", "db"}:
+                    filters = payload.get("filters") or {}
+                    if isinstance(filters, dict):
+                        intent = (
+                            (filters.get("intent")
+                            or filters.get("type")
+                            or filters.get("lookup_type")
+                            or "")
+                        ).lower()
+                        if intent in {"row_selection", "table_selection", "sql_row_selection"}:
+                            suggested.append("sql")
+                    suggested.append("row_selection_subagent")
 
         return suggested
 
@@ -733,6 +815,49 @@ Provide a helpful, complete answer."""
                 question=question,
                 conversation_tail=conversation_tail,
                 focus_hints=focus_hints,
+                planner_payload=planner_payload,
+                session_id=session_id,
+            )
+
+            results.append(asdict(result))
+
+        return results
+
+    async def _execute_row_selection_steps(
+        self,
+        plan: Dict[str, Any],
+        *,
+        conversation_history: Optional[List[Dict[str, Any]]],
+        session_id: Optional[int],
+    ) -> List[Dict[str, Any]]:
+        del conversation_history  # conversation tail not used for row selection yet
+
+        if not self.row_selection_subagent:
+            return []
+
+        steps = plan.get("steps", []) if isinstance(plan, dict) else []
+        if not steps:
+            return []
+
+        results: List[Dict[str, Any]] = []
+        for step in steps:
+            if not isinstance(step, dict) or not self.row_selection_subagent.supports_step(step):
+                continue
+
+            payload = step.get("payload") or {}
+            if not isinstance(payload, dict):
+                payload = {}
+
+            filters = payload.get("filters") or {}
+            if not isinstance(filters, dict):
+                filters = {}
+
+            planner_payload = dict(payload)
+
+            result = await self.row_selection_subagent.execute(
+                step_id=str(step.get("id") or "row_selection"),
+                question=str(payload.get("query") or ""),
+                filters=filters,
                 planner_payload=planner_payload,
                 session_id=session_id,
             )
@@ -929,16 +1054,27 @@ Provide a helpful, complete answer."""
 
         return tools
     
-    async def _generate_sql_query(self, message: str, conversation_history: List[Dict] = None) -> str:
+    async def _generate_sql_query(
+        self,
+        message: str,
+        conversation_history: List[Dict] = None,
+        *,
+        table_hints: Optional[Sequence[str]] = None,
+    ) -> str:
         """Generate SQL query based on message content and conversation context"""
         try:
             # Get schema info first
-            schema_query = f"database schema tables columns structure for query: {message}"
+            hint_fragment = ""
+            if table_hints:
+                hint_fragment = " focusing on tables: " + ", ".join(dict.fromkeys(table_hints))
+            schema_query = (
+                f"database schema tables columns structure for query: {message}{hint_fragment}"
+            )
             if self.documentation_enabled and self.rag_tool:
                 schema_info = await self.rag_tool.ainvoke(schema_query)
             else:
                 schema_info = "Documentation lookup disabled."
-            
+
             # Build conversation context for SQL generation
             conversation_context = ""
             if conversation_history and len(conversation_history) > 0:
@@ -951,12 +1087,17 @@ Provide a helpful, complete answer."""
                         conversation_context += f"Assistant: {msg.get('text', '')}\n"
             
             # Generate SQL
+            table_hint_section = ""
+            if table_hints:
+                formatted_hints = "\n".join(f"- {table}" for table in dict.fromkeys(table_hints))
+                table_hint_section = f"\n\n**TABLE HINTS FROM PLANNER:**\n{formatted_hints}"
+
             sql_prompt = f"""You are an expert SQL generator for the Aiven inventory management system.
 
 **USER QUESTION:** {message}{conversation_context}
 
 **DATABASE SCHEMA INFORMATION:**
-{schema_info}
+{schema_info}{table_hint_section}
 
 **THINKING PROCESS:**
 1. **ANALYZE** what data the user needs (consider conversation context)
