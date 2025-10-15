@@ -30,6 +30,7 @@ try:  # pragma: no cover - support direct execution and package import
         ActionWorkflowSubagent,
         DocumentationQASubagent,
         RowSelectionSubagent,
+        VoiceCallSubagent,
     )
 except ImportError:  # pragma: no cover - fallback when executed as script
     from rag_tool import DocumentationRAGTool
@@ -43,6 +44,7 @@ except ImportError:  # pragma: no cover - fallback when executed as script
         ActionWorkflowSubagent,
         DocumentationQASubagent,
         RowSelectionSubagent,
+        VoiceCallSubagent,
     )
 
 logger = logging.getLogger(__name__)
@@ -79,6 +81,11 @@ class AivenAgent:
             in {"1", "true", "yes", "on"}
         )
         self.action_workflow_subagent: Optional[ActionWorkflowSubagent] = None
+        self.voice_call_subagent_enabled = (
+            os.getenv("AI_ENABLE_VOICE_CALL_SUBAGENT", "false").strip().lower()
+            in {"1", "true", "yes", "on"}
+        )
+        self.voice_call_subagent: Optional[VoiceCallSubagent] = None
         
         # Statistics
         self.stats = {
@@ -190,6 +197,7 @@ class AivenAgent:
         self.documentation_qa_subagent = None
         self.row_selection_subagent = None
         self.action_workflow_subagent = None
+        self.voice_call_subagent = None
 
         if self.documentation_subagent_enabled:
             if not self.documentation_enabled:
@@ -229,6 +237,17 @@ class AivenAgent:
             logger.info("Action workflow subagent initialized")
         else:
             logger.info("Action workflow subagent disabled via feature flag")
+
+        if self.voice_call_subagent_enabled:
+            try:
+                self.voice_call_subagent = VoiceCallSubagent(
+                    analytics_sink=self.analytics_sink,
+                )
+                logger.info("Voice call subagent initialized")
+            except Exception as exc:  # pylint: disable=broad-except
+                logger.exception("Voice call subagent initialization failed: %s", exc)
+        else:
+            logger.info("Voice call subagent disabled via feature flag")
 
     def _extract_follow_up_instructions(self, raw_message: str) -> Tuple[str, List[Dict[str, Any]]]:
         """Parse structured follow-up task instructions embedded in the user message."""
@@ -483,6 +502,29 @@ class AivenAgent:
                         }
                         gathered_info["actions"] = actions_summary
                 tools_needed = [tool for tool in tools_needed if tool != "action"]
+
+            voice_call_results: List[Dict[str, Any]] = []
+            if planner_plan and self.voice_call_subagent:
+                voice_call_results = await self._execute_voice_call_steps(
+                    planner_plan,
+                    conversation_id=conversation_id,
+                    session_id=planner_session_id,
+                )
+
+            if voice_call_results:
+                gathered_info["voice_call_subagent"] = voice_call_results
+                successful_voice_calls = [
+                    result
+                    for result in voice_call_results
+                    if result.get("status") not in {"error"}
+                ]
+                if successful_voice_calls:
+                    tool_usage_count += len(successful_voice_calls)
+                tools_needed = [
+                    tool
+                    for tool in tools_needed
+                    if tool not in {"voice_call_subagent", "voice_call"}
+                ]
 
             # Use Action tool if needed
             if "action" in tools_needed and self.action_tool and "actions" not in gathered_info:
@@ -827,6 +869,8 @@ Provide a helpful, complete answer."""
             return "sql"
         if any(keyword in tool_name for keyword in ("action", "workflow", "task")):
             return "action"
+        if "voice" in tool_name and "call" in tool_name:
+            return "voice_call_subagent"
 
         return None
 
@@ -978,6 +1022,94 @@ Provide a helpful, complete answer."""
             )
 
             results.append(asdict(result))
+
+        return results
+
+    async def _execute_voice_call_steps(
+        self,
+        plan: Dict[str, Any],
+        *,
+        conversation_id: Optional[str],
+        session_id: Optional[int],
+    ) -> List[Dict[str, Any]]:
+        if not self.voice_call_subagent:
+            return []
+
+        steps = plan.get("steps", []) if isinstance(plan, dict) else []
+        if not steps:
+            return []
+
+        results: List[Dict[str, Any]] = []
+        for step in steps:
+            if not isinstance(step, dict) or not self.voice_call_subagent.supports_step(step):
+                continue
+
+            payload = step.get("payload") or {}
+            if not isinstance(payload, dict):
+                payload = {}
+
+            arguments = payload.get("arguments") or {}
+            if not isinstance(arguments, dict):
+                arguments = {}
+
+            purchase_id = (
+                arguments.get("purchaseId")
+                or payload.get("purchase_id")
+                or payload.get("purchaseId")
+            )
+            agent_session_hint = (
+                arguments.get("agentSessionId")
+                or payload.get("agent_session_id")
+                or payload.get("agentSessionId")
+                or session_id
+            )
+            goals_raw = arguments.get("goals") or payload.get("goals")
+            if isinstance(goals_raw, list):
+                goals_normalized = goals_raw
+            elif isinstance(goals_raw, (tuple, set)):
+                goals_normalized = list(goals_raw)
+            elif goals_raw:
+                goals_normalized = [goals_raw]
+            else:
+                goals_normalized = None
+
+            metadata_candidate = arguments.get("metadata") or payload.get("metadata")
+            metadata_normalized = metadata_candidate if isinstance(metadata_candidate, dict) else None
+            callbacks = arguments.get("callbacks") or payload.get("callbacks")
+
+            planner_payload = dict(payload)
+            planner_payload.pop("arguments", None)
+            if callbacks is not None:
+                planner_payload["callbacks"] = callbacks
+
+            step_identifier = str(
+                step.get("id")
+                or payload.get("tool_name")
+                or payload.get("name")
+                or "voice_vendor_call"
+            )
+
+            try:
+                result = await self.voice_call_subagent.execute(
+                    step_id=step_identifier,
+                    purchase_id=purchase_id,
+                    agent_session_id=agent_session_hint,
+                    goals=goals_normalized,
+                    metadata=metadata_normalized,
+                    planner_payload=planner_payload,
+                    conversation_id=conversation_id,
+                    session_id=session_id,
+                )
+                results.append(asdict(result))
+            except Exception as exc:  # pylint: disable=broad-except
+                logger.exception("Voice call subagent step failed: %s", exc)
+                results.append(
+                    {
+                        "step_id": step_identifier,
+                        "status": "error",
+                        "error": str(exc),
+                    }
+                )
 
         return results
 

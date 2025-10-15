@@ -3,6 +3,7 @@
 from .action_workflow import ActionWorkflowResult, ActionWorkflowSubagent
 from .documentation_qa import DocumentationQASubagent, DocumentationQAResult
 from .row_selection import RowSelectionResult, RowSelectionSubagent
+from .voice_call import VoiceCallResult, VoiceCallSubagent
 
 __all__ = [
     "ActionWorkflowResult",
@@ -11,4 +12,6 @@ __all__ = [
     "DocumentationQAResult",
     "RowSelectionResult",
     "RowSelectionSubagent",
+    "VoiceCallResult",
+    "VoiceCallSubagent",
 ]
