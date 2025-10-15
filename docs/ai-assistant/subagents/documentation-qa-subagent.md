@@ -79,10 +79,14 @@
 ## Implementation Tasks
 - [x] Draft architecture and contracts (this document).
 - [x] Create `ai_agent/subagents/__init__.py` namespace and `documentation_qa.py` implementation scaffold.
-- [ ] Wire the subagent into `AivenAgent` so planner-directed steps call it (feature flag for gradual rollout).
-- [ ] Expose FastAPI endpoint for manual invocation/testing (`POST /subagents/documentation-qa`).
+- [x] Wire the subagent into `AivenAgent` so planner-directed steps call it (feature flag for gradual rollout).
+- [x] Expose FastAPI endpoint for manual invocation/testing (`POST /subagents/documentation-qa`).
 - [ ] Add unit tests covering retrieval thresholds and failure modes.
 - [ ] Document runbook for no-answer escalation.
+
+**Feature flag & verification**
+- Enable planner-driven execution with `AI_ENABLE_DOCUMENTATION_QA_SUBAGENT=true` (requires documentation ingestion + Gemini credentials).
+- Hit `POST /subagents/documentation-qa` with a question payload to exercise the subagent directly; the response mirrors the planner-facing contract, including citations and metrics.
 
 ## Open Questions
 - Should retrieval leverage existing Chroma `result` metadata or new chunk schema with explicit headings?
@@ -95,4 +99,4 @@
 - Gemini model credentials (already required by `AivenAgent`).
 
 ## Next Checkpoint
-Once the implementation scaffold and feature flag are merged we can mark the Phase 2 `Documentation QA subagent` task as complete and start on structured evaluation scenarios.
+With planner wiring live the next milestone is automated coverage: add unit tests for retrieval thresholds and draft the escalation runbook before expanding to other subagents.

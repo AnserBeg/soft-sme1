@@ -15,7 +15,7 @@
 - [ ] Documentation QA subagent
   - [x] Architecture/contract drafted
   - [x] Execution scaffold module created
-  - [ ] Planner integration & endpoint wiring
+  - [x] Planner integration & endpoint wiring
 - [ ] Row-selection subagent
 - [ ] Action/workflow subagent
 - [ ] Voice/call subagent
@@ -38,4 +38,4 @@
 - [ ] Security review
 
 ### Recommended next task
-Shift to **Phase 2 – Documentation QA subagent** to start building out the first specialized worker now that planner telemetry is in place for observability.
+Focus on **Phase 2 – Documentation QA subagent** follow-ups: add targeted unit tests and a no-answer escalation runbook to harden the newly wired endpoint before onboarding additional subagents.

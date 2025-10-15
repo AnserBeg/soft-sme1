@@ -10,10 +10,12 @@ This server runs as a child process of the main Node.js backend.
 import os
 import sys
 import logging
+import uuid
+from dataclasses import asdict
 from typing import Dict, Any, List, Optional
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import uvicorn
 from dotenv import load_dotenv
 
@@ -70,6 +72,29 @@ class ChatResponse(BaseModel):
     action_message: Optional[str] = None
     action_catalog: list[Dict[str, Any]] | None = None
     planner_plan: Optional[Dict[str, Any]] = None
+    documentation_subagent: Optional[List[Dict[str, Any]]] = None
+
+class DocumentationQARequest(BaseModel):
+    question: str
+    step_id: Optional[str] = None
+    conversation_id: Optional[str] = None
+    user_id: Optional[int] = None
+    session_id: Optional[int] = None
+    focus_hints: Optional[Dict[str, Any]] = None
+    conversation_tail: Optional[List[Dict[str, str]]] = None
+    conversation_history: Optional[List[Dict[str, Any]]] = None
+    planner_payload: Optional[Dict[str, Any]] = None
+
+
+class DocumentationQAResponse(BaseModel):
+    step_id: str
+    status: str
+    answer: Optional[str] = None
+    citations: List[Dict[str, Any]] = Field(default_factory=list)
+    reasoning: Optional[str] = None
+    metrics: Dict[str, Any]
+    result_key: Optional[str] = None
+    error: Optional[str] = None
 
 class InitializeResponse(BaseModel):
     status: str
@@ -214,6 +239,7 @@ async def chat(request: ChatRequest):
                     "confidence": response["confidence"],
                     "tool_used": response["tool_used"],
                     "planner_plan": response.get("planner_plan"),
+                    "documentation_subagent": response.get("documentation_subagent"),
                 }
             )
 
@@ -229,6 +255,7 @@ async def chat(request: ChatRequest):
                 "actions": response.get("actions", []),
                 "action_message": response.get("action_message"),
                 "planner_plan": response.get("planner_plan"),
+                "documentation_subagent": response.get("documentation_subagent"),
             }
         )
 
@@ -242,11 +269,60 @@ async def chat(request: ChatRequest):
             action_message=response.get("action_message"),
             action_catalog=response.get("action_catalog", []),
             planner_plan=response.get("planner_plan"),
+            documentation_subagent=response.get("documentation_subagent"),
         )
-        
+
     except Exception as e:
         logger.error(f"Chat processing failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/subagents/documentation-qa", response_model=DocumentationQAResponse)
+async def invoke_documentation_qa(request: DocumentationQARequest):
+    """Invoke the documentation QA subagent directly for manual testing."""
+
+    if not ai_agent or not ai_agent.documentation_qa_subagent:
+        raise HTTPException(status_code=503, detail="Documentation QA subagent is not available")
+
+    history = request.conversation_history or []
+    if not history and request.conversation_id:
+        try:
+            history = conversation_manager.get_conversation_history(request.conversation_id)
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.warning("Failed to load conversation history for documentation QA endpoint: %s", exc)
+            history = []
+
+    conversation_tail = request.conversation_tail
+    if conversation_tail is None:
+        conversation_tail = ai_agent._conversation_tail_from_history(history)  # type: ignore[attr-defined]
+
+    focus_hints = request.focus_hints or {}
+    if not isinstance(focus_hints, dict):
+        focus_hints = {}
+
+    planner_payload = request.planner_payload or {}
+    if not isinstance(planner_payload, dict):
+        planner_payload = {}
+
+    step_id = request.step_id or str(uuid.uuid4())
+    session_id = request.session_id
+    if session_id is None:
+        session_id = ai_agent._resolve_session_id(  # type: ignore[attr-defined]
+            request.question,
+            request.conversation_id,
+            request.user_id,
+        )
+
+    result = await ai_agent.documentation_qa_subagent.execute(
+        step_id=step_id,
+        question=request.question,
+        conversation_tail=conversation_tail,
+        focus_hints=focus_hints,
+        planner_payload=planner_payload,
+        session_id=session_id,
+    )
+
+    return DocumentationQAResponse(**asdict(result))
 
 @app.get("/conversation/{conversation_id}")
 async def get_conversation(conversation_id: str):

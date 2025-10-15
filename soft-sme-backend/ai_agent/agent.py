@@ -13,6 +13,7 @@ import os
 import logging
 import time
 import uuid
+from dataclasses import asdict
 from datetime import datetime
 from typing import Dict, Any, List, Optional, Tuple
 from langchain_core.messages import HumanMessage, AIMessage
@@ -24,6 +25,7 @@ from conversation_manager import ConversationManager
 from task_queue import TaskQueue
 from analytics_sink import AnalyticsSink
 from planner_client import PlannerClient, PlannerServiceError
+from subagents import DocumentationQASubagent
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +46,11 @@ class AivenAgent:
         self.analytics_sink = AnalyticsSink()
         self.planner_client = PlannerClient()
         self.default_locale = self._sanitize_env(os.getenv("AI_AGENT_DEFAULT_LOCALE"))
+        self.documentation_subagent_enabled = (
+            os.getenv("AI_ENABLE_DOCUMENTATION_QA_SUBAGENT", "false").strip().lower()
+            in {"1", "true", "yes", "on"}
+        )
+        self.documentation_qa_subagent: Optional[DocumentationQASubagent] = None
         
         # Statistics
         self.stats = {
@@ -99,7 +106,8 @@ class AivenAgent:
             
             # Initialize tools
             await self._initialize_tools()
-            
+            self._initialize_subagents()
+
             self.initialized = True
             logger.info("AI Agent initialized successfully")
             
@@ -147,6 +155,38 @@ class AivenAgent:
             raise
 
         # Note: Removed old LangGraph workflow methods as we're now using LLM-based routing
+
+    def _initialize_subagents(self) -> None:
+        """Instantiate planner-integrated subagents under feature flags."""
+
+        self.documentation_qa_subagent = None
+
+        if not self.documentation_subagent_enabled:
+            logger.info("Documentation QA subagent disabled via feature flag")
+            return
+
+        if not self.documentation_enabled:
+            logger.info("Documentation QA subagent skipped because documentation support is disabled")
+            return
+
+        if not self.rag_tool:
+            logger.warning(
+                "Documentation QA subagent unavailable because the documentation RAG tool failed to initialize",
+            )
+            return
+
+        if not self.llm:
+            logger.warning(
+                "Documentation QA subagent unavailable because the LLM client is not configured",
+            )
+            return
+
+        self.documentation_qa_subagent = DocumentationQASubagent(
+            rag_tool=self.rag_tool,
+            llm=self.llm,
+            analytics_sink=self.analytics_sink,
+        )
+        logger.info("Documentation QA subagent initialized")
 
     def _extract_follow_up_instructions(self, raw_message: str) -> Tuple[str, List[Dict[str, Any]]]:
         """Parse structured follow-up task instructions embedded in the user message."""
@@ -272,7 +312,7 @@ class AivenAgent:
                 tools_needed = ["llm_knowledge"]
             logger.info(f"Filtered tools needed: {tools_needed}")
 
-            planner_plan = await self._maybe_generate_plan(
+            planner_plan, planner_session_id = await self._maybe_generate_plan(
                 prompt_text,
                 conversation_id=conversation_id,
                 user_id=user_id,
@@ -291,6 +331,41 @@ class AivenAgent:
                 gathered_info["planner_plan"] = planner_plan
             tool_usage_count = 0
             actions_summary: Dict[str, Any] = {}
+
+            documentation_results: List[Dict[str, Any]] = []
+            if planner_plan and self.documentation_qa_subagent:
+                documentation_results = await self._execute_documentation_steps(
+                    planner_plan,
+                    conversation_history=conversation_history,
+                    fallback_question=prompt_text,
+                    session_id=planner_session_id,
+                )
+
+            if documentation_results:
+                gathered_info["documentation_subagent"] = documentation_results
+
+                successful_answers = [
+                    item["answer"]
+                    for item in documentation_results
+                    if item.get("status") == "success" and item.get("answer")
+                ]
+                if successful_answers:
+                    gathered_info.setdefault("documentation", "\n\n".join(successful_answers))
+                    self.stats["rag_queries"] += len(successful_answers)
+
+                citations_payload = [
+                    {
+                        "step_id": item.get("step_id"),
+                        "citations": item.get("citations", []),
+                    }
+                    for item in documentation_results
+                    if item.get("citations")
+                ]
+                if citations_payload:
+                    gathered_info["documentation_citations"] = citations_payload
+
+                tool_usage_count += len(documentation_results)
+                tools_needed = [tool for tool in tools_needed if tool != "rag"]
 
             # Use Action tool if needed
             if "action" in tools_needed and self.action_tool and "actions" not in gathered_info:
@@ -470,6 +545,8 @@ Provide a helpful, complete answer."""
             sources = []
             if "documentation" in gathered_info:
                 sources.append("documentation")
+            if documentation_results:
+                sources.append("documentation_subagent")
             if "database_data" in gathered_info:
                 sources.append("database")
             if actions_summary.get("actions"):
@@ -505,6 +582,7 @@ Provide a helpful, complete answer."""
                 "action_message": actions_summary.get("message"),
                 "action_catalog": actions_summary.get("catalog", []),
                 "planner_plan": planner_plan,
+                "documentation_subagent": documentation_results,
             }
 
         except Exception as e:
@@ -527,9 +605,9 @@ Provide a helpful, complete answer."""
         *,
         conversation_id: Optional[str] = None,
         user_id: Optional[int] = None,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> Tuple[Optional[Dict[str, Any]], Optional[int]]:
         if not self.planner_client.is_enabled:
-            return None
+            return None, None
 
         session_id = self._resolve_session_id(message, conversation_id, user_id)
         context = self._build_planner_context(user_id)
@@ -550,10 +628,10 @@ Provide a helpful, complete answer."""
                 status="failed",
                 error_message=str(exc),
             )
-            return None
+            return None, session_id
 
         if plan is None:
-            return None
+            return None, session_id
 
         metadata = plan.get("metadata", {}) if isinstance(plan, dict) else {}
         await self.analytics_sink.log_event(
@@ -570,7 +648,7 @@ Provide a helpful, complete answer."""
             },
         )
 
-        return plan
+        return plan, session_id
 
     def _map_planner_steps_to_tools(self, plan: Dict[str, Any]) -> List[str]:
         suggested: List[str] = []
@@ -599,6 +677,8 @@ Provide a helpful, complete answer."""
         if not tool_name:
             return None
 
+        if "documentation_qa" in tool_name or "documentation_lookup" in tool_name:
+            return "documentation_subagent"
         if "rag" in tool_name or "doc" in tool_name:
             return "rag"
         if any(keyword in tool_name for keyword in ("sql", "db", "database")):
@@ -607,6 +687,88 @@ Provide a helpful, complete answer."""
             return "action"
 
         return None
+
+    async def _execute_documentation_steps(
+        self,
+        plan: Dict[str, Any],
+        *,
+        conversation_history: Optional[List[Dict[str, Any]]],
+        fallback_question: str,
+        session_id: Optional[int],
+    ) -> List[Dict[str, Any]]:
+        if not self.documentation_qa_subagent:
+            return []
+
+        steps = plan.get("steps", []) if isinstance(plan, dict) else []
+        if not steps:
+            return []
+
+        results: List[Dict[str, Any]] = []
+        for step in steps:
+            if not isinstance(step, dict) or not self.documentation_qa_subagent.supports_step(step):
+                continue
+
+            payload = step.get("payload") or {}
+            if not isinstance(payload, dict):
+                payload = {}
+
+            arguments = payload.get("arguments") or {}
+            if not isinstance(arguments, dict):
+                arguments = {}
+
+            question = arguments.get("question") or arguments.get("query") or fallback_question
+            focus_hints = arguments.get("focus_hints") or arguments.get("focus") or {}
+            if not isinstance(focus_hints, dict):
+                focus_hints = {}
+
+            conversation_tail = arguments.get("conversation_tail")
+            if not isinstance(conversation_tail, list):
+                conversation_tail = self._conversation_tail_from_history(conversation_history)
+
+            planner_payload = dict(payload)
+            planner_payload.pop("arguments", None)
+
+            result = await self.documentation_qa_subagent.execute(
+                step_id=str(step.get("id") or "documentation_qa"),
+                question=question,
+                conversation_tail=conversation_tail,
+                focus_hints=focus_hints,
+                planner_payload=planner_payload,
+                session_id=session_id,
+            )
+
+            results.append(asdict(result))
+
+        return results
+
+    def _conversation_tail_from_history(
+        self, conversation_history: Optional[List[Dict[str, Any]]]
+    ) -> List[Dict[str, str]]:
+        if not conversation_history:
+            return []
+
+        tail: List[Dict[str, str]] = []
+        for entry in conversation_history[-3:]:
+            if not isinstance(entry, dict):
+                continue
+
+            text = entry.get("text") or entry.get("content")
+            if not text:
+                continue
+
+            is_user = entry.get("isUser")
+            if is_user is None:
+                is_user = entry.get("is_user")
+            if is_user is None:
+                role = entry.get("role")
+                is_user = role.lower() == "user" if isinstance(role, str) else True
+
+            tail.append({
+                "role": "user" if is_user else "assistant",
+                "content": text,
+            })
+
+        return tail
 
     def _build_planner_context(self, user_id: Optional[int]) -> Dict[str, Any]:
         context: Dict[str, Any] = {}
