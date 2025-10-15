@@ -33,7 +33,7 @@
 
 ## Phase 3 – Aggregation & UX
 - [x] Aggregator module
-- [ ] Streaming response updates _(planner SSE proxy + coordinator stream hooks landed; frontend/UI still pending)_
+- [ ] Streaming response updates _(StreamMux SSE generator with heartbeat batching landed; frontend/UI hook still pending)_
 - [ ] Conversation UI enhancements
 - [ ] Task queue fan-out
 
@@ -48,4 +48,4 @@
 - [ ] Security review
 
 ### Recommended next task
-Implement **StreamMux SSE generator** with heartbeat batching and add replay integration tests to validate concurrent subagent completions before enabling the frontend hook.
+Wire up the **frontend planner stream hook** to consume the new SSE batch format and surface per-subagent progress in the conversation UI behind the rollout flag.

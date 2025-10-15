@@ -30,6 +30,7 @@ AggregationCoordinator
 3. **StreamMux**
    - Provides a stream abstraction that merges multiple asynchronous producers (subagent adapters, planner progress hooks) into an ordered event channel.
    - Supports both SSE and WebSocket transports to accommodate the frontend rollout plan.
+   - Batches up to five planner events per SSE frame, emits heartbeats with the latest `sequence` when idle, and deduplicates replayed records so reconnects and live updates share a consistent timeline.
 4. **SubagentAdapters**
    - Transform raw subagent responses into `AggregatedEvent` structures.
    - Fill gaps (e.g., map row-selection result to table preview card payload) before handing events to the mux.
@@ -127,9 +128,9 @@ AggregationCoordinator
 - [x] Publish Phase 3 streaming rollout plan (see `reports/phase3-streaming-response-updates.md`).
 - [x] Implement `AggregationCoordinator` class inside `soft-sme-backend/ai_agent/aggregation.py` with live stream emission hooks.
 - [ ] Implement `TelemetryContextStore` using Redis (primary) with in-memory fallback for local dev.
-- [ ] Implement `StreamMux` with SSE first, then extend to WebSocket.
+- [x] Implement `StreamMux` with SSE first, then extend to WebSocket.
 - [ ] Build adapters for documentation QA, row-selection, action/workflow, and voice subagents.
-- [ ] Write integration tests simulating concurrent subagent completions and reconnection replay.
+- [x] Write integration tests simulating concurrent subagent completions and reconnection replay.
 - [ ] Add replay endpoint (`GET /planner/sessions/{session_id}/steps/{plan_step_id}/events`).
 - [ ] Instrument analytics sink with aggregation events.
 
