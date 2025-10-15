@@ -13,6 +13,9 @@
 
 ## Phase 2 – Subagent Refactors
 - [ ] Documentation QA subagent
+  - [x] Architecture/contract drafted
+  - [x] Execution scaffold module created
+  - [ ] Planner integration & endpoint wiring
 - [ ] Row-selection subagent
 - [ ] Action/workflow subagent
 - [ ] Voice/call subagent
