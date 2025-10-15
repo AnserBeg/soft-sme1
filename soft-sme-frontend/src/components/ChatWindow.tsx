@@ -20,6 +20,9 @@ import ChatMessage from './ChatMessage';
 import ChatInput from './ChatInput';
 import { useChat } from '../hooks/useChat';
 import { SxProps, Theme } from '@mui/material/styles';
+import PlannerProgressPanel from './PlannerProgressPanel';
+import usePlannerStream from '../hooks/usePlannerStream';
+import { isPlannerStreamingEnabled } from '../utils/featureFlags';
 
 interface ChatWindowProps {
   isOpen: boolean;
@@ -33,9 +36,29 @@ interface ChatBoardProps {
 }
 
 export const ChatBoard: React.FC<ChatBoardProps> = ({ variant = 'drawer', onClose, sx }) => {
-  const { messages, isLoading, sendMessage, clearMessages, acknowledgeMessages } = useChat();
+  const {
+    messages,
+    isLoading,
+    sendMessage,
+    clearMessages,
+    acknowledgeMessages,
+    plannerStream,
+  } = useChat();
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const isEmbedded = variant === 'embedded';
+
+  const streamingEnabled = isPlannerStreamingEnabled();
+
+  const streamState = usePlannerStream({
+    sessionId: plannerStream?.sessionId,
+    planStepId: plannerStream?.planStepId,
+    initialCursor: plannerStream?.cursor ?? null,
+    expectedSubagents: plannerStream?.expectedSubagents,
+    plannerContext: plannerStream?.plannerContext ?? null,
+    enabled: streamingEnabled && Boolean(plannerStream?.planStepId),
+  });
+
+  const showPlannerPanel = streamingEnabled && Boolean(plannerStream?.planStepId);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -172,6 +195,18 @@ export const ChatBoard: React.FC<ChatBoardProps> = ({ variant = 'drawer', onClos
       </Box>
 
       <Box sx={messagesWrapperStyles}>
+        {showPlannerPanel && (
+          <PlannerProgressPanel
+            subagents={streamState.subagents}
+            connectionState={streamState.connectionState}
+            stepStatus={streamState.stepStatus}
+            plannerContext={streamState.plannerContext}
+            completedPayload={streamState.completedPayload}
+            replayComplete={streamState.replayComplete}
+            lastHeartbeatAt={streamState.lastHeartbeatAt}
+            isTerminal={streamState.isTerminal}
+          />
+        )}
         {messages.length === 0 ? (
             <Box
               sx={{

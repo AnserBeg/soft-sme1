@@ -33,7 +33,7 @@
 
 ## Phase 3 – Aggregation & UX
 - [x] Aggregator module
-- [ ] Streaming response updates _(StreamMux SSE generator with heartbeat batching landed; frontend/UI hook still pending)_
+- [x] Streaming response updates _(SSE batching wired through planner stream hook and conversation UI progress panel)_
 - [ ] Conversation UI enhancements
 - [ ] Task queue fan-out
 
@@ -48,4 +48,4 @@
 - [ ] Security review
 
 ### Recommended next task
-Wire up the **frontend planner stream hook** to consume the new SSE batch format and surface per-subagent progress in the conversation UI behind the rollout flag.
+Expand the **conversation UI enhancements** to incorporate actionable controls (acknowledge/dismiss) for planner updates and align transcript rendering with streamed subagent states.

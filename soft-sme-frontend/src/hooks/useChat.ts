@@ -1,6 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { toast } from 'react-toastify';
-import { chatService, AgentChatEvent, AgentChatMessage } from '../services/chatService';
+import {
+  chatService,
+  AgentChatEvent,
+  AgentChatMessage,
+  PlannerStreamHandshake,
+} from '../services/chatService';
 import { ChatMessageItem } from '../components/ChatMessage';
 import { VoiceCallArtifact } from '../types/voice';
 
@@ -64,6 +69,7 @@ export const useChat = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [plannerStream, setPlannerStream] = useState<PlannerStreamHandshake | null>(null);
   const [sessionId, setSessionId] = useState<number | null>(() => {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (!stored) return null;
@@ -254,8 +260,9 @@ export const useChat = () => {
       setIsLoading(true);
 
       try {
-        const events = await chatService.sendMessage(id, trimmed);
+        const { events, plan } = await chatService.sendMessage(id, trimmed);
         addEventMessages(events);
+        setPlannerStream(plan ?? null);
         await fetchMessages();
       } catch (error) {
         console.error('Error sending message:', error);
@@ -267,10 +274,15 @@ export const useChat = () => {
     [addEventMessages, ensureSession, fetchMessages]
   );
 
+  const clearPlannerStream = useCallback(() => {
+    setPlannerStream(null);
+  }, []);
+
   const clearMessages = useCallback(() => {
     setMessages([]);
     setUnreadCount(0);
-  }, []);
+    clearPlannerStream();
+  }, [clearPlannerStream]);
 
   const toggleChat = useCallback(() => {
     setIsOpen((prev) => {
@@ -308,5 +320,7 @@ export const useChat = () => {
     closeChat,
     openChat,
     acknowledgeMessages,
+    plannerStream,
+    clearPlannerStream,
   };
 };
