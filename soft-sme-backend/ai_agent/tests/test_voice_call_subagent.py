@@ -51,6 +51,15 @@ class StubAsyncClient:
         return response
 
 
+class StubTaskQueue:
+    def __init__(self) -> None:
+        self.requests: List[Sequence[Any]] = []
+
+    def fan_out(self, specs):  # pragma: no cover - exercised via VoiceCallSubagent
+        self.requests.append(specs)
+        return [f"task-{len(self.requests)}"]
+
+
 class VoiceCallSubagentTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.analytics = DummyAnalyticsSink()
@@ -94,10 +103,13 @@ class VoiceCallSubagentTests(unittest.IsolatedAsyncioTestCase):
             ]
         )
 
+        queue = StubTaskQueue()
+
         subagent = VoiceCallSubagent(
             analytics_sink=self.analytics,
             http_client=client,
             max_retries=1,
+            task_queue=queue,
         )
 
         result = await subagent.execute(
@@ -108,7 +120,14 @@ class VoiceCallSubagentTests(unittest.IsolatedAsyncioTestCase):
             metadata={"priority": "normal"},
             planner_payload={
                 "callbacks": {
-                    "onStatusChange": on_status,
+                    "onStatusChange": [
+                        on_status,
+                        {
+                            "type": "task_queue",
+                            "task_type": "planner_voice_status",
+                            "payload": {"source": "voice_call"},
+                        },
+                    ],
                     "onStructuredUpdate": on_structured,
                 }
             },
@@ -124,6 +143,19 @@ class VoiceCallSubagentTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(callbacks_called["status"])
         self.assertTrue(callbacks_called["structured"])
         self.assertTrue(any(event[0] == "subagent_invocation_completed" for event in self.analytics.events))
+        self.assertEqual(len(queue.requests), 1)
+        queued_spec = queue.requests[0][0]
+        self.assertEqual(queued_spec.task_type, "planner_voice_status")
+        self.assertIn("event", queued_spec.payload)
+        self.assertEqual(queued_spec.payload.get("source"), "voice_call")
+        self.assertEqual(queued_spec.conversation_id, "conv-1")
+        self.assertTrue(
+            any(
+                event_type == "voice_callback_dispatched" and event_kwargs["status"] == "success"
+                and event_kwargs["metadata"].get("target") == "task_queue"
+                for event_type, event_kwargs in self.analytics.events
+            )
+        )
 
     async def test_execute_failure_returns_error_result(self):
         client = StubAsyncClient([RuntimeError("dial failed")])

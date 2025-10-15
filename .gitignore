@@ -86,6 +86,8 @@ tmp/
 temp/
 "$CACHE_ROOT"/
 **/"$CACHE_ROOT"/
+__pycache__/
+**/__pycache__/
 
 # Editor directories and files
 .vscode/

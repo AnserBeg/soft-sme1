@@ -39,7 +39,7 @@
   - [x] Implement acknowledge/dismiss controls in conversation UI
   - [x] Wire telemetry-preserving action handlers
   - [x] Regression tests for replay + optimistic updates
-- [ ] Task queue fan-out
+- [x] Task queue fan-out
 
 ## Phase 4 – Continuous Evaluation
 - [ ] Synthetic conversation suite
@@ -52,4 +52,4 @@
 - [ ] Security review
 
 ### Recommended next task
-Implement **task queue fan-out** so planner updates can notify downstream workers in parallel.
+Begin the **synthetic conversation suite** so we can exercise planner/subagent coordination under repeatable scenarios.

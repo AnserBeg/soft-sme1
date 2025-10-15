@@ -242,6 +242,7 @@ class AivenAgent:
             try:
                 self.voice_call_subagent = VoiceCallSubagent(
                     analytics_sink=self.analytics_sink,
+                    task_queue=self.task_queue,
                 )
                 logger.info("Voice call subagent initialized")
             except Exception as exc:  # pylint: disable=broad-except
