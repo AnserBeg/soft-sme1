@@ -67,7 +67,7 @@
 - [x] Extend planner schema with a dedicated `safety` step payload and severity enum.
 - [x] Provide stub planner step that executes before all other responses.
 - [x] Implement PostgreSQL rules evaluation layer with caching.
-- [ ] Integrate guardrail LLM verifier with deterministic JSON schema and retries.
+- [x] Integrate guardrail LLM verifier with deterministic JSON schema and retries.
 - [ ] Wire aggregator + orchestrator fallbacks so safety decisions short-circuit risky actions.
 - [ ] Add synthetic regression scenarios covering privacy, financial risk, and harassment policies.
 
@@ -75,6 +75,7 @@
 - Implemented `planner_service.policy_engine` to normalize pending planner actions and evaluate policy rules with a five-minute cache per company.
 - The engine falls back to a static ruleset when PostgreSQL connectivity is unavailable so local development and CI remain deterministic.
 - Severity aggregation now merges policy tags, escalation instructions, and fallback step guidance for any matched rule, ensuring downstream systems receive structured guardrail context.
+- Added `planner_service.guardrail_verifier` to orchestrate an audited LLM verifier with structured retries. The deterministic evaluation result is handed off with normalized context so the LLM can add nuanced policy signals without compromising repeatability. Failures fall back to the baseline deterministic decision while logging telemetry for responders.
 - Added a Phase 2 regression scenario (`privacy-export-guardrail.yaml`) that exercises the privacy/export block rule introduced in the static dataset.
 
 ## Failure Handling & Runbook

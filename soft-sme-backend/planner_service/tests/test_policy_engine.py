@@ -6,9 +6,15 @@ import pytest
 
 from ..policy_engine import (
     InMemoryPolicyRuleRepository,
+    PolicyEvaluationResult,
     PolicyRule,
     PolicyRuleEvaluator,
     SafetySubject,
+)
+from ..guardrail_verifier import (
+    GuardrailVerification,
+    GuardrailVerifier,
+    GuardrailVerifierError,
 )
 from ..schemas import PlannerContext, PlannerRequest, SafetySeverity
 
@@ -28,6 +34,26 @@ class RecordingRepository(InMemoryPolicyRuleRepository):
 def build_request(message: str, **context_kwargs) -> PlannerRequest:
     context = PlannerContext(**context_kwargs)
     return PlannerRequest(session_id=1, message=message, context=context)
+
+
+class StubGuardrailVerifier(GuardrailVerifier):
+    """Deterministic guardrail verifier used for unit tests."""
+
+    def __init__(self, result: Optional[GuardrailVerification] = None, *, raise_error: bool = False) -> None:
+        self.result = result
+        self.raise_error = raise_error
+        self.calls = 0
+
+    def verify(
+        self,
+        subject: SafetySubject,
+        baseline: PolicyEvaluationResult,
+        matched_rules: Sequence[PolicyRule],
+    ) -> Optional[GuardrailVerification]:
+        self.calls += 1
+        if self.raise_error:
+            raise GuardrailVerifierError("verifier failed")
+        return self.result
 
 
 def test_evaluator_detects_privacy_block() -> None:
@@ -110,6 +136,48 @@ def test_pending_action_rule_detection() -> None:
     assert result.severity is SafetySeverity.WARN
     assert "privacy" in result.policy_tags
     assert "customer table" in result.detected_issues[0]
+
+
+def test_guardrail_verifier_escalates_baseline() -> None:
+    """LLM guardrail output should merge with deterministic policy results."""
+
+    repository = InMemoryPolicyRuleRepository({None: ()})
+    verifier = StubGuardrailVerifier(
+        result=GuardrailVerification(
+            check_name="llm-guardrail",
+            severity=SafetySeverity.WARN,
+            policy_tags=("harassment",),
+            detected_issues=("Detected disallowed harassment content.",),
+            requires_manual_review=True,
+            resolution="Escalate to moderation queue.",
+        )
+    )
+    evaluator = PolicyRuleEvaluator(repository, guardrail_verifier=verifier)
+
+    request = build_request("You are terrible", company_id=10)
+    result = evaluator.evaluate(SafetySubject.from_request(request))
+
+    assert result.severity is SafetySeverity.WARN
+    assert "harassment" in result.policy_tags
+    assert result.requires_manual_review is True
+    assert "Detected disallowed harassment content." in result.detected_issues
+    assert verifier.calls == 1
+
+
+def test_guardrail_verifier_failure_returns_baseline() -> None:
+    """Evaluator should fall back to baseline when guardrail verifier errors."""
+
+    repository = InMemoryPolicyRuleRepository({None: ()})
+    verifier = StubGuardrailVerifier(raise_error=True)
+    evaluator = PolicyRuleEvaluator(repository, guardrail_verifier=verifier)
+
+    request = build_request("Hello", company_id=1)
+    result = evaluator.evaluate(SafetySubject.from_request(request))
+
+    assert result.severity is SafetySeverity.INFO
+    assert result.policy_tags == ("baseline",)
+    assert result.detected_issues == ()
+    assert verifier.calls == 1
 
 
 if __name__ == "__main__":  # pragma: no cover - allows standalone execution

@@ -62,4 +62,4 @@
 - [ ] Security review
 
 ### Recommended next task
-Integrate the guardrail LLM verifier with the safety subagent so the deterministic layer can hand off nuanced policy text classification with structured retries.
+Wire aggregator + orchestrator fallbacks so safety decisions short-circuit risky actions and prevent unsafe plan execution.
