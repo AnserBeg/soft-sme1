@@ -112,6 +112,7 @@ Thumbs.db
 *.sql
 # Allow migration SQL files
 !soft-sme-backend/migrations/*.sql
+!docs/ai-assistant/data/policy_rules_seed.sql
 *.sqlite
 *.db
 

@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from fastapi import FastAPI
 
+from .policy_engine import PolicyRuleEvaluator, SafetySubject, build_policy_evaluator
 from .schemas import (
     MessageStepPayload,
     PlannerMetadata,
@@ -15,13 +16,15 @@ from .schemas import (
     PlannerResponse,
     PlannerStep,
     PlannerStepType,
-    SafetySeverity,
     SafetyStepPayload,
 )
 from .telemetry import telemetry
 
 
 logger = logging.getLogger("planner_service")
+
+policy_evaluator: PolicyRuleEvaluator = build_policy_evaluator()
+
 
 app = FastAPI(
     title="Planner Service",
@@ -56,17 +59,21 @@ def generate_plan(request: PlannerRequest) -> PlannerResponse:
     )
 
     try:
+        safety_subject = SafetySubject.from_request(request)
+        evaluation = policy_evaluator.evaluate(safety_subject)
+
         safety_step = PlannerStep(
             id=str(uuid4()),
             type=PlannerStepType.SAFETY,
             description="Execute baseline policy checks before fulfilling the request.",
             payload=SafetyStepPayload(
                 check_name="default-policy-screen",
-                severity=SafetySeverity.INFO,
-                policy_tags=["baseline"],
-                detected_issues=[],
-                requires_manual_review=False,
-                resolution="No policy violations detected; proceed with response.",
+                severity=evaluation.severity,
+                policy_tags=list(evaluation.policy_tags),
+                detected_issues=list(evaluation.detected_issues),
+                requires_manual_review=evaluation.requires_manual_review,
+                resolution=evaluation.resolution,
+                fallback_step=evaluation.fallback_step,
             ),
         )
 
