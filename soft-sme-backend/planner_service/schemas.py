@@ -15,6 +15,18 @@ class PlannerContext(BaseModel):
     company_id: Optional[int] = Field(default=None, description="Tenant/company identifier if available.")
     user_id: Optional[int] = Field(default=None, description="User requesting the plan.")
     locale: Optional[str] = Field(default=None, description="Locale hint that may impact tool selection or copy.")
+    planner_summary: Optional[str] = Field(
+        default=None,
+        description="Short summary of the orchestrator goal or inferred user intent.",
+    )
+    pending_actions: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Structured actions the planner expects to evaluate for policy risk.",
+    )
+    metadata: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Arbitrary planner context fields preserved for downstream evaluators.",
+    )
 
 
 class PlannerStepType(str, Enum):

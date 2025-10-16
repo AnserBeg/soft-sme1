@@ -32,8 +32,8 @@
 - [x] Safety/policy subagent (optional)
   - [x] Draft architecture/contract (`subagents/safety-policy-subagent.md`)
   - [x] Extend planner schema with safety payload & severity enum
-  - [x] Seed planner with baseline safety step + validation tests
-  - [ ] Implement policy rules evaluation + guardrail execution
+- [x] Seed planner with baseline safety step + validation tests
+  - [x] Implement policy rules evaluation + guardrail execution
 
 ## Phase 3 – Aggregation & UX
 - [x] Aggregator module
@@ -62,4 +62,4 @@
 - [ ] Security review
 
 ### Recommended next task
-Build the deterministic policy rules evaluation layer for the safety subagent and backfill regression scenarios that exercise new guardrails.
+Integrate the guardrail LLM verifier with the safety subagent so the deterministic layer can hand off nuanced policy text classification with structured retries.

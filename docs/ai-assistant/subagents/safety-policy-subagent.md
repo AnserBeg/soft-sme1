@@ -66,10 +66,16 @@
 - [x] Draft architecture and contracts (this document).
 - [x] Extend planner schema with a dedicated `safety` step payload and severity enum.
 - [x] Provide stub planner step that executes before all other responses.
-- [ ] Implement PostgreSQL rules evaluation layer with caching.
+- [x] Implement PostgreSQL rules evaluation layer with caching.
 - [ ] Integrate guardrail LLM verifier with deterministic JSON schema and retries.
 - [ ] Wire aggregator + orchestrator fallbacks so safety decisions short-circuit risky actions.
 - [ ] Add synthetic regression scenarios covering privacy, financial risk, and harassment policies.
+
+## Deterministic Policy Rule Engine
+- Implemented `planner_service.policy_engine` to normalize pending planner actions and evaluate policy rules with a five-minute cache per company.
+- The engine falls back to a static ruleset when PostgreSQL connectivity is unavailable so local development and CI remain deterministic.
+- Severity aggregation now merges policy tags, escalation instructions, and fallback step guidance for any matched rule, ensuring downstream systems receive structured guardrail context.
+- Added a Phase 2 regression scenario (`privacy-export-guardrail.yaml`) that exercises the privacy/export block rule introduced in the static dataset.
 
 ## Failure Handling & Runbook
 1. **False positive (blocked but should pass)**
