@@ -9,6 +9,12 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional, Protocol, Sequence, Tuple
 
 from .schemas import PlannerRequest, SafetySeverity
+from .guardrail_verifier import (
+    GuardrailVerification,
+    GuardrailVerifier,
+    GuardrailVerifierError,
+    build_guardrail_verifier,
+)
 
 logger = logging.getLogger("planner_service.policy_engine")
 
@@ -219,18 +225,57 @@ class PostgresPolicyRuleRepository:
 class PolicyRuleEvaluator:
     """Evaluate planner requests against deterministic policy rules."""
 
-    def __init__(self, repository: PolicyRuleRepository, cache_ttl_seconds: int = 300) -> None:
+    def __init__(
+        self,
+        repository: PolicyRuleRepository,
+        cache_ttl_seconds: int = 300,
+        guardrail_verifier: Optional[GuardrailVerifier] = None,
+    ) -> None:
         self._repository = repository
         self._cache_ttl_seconds = cache_ttl_seconds
         self._cache: Dict[Optional[int], Tuple[float, Sequence[PolicyRule]]] = {}
+        self._guardrail_verifier = guardrail_verifier
 
     def evaluate(self, subject: SafetySubject) -> PolicyEvaluationResult:
         rules = self._load_rules(subject.company_id)
-        detected_rules: List[PolicyRule] = []
-        for rule in rules:
-            if rule.matches(subject):
-                detected_rules.append(rule)
+        matched_rules = [rule for rule in rules if rule.matches(subject)]
 
+        baseline_result = self._build_baseline_result(matched_rules)
+
+        if not self._guardrail_verifier:
+            return baseline_result
+
+        try:
+            verification = self._guardrail_verifier.verify(
+                subject=subject,
+                baseline=baseline_result,
+                matched_rules=tuple(matched_rules),
+            )
+        except GuardrailVerifierError as exc:
+            logger.warning("Guardrail verifier failed; returning baseline result: %s", exc)
+            return baseline_result
+
+        if not verification:
+            return baseline_result
+
+        return self._merge_results(baseline_result, verification)
+
+    def _load_rules(self, company_id: Optional[int]) -> Sequence[PolicyRule]:
+        now = time.time()
+        cached = self._cache.get(company_id)
+        if cached and now - cached[0] < self._cache_ttl_seconds:
+            return cached[1]
+
+        rules = self._repository.fetch_rules(company_id)
+        self._cache[company_id] = (now, rules)
+        logger.debug(
+            "Loaded %s policy rules for company_id=%s", len(rules), company_id or "*"
+        )
+        return rules
+
+    def _build_baseline_result(
+        self, detected_rules: Sequence[PolicyRule]
+    ) -> PolicyEvaluationResult:
         if not detected_rules:
             return PolicyEvaluationResult(
                 check_name="default-policy-screen",
@@ -242,8 +287,12 @@ class PolicyRuleEvaluator:
                 fallback_step=None,
             )
 
-        severity = max(detected_rules, key=lambda rule: _SEVERITY_ORDER[rule.severity]).severity
-        requires_manual_review = any(rule.requires_manual_review for rule in detected_rules)
+        severity = max(
+            detected_rules, key=lambda rule: _SEVERITY_ORDER[rule.severity]
+        ).severity
+        requires_manual_review = any(
+            rule.requires_manual_review for rule in detected_rules
+        )
         policy_tags: List[str] = ["baseline"]
         issues: List[str] = []
         fallback_step: Optional[str] = None
@@ -273,18 +322,56 @@ class PolicyRuleEvaluator:
             fallback_step=fallback_step,
         )
 
-    def _load_rules(self, company_id: Optional[int]) -> Sequence[PolicyRule]:
-        now = time.time()
-        cached = self._cache.get(company_id)
-        if cached and now - cached[0] < self._cache_ttl_seconds:
-            return cached[1]
+    def _merge_results(
+        self,
+        baseline: PolicyEvaluationResult,
+        verification: GuardrailVerification,
+    ) -> PolicyEvaluationResult:
+        policy_tags = list(baseline.policy_tags)
+        for tag in verification.policy_tags:
+            if tag not in policy_tags:
+                policy_tags.append(tag)
 
-        rules = self._repository.fetch_rules(company_id)
-        self._cache[company_id] = (now, rules)
-        logger.debug(
-            "Loaded %s policy rules for company_id=%s", len(rules), company_id or "*"
+        detected_issues = list(baseline.detected_issues)
+        for issue in verification.detected_issues:
+            if issue not in detected_issues:
+                detected_issues.append(issue)
+
+        severity = (
+            verification.severity
+            if _SEVERITY_ORDER[verification.severity] > _SEVERITY_ORDER[baseline.severity]
+            else baseline.severity
         )
-        return rules
+
+        requires_manual_review = (
+            baseline.requires_manual_review or verification.requires_manual_review
+        )
+
+        resolution = baseline.resolution
+        fallback_step = baseline.fallback_step
+
+        if _SEVERITY_ORDER[verification.severity] >= _SEVERITY_ORDER[baseline.severity]:
+            resolution = verification.resolution or resolution
+            fallback_step = verification.fallback_step or fallback_step
+        else:
+            if not resolution and verification.resolution:
+                resolution = verification.resolution
+            if not fallback_step and verification.fallback_step:
+                fallback_step = verification.fallback_step
+
+        check_name = baseline.check_name
+        if verification.check_name and verification.check_name != baseline.check_name:
+            check_name = f"{baseline.check_name}+{verification.check_name}"
+
+        return PolicyEvaluationResult(
+            check_name=check_name,
+            severity=severity,
+            policy_tags=tuple(policy_tags),
+            detected_issues=tuple(detected_issues),
+            requires_manual_review=requires_manual_review,
+            resolution=resolution,
+            fallback_step=fallback_step,
+        )
 
 
 def _build_static_repository() -> InMemoryPolicyRuleRepository:
@@ -328,7 +415,12 @@ def build_policy_evaluator() -> PolicyRuleEvaluator:
     else:
         repository = _build_static_repository()
 
-    return PolicyRuleEvaluator(repository=repository)
+    guardrail_verifier = build_guardrail_verifier()
+
+    return PolicyRuleEvaluator(
+        repository=repository,
+        guardrail_verifier=guardrail_verifier,
+    )
 
 
 __all__ = [
