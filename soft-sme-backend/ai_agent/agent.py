@@ -17,7 +17,7 @@ import uuid
 from collections import deque
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
-from typing import Dict, Any, List, Mapping, Optional, Sequence, Tuple
+from typing import Dict, Any, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from langchain_core.messages import HumanMessage, AIMessage
 
@@ -32,6 +32,7 @@ try:  # pragma: no cover - support direct execution and package import
     from .planner_client import PlannerClient, PlannerServiceError
     from .skill_library import SkillLibraryClient
     from .critic_agent import CriticAgent
+    from .multi_agent_graph import MultiAgentGraphRunner
     from .subagents import (
         ActionWorkflowSubagent,
         DocumentationQASubagent,
@@ -50,6 +51,7 @@ except ImportError:  # pragma: no cover - fallback when executed as script
     from planner_client import PlannerClient, PlannerServiceError
     from skill_library import SkillLibraryClient
     from critic_agent import CriticAgent
+    from multi_agent_graph import MultiAgentGraphRunner
     from subagents import (
         ActionWorkflowSubagent,
         DocumentationQASubagent,
@@ -133,6 +135,11 @@ class AivenAgent:
             in {"1", "true", "yes", "on"}
         )
         self.critic_subagent: Optional[CriticAgent] = None
+        self.multi_agent_runner: Optional[MultiAgentGraphRunner] = None
+        self.multi_agent_graph_enabled = (
+            os.getenv("AI_ENABLE_MULTI_AGENT_GRAPH", "false").strip().lower()
+            in {"1", "true", "yes", "on"}
+        )
 
         # Statistics
         self.stats = {
@@ -311,6 +318,86 @@ class AivenAgent:
         else:
             logger.info("Critic subagent disabled via feature flag")
 
+    def _ensure_multi_agent_runner(self) -> Optional[MultiAgentGraphRunner]:
+        if self.multi_agent_runner is None:
+            self.multi_agent_runner = MultiAgentGraphRunner(
+                aggregator=self.aggregation_coordinator,
+                documentation_subagent=self.documentation_qa_subagent,
+                sql_tool=self.sql_tool,
+                action_tool=self.action_tool,
+                voice_subagent=self.voice_call_subagent,
+                critic_agent=self.critic_subagent,
+                analytics_sink=self.analytics_sink,
+            )
+        return self.multi_agent_runner
+
+    def _extract_multi_agent_graph_spec(
+        self, planner_plan: Optional[Mapping[str, Any]]
+    ) -> Optional[Mapping[str, Any]]:
+        if not isinstance(planner_plan, Mapping):
+            return None
+
+        candidates: List[Mapping[str, Any]] = []
+        for key in ("agent_graph", "graph"):
+            payload = planner_plan.get(key)
+            if isinstance(payload, Mapping):
+                candidates.append(payload)
+
+        steps = planner_plan.get("steps") if isinstance(planner_plan.get("steps"), Iterable) else []
+        for step in steps:
+            if not isinstance(step, Mapping):
+                continue
+            if str(step.get("type") or "").lower() not in {"graph", "agent_graph", "branch"}:
+                continue
+            payload = step.get("payload") if isinstance(step.get("payload"), Mapping) else None
+            if payload:
+                candidates.append(payload)
+
+        for candidate in candidates:
+            if not self._should_enable_multi_agent_graph(planner_plan, candidate):
+                continue
+            if self._has_branch_payload(candidate):
+                return candidate
+        return None
+
+    def _should_enable_multi_agent_graph(
+        self, plan_root: Mapping[str, Any], candidate: Mapping[str, Any]
+    ) -> bool:
+        if self.multi_agent_graph_enabled:
+            return True
+
+        flag_sources: List[Mapping[str, Any]] = []
+        for container in (plan_root, candidate):
+            feature_flags = container.get("feature_flags") if isinstance(container.get("feature_flags"), Mapping) else None
+            if isinstance(feature_flags, Mapping):
+                flag_sources.append(feature_flags)
+
+        for flags in flag_sources:
+            for key in ("multi_agent_graph", "enable_multi_agent_graph", "agent_graph"):
+                value = flags.get(key)
+                if isinstance(value, str):
+                    if value.strip().lower() in {"1", "true", "yes", "on"}:
+                        return True
+                elif value:
+                    return True
+        return False
+
+    @staticmethod
+    def _has_branch_payload(candidate: Mapping[str, Any]) -> bool:
+        branches = candidate.get("branches")
+        if isinstance(branches, Sequence) and any(isinstance(item, Mapping) for item in branches):
+            return True
+        steps = candidate.get("steps") if isinstance(candidate.get("steps"), Sequence) else []
+        for step in steps:
+            if not isinstance(step, Mapping):
+                continue
+            payload = step.get("payload") if isinstance(step.get("payload"), Mapping) else {}
+            if isinstance(payload.get("branches"), Sequence) and any(
+                isinstance(item, Mapping) for item in payload.get("branches", [])
+            ):
+                return True
+        return False
+
     def _extract_follow_up_instructions(self, raw_message: str) -> Tuple[str, List[Dict[str, Any]]]:
         """Parse structured follow-up task instructions embedded in the user message."""
         if not raw_message:
@@ -461,10 +548,48 @@ class AivenAgent:
             )
             logger.info("Ranked tool order: %s", tools_needed)
 
+            graph_result_dict: Optional[Dict[str, Any]] = None
+            if planner_plan:
+                graph_spec = self._extract_multi_agent_graph_spec(planner_plan)
+                if graph_spec:
+                    runner = self._ensure_multi_agent_runner()
+                    if runner:
+                        graph_session_id = (
+                            str(planner_session_id)
+                            if planner_session_id is not None
+                            else str(conversation_id or uuid.uuid4())
+                        )
+                        try:
+                            graph_run = await runner.run_graph(
+                                session_id=graph_session_id,
+                                plan=graph_spec,
+                                conversation_id=conversation_id,
+                                conversation_history=conversation_history,
+                            )
+                        except Exception as exc:  # pylint: disable=broad-except
+                            logger.exception("Multi-agent graph execution failed: %s", exc)
+                        else:
+                            if graph_run:
+                                graph_result_dict = graph_run.to_dict()
+                                await self.analytics_sink.log_event(
+                                    "agent_graph_completed",
+                                    conversation_id=conversation_id,
+                                    session_id=int(graph_session_id)
+                                    if graph_session_id.isdigit()
+                                    else None,
+                                    status=graph_run.status,
+                                    metadata={
+                                        "branch_count": len(graph_run.branches),
+                                        "run_id": graph_run.run_id,
+                                    },
+                                )
+
             # STEP 2: Iterative tool usage
             gathered_info = {}
             if planner_plan:
                 gathered_info["planner_plan"] = planner_plan
+            if graph_result_dict:
+                gathered_info["agent_graph"] = graph_result_dict
             tool_usage_count = 0
             actions_summary: Dict[str, Any] = {}
 

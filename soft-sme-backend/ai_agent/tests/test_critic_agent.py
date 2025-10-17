@@ -14,10 +14,15 @@ class StubAnalyticsSink:
 class StubConversationManager:
     def __init__(self) -> None:
         self.calls = []
+        self.branch_calls = []
 
     def record_reflection(self, conversation_id: str, **payload):  # type: ignore[override]
         self.calls.append((conversation_id, payload))
         return "reflection-id"
+
+    def record_branch_assessment(self, conversation_id: str, **payload):  # type: ignore[override]
+        self.branch_calls.append((conversation_id, payload))
+        return "branch-assessment-id"
 
 
 class CriticAgentTests(unittest.IsolatedAsyncioTestCase):
@@ -87,6 +92,51 @@ class CriticAgentTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(feedback)
         self.assertEqual(manager.calls, [])
         self.assertEqual(analytics.events, [])
+
+    async def test_assess_branch_returns_assessment_for_executor_failure(self) -> None:
+        analytics = StubAnalyticsSink()
+        manager = StubConversationManager()
+        critic = CriticAgent(
+            analytics_sink=analytics,
+            conversation_manager=manager,
+            minimum_risk="low",
+        )
+
+        assessment = await critic.assess_branch(
+            branch_id="branch-1",
+            conversation_id="conv-3",
+            findings=[{"task_id": "task-1", "status": "success"}],
+            executor_result={"status": "error", "tool": "sql", "message": "timeout"},
+            voice_result=None,
+            branch_metadata={"risk_level": "normal"},
+        )
+
+        self.assertIsNotNone(assessment)
+        assert assessment is not None
+        self.assertTrue(assessment.requires_revision)
+        self.assertEqual(len(manager.branch_calls), 1)
+        self.assertEqual(analytics.events[-1]["metadata"]["issue_count"], 1)
+
+    async def test_assess_branch_skips_when_no_flags(self) -> None:
+        analytics = StubAnalyticsSink()
+        manager = StubConversationManager()
+        critic = CriticAgent(
+            analytics_sink=analytics,
+            conversation_manager=manager,
+            minimum_risk="medium",
+        )
+
+        assessment = await critic.assess_branch(
+            branch_id="branch-2",
+            conversation_id="conv-4",
+            findings=[{"task_id": "task-1", "status": "success"}],
+            executor_result={"status": "completed"},
+            voice_result={"status": "completed"},
+            branch_metadata={"risk_level": "normal"},
+        )
+
+        self.assertIsNone(assessment)
+        self.assertEqual(manager.branch_calls, [])
 
 
 if __name__ == "__main__":

@@ -15,7 +15,7 @@ This plan consolidates the remaining items from `multi-agent-upgrade-task-board.
 | Phase A.2 | Telemetry-driven `ToolScoringPolicy` for routing | ✅ Complete | Bayesian-smoothed success metrics rank planner + heuristic candidates with regression coverage. |
 | Phase A.3 | Action workflow skill library and verification callbacks | ✅ Complete | Implemented persistent skill store, reflection logging, and synchronous verification hooks. |
 | Phase B | Memory, critic, and reflection surfaces | ✅ Complete | Episodic summaries, critic workflows, and reinforcement signals wired into tool scoring. |
-| Phase C | Multi-agent orchestration graph and branching | 🔄 In Progress | Blueprint defined for LangGraph node roles, branching contracts, and voice subagent integration. |
+| Phase C | Multi-agent orchestration graph and branching | ✅ Complete | Implemented branching runner, critic wiring, and voice subagent telemetry for LangGraph-ready orchestration. |
 | Phase D | Continuous evaluation and guardrail hardening | ⏳ Not Started | Depends on LangGraph telemetry stream from Phases A–C. |
 | Phase E | Governance, documentation, and rollout playbooks | ⏳ Not Started | To be activated once evaluation metrics stabilize. |
 
@@ -205,4 +205,14 @@ CREATE INDEX IF NOT EXISTS idx_ai_conversation_reflections_conversation
 - Implement LangGraph node scaffolding in code, honoring the blueprint’s data contracts and planner feature flags.
 - Build branch reconciliation logic with critic-enforced guardrails, followed by integration tests that stress conflicting research outcomes.
 - Ship the voice subagent pipeline, then proceed to Phase D evaluation harness, guardrail automation, and Phase E governance deliverables.
+
+## Progress Update – 2025-03-19
+- **Phase C.1–C.3 — Multi-agent graph execution:** Delivered a production-ready `MultiAgentGraphRunner` that fans planner branches across documentation research, SQL/action executors, critic assessments, and optional voice calls. Aggregation telemetry now captures branch-level events so the SSE stream replays the entire collaboration chain.
+- **Critic + orchestration integration:** Extended `CriticAgent` with branch assessments and wired the runner to escalate failed executors, feeding automated revisions back into telemetry. New unit tests cover successful runs, executor failures, and voice-optional flows.
+- **Orchestrator awareness:** `AivenAgent.process_message` detects planner graph steps, invokes the runner, and folds outcomes into the ReAct loop’s gathered context, enabling downstream responses to incorporate multi-agent results without waiting for follow-up releases.
+
+### Remaining Focus After 2025-03-19
+- Automate Phase D evaluation harnesses: add synthetic branching scenarios, guardrail regression dashboards, and latency/cost reporting hooks.
+- Expand guardrail automation to react to branch assessments (auto-rollbacks, task queue compensations) and confirm analytics ingestion across environments.
+- Kick off Phase E governance work: contributor training, rollout playbooks, and security reviews of new tool surfaces.
 

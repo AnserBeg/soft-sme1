@@ -41,6 +41,36 @@ class CriticFeedback:
         }
 
 
+@dataclass(slots=True)
+class CriticBranchAssessment:
+    """Assessment payload for a single multi-agent branch."""
+
+    branch_id: str
+    risk_level: str
+    requires_revision: bool
+    summary: str
+    recommendation: str
+    issues: List[Dict[str, Any]] = field(default_factory=list)
+    impacted_tools: List[Dict[str, Any]] = field(default_factory=list)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    score: float = 0.0
+
+    def to_dict(self) -> Dict[str, Any]:
+        payload = {
+            "branch_id": self.branch_id,
+            "risk_level": self.risk_level,
+            "requires_revision": self.requires_revision,
+            "summary": self.summary,
+            "recommendation": self.recommendation,
+            "issues": list(self.issues),
+            "impacted_tools": list(self.impacted_tools),
+            "metadata": dict(self.metadata),
+        }
+        if self.score:
+            payload["score"] = self.score
+        return payload
+
+
 class CriticAgent:
     """Applies deterministic checks to flag risky tool executions."""
 
@@ -113,6 +143,81 @@ class CriticAgent:
             await self._persist_reflection(conversation_id, feedback)
 
         return feedback.to_dict()
+
+    async def assess_branch(
+        self,
+        *,
+        branch_id: str,
+        conversation_id: Optional[str],
+        findings: Sequence[Mapping[str, Any]],
+        executor_result: Optional[Mapping[str, Any]],
+        voice_result: Optional[Mapping[str, Any]],
+        branch_metadata: Optional[Mapping[str, Any]] = None,
+    ) -> Optional[CriticBranchAssessment]:
+        """Evaluate a multi-agent branch and emit telemetry when risky."""
+
+        normalized_risk = self._normalize_risk(
+            str((branch_metadata or {}).get("risk_level", "normal"))
+        )
+        score = self._to_float((branch_metadata or {}).get("score"))
+
+        issues = self._collect_branch_issues(findings, executor_result, voice_result)
+        if not issues and normalized_risk == "normal":
+            return None
+
+        for issue in issues:
+            issue_risk = self._normalize_risk(str(issue.get("severity", "")))
+            if _RISK_ORDER[issue_risk] > _RISK_ORDER[normalized_risk]:
+                normalized_risk = issue_risk
+
+        requires_revision = any(
+            _RISK_ORDER[self._normalize_risk(str(issue.get("severity", "")))]
+            >= _RISK_ORDER["high"]
+            for issue in issues
+        )
+
+        summary = self._compose_branch_summary(branch_id, normalized_risk, issues)
+        recommendation = self._compose_branch_recommendation(issues, requires_revision)
+        impacted_tools = self._build_impacted_tools(issues)
+
+        assessment = CriticBranchAssessment(
+            branch_id=branch_id,
+            risk_level=normalized_risk,
+            requires_revision=requires_revision,
+            summary=summary,
+            recommendation=recommendation,
+            issues=issues,
+            impacted_tools=impacted_tools,
+            metadata={
+                "score": score,
+                "executor_status": (executor_result or {}).get("status"),
+            },
+            score=score or 0.0,
+        )
+
+        await self._analytics.log_event(
+            "critic_branch_assessed",
+            conversation_id=conversation_id,
+            status="requires_revision" if requires_revision else "observed",
+            metadata={
+                "branch_id": branch_id,
+                "risk_level": normalized_risk,
+                "issue_count": len(issues),
+                "score": score,
+            },
+        )
+
+        if conversation_id and hasattr(self._conversation_manager, "record_branch_assessment"):
+            try:
+                self._conversation_manager.record_branch_assessment(  # type: ignore[attr-defined]
+                    conversation_id,
+                    branch_id=branch_id,
+                    payload=assessment.to_dict(),
+                )
+            except Exception:  # pragma: no cover - defensive guard
+                logger.exception("Failed to persist branch assessment for %s", branch_id)
+
+        return assessment
 
     # ------------------------------------------------------------------
     # Helpers
@@ -212,6 +317,65 @@ class CriticAgent:
 
         return issues
 
+    def _collect_branch_issues(
+        self,
+        findings: Sequence[Mapping[str, Any]],
+        executor_result: Optional[Mapping[str, Any]],
+        voice_result: Optional[Mapping[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        issues: List[Dict[str, Any]] = []
+
+        for finding in findings:
+            status = str(finding.get("status") or "").lower()
+            if status in {"no_answer", "failed", "error"}:
+                issues.append(
+                    {
+                        "source": "research",
+                        "severity": "medium",
+                        "description": finding.get("summary")
+                        or f"Research task {finding.get('task_id')} did not return an answer.",
+                        "tool": finding.get("tool") or "documentation_qa",
+                    }
+                )
+
+        if executor_result:
+            status = str(executor_result.get("status") or "").lower()
+            if status in {"error", "failed"}:
+                issues.append(
+                    {
+                        "source": "executor",
+                        "severity": "high",
+                        "description": executor_result.get("message")
+                        or "Branch executor reported a failure.",
+                        "tool": executor_result.get("tool") or "executor",
+                    }
+                )
+            elif status in {"partial", "timeout"}:
+                issues.append(
+                    {
+                        "source": "executor",
+                        "severity": "medium",
+                        "description": executor_result.get("message")
+                        or "Branch executor completed with partial results.",
+                        "tool": executor_result.get("tool") or "executor",
+                    }
+                )
+
+        if voice_result:
+            voice_status = str(voice_result.get("status") or "").lower()
+            if voice_status not in {"completed", "success", "ok", "queued"}:
+                issues.append(
+                    {
+                        "source": "voice",
+                        "severity": "medium",
+                        "description": voice_result.get("error")
+                        or "Voice subagent did not finish successfully.",
+                        "tool": voice_result.get("tool") or "voice_call",
+                    }
+                )
+
+        return issues
+
     def _build_impacted_tools(self, issues: Sequence[Mapping[str, Any]]) -> List[Dict[str, Any]]:
         impacted: List[Dict[str, Any]] = []
         for issue in issues:
@@ -233,6 +397,25 @@ class CriticAgent:
                 }
             )
         return impacted
+
+    def _compose_branch_summary(
+        self, branch_id: str, risk_level: str, issues: Sequence[Mapping[str, Any]]
+    ) -> str:
+        if not issues:
+            return f"Branch {branch_id} executed without notable issues."
+
+        top_issue = issues[0]
+        description = str(top_issue.get("description") or "an issue was detected")
+        return f"Branch {branch_id} observed {len(issues)} issue(s); highest risk {risk_level}: {description}"
+
+    def _compose_branch_recommendation(
+        self, issues: Sequence[Mapping[str, Any]], requires_revision: bool
+    ) -> str:
+        if not issues:
+            return "No follow-up required."
+        if requires_revision:
+            return "Re-run the branch after addressing the blocking issues."
+        return "Monitor the branch outcomes and proceed with caution."
 
     def _compose_summary(self, risk_level: str, issues: Sequence[Mapping[str, Any]]) -> str:
         headline = f"Critic review captured {len(issues)} issue(s) at {risk_level} risk."
@@ -288,6 +471,15 @@ class CriticAgent:
         except Exception as exc:  # pragma: no cover - defensive guard
             logger.debug("Failed to store critic reflection metadata for %s: %s", conversation_id, exc)
 
+    @staticmethod
+    def _to_float(value: Any) -> Optional[float]:
+        try:
+            if value is None:
+                return None
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
     def _normalize_risk(self, value: str) -> str:
         normalized = value.lower()
         return normalized if normalized in _RISK_ORDER else "normal"
@@ -298,4 +490,4 @@ class CriticAgent:
         return candidate_norm if _RISK_ORDER[candidate_norm] > _RISK_ORDER[current_norm] else current_norm
 
 
-__all__ = ["CriticAgent", "CriticFeedback"]
+__all__ = ["CriticAgent", "CriticFeedback", "CriticBranchAssessment"]
