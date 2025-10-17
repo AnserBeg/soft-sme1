@@ -9,6 +9,7 @@ import {
   Typography,
   ChipProps,
 } from '@mui/material';
+import type { Theme } from '@mui/material/styles';
 import dayjs from 'dayjs';
 import {
   PlannerStreamConnectionState,
@@ -48,6 +49,21 @@ const formatTimestamp = (value?: string | null): string | null => {
     return null;
   }
   return parsed.format('MMM D, YYYY h:mm:ss A');
+};
+
+const getStatusSwatch = (theme: Theme, color: ChipProps['color']) => {
+  if (color === 'default') {
+    return {
+      background: theme.palette.grey[200],
+      foreground: theme.palette.grey[800],
+    };
+  }
+
+  const palette = theme.palette[color];
+  return {
+    background: palette.light,
+    foreground: palette.main,
+  };
 };
 
 const PlannerProgressPanel: React.FC<PlannerProgressPanelProps> = ({
@@ -130,10 +146,8 @@ const PlannerProgressPanel: React.FC<PlannerProgressPanelProps> = ({
                           width: 28,
                           height: 28,
                           borderRadius: '50%',
-                          backgroundColor: (theme) =>
-                            theme.palette[details.color === 'default' ? 'grey' : details.color].light,
-                          color: (theme) =>
-                            theme.palette[details.color === 'default' ? 'grey' : details.color].main,
+                          backgroundColor: (theme) => getStatusSwatch(theme, details.color).background,
+                          color: (theme) => getStatusSwatch(theme, details.color).foreground,
                         }}
                       >
                         {details.icon}
@@ -174,10 +188,8 @@ const PlannerProgressPanel: React.FC<PlannerProgressPanelProps> = ({
                 width: 28,
                 height: 28,
                 borderRadius: '50%',
-                backgroundColor: (theme) =>
-                  theme.palette[overallStatus.color === 'default' ? 'grey' : overallStatus.color].light,
-                color: (theme) =>
-                  theme.palette[overallStatus.color === 'default' ? 'grey' : overallStatus.color].main,
+                backgroundColor: (theme) => getStatusSwatch(theme, overallStatus.color).background,
+                color: (theme) => getStatusSwatch(theme, overallStatus.color).foreground,
               }}
             >
               {overallStatus.icon}
