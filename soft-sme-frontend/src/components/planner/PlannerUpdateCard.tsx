@@ -8,7 +8,9 @@ import {
   Stack,
   Tooltip,
   Typography,
+  ChipProps,
 } from '@mui/material';
+import type { Theme } from '@mui/material/styles';
 import dayjs from 'dayjs';
 import { formatPlannerStageLabel, resolvePlannerStatusVisual } from '../../utils/plannerStatus';
 import type { PlannerUpdateItem } from '../../utils/plannerUpdates';
@@ -27,6 +29,21 @@ interface PlannerUpdateCardProps {
   disabled?: boolean;
   actionState?: PlannerUpdateActionState;
 }
+
+const getStatusSwatch = (theme: Theme, color: ChipProps['color']) => {
+  if (color === 'default') {
+    return {
+      background: theme.palette.grey[200],
+      foreground: theme.palette.grey[800],
+    };
+  }
+
+  const palette = theme.palette[color];
+  return {
+    background: palette.light,
+    foreground: palette.main,
+  };
+};
 
 const PlannerUpdateCard: React.FC<PlannerUpdateCardProps> = ({
   update,
@@ -88,9 +105,8 @@ const PlannerUpdateCard: React.FC<PlannerUpdateCardProps> = ({
                   width: 32,
                   height: 32,
                   borderRadius: '50%',
-                  backgroundColor: (theme) =>
-                    theme.palette[visuals.color === 'default' ? 'grey' : visuals.color].light,
-                  color: (theme) => theme.palette[visuals.color === 'default' ? 'grey' : visuals.color].main,
+                  backgroundColor: (theme) => getStatusSwatch(theme, visuals.color).background,
+                  color: (theme) => getStatusSwatch(theme, visuals.color).foreground,
                 }}
               >
                 {visuals.icon}
