@@ -25,6 +25,7 @@ try:  # pragma: no cover - support direct execution and package import
     from .conversation_manager import ConversationManager
     from .task_queue import TaskQueue
     from .analytics_sink import AnalyticsSink
+    from .aggregation import AggregationCoordinator
     from .planner_client import PlannerClient, PlannerServiceError
     from .subagents import (
         ActionWorkflowSubagent,
@@ -39,6 +40,7 @@ except ImportError:  # pragma: no cover - fallback when executed as script
     from conversation_manager import ConversationManager
     from task_queue import TaskQueue
     from analytics_sink import AnalyticsSink
+    from aggregation import AggregationCoordinator
     from planner_client import PlannerClient, PlannerServiceError
     from subagents import (
         ActionWorkflowSubagent,
@@ -64,6 +66,9 @@ class AivenAgent:
         self.messages = []  # Add messages list for conversation history
         self.documentation_enabled = os.getenv("AI_ENABLE_DOCUMENTATION", "true").lower() == "true"
         self.analytics_sink = AnalyticsSink()
+        self.aggregation_coordinator = AggregationCoordinator(
+            analytics_sink=self.analytics_sink
+        )
         self.planner_client = PlannerClient()
         self.default_locale = self._sanitize_env(os.getenv("AI_AGENT_DEFAULT_LOCALE"))
         self.documentation_subagent_enabled = (
@@ -395,6 +400,65 @@ class AivenAgent:
             actions_summary: Dict[str, Any] = {}
 
             documentation_results: List[Dict[str, Any]] = []
+            safety_results: List[Dict[str, Any]] = []
+            blocking_safety: Optional[Dict[str, Any]] = None
+            if planner_plan and planner_session_id is not None:
+                safety_results = await self._process_safety_steps(
+                    planner_plan,
+                    session_id=planner_session_id,
+                )
+                if safety_results:
+                    gathered_info["safety_subagent"] = safety_results
+                    blocking_safety = next(
+                        (item for item in safety_results if item.get("short_circuit")),
+                        None,
+                    )
+                    if blocking_safety:
+                        await self.analytics_sink.log_event(
+                            "safety_short_circuit",
+                            conversation_id=conversation_id,
+                            session_id=planner_session_id,
+                            status="blocked",
+                            metadata={
+                                "severity": blocking_safety.get("severity"),
+                                "policy_tags": blocking_safety.get("policy_tags", []),
+                                "detected_issues": blocking_safety.get("detected_issues", []),
+                                "requires_manual_review": blocking_safety.get(
+                                    "requires_manual_review"
+                                ),
+                                "resolution": blocking_safety.get("resolution"),
+                                "fallback_step": blocking_safety.get("fallback_step"),
+                            },
+                        )
+
+                        response_text = self._compose_safety_block_message(
+                            blocking_safety
+                        )
+                        processing_time = time.time() - start_time
+
+                        self.stats["total_queries"] += 1
+                        self.stats["average_response_time"] = (
+                            (
+                                self.stats["average_response_time"]
+                                * (self.stats["total_queries"] - 1)
+                                + processing_time
+                            )
+                            / self.stats["total_queries"]
+                        )
+
+                        return {
+                            "response": response_text,
+                            "sources": ["policy_guardrail"],
+                            "confidence": 0.0,
+                            "tool_used": "safety_guardrail",
+                            "processing_time": processing_time,
+                            "actions": [],
+                            "action_message": blocking_safety.get("resolution"),
+                            "action_catalog": [],
+                            "planner_plan": planner_plan,
+                            "documentation_subagent": documentation_results,
+                        }
+
             if planner_plan and self.documentation_qa_subagent:
                 documentation_results = await self._execute_documentation_steps(
                     planner_plan,
@@ -874,6 +938,99 @@ Provide a helpful, complete answer."""
             return "voice_call_subagent"
 
         return None
+
+    async def _process_safety_steps(
+        self,
+        plan: Dict[str, Any],
+        *,
+        session_id: int,
+    ) -> List[Dict[str, Any]]:
+        if not self.aggregation_coordinator:
+            return []
+
+        steps = plan.get("steps", []) if isinstance(plan, dict) else []
+        if not isinstance(steps, list):
+            return []
+
+        results: List[Dict[str, Any]] = []
+        for step in steps:
+            if not isinstance(step, dict):
+                continue
+
+            step_type = str(step.get("type") or "").lower()
+            if step_type != "safety":
+                continue
+
+            payload = step.get("payload") or {}
+            if not isinstance(payload, dict):
+                payload = {}
+
+            step_id = str(step.get("id") or uuid.uuid4())
+
+            directive = await self.aggregation_coordinator.apply_safety_decision(
+                session_id=str(session_id),
+                plan_step_id=step_id,
+                decision=payload,
+                planner_context={
+                    "description": step.get("description"),
+                    "check_name": payload.get("check_name"),
+                },
+            )
+
+            directive_payload = directive.to_payload()
+            directive_payload.update(
+                {
+                    "step_id": step_id,
+                    "check_name": payload.get("check_name"),
+                    "description": step.get("description"),
+                }
+            )
+            results.append(directive_payload)
+
+        return results
+
+    def _compose_safety_block_message(self, safety_result: Dict[str, Any]) -> str:
+        base_message = (
+            "I'm sorry, but I can't help with that request because it violates our safety guidelines."
+        )
+
+        policy_tags = [
+            str(tag)
+            for tag in safety_result.get("policy_tags", [])
+            if isinstance(tag, str) and tag
+        ]
+        detected_issues = [
+            str(issue)
+            for issue in safety_result.get("detected_issues", [])
+            if isinstance(issue, str) and issue
+        ]
+        requires_manual_review = bool(safety_result.get("requires_manual_review"))
+        resolution = safety_result.get("resolution")
+
+        lines = [base_message]
+
+        if policy_tags:
+            lines.append("")
+            lines.append("Flagged policies: " + ", ".join(policy_tags))
+
+        if detected_issues:
+            lines.append("")
+            lines.append("Details:")
+            for issue in detected_issues:
+                lines.append(f"- {issue}")
+
+        if requires_manual_review:
+            lines.append("")
+            lines.append("A human review is required before we can proceed.")
+
+        if isinstance(resolution, str) and resolution.strip():
+            lines.append("")
+            lines.append(resolution.strip())
+        else:
+            lines.append("")
+            lines.append("Please contact your administrator for next steps.")
+
+        return "\n".join(lines).strip()
 
     async def _execute_documentation_steps(
         self,

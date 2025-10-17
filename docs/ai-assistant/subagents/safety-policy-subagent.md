@@ -68,7 +68,9 @@
 - [x] Provide stub planner step that executes before all other responses.
 - [x] Implement PostgreSQL rules evaluation layer with caching.
 - [x] Integrate guardrail LLM verifier with deterministic JSON schema and retries.
-- [ ] Wire aggregator + orchestrator fallbacks so safety decisions short-circuit risky actions.
+- [x] Wire aggregator + orchestrator fallbacks so safety decisions short-circuit risky actions.
+  - Aggregator exposes `apply_safety_decision` to normalize guardrail outputs and emit block events.
+  - Orchestrator halts execution on `block`/manual-review outcomes and surfaces compliance messaging to users.
 - [ ] Add synthetic regression scenarios covering privacy, financial risk, and harassment policies.
 
 ## Deterministic Policy Rule Engine
