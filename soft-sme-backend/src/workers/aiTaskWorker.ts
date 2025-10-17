@@ -3,6 +3,7 @@ import { pool } from '../db';
 import { ConversationManager } from '../services/aiConversationManager';
 import { AITaskQueueService, TaskRecord } from '../services/aiTaskQueueService';
 import { AgentToolsV2 } from '../services/agentV2/tools';
+import { ConversationSummarizer } from '../services/conversationSummarizer';
 
 interface AgentToolPayload {
   tool: string;
@@ -15,11 +16,13 @@ export class AITaskWorker {
   private readonly queue: AITaskQueueService;
   private readonly conversationManager: ConversationManager;
   private readonly tools: AgentToolsV2;
+  private readonly summarizer: ConversationSummarizer;
 
   constructor(private readonly db: Pool = pool) {
     this.queue = new AITaskQueueService(db);
     this.conversationManager = new ConversationManager(db);
     this.tools = new AgentToolsV2(db);
+    this.summarizer = new ConversationSummarizer(db);
   }
 
   async runOnce(): Promise<boolean> {
@@ -45,6 +48,25 @@ export class AITaskWorker {
   private async executeTask(task: TaskRecord): Promise<unknown> {
     if (task.taskType === 'agent_tool') {
       return this.executeAgentTool(task.payload as AgentToolPayload);
+    }
+
+    if (task.taskType === 'conversation_summary') {
+      if (!task.conversationId) {
+        throw new Error('Conversation summary task requires a conversation id');
+      }
+
+      const payload = task.payload ?? {};
+      const force = (payload as { force?: unknown }).force === true;
+      const rawMax = (payload as { maxMessages?: unknown }).maxMessages;
+      const maxMessages =
+        typeof rawMax === 'number' && Number.isFinite(rawMax) && rawMax > 0
+          ? Math.min(Math.floor(rawMax), 500)
+          : undefined;
+
+      return this.summarizer.summarizeConversation(task.conversationId, {
+        force,
+        maxMessages
+      });
     }
 
     throw new Error(`Unsupported task type: ${task.taskType}`);
@@ -84,7 +106,7 @@ export class AITaskWorker {
     status: 'completed' | 'failed',
     details: Record<string, unknown> | unknown
   ): Promise<void> {
-    if (!task.conversationId) {
+    if (!task.conversationId || task.taskType === 'conversation_summary') {
       return;
     }
 
