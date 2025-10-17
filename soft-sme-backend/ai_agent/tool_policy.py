@@ -55,6 +55,10 @@ class _ToolStats:
         latency_ms: Optional[float],
         weight: float = 1.0,
     ) -> None:
+        weight = max(0.0, float(weight))
+        if weight == 0:
+            return
+
         if success:
             self.successes += weight
             self.last_success_ts = time.time()
@@ -109,6 +113,7 @@ class ToolScoringPolicy:
         success: bool,
         latency_ms: Optional[float] = None,
         metadata: Optional[Mapping[str, object]] = None,
+        weight: float = 1.0,
     ) -> None:
         """Update rolling statistics for a tool.
 
@@ -121,7 +126,34 @@ class ToolScoringPolicy:
             return
 
         stats = self._stats.setdefault(tool_name, _ToolStats())
-        stats.record(success=success, latency_ms=latency_ms)
+        stats.record(success=success, latency_ms=latency_ms, weight=weight)
+
+    def apply_reflection_feedback(
+        self,
+        impacted_tools: Sequence[Mapping[str, object]],
+    ) -> None:
+        """Adjust tool scores using critic reflections."""
+
+        for entry in impacted_tools:
+            if not isinstance(entry, Mapping):
+                continue
+            name = str(entry.get("name") or entry.get("tool") or "").strip()
+            if not name:
+                continue
+            success_flag = bool(entry.get("success", False))
+            weight = entry.get("weight") or entry.get("penalty") or 1.0
+            try:
+                weight_value = max(0.1, min(float(weight), 5.0))
+            except (TypeError, ValueError):
+                weight_value = 1.0
+            metadata = {"source": "reflection", "reason": entry.get("reason")}
+            self.record_observation(
+                name,
+                success=success_flag,
+                latency_ms=None,
+                metadata=metadata,
+                weight=weight_value,
+            )
 
     # ------------------------------------------------------------------
     # Ranking
