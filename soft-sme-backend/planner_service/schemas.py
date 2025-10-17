@@ -37,6 +37,7 @@ class PlannerStepType(str, Enum):
     LOOKUP = "lookup"
     ACTION = "action"
     SAFETY = "safety"
+    PLANNER_ACTION = "planner_action"
 
 
 class ToolStepPayload(BaseModel):
@@ -120,6 +121,27 @@ class ActionStepPayload(BaseModel):
     )
 
 
+class PlannerActionStepPayload(BaseModel):
+    """Payload that orchestrates reasoning steps within the control loop."""
+
+    action: Literal["reason", "act", "reflect"] = Field(
+        ...,
+        description="ReAct phase to trigger inside the orchestrator control loop.",
+    )
+    hint: Optional[str] = Field(
+        default=None,
+        description="Natural language guidance that should be surfaced to the orchestrator for prompting.",
+    )
+    preferred_tool: Optional[str] = Field(
+        default=None,
+        description="Tool identifier the planner wants the orchestrator to prioritize for this phase.",
+    )
+    result_key: Optional[str] = Field(
+        default=None,
+        description="Optional key the orchestrator should use when storing the observation.",
+    )
+
+
 class SafetySeverity(str, Enum):
     """Severity levels emitted by the safety/policy subagent."""
 
@@ -166,6 +188,7 @@ PlannerStepPayload = Union[
     LookupStepPayload,
     ActionStepPayload,
     SafetyStepPayload,
+    PlannerActionStepPayload,
 ]
 
 
@@ -195,6 +218,7 @@ class PlannerStep(BaseModel):
             PlannerStepType.LOOKUP: LookupStepPayload,
             PlannerStepType.ACTION: ActionStepPayload,
             PlannerStepType.SAFETY: SafetyStepPayload,
+            PlannerStepType.PLANNER_ACTION: PlannerActionStepPayload,
         }
 
         payload_model = expected_payload[self.type]
