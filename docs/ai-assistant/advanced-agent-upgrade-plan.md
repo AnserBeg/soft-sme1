@@ -93,3 +93,7 @@ This plan consolidates the remaining items from `multi-agent-upgrade-task-board.
 - How should long-term memory storage scale (vector DB vs. relational summaries) given anticipated conversation volume?
 - Which teams own AutoGen critic review tuning and escalation procedures?
 
+## Progress Update – 2025-02-14
+- **Phase A.2 — Upgrade tool routing heuristics:** Added a new telemetry-driven `ToolScoringPolicy` that keeps Bayesian-smoothed reliability statistics for every tool and re-ranks planner + heuristic candidates on each turn. The orchestrator now records structured success/failure observations for documentation, SQL, action, and subagent invocations, so the policy continuously improves ordering without needing manual tuning. Unit tests cover success-rate weighting, planner boost handling, and recency penalties to ensure regression safety.
+- **Guardrails for future work:** The scoring module exposes hooks for latency analysis and planner-directed overrides, giving us a deterministic yet extensible policy surface. Upcoming tasks can plug in the aggregator telemetry feed or adjust weighting without refactoring the control loop.
+

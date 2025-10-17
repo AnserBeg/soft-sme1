@@ -33,6 +33,7 @@ try:  # pragma: no cover - support direct execution and package import
         RowSelectionSubagent,
         VoiceCallSubagent,
     )
+    from .tool_policy import ToolScoringPolicy, ToolUsageContext
 except ImportError:  # pragma: no cover - fallback when executed as script
     from rag_tool import DocumentationRAGTool
     from sql_tool import InventorySQLTool
@@ -48,6 +49,7 @@ except ImportError:  # pragma: no cover - fallback when executed as script
         RowSelectionSubagent,
         VoiceCallSubagent,
     )
+    from tool_policy import ToolScoringPolicy, ToolUsageContext
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +72,7 @@ class AivenAgent:
             analytics_sink=self.analytics_sink
         )
         self.planner_client = PlannerClient()
+        self.tool_policy = ToolScoringPolicy()
         self.default_locale = self._sanitize_env(os.getenv("AI_AGENT_DEFAULT_LOCALE"))
         self.documentation_subagent_enabled = (
             os.getenv("AI_ENABLE_DOCUMENTATION_QA_SUBAGENT", "false").strip().lower()
@@ -385,12 +388,25 @@ class AivenAgent:
                 user_id=user_id,
             )
 
+            planner_suggestions: List[str] = []
             if planner_plan:
                 planner_tools = self._map_planner_steps_to_tools(planner_plan)
                 if planner_tools:
                     combined = list(dict.fromkeys(planner_tools + tools_needed))
                     logger.info("Planner suggested tool adjustments: %s", combined)
                     tools_needed = combined
+                    planner_suggestions = planner_tools
+
+            tools_needed = self.tool_policy.rank_candidates(
+                tools_needed,
+                ToolUsageContext(
+                    message=prompt_text,
+                    conversation_id=conversation_id,
+                    conversation_history_size=len(conversation_history or []),
+                    planner_suggestions=planner_suggestions,
+                ),
+            )
+            logger.info("Ranked tool order: %s", tools_needed)
 
             # STEP 2: Iterative tool usage
             gathered_info = {}
@@ -470,6 +486,23 @@ class AivenAgent:
             if documentation_results:
                 gathered_info["documentation_subagent"] = documentation_results
 
+                for result in documentation_results:
+                    status = (result.get("status") or "").lower()
+                    success = status == "success"
+                    latency_value = result.get("latency_ms")
+                    latency_ms = None
+                    if isinstance(latency_value, (int, float)):
+                        latency_ms = float(latency_value)
+                    self.tool_policy.record_observation(
+                        "documentation_subagent",
+                        success=success,
+                        latency_ms=latency_ms,
+                        metadata={
+                            "step_id": result.get("step_id"),
+                            "status": status,
+                        },
+                    )
+
                 successful_answers = [
                     item["answer"]
                     for item in documentation_results
@@ -504,6 +537,22 @@ class AivenAgent:
 
             if row_selection_results:
                 gathered_info["row_selection_subagent"] = row_selection_results
+                for result in row_selection_results:
+                    status = (result.get("status") or "").lower()
+                    success = status == "success"
+                    latency_value = result.get("latency_ms")
+                    latency_ms = None
+                    if isinstance(latency_value, (int, float)):
+                        latency_ms = float(latency_value)
+                    self.tool_policy.record_observation(
+                        "row_selection_subagent",
+                        success=success,
+                        latency_ms=latency_ms,
+                        metadata={
+                            "step_id": result.get("step_id"),
+                            "status": status,
+                        },
+                    )
                 successful_row_selection = next(
                     (
                         result
@@ -544,6 +593,22 @@ class AivenAgent:
 
             if action_workflow_results:
                 gathered_info["action_workflow_subagent"] = action_workflow_results
+                for result in action_workflow_results:
+                    status = (result.get("status") or "").lower()
+                    success = status not in {"error", "manual"}
+                    latency_value = result.get("latency_ms")
+                    latency_ms = None
+                    if isinstance(latency_value, (int, float)):
+                        latency_ms = float(latency_value)
+                    self.tool_policy.record_observation(
+                        "action_workflow_subagent",
+                        success=success,
+                        latency_ms=latency_ms,
+                        metadata={
+                            "step_id": result.get("step_id"),
+                            "status": status,
+                        },
+                    )
                 actionable_results = [
                     result
                     for result in action_workflow_results
@@ -578,6 +643,22 @@ class AivenAgent:
 
             if voice_call_results:
                 gathered_info["voice_call_subagent"] = voice_call_results
+                for result in voice_call_results:
+                    status = (result.get("status") or "").lower()
+                    success = status not in {"error"}
+                    latency_value = result.get("latency_ms")
+                    latency_ms = None
+                    if isinstance(latency_value, (int, float)):
+                        latency_ms = float(latency_value)
+                    self.tool_policy.record_observation(
+                        "voice_call_subagent",
+                        success=success,
+                        latency_ms=latency_ms,
+                        metadata={
+                            "step_id": result.get("step_id"),
+                            "status": status,
+                        },
+                    )
                 successful_voice_calls = [
                     result
                     for result in voice_call_results
@@ -594,6 +675,7 @@ class AivenAgent:
             # Use Action tool if needed
             if "action" in tools_needed and self.action_tool and "actions" not in gathered_info:
                 try:
+                    action_start = time.time()
                     action_result = await self.action_tool.invoke(message, conversation_id)
                     if action_result.get("actions"):
                         gathered_info["actions"] = action_result
@@ -601,6 +683,12 @@ class AivenAgent:
                         self.stats["action_queries"] += 1
                         tool_usage_count += 1
                         logger.info("Action tool used successfully")
+                        self.tool_policy.record_observation(
+                            "action",
+                            success=True,
+                            latency_ms=(time.time() - action_start) * 1000.0,
+                            metadata={"actions": len(action_result.get("actions", []))},
+                        )
                 except Exception as action_error:
                     logger.error(f"Action tool error: {action_error}")
                     await self.analytics_sink.log_event(
@@ -621,6 +709,12 @@ class AivenAgent:
                         ]
                     }
                     actions_summary = gathered_info["actions"]
+                    self.tool_policy.record_observation(
+                        "action",
+                        success=False,
+                        latency_ms=None,
+                        metadata={"error": str(action_error)},
+                    )
 
             # Use RAG tool if needed
             rag_query = None
@@ -630,6 +724,7 @@ class AivenAgent:
                 and "rag" in tools_needed
                 and "documentation" not in gathered_info
             ):
+                rag_start = time.time()
                 try:
                     # Create a more specific query for better RAG results
                     if "edit" in prompt_text.lower() or "modify" in prompt_text.lower():
@@ -647,6 +742,12 @@ class AivenAgent:
                     logger.info("RAG tool used successfully")
                     logger.info(f"RAG query used: {rag_query}")
                     logger.info(f"RAG result preview: {doc_result[:500]}...")
+                    self.tool_policy.record_observation(
+                        "rag",
+                        success=True,
+                        latency_ms=(time.time() - rag_start) * 1000.0,
+                        metadata={"query": rag_query},
+                    )
                 except Exception as e:
                     logger.error(f"RAG tool error: {e}")
                     await self.analytics_sink.log_event(
@@ -660,6 +761,12 @@ class AivenAgent:
                         },
                     )
                     gathered_info["documentation"] = "No documentation found"
+                    self.tool_policy.record_observation(
+                        "rag",
+                        success=False,
+                        latency_ms=(time.time() - rag_start) * 1000.0,
+                        metadata={"query": rag_query, "error": str(e)},
+                    )
 
             # Use SQL tool if needed
             if "sql" in tools_needed and "database_data" not in gathered_info:
@@ -671,9 +778,9 @@ class AivenAgent:
                         table_hints=row_selection_candidates,
                     )
                     if sql_query:
-                        # Add timeout for SQL queries
                         import asyncio
                         try:
+                            sql_start = time.time()
                             db_result = await asyncio.wait_for(
                                 self.sql_tool.ainvoke(sql_query),
                                 timeout=10.0  # 10 second timeout for SQL
@@ -682,9 +789,29 @@ class AivenAgent:
                             self.stats["sql_queries"] += 1
                             tool_usage_count += 1
                             logger.info("SQL tool used successfully")
+                            self.tool_policy.record_observation(
+                                "sql",
+                                success=True,
+                                latency_ms=(time.time() - sql_start) * 1000.0,
+                                metadata={"query": sql_query},
+                            )
                         except asyncio.TimeoutError:
                             logger.warning("SQL query timed out, skipping")
                             gathered_info["database_data"] = "SQL query timed out"
+                            self.tool_policy.record_observation(
+                                "sql",
+                                success=False,
+                                latency_ms=10000.0,
+                                metadata={"query": sql_query, "error": "timeout"},
+                            )
+                    else:
+                        logger.info("No SQL query generated; skipping database lookup")
+                        self.tool_policy.record_observation(
+                            "sql",
+                            success=False,
+                            latency_ms=None,
+                            metadata={"reason": "no_query_generated"},
+                        )
                 except Exception as e:
                     logger.error(f"SQL tool error: {e}")
                     await self.analytics_sink.log_event(
@@ -695,6 +822,12 @@ class AivenAgent:
                         error_message=str(e),
                     )
                     gathered_info["database_data"] = "No database data available"
+                    self.tool_policy.record_observation(
+                        "sql",
+                        success=False,
+                        latency_ms=None,
+                        metadata={"error": str(e)},
+                    )
             
             # STEP 3: Generate final response
             critical_requirements = []
