@@ -16,7 +16,7 @@ This plan consolidates the remaining items from `multi-agent-upgrade-task-board.
 | Phase A.3 | Action workflow skill library and verification callbacks | ✅ Complete | Implemented persistent skill store, reflection logging, and synchronous verification hooks. |
 | Phase B | Memory, critic, and reflection surfaces | ✅ Complete | Episodic summaries, critic workflows, and reinforcement signals wired into tool scoring. |
 | Phase C | Multi-agent orchestration graph and branching | ✅ Complete | Implemented branching runner, critic wiring, and voice subagent telemetry for LangGraph-ready orchestration. |
-| Phase D | Continuous evaluation and guardrail hardening | ⏳ Not Started | Depends on LangGraph telemetry stream from Phases A–C. |
+| Phase D | Continuous evaluation and guardrail hardening | 🚧 In Progress | Guardrail automation queues follow-up tasks; evaluation harness expansion underway. |
 | Phase E | Governance, documentation, and rollout playbooks | ⏳ Not Started | To be activated once evaluation metrics stabilize. |
 
 ## Phase A – Control Loop & Tooling
@@ -224,4 +224,13 @@ CREATE INDEX IF NOT EXISTS idx_ai_conversation_reflections_conversation
 - Extend evaluation harness with branch-specific stress tests and auto-run suites to populate the new metrics continuously.
 - Automate guardrail enforcement workflows (Phase D.2) so safety override telemetry links to compensating actions and queue backfills.
 - Transition into Phase E deliverables: rollout playbooks, contributor onboarding updates, and end-to-end governance sign-off using the richer evaluation signals.
+
+## Progress Update – 2025-03-28
+- **Phase D.2 — Guardrail automation fan-out:** Aggregation coordinator now normalizes planner-provided follow-up tasks and seeds default guardrail compensation jobs when none are supplied. The orchestrator automatically enqueues those tasks with task queue IDs so safety overrides trigger deterministic recovery paths.
+- **Evaluation harness coverage:** Added asynchronous regression tests for the aggregation coordinator and guardrail compensation flow, ensuring queued task metadata and follow-up payloads surface in telemetry for future dashboards.
+
+### Remaining Focus After 2025-03-28
+- Expand synthetic scenario suite with branch-specific stress cases and schedule continuous runs to feed the evaluation dashboard (Phase D.1 extension).
+- Wire queued guardrail compensations into downstream workers and validate telemetry ingestion across staging and production (Phase D.2 hardening).
+- Kick off Phase E governance deliverables: contributor training updates, rollout playbooks, and security reviews leveraging the richer guardrail telemetry.
 

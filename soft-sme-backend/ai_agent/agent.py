@@ -431,7 +431,8 @@ class AivenAgent:
         conversation_id: str,
         tasks: List[Dict[str, Any]],
         user_id: Optional[int] = None
-    ) -> None:
+    ) -> List[str]:
+        queued_task_ids: List[str] = []
         for task in tasks:
             task_type = task.get('task_type') or 'agent_tool'
             payload = task.get('payload') or {}
@@ -465,8 +466,11 @@ class AivenAgent:
                     task_type,
                     conversation_id
                 )
+                queued_task_ids.append(task_id)
             except Exception as exc:
                 logger.error('Failed to enqueue follow-up task for conversation %s: %s', conversation_id, exc)
+
+        return queued_task_ids
 
     def _parse_schedule_at(self, value: Optional[str]) -> Optional[datetime]:
         if not value or not isinstance(value, str):
@@ -600,6 +604,8 @@ class AivenAgent:
                 safety_results = await self._process_safety_steps(
                     planner_plan,
                     session_id=planner_session_id,
+                    conversation_id=conversation_id,
+                    user_id=user_id,
                 )
                 if safety_results:
                     gathered_info["safety_subagent"] = safety_results
@@ -962,6 +968,8 @@ Provide a helpful, complete answer."""
         plan: Dict[str, Any],
         *,
         session_id: int,
+        conversation_id: Optional[str] = None,
+        user_id: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         if not self.aggregation_coordinator:
             return []
@@ -1003,6 +1011,19 @@ Provide a helpful, complete answer."""
                     "description": step.get("description"),
                 }
             )
+
+            follow_up_tasks_payload = [dict(task) for task in directive.follow_up_tasks]
+            if follow_up_tasks_payload:
+                directive_payload["follow_up_tasks"] = follow_up_tasks_payload
+                if conversation_id and getattr(self, "task_queue", None):
+                    queued_follow_ups = self._enqueue_follow_up_tasks(
+                        conversation_id,
+                        [dict(task) for task in follow_up_tasks_payload],
+                        user_id=user_id,
+                    )
+                    if queued_follow_ups:
+                        directive_payload["queued_follow_up_tasks"] = queued_follow_ups
+
             results.append(directive_payload)
 
         return results
