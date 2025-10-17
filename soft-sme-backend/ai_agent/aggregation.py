@@ -16,6 +16,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import logging
+import os
 from typing import Any, AsyncIterator, Deque, Dict, List, Mapping, Optional, Tuple
 
 from .analytics_sink import AnalyticsSink
@@ -102,7 +103,28 @@ class SafetyDirective:
 
 
 class TelemetryContextStore:
-    """In-memory telemetry context store used until Redis is introduced."""
+    """Abstract telemetry context store interface."""
+
+    async def set(
+        self,
+        session_id: str,
+        plan_step_id: str,
+        subagent_key: str,
+        telemetry: Optional[TelemetryPayload],
+    ) -> None:
+        raise NotImplementedError
+
+    async def get(
+        self, session_id: str, plan_step_id: str, subagent_key: str
+    ) -> TelemetryPayload:
+        raise NotImplementedError
+
+    async def clear(self, session_id: str, plan_step_id: str) -> None:
+        raise NotImplementedError
+
+
+class InMemoryTelemetryContextStore(TelemetryContextStore):
+    """In-memory telemetry context store used primarily for local development and tests."""
 
     def __init__(self) -> None:
         self._store: Dict[str, Dict[str, Dict[str, TelemetryPayload]]] = {}
@@ -139,6 +161,112 @@ class TelemetryContextStore:
             plan_store.pop(plan_step_id, None)
             if not plan_store:
                 self._store.pop(session_id, None)
+
+
+try:  # pragma: no cover - import is validated in tests via dependency injection
+    from redis import asyncio as redis_asyncio
+except Exception:  # pragma: no cover - redis is optional at runtime
+    redis_asyncio = None
+
+
+class RedisTelemetryContextStore(TelemetryContextStore):
+    """Redis-backed telemetry store for horizontally scaled workers."""
+
+    def __init__(
+        self,
+        *,
+        redis_url: Optional[str] = None,
+        ttl_seconds: int = 1800,
+        namespace: str = "planner:telemetry",
+        redis_client: Optional["redis_asyncio.Redis"] = None,
+    ) -> None:
+        if redis_client is not None:
+            self._redis = redis_client
+        else:
+            if redis_asyncio is None:
+                raise RuntimeError(
+                    "redis package not available; install redis>=5.0.0 to use RedisTelemetryContextStore"
+                )
+            if not redis_url:
+                raise ValueError("redis_url must be provided when redis_client is not supplied")
+            self._redis = redis_asyncio.from_url(
+                redis_url,
+                encoding="utf-8",
+                decode_responses=True,
+            )
+
+        self._ttl_seconds = ttl_seconds
+        self._namespace = namespace
+
+    def _key(self, session_id: str, plan_step_id: str) -> str:
+        return f"{self._namespace}:{session_id}:{plan_step_id}"
+
+    async def set(
+        self,
+        session_id: str,
+        plan_step_id: str,
+        subagent_key: str,
+        telemetry: Optional[TelemetryPayload],
+    ) -> None:
+        payload = json.dumps(telemetry or {}, separators=(",", ":"))
+        key = self._key(session_id, plan_step_id)
+        await self._redis.hset(key, subagent_key, payload)
+        if self._ttl_seconds > 0:
+            await self._redis.expire(key, self._ttl_seconds)
+
+    async def get(
+        self, session_id: str, plan_step_id: str, subagent_key: str
+    ) -> TelemetryPayload:
+        key = self._key(session_id, plan_step_id)
+        payload = await self._redis.hget(key, subagent_key)
+        if not payload:
+            return {}
+        try:
+            return dict(json.loads(payload))
+        except (TypeError, ValueError):
+            logger.warning(
+                "RedisTelemetryContextStore.get: failed to decode telemetry payload for %s/%s/%s",  # noqa: E501
+                session_id,
+                plan_step_id,
+                subagent_key,
+            )
+            return {}
+
+    async def clear(self, session_id: str, plan_step_id: str) -> None:
+        key = self._key(session_id, plan_step_id)
+        await self._redis.delete(key)
+
+
+def create_telemetry_store_from_env(
+    env: Optional[Mapping[str, str]] = None,
+) -> TelemetryContextStore:
+    """Create an appropriate telemetry store based on environment variables."""
+
+    env = env or os.environ
+    redis_url = env.get("AI_TELEMETRY_REDIS_URL") or env.get("REDIS_URL")
+    ttl_raw = env.get("AI_TELEMETRY_REDIS_TTL_SECONDS")
+    ttl_seconds = 1800
+    if ttl_raw:
+        try:
+            ttl_seconds = max(int(ttl_raw), 0)
+        except ValueError:
+            logger.warning(
+                "Invalid AI_TELEMETRY_REDIS_TTL_SECONDS=%s; defaulting to %s", ttl_raw, ttl_seconds
+            )
+
+    if redis_url:
+        try:
+            return RedisTelemetryContextStore(
+                redis_url=redis_url,
+                ttl_seconds=ttl_seconds,
+            )
+        except Exception as exc:  # pragma: no cover - exercised in integration
+            logger.warning(
+                "Falling back to in-memory telemetry store because Redis initialization failed: %s",
+                exc,
+            )
+
+    return InMemoryTelemetryContextStore()
 
 
 class ResultCache:
@@ -187,7 +315,9 @@ class AggregationCoordinator:
         result_cache: Optional[ResultCache] = None,
         analytics_sink: Optional[AnalyticsSink] = None,
     ) -> None:
-        self._telemetry_store = telemetry_store or TelemetryContextStore()
+        if telemetry_store is None:
+            telemetry_store = create_telemetry_store_from_env()
+        self._telemetry_store = telemetry_store
         self._result_cache = result_cache or ResultCache()
         self._analytics_sink = analytics_sink
         self._states: Dict[Tuple[str, str], SessionStepState] = {}
@@ -633,6 +763,9 @@ __all__ = [
     "AggregationCoordinator",
     "StreamMux",
     "TelemetryContextStore",
+    "InMemoryTelemetryContextStore",
+    "RedisTelemetryContextStore",
+    "create_telemetry_store_from_env",
     "ResultCache",
     "SubagentExpectation",
     "SafetyDirective",
