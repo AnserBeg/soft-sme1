@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import api from '../api/axios';
+import plannerService from '../services/plannerService';
 
 export type PlannerStreamConnectionState =
   | 'idle'
@@ -447,6 +448,7 @@ export const usePlannerStream = (args: UsePlannerStreamArgs): UsePlannerStreamRe
   const shouldReconnectRef = useRef(false);
   const reconnectAttemptRef = useRef(0);
   const completionNotifiedRef = useRef(false);
+  const replayCompleteRef = useRef(false);
 
   const resetSummary = useCallback(() => {
     dispatch({ type: 'reset', expected: expectedSubagents, plannerContext });
@@ -454,6 +456,7 @@ export const usePlannerStream = (args: UsePlannerStreamArgs): UsePlannerStreamRe
     setReplayComplete(false);
     setLastHeartbeatAt(null);
     completionNotifiedRef.current = false;
+    replayCompleteRef.current = false;
   }, [expectedSubagents, plannerContext, initialCursor]);
 
   useEffect(() => {
@@ -465,6 +468,10 @@ export const usePlannerStream = (args: UsePlannerStreamArgs): UsePlannerStreamRe
       dispatch({ type: 'hydrateExpected', expected: expectedSubagents, plannerContext });
     }
   }, [expectedSubagents, plannerContext]);
+
+  useEffect(() => {
+    replayCompleteRef.current = replayComplete;
+  }, [replayComplete]);
 
   const clearReconnectTimer = () => {
     if (reconnectTimerRef.current) {
@@ -613,6 +620,32 @@ export const usePlannerStream = (args: UsePlannerStreamArgs): UsePlannerStreamRe
       }
 
       try {
+        if (!replayCompleteRef.current) {
+          try {
+            const replay = await plannerService.fetchReplay({
+              sessionId: normalizedSessionId,
+              planStepId: normalizedPlanStepId,
+              after: lastEventIdRef.current,
+              limit: 200,
+            });
+            const replayEvents = Array.isArray(replay?.events)
+              ? (replay.events.map(normalizePlannerEvent).filter(Boolean) as PlannerStreamEvent[])
+              : [];
+            if (replay?.next_cursor) {
+              lastEventIdRef.current = String(replay.next_cursor);
+            }
+            if (replayEvents.length > 0) {
+              dispatch({ type: 'append', events: replayEvents });
+            }
+            setReplayComplete(true);
+            replayCompleteRef.current = true;
+          } catch (replayError) {
+            if (import.meta.env.DEV) {
+              console.warn('Planner replay fetch failed', replayError);
+            }
+          }
+        }
+
         const response = await fetch(url, {
           method: 'GET',
           headers,
