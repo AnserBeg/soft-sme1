@@ -7,15 +7,18 @@ Main AI agent class that orchestrates the LangGraph workflow for the Aiven appli
 Handles routing between documentation RAG and live database queries.
 """
 
+import asyncio
 import hashlib
 import json
 import os
 import logging
 import time
 import uuid
-from dataclasses import asdict
+from collections import deque
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Dict, Any, List, Optional, Sequence, Tuple
+
 from langchain_core.messages import HumanMessage, AIMessage
 
 try:  # pragma: no cover - support direct execution and package import
@@ -53,9 +56,35 @@ except ImportError:  # pragma: no cover - fallback when executed as script
 
 logger = logging.getLogger(__name__)
 
+
+@dataclass
+class ReActLoopState:
+    """Mutable state tracked across ReAct control loop iterations."""
+
+    gathered_info: Dict[str, Any] = field(default_factory=dict)
+    documentation_results: List[Dict[str, Any]] = field(default_factory=list)
+    row_selection_candidates: List[str] = field(default_factory=list)
+    actions_summary: Dict[str, Any] = field(default_factory=dict)
+    tool_usage_count: int = 0
+    executed_tools: Dict[str, int] = field(default_factory=dict)
+
+
+@dataclass
+class ReActObservation:
+    """Outcome emitted after executing a single control loop action."""
+
+    success: bool
+    summary: str
+    continue_loop: bool = True
+    enqueue_tools: List[str] = field(default_factory=list)
+    payload: Dict[str, Any] = field(default_factory=dict)
+
+
 class AivenAgent:
     """Main AI agent for Aiven application"""
-    
+
+    MAX_REACT_ITERATIONS = 6
+
     def __init__(self):
         self.llm = None
         self.tools = []
@@ -475,359 +504,22 @@ class AivenAgent:
                             "documentation_subagent": documentation_results,
                         }
 
-            if planner_plan and self.documentation_qa_subagent:
-                documentation_results = await self._execute_documentation_steps(
-                    planner_plan,
-                    conversation_history=conversation_history,
-                    fallback_question=prompt_text,
-                    session_id=planner_session_id,
-                )
+            loop_state = await self._run_react_control_loop(
+                prompt_text=prompt_text,
+                conversation_history=conversation_history,
+                planner_plan=planner_plan,
+                planner_session_id=planner_session_id,
+                conversation_id=conversation_id,
+                ranked_tools=tools_needed,
+                planner_suggestions=planner_suggestions,
+                initial_info=gathered_info,
+            )
 
-            if documentation_results:
-                gathered_info["documentation_subagent"] = documentation_results
-
-                for result in documentation_results:
-                    status = (result.get("status") or "").lower()
-                    success = status == "success"
-                    latency_value = result.get("latency_ms")
-                    latency_ms = None
-                    if isinstance(latency_value, (int, float)):
-                        latency_ms = float(latency_value)
-                    self.tool_policy.record_observation(
-                        "documentation_subagent",
-                        success=success,
-                        latency_ms=latency_ms,
-                        metadata={
-                            "step_id": result.get("step_id"),
-                            "status": status,
-                        },
-                    )
-
-                successful_answers = [
-                    item["answer"]
-                    for item in documentation_results
-                    if item.get("status") == "success" and item.get("answer")
-                ]
-                if successful_answers:
-                    gathered_info.setdefault("documentation", "\n\n".join(successful_answers))
-                    self.stats["rag_queries"] += len(successful_answers)
-
-                citations_payload = [
-                    {
-                        "step_id": item.get("step_id"),
-                        "citations": item.get("citations", []),
-                    }
-                    for item in documentation_results
-                    if item.get("citations")
-                ]
-                if citations_payload:
-                    gathered_info["documentation_citations"] = citations_payload
-
-                tool_usage_count += len(documentation_results)
-                tools_needed = [tool for tool in tools_needed if tool != "rag"]
-
-            row_selection_results: List[Dict[str, Any]] = []
-            row_selection_candidates: List[str] = []
-            if planner_plan and self.row_selection_subagent:
-                row_selection_results = await self._execute_row_selection_steps(
-                    planner_plan,
-                    conversation_history=conversation_history,
-                    session_id=planner_session_id,
-                )
-
-            if row_selection_results:
-                gathered_info["row_selection_subagent"] = row_selection_results
-                for result in row_selection_results:
-                    status = (result.get("status") or "").lower()
-                    success = status == "success"
-                    latency_value = result.get("latency_ms")
-                    latency_ms = None
-                    if isinstance(latency_value, (int, float)):
-                        latency_ms = float(latency_value)
-                    self.tool_policy.record_observation(
-                        "row_selection_subagent",
-                        success=success,
-                        latency_ms=latency_ms,
-                        metadata={
-                            "step_id": result.get("step_id"),
-                            "status": status,
-                        },
-                    )
-                successful_row_selection = next(
-                    (
-                        result
-                        for result in row_selection_results
-                        if result.get("status") == "success"
-                        and isinstance(result.get("table_candidates"), list)
-                        and result.get("table_candidates")
-                    ),
-                    None,
-                )
-                if successful_row_selection:
-                    row_selection_candidates = [
-                        str(candidate)
-                        for candidate in successful_row_selection.get("table_candidates", [])
-                        if isinstance(candidate, str) and candidate
-                    ]
-                    gathered_info["row_selection_summary"] = {
-                        "table_candidates": row_selection_candidates,
-                        "reasoning": successful_row_selection.get("reasoning"),
-                    }
-
-                non_error_results = [
-                    result for result in row_selection_results if result.get("status") != "error"
-                ]
-                tool_usage_count += len(non_error_results)
-                tools_needed = [
-                    tool for tool in tools_needed if tool != "row_selection_subagent"
-                ]
-
-            action_workflow_results: List[Dict[str, Any]] = []
-            if planner_plan and self.action_workflow_subagent:
-                action_workflow_results = await self._execute_action_workflow_steps(
-                    planner_plan,
-                    conversation_history=conversation_history,
-                    conversation_id=conversation_id,
-                    session_id=planner_session_id,
-                )
-
-            if action_workflow_results:
-                gathered_info["action_workflow_subagent"] = action_workflow_results
-                for result in action_workflow_results:
-                    status = (result.get("status") or "").lower()
-                    success = status not in {"error", "manual"}
-                    latency_value = result.get("latency_ms")
-                    latency_ms = None
-                    if isinstance(latency_value, (int, float)):
-                        latency_ms = float(latency_value)
-                    self.tool_policy.record_observation(
-                        "action_workflow_subagent",
-                        success=success,
-                        latency_ms=latency_ms,
-                        metadata={
-                            "step_id": result.get("step_id"),
-                            "status": status,
-                        },
-                    )
-                actionable_results = [
-                    result
-                    for result in action_workflow_results
-                    if result.get("status") not in {"error", "manual"}
-                ]
-                if actionable_results:
-                    tool_usage_count += len(actionable_results)
-                    if not gathered_info.get("actions"):
-                        actions_summary = {
-                            "actions": [
-                                {
-                                    "tool": result.get("action"),
-                                    "success": result.get("status") not in {"error", "manual"},
-                                    "message": result.get("message"),
-                                    "queuedTaskId": result.get("queued_task_id"),
-                                    "status": result.get("status"),
-                                }
-                                for result in action_workflow_results
-                            ],
-                            "message": actionable_results[0].get("message"),
-                        }
-                        gathered_info["actions"] = actions_summary
-                tools_needed = [tool for tool in tools_needed if tool != "action"]
-
-            voice_call_results: List[Dict[str, Any]] = []
-            if planner_plan and self.voice_call_subagent:
-                voice_call_results = await self._execute_voice_call_steps(
-                    planner_plan,
-                    conversation_id=conversation_id,
-                    session_id=planner_session_id,
-                )
-
-            if voice_call_results:
-                gathered_info["voice_call_subagent"] = voice_call_results
-                for result in voice_call_results:
-                    status = (result.get("status") or "").lower()
-                    success = status not in {"error"}
-                    latency_value = result.get("latency_ms")
-                    latency_ms = None
-                    if isinstance(latency_value, (int, float)):
-                        latency_ms = float(latency_value)
-                    self.tool_policy.record_observation(
-                        "voice_call_subagent",
-                        success=success,
-                        latency_ms=latency_ms,
-                        metadata={
-                            "step_id": result.get("step_id"),
-                            "status": status,
-                        },
-                    )
-                successful_voice_calls = [
-                    result
-                    for result in voice_call_results
-                    if result.get("status") not in {"error"}
-                ]
-                if successful_voice_calls:
-                    tool_usage_count += len(successful_voice_calls)
-                tools_needed = [
-                    tool
-                    for tool in tools_needed
-                    if tool not in {"voice_call_subagent", "voice_call"}
-                ]
-
-            # Use Action tool if needed
-            if "action" in tools_needed and self.action_tool and "actions" not in gathered_info:
-                try:
-                    action_start = time.time()
-                    action_result = await self.action_tool.invoke(message, conversation_id)
-                    if action_result.get("actions"):
-                        gathered_info["actions"] = action_result
-                        actions_summary = action_result
-                        self.stats["action_queries"] += 1
-                        tool_usage_count += 1
-                        logger.info("Action tool used successfully")
-                        self.tool_policy.record_observation(
-                            "action",
-                            success=True,
-                            latency_ms=(time.time() - action_start) * 1000.0,
-                            metadata={"actions": len(action_result.get("actions", []))},
-                        )
-                except Exception as action_error:
-                    logger.error(f"Action tool error: {action_error}")
-                    await self.analytics_sink.log_event(
-                        "tool_failure",
-                        tool="agent_v2",
-                        conversation_id=conversation_id,
-                        status="failed",
-                        error_message=str(action_error),
-                        metadata={"stage": "agent_wrapper"},
-                    )
-                    gathered_info["actions"] = {
-                        "actions": [
-                            {
-                                "tool": "agent_v2",
-                                "success": False,
-                                "message": f"Action execution failed: {action_error}",
-                            }
-                        ]
-                    }
-                    actions_summary = gathered_info["actions"]
-                    self.tool_policy.record_observation(
-                        "action",
-                        success=False,
-                        latency_ms=None,
-                        metadata={"error": str(action_error)},
-                    )
-
-            # Use RAG tool if needed
-            rag_query = None
-            if (
-                self.documentation_enabled
-                and self.rag_tool
-                and "rag" in tools_needed
-                and "documentation" not in gathered_info
-            ):
-                rag_start = time.time()
-                try:
-                    # Create a more specific query for better RAG results
-                    if "edit" in prompt_text.lower() or "modify" in prompt_text.lower():
-                        if "attendance" in prompt_text.lower() or "clock" in prompt_text.lower():
-                            rag_query = f"time tracking reports page edit modify time entries attendance clock in clock out reports {prompt_text}"
-                        else:
-                            rag_query = f"how to edit modify time entries attendance clock in clock out {prompt_text}"
-                    else:
-                        rag_query = f"relevant documentation for: {prompt_text}"
-
-                    doc_result = await self.rag_tool.ainvoke(rag_query)
-                    gathered_info["documentation"] = doc_result
-                    self.stats["rag_queries"] += 1
-                    tool_usage_count += 1
-                    logger.info("RAG tool used successfully")
-                    logger.info(f"RAG query used: {rag_query}")
-                    logger.info(f"RAG result preview: {doc_result[:500]}...")
-                    self.tool_policy.record_observation(
-                        "rag",
-                        success=True,
-                        latency_ms=(time.time() - rag_start) * 1000.0,
-                        metadata={"query": rag_query},
-                    )
-                except Exception as e:
-                    logger.error(f"RAG tool error: {e}")
-                    await self.analytics_sink.log_event(
-                        "tool_failure",
-                        tool="documentation_rag",
-                        conversation_id=conversation_id,
-                        status="failed",
-                        error_message=str(e),
-                        metadata={
-                            "query": rag_query,
-                        },
-                    )
-                    gathered_info["documentation"] = "No documentation found"
-                    self.tool_policy.record_observation(
-                        "rag",
-                        success=False,
-                        latency_ms=(time.time() - rag_start) * 1000.0,
-                        metadata={"query": rag_query, "error": str(e)},
-                    )
-
-            # Use SQL tool if needed
-            if "sql" in tools_needed and "database_data" not in gathered_info:
-                try:
-                    # Generate SQL query based on the message and conversation context
-                    sql_query = await self._generate_sql_query(
-                        prompt_text,
-                        conversation_history,
-                        table_hints=row_selection_candidates,
-                    )
-                    if sql_query:
-                        import asyncio
-                        try:
-                            sql_start = time.time()
-                            db_result = await asyncio.wait_for(
-                                self.sql_tool.ainvoke(sql_query),
-                                timeout=10.0  # 10 second timeout for SQL
-                            )
-                            gathered_info["database_data"] = db_result
-                            self.stats["sql_queries"] += 1
-                            tool_usage_count += 1
-                            logger.info("SQL tool used successfully")
-                            self.tool_policy.record_observation(
-                                "sql",
-                                success=True,
-                                latency_ms=(time.time() - sql_start) * 1000.0,
-                                metadata={"query": sql_query},
-                            )
-                        except asyncio.TimeoutError:
-                            logger.warning("SQL query timed out, skipping")
-                            gathered_info["database_data"] = "SQL query timed out"
-                            self.tool_policy.record_observation(
-                                "sql",
-                                success=False,
-                                latency_ms=10000.0,
-                                metadata={"query": sql_query, "error": "timeout"},
-                            )
-                    else:
-                        logger.info("No SQL query generated; skipping database lookup")
-                        self.tool_policy.record_observation(
-                            "sql",
-                            success=False,
-                            latency_ms=None,
-                            metadata={"reason": "no_query_generated"},
-                        )
-                except Exception as e:
-                    logger.error(f"SQL tool error: {e}")
-                    await self.analytics_sink.log_event(
-                        "tool_failure",
-                        tool="inventory_sql",
-                        conversation_id=conversation_id,
-                        status="failed",
-                        error_message=str(e),
-                    )
-                    gathered_info["database_data"] = "No database data available"
-                    self.tool_policy.record_observation(
-                        "sql",
-                        success=False,
-                        latency_ms=None,
-                        metadata={"error": str(e)},
-                    )
+            gathered_info = loop_state.gathered_info
+            documentation_results = loop_state.documentation_results
+            row_selection_candidates = loop_state.row_selection_candidates
+            actions_summary = loop_state.actions_summary or actions_summary
+            tool_usage_count = loop_state.tool_usage_count
             
             # STEP 3: Generate final response
             critical_requirements = []
@@ -1164,6 +856,739 @@ Provide a helpful, complete answer."""
             lines.append("Please contact your administrator for next steps.")
 
         return "\n".join(lines).strip()
+
+    async def _run_react_control_loop(
+        self,
+        *,
+        prompt_text: str,
+        conversation_history: Optional[List[Dict[str, Any]]],
+        planner_plan: Optional[Dict[str, Any]],
+        planner_session_id: Optional[int],
+        conversation_id: Optional[str],
+        ranked_tools: Sequence[str],
+        planner_suggestions: Sequence[str],
+        initial_info: Dict[str, Any],
+    ) -> ReActLoopState:
+        """Execute a LangGraph-inspired ReAct loop that iteratively selects tools."""
+
+        state = ReActLoopState(gathered_info=dict(initial_info or {}))
+        if planner_plan and "planner_plan" not in state.gathered_info:
+            state.gathered_info["planner_plan"] = planner_plan
+
+        pending: deque[str] = deque()
+        pending_set: set[str] = set()
+
+        def _add_tool(name: Optional[str], *, front: bool = False) -> None:
+            normalized = self._normalize_tool_name(name)
+            if not normalized or normalized == "llm_knowledge":
+                return
+            if normalized in pending_set:
+                return
+            if front:
+                pending.appendleft(normalized)
+            else:
+                pending.append(normalized)
+            pending_set.add(normalized)
+
+        normalized_suggestions = {
+            self._normalize_tool_name(tool)
+            for tool in planner_suggestions
+            if self._normalize_tool_name(tool)
+        }
+
+        for tool in planner_suggestions:
+            _add_tool(tool, front=True)
+        for tool in ranked_tools:
+            _add_tool(tool)
+
+        session_identifier = str(conversation_id or planner_session_id or uuid.uuid4())
+        plan_step_id: Optional[str] = None
+        if self.aggregation_coordinator and pending:
+            try:
+                plan_step_id = f"react-loop-{uuid.uuid4()}"
+                await self.aggregation_coordinator.register_plan_step(
+                    session_id=session_identifier,
+                    plan_step_id=plan_step_id,
+                    expected_subagents=[
+                        {"key": "reason", "result_key": "thought"},
+                        {"key": "act", "result_key": "observation"},
+                        {"key": "reflect", "result_key": "decision"},
+                    ],
+                    planner_context={
+                        "description": "react_control_loop",
+                        "initial_tools": list(pending),
+                    },
+                )
+            except Exception as exc:  # pragma: no cover - defensive guard
+                logger.exception("Failed to register ReAct control loop with aggregator: %s", exc)
+                plan_step_id = None
+
+        iteration = 0
+        while pending and iteration < self.MAX_REACT_ITERATIONS:
+            iteration += 1
+            tool = pending.popleft()
+            state.executed_tools[tool] = state.executed_tools.get(tool, 0) + 1
+
+            reason_message = self._compose_reason_message(
+                tool=tool,
+                iteration=iteration,
+                state=state,
+                normalized_suggestions=normalized_suggestions,
+                pending=list(pending),
+            )
+            await self._emit_react_event(
+                session_id=session_identifier,
+                plan_step_id=plan_step_id,
+                subagent="reason",
+                status="completed",
+                payload={
+                    "tool": tool,
+                    "iteration": iteration,
+                    "pending_tools": list(pending),
+                    "thought": reason_message,
+                },
+            )
+
+            observation = await self._execute_react_action(
+                tool=tool,
+                state=state,
+                prompt_text=prompt_text,
+                conversation_history=conversation_history,
+                planner_plan=planner_plan,
+                planner_session_id=planner_session_id,
+                conversation_id=conversation_id,
+            )
+
+            payload = {"tool": tool, "summary": observation.summary, **observation.payload}
+            await self._emit_react_event(
+                session_id=session_identifier,
+                plan_step_id=plan_step_id,
+                subagent="act",
+                status="success" if observation.success else "error",
+                payload=payload,
+            )
+
+            reflect_message, should_continue, enqueue_tools = self._reflect_after_observation(
+                tool=tool,
+                observation=observation,
+                state=state,
+                pending=list(pending),
+            )
+
+            await self._emit_react_event(
+                session_id=session_identifier,
+                plan_step_id=plan_step_id,
+                subagent="reflect",
+                status="continue" if should_continue else "stop",
+                payload={
+                    "tool": tool,
+                    "message": reflect_message,
+                    "next_tools": enqueue_tools,
+                },
+            )
+
+            if not should_continue:
+                break
+
+            for candidate in enqueue_tools:
+                normalized = self._normalize_tool_name(candidate)
+                if not normalized or normalized == "llm_knowledge":
+                    continue
+                if state.executed_tools.get(normalized, 0) >= 2:
+                    continue
+                if normalized not in pending_set:
+                    pending.append(normalized)
+                    pending_set.add(normalized)
+                elif normalized not in pending:
+                    pending.append(normalized)
+
+        await self._emit_react_completion(
+            session_id=session_identifier,
+            plan_step_id=plan_step_id,
+            state=state,
+        )
+
+        return state
+
+    async def _emit_react_event(
+        self,
+        *,
+        session_id: str,
+        plan_step_id: Optional[str],
+        subagent: str,
+        status: str,
+        payload: Dict[str, Any],
+    ) -> None:
+        if not self.aggregation_coordinator or not plan_step_id:
+            return
+
+        try:
+            await self.aggregation_coordinator.emit_subagent_event(
+                session_id=session_id,
+                plan_step_id=plan_step_id,
+                subagent=subagent,
+                status=status,
+                payload=payload,
+            )
+        except Exception as exc:  # pragma: no cover - telemetry failures shouldn't crash the agent
+            logger.exception("Failed to emit ReAct %s event: %s", subagent, exc)
+
+    async def _emit_react_completion(
+        self,
+        *,
+        session_id: str,
+        plan_step_id: Optional[str],
+        state: ReActLoopState,
+    ) -> None:
+        if not self.aggregation_coordinator or not plan_step_id:
+            return
+
+        try:
+            await self.aggregation_coordinator.emit_step_completed(
+                session_id=session_id,
+                plan_step_id=plan_step_id,
+                status="success",
+                payload={
+                    "gathered_keys": list(state.gathered_info.keys()),
+                    "executed_tools": state.executed_tools,
+                },
+            )
+        except Exception as exc:  # pragma: no cover - telemetry failures shouldn't crash the agent
+            logger.exception("Failed to complete ReAct loop event stream: %s", exc)
+
+    def _compose_reason_message(
+        self,
+        *,
+        tool: str,
+        iteration: int,
+        state: ReActLoopState,
+        normalized_suggestions: set[str],
+        pending: List[str],
+    ) -> str:
+        reasons: List[str] = []
+        if tool in normalized_suggestions:
+            reasons.append("planner suggested this capability")
+        if tool == "sql" and state.row_selection_candidates:
+            reasons.append("row selection provided table hints")
+        if tool == "rag" and not state.gathered_info.get("documentation"):
+            reasons.append("no documentation answer gathered yet")
+        if tool == "action" and "actions" not in state.gathered_info:
+            reasons.append("no workflows have been executed")
+        if not reasons:
+            reasons.append("following ranked tool order")
+
+        pending_clause = f". Pending afterwards: {', '.join(pending)}" if pending else ""
+        return f"Iteration {iteration}: selecting {tool} because {', '.join(reasons)}{pending_clause}".strip()
+
+    async def _execute_react_action(
+        self,
+        *,
+        tool: str,
+        state: ReActLoopState,
+        prompt_text: str,
+        conversation_history: Optional[List[Dict[str, Any]]],
+        planner_plan: Optional[Dict[str, Any]],
+        planner_session_id: Optional[int],
+        conversation_id: Optional[str],
+    ) -> ReActObservation:
+        normalized_tool = self._normalize_tool_name(tool) or "unknown"
+
+        if normalized_tool == "documentation_subagent":
+            if not planner_plan or not self.documentation_qa_subagent:
+                return ReActObservation(
+                    success=False,
+                    summary="Documentation QA subagent unavailable",
+                    enqueue_tools=["rag"] if self.rag_tool else [],
+                    payload={"reason": "not_configured"},
+                )
+
+            results = await self._execute_documentation_steps(
+                planner_plan,
+                conversation_history=conversation_history,
+                fallback_question=prompt_text,
+                session_id=planner_session_id,
+            )
+
+            state.documentation_results = results
+            if results:
+                state.gathered_info["documentation_subagent"] = results
+
+                successful_answers = [
+                    item for item in results if item.get("status") == "success"
+                ]
+                for result in results:
+                    status = (result.get("status") or "").lower()
+                    latency_value = result.get("latency_ms")
+                    latency_ms = float(latency_value) if isinstance(latency_value, (int, float)) else None
+                    self.tool_policy.record_observation(
+                        "documentation_subagent",
+                        success=status == "success",
+                        latency_ms=latency_ms,
+                        metadata={"step_id": result.get("step_id"), "status": status},
+                    )
+
+                if successful_answers:
+                    answers_text = "\n\n".join(
+                        answer.get("answer", "") for answer in successful_answers if answer.get("answer")
+                    )
+                    if answers_text:
+                        state.gathered_info.setdefault("documentation", answers_text)
+                        self.stats["rag_queries"] += len(successful_answers)
+
+                citations_payload = [
+                    {
+                        "step_id": item.get("step_id"),
+                        "citations": item.get("citations", []),
+                    }
+                    for item in results
+                    if item.get("citations")
+                ]
+                if citations_payload:
+                    state.gathered_info["documentation_citations"] = citations_payload
+
+                state.tool_usage_count += len(
+                    [result for result in results if result.get("status") != "error"]
+                )
+
+                return ReActObservation(
+                    success=True,
+                    summary=f"Documentation QA returned {len(successful_answers)} successful answers",
+                    enqueue_tools=[],
+                    payload={"result_count": len(results)},
+                )
+
+            return ReActObservation(
+                success=False,
+                summary="Planner provided documentation steps but none succeeded",
+                enqueue_tools=["rag"] if self.rag_tool else [],
+                payload={"result_count": 0},
+            )
+
+        if normalized_tool == "row_selection_subagent":
+            if not planner_plan or not self.row_selection_subagent:
+                return ReActObservation(
+                    success=False,
+                    summary="Row selection subagent unavailable",
+                    payload={"reason": "not_configured"},
+                )
+
+            results = await self._execute_row_selection_steps(
+                planner_plan,
+                conversation_history=conversation_history,
+                session_id=planner_session_id,
+            )
+
+            if results:
+                state.gathered_info["row_selection_subagent"] = results
+                for result in results:
+                    status = (result.get("status") or "").lower()
+                    latency_value = result.get("latency_ms")
+                    latency_ms = float(latency_value) if isinstance(latency_value, (int, float)) else None
+                    self.tool_policy.record_observation(
+                        "row_selection_subagent",
+                        success=status == "success",
+                        latency_ms=latency_ms,
+                        metadata={"step_id": result.get("step_id"), "status": status},
+                    )
+
+                success_result = next(
+                    (
+                        result
+                        for result in results
+                        if result.get("status") == "success"
+                        and isinstance(result.get("table_candidates"), list)
+                        and result.get("table_candidates")
+                    ),
+                    None,
+                )
+
+                if success_result:
+                    candidates = [
+                        str(candidate)
+                        for candidate in success_result.get("table_candidates", [])
+                        if isinstance(candidate, str) and candidate
+                    ]
+                    state.row_selection_candidates = candidates
+                    state.gathered_info["row_selection_summary"] = {
+                        "table_candidates": candidates,
+                        "reasoning": success_result.get("reasoning"),
+                    }
+
+                state.tool_usage_count += len(
+                    [result for result in results if result.get("status") != "error"]
+                )
+
+                enqueue = ["sql"] if self.sql_tool else []
+                return ReActObservation(
+                    success=bool(success_result),
+                    summary="Row selection evaluated planner hints",
+                    enqueue_tools=enqueue,
+                    payload={"result_count": len(results)},
+                )
+
+            return ReActObservation(
+                success=False,
+                summary="Planner requested row selection but no results were returned",
+                enqueue_tools=[],
+                payload={"result_count": 0},
+            )
+
+        if normalized_tool == "action_workflow_subagent":
+            if not planner_plan or not self.action_workflow_subagent:
+                return ReActObservation(
+                    success=False,
+                    summary="Action workflow subagent unavailable",
+                    payload={"reason": "not_configured"},
+                )
+
+            results = await self._execute_action_workflow_steps(
+                planner_plan,
+                conversation_history=conversation_history,
+                conversation_id=conversation_id,
+                session_id=planner_session_id,
+            )
+
+            if results:
+                state.gathered_info["action_workflow_subagent"] = results
+                for result in results:
+                    status = (result.get("status") or "").lower()
+                    latency_value = result.get("latency_ms")
+                    latency_ms = float(latency_value) if isinstance(latency_value, (int, float)) else None
+                    self.tool_policy.record_observation(
+                        "action_workflow_subagent",
+                        success=status not in {"error", "manual"},
+                        latency_ms=latency_ms,
+                        metadata={"step_id": result.get("step_id"), "status": status},
+                    )
+
+                actionable_results = [
+                    result
+                    for result in results
+                    if result.get("status") not in {"error", "manual"}
+                ]
+
+                if actionable_results:
+                    state.tool_usage_count += len(actionable_results)
+                    state.actions_summary = {
+                        "actions": [
+                            {
+                                "tool": result.get("action"),
+                                "success": result.get("status") not in {"error", "manual"},
+                                "message": result.get("message"),
+                                "queuedTaskId": result.get("queued_task_id"),
+                                "status": result.get("status"),
+                            }
+                            for result in results
+                        ],
+                        "message": actionable_results[0].get("message"),
+                    }
+                    state.gathered_info.setdefault("actions", state.actions_summary)
+
+                return ReActObservation(
+                    success=bool(actionable_results),
+                    summary="Action workflows evaluated",
+                    enqueue_tools=[],
+                    payload={"result_count": len(results)},
+                )
+
+            return ReActObservation(
+                success=False,
+                summary="Planner requested workflows but none executed",
+                enqueue_tools=[],
+                payload={"result_count": 0},
+            )
+
+        if normalized_tool == "voice_call_subagent":
+            if not planner_plan or not self.voice_call_subagent:
+                return ReActObservation(
+                    success=False,
+                    summary="Voice call subagent unavailable",
+                    payload={"reason": "not_configured"},
+                )
+
+            results = await self._execute_voice_call_steps(
+                planner_plan,
+                conversation_id=conversation_id,
+                session_id=planner_session_id,
+            )
+
+            if results:
+                state.gathered_info["voice_call_subagent"] = results
+                for result in results:
+                    status = (result.get("status") or "").lower()
+                    latency_value = result.get("latency_ms")
+                    latency_ms = float(latency_value) if isinstance(latency_value, (int, float)) else None
+                    self.tool_policy.record_observation(
+                        "voice_call_subagent",
+                        success=status not in {"error"},
+                        latency_ms=latency_ms,
+                        metadata={"step_id": result.get("step_id"), "status": status},
+                    )
+
+                successful = [
+                    result for result in results if result.get("status") not in {"error"}
+                ]
+                if successful:
+                    state.tool_usage_count += len(successful)
+
+                return ReActObservation(
+                    success=bool(successful),
+                    summary="Voice call agent processed planner instructions",
+                    enqueue_tools=[],
+                    payload={"result_count": len(results)},
+                )
+
+            return ReActObservation(
+                success=False,
+                summary="Voice call planner steps produced no actionable results",
+                enqueue_tools=[],
+                payload={"result_count": 0},
+            )
+
+        if normalized_tool == "action":
+            if not self.action_tool:
+                return ReActObservation(
+                    success=False,
+                    summary="Action tool unavailable",
+                    payload={"reason": "not_configured"},
+                )
+
+            try:
+                action_start = time.time()
+                action_result = await self.action_tool.invoke(prompt_text, conversation_id)
+                if action_result.get("actions"):
+                    state.gathered_info.setdefault("actions", action_result)
+                    state.actions_summary = action_result
+                    self.stats["action_queries"] += 1
+                    state.tool_usage_count += 1
+                    self.tool_policy.record_observation(
+                        "action",
+                        success=True,
+                        latency_ms=(time.time() - action_start) * 1000.0,
+                        metadata={"actions": len(action_result.get("actions", []))},
+                    )
+                    return ReActObservation(
+                        success=True,
+                        summary="Queued application action workflow",
+                        enqueue_tools=[],
+                        payload={"action_count": len(action_result.get("actions", []))},
+                    )
+                return ReActObservation(
+                    success=False,
+                    summary="No actions were triggered",
+                    enqueue_tools=[],
+                    payload={"action_count": 0},
+                )
+            except Exception as exc:  # pragma: no cover - action execution can fail
+                logger.error("Action tool error: %s", exc)
+                await self.analytics_sink.log_event(
+                    "tool_failure",
+                    tool="agent_v2",
+                    conversation_id=conversation_id,
+                    status="failed",
+                    error_message=str(exc),
+                    metadata={"stage": "agent_wrapper"},
+                )
+                state.gathered_info["actions"] = {
+                    "actions": [
+                        {
+                            "tool": "agent_v2",
+                            "success": False,
+                            "message": f"Action execution failed: {exc}",
+                        }
+                    ]
+                }
+                state.actions_summary = state.gathered_info["actions"]
+                self.tool_policy.record_observation(
+                    "action",
+                    success=False,
+                    latency_ms=None,
+                    metadata={"error": str(exc)},
+                )
+                return ReActObservation(
+                    success=False,
+                    summary="Action tool failed",
+                    enqueue_tools=[],
+                    payload={"error": str(exc)},
+                )
+
+        if normalized_tool == "rag":
+            if not (self.documentation_enabled and self.rag_tool):
+                return ReActObservation(
+                    success=False,
+                    summary="Documentation retrieval disabled",
+                    enqueue_tools=[],
+                    payload={"reason": "disabled"},
+                )
+
+            rag_query = None
+            rag_start = time.time()
+            try:
+                prompt_lower = prompt_text.lower()
+                if "edit" in prompt_lower or "modify" in prompt_lower:
+                    if "attendance" in prompt_lower or "clock" in prompt_lower:
+                        rag_query = (
+                            "time tracking reports page edit modify time entries attendance "
+                            f"clock in clock out reports {prompt_text}"
+                        )
+                    else:
+                        rag_query = f"how to edit modify time entries attendance clock in clock out {prompt_text}"
+                else:
+                    rag_query = f"relevant documentation for: {prompt_text}"
+
+                doc_result = await self.rag_tool.ainvoke(rag_query)
+                state.gathered_info["documentation"] = doc_result
+                self.stats["rag_queries"] += 1
+                state.tool_usage_count += 1
+                self.tool_policy.record_observation(
+                    "rag",
+                    success=True,
+                    latency_ms=(time.time() - rag_start) * 1000.0,
+                    metadata={"query": rag_query},
+                )
+                return ReActObservation(
+                    success=True,
+                    summary="Retrieved documentation snippet",
+                    enqueue_tools=[],
+                    payload={"query": rag_query},
+                )
+            except Exception as exc:  # pragma: no cover - RAG may fail at runtime
+                logger.error("RAG tool error: %s", exc)
+                await self.analytics_sink.log_event(
+                    "tool_failure",
+                    tool="documentation_rag",
+                    conversation_id=conversation_id,
+                    status="failed",
+                    error_message=str(exc),
+                    metadata={"query": rag_query},
+                )
+                state.gathered_info["documentation"] = "No documentation found"
+                self.tool_policy.record_observation(
+                    "rag",
+                    success=False,
+                    latency_ms=(time.time() - rag_start) * 1000.0,
+                    metadata={"query": rag_query, "error": str(exc)},
+                )
+                return ReActObservation(
+                    success=False,
+                    summary="Documentation lookup failed",
+                    enqueue_tools=[],
+                    payload={"query": rag_query, "error": str(exc)},
+                )
+
+        if normalized_tool == "sql":
+            if not self.sql_tool:
+                return ReActObservation(
+                    success=False,
+                    summary="SQL tool unavailable",
+                    payload={"reason": "not_configured"},
+                )
+
+            sql_query = await self._generate_sql_query(
+                prompt_text,
+                conversation_history,
+                table_hints=state.row_selection_candidates,
+            )
+            if not sql_query:
+                self.tool_policy.record_observation(
+                    "sql",
+                    success=False,
+                    latency_ms=None,
+                    metadata={"reason": "no_query_generated"},
+                )
+                return ReActObservation(
+                    success=False,
+                    summary="No SQL query generated",
+                    enqueue_tools=[],
+                    payload={"reason": "no_query"},
+                )
+
+            try:
+                sql_start = time.time()
+                db_result = await asyncio.wait_for(
+                    self.sql_tool.ainvoke(sql_query),
+                    timeout=10.0,
+                )
+                state.gathered_info["database_data"] = db_result
+                self.stats["sql_queries"] += 1
+                state.tool_usage_count += 1
+                self.tool_policy.record_observation(
+                    "sql",
+                    success=True,
+                    latency_ms=(time.time() - sql_start) * 1000.0,
+                    metadata={"query": sql_query},
+                )
+                return ReActObservation(
+                    success=True,
+                    summary="Executed SQL query",
+                    enqueue_tools=[],
+                    payload={"query": sql_query},
+                )
+            except asyncio.TimeoutError:
+                logger.warning("SQL query timed out, skipping")
+                state.gathered_info["database_data"] = "SQL query timed out"
+                self.tool_policy.record_observation(
+                    "sql",
+                    success=False,
+                    latency_ms=10000.0,
+                    metadata={"query": sql_query, "error": "timeout"},
+                )
+                return ReActObservation(
+                    success=False,
+                    summary="SQL query timed out",
+                    enqueue_tools=[],
+                    payload={"query": sql_query, "error": "timeout"},
+                )
+            except Exception as exc:  # pragma: no cover - SQL execution can fail
+                logger.error("SQL tool error: %s", exc)
+                await self.analytics_sink.log_event(
+                    "tool_failure",
+                    tool="inventory_sql",
+                    conversation_id=conversation_id,
+                    status="failed",
+                    error_message=str(exc),
+                )
+                state.gathered_info["database_data"] = "No database data available"
+                self.tool_policy.record_observation(
+                    "sql",
+                    success=False,
+                    latency_ms=None,
+                    metadata={"error": str(exc), "query": sql_query},
+                )
+                return ReActObservation(
+                    success=False,
+                    summary="SQL execution failed",
+                    enqueue_tools=[],
+                    payload={"query": sql_query, "error": str(exc)},
+                )
+
+        return ReActObservation(
+            success=False,
+            summary=f"Unsupported tool {normalized_tool}",
+            enqueue_tools=[],
+            payload={"tool": normalized_tool},
+        )
+
+    def _reflect_after_observation(
+        self,
+        *,
+        tool: str,
+        observation: ReActObservation,
+        state: ReActLoopState,
+        pending: List[str],
+    ) -> Tuple[str, bool, List[str]]:
+        message = observation.summary
+        enqueue = list(observation.enqueue_tools)
+        continue_loop = observation.continue_loop and (bool(pending) or bool(enqueue))
+        if observation.success and not enqueue and not pending:
+            continue_loop = False
+        return message, continue_loop, enqueue
+
+    def _normalize_tool_name(self, name: Optional[str]) -> Optional[str]:
+        if name is None:
+            return None
+        normalized = str(name).strip().lower()
+        return normalized or None
 
     async def _execute_documentation_steps(
         self,

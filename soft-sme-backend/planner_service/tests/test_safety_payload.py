@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from ..schemas import PlannerResponse, PlannerStep, PlannerStepType, SafetySeverity
+from ..schemas import (
+    PlannerResponse,
+    PlannerStep,
+    PlannerStepType,
+    SafetySeverity,
+)
 
 
 def test_safety_step_payload_coercion() -> None:
@@ -56,3 +61,24 @@ def test_response_accepts_safety_step() -> None:
     assert response.steps[0].type is PlannerStepType.SAFETY
     assert response.steps[0].payload.severity is SafetySeverity.INFO
     assert response.metadata.version == "0.3"
+
+
+def test_planner_action_payload_validation() -> None:
+    """Planner action steps should coerce payloads into PlannerActionStepPayload."""
+
+    step = PlannerStep(
+        id="react-1",
+        type=PlannerStepType.PLANNER_ACTION,
+        description="Kick off reasoning phase",
+        payload={
+            "action": "reason",
+            "hint": "Focus on documentation accuracy",
+            "preferred_tool": "documentation_subagent",
+            "result_key": "thought-1",
+        },
+    )
+
+    assert step.payload.action == "reason"
+    assert step.payload.hint == "Focus on documentation accuracy"
+    assert step.payload.preferred_tool == "documentation_subagent"
+    assert step.payload.result_key == "thought-1"

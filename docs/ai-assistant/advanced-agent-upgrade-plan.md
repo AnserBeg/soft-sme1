@@ -97,3 +97,13 @@ This plan consolidates the remaining items from `multi-agent-upgrade-task-board.
 - **Phase A.2 — Upgrade tool routing heuristics:** Added a new telemetry-driven `ToolScoringPolicy` that keeps Bayesian-smoothed reliability statistics for every tool and re-ranks planner + heuristic candidates on each turn. The orchestrator now records structured success/failure observations for documentation, SQL, action, and subagent invocations, so the policy continuously improves ordering without needing manual tuning. Unit tests cover success-rate weighting, planner boost handling, and recency penalties to ensure regression safety.
 - **Guardrails for future work:** The scoring module exposes hooks for latency analysis and planner-directed overrides, giving us a deterministic yet extensible policy surface. Upcoming tasks can plug in the aggregator telemetry feed or adjust weighting without refactoring the control loop.
 
+## Progress Update – 2025-02-17
+- **Phase A.1 — Embed ReAct loop in the orchestrator:** Replaced the monolithic `process_message` tool pipeline with a LangGraph-style ReAct control loop that iteratively reasons, acts, and reflects over ranked tools. The loop captures intermediate reasoning, dynamically queues follow-up actions (e.g., SQL after row selection success), and keeps shared `ReActLoopState` telemetry so the orchestrator can compose multi-tool outcomes deterministically.
+- **Phase A.1 — PlannerAction schema:** Added a `planner_action` step type to `planner-service` with validation and tests so plans can explicitly request `reason`, `act`, or `reflect` phases with hints and preferred tools. This unlocks planner-authored control directives that flow straight into the orchestrator loop.
+- **Phase A.1 — Aggregation streaming hooks:** Instrumented the control loop to register a synthetic planner step and stream `reason`/`act`/`reflect` events through the aggregation coordinator. Intermediate thoughts, tool observations, and loop completion metadata now surface to the UI/replay pipeline without waiting for the final response.
+
+### Remaining Focus After 2025-02-17
+- Wire LangGraph-style branching/execution graph support into `planner-service` so planner-authored `planner_action` hints can orchestrate concurrent research/execution nodes instead of the current sequential loop.
+- Persist tool reflection outcomes into telemetry storage and expose them to the scoring policy for closed-loop learning (Phase B.3).
+- Implement the critic/reflection agent and episodic memory surfaces defined in Phase B to close the loop between planner feedback and user responses.
+
