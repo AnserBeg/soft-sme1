@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import logging
 import os
-from typing import Any, AsyncIterator, Deque, Dict, List, Mapping, Optional, Tuple
+from typing import Any, AsyncIterator, Deque, Dict, Iterable, List, Mapping, Optional, Tuple
 
 from .analytics_sink import AnalyticsSink
 
@@ -84,6 +84,7 @@ class SafetyDirective:
     policy_tags: Tuple[str, ...]
     detected_issues: Tuple[str, ...]
     should_short_circuit: bool
+    follow_up_tasks: Tuple[Dict[str, Any], ...] = ()
 
     def to_payload(self) -> Dict[str, Any]:
         """Serialize the directive for analytics or prompting."""
@@ -99,7 +100,141 @@ class SafetyDirective:
             payload["fallback_step"] = self.fallback_step
         if self.resolution:
             payload["resolution"] = self.resolution
+        if self.follow_up_tasks:
+            payload["follow_up_tasks"] = [dict(task) for task in self.follow_up_tasks]
         return payload
+
+
+def _normalize_schedule_for(value: Any) -> Optional[str]:
+    """Convert schedule hints to an ISO 8601 string when possible."""
+
+    if value is None:
+        return None
+
+    if isinstance(value, datetime):
+        candidate = value.astimezone(timezone.utc)
+        return candidate.isoformat().replace("+00:00", "Z")
+
+    if isinstance(value, str):
+        trimmed = value.strip()
+        if not trimmed:
+            return None
+        try:
+            parsed = datetime.fromisoformat(
+                trimmed.replace("Z", "+00:00") if trimmed.endswith("Z") else trimmed
+            )
+        except ValueError:
+            return trimmed
+
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        else:
+            parsed = parsed.astimezone(timezone.utc)
+        return parsed.isoformat().replace("+00:00", "Z")
+
+    return None
+
+
+def _normalize_follow_up_task(task: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
+    """Best-effort normalization for guardrail follow-up task payloads."""
+
+    if not isinstance(task, Mapping):
+        return None
+
+    payload = task.get("payload")
+    if isinstance(payload, Mapping):
+        normalized_payload = dict(payload)
+    elif payload is None:
+        normalized_payload = {}
+    else:
+        normalized_payload = {"value": payload}
+
+    task_type = task.get("task_type") or task.get("type") or ""
+    task_type = str(task_type).strip()
+    tool = task.get("tool")
+
+    if not task_type:
+        task_type = "agent_tool" if tool else "agent_guardrail_follow_up"
+
+    normalized: Dict[str, Any] = {
+        "task_type": task_type,
+        "payload": normalized_payload,
+    }
+
+    if tool:
+        normalized["tool"] = str(tool)
+
+    for key in ("args", "sessionId", "metadata", "reason"):
+        if key in task:
+            normalized[key] = task[key]
+
+    conversation_id = task.get("conversation_id") or task.get("conversationId")
+    if conversation_id:
+        normalized["conversation_id"] = str(conversation_id)
+
+    schedule_hint = (
+        task.get("schedule_for")
+        or task.get("scheduled_for")
+        or task.get("scheduledFor")
+    )
+    schedule_for = _normalize_schedule_for(schedule_hint)
+    if schedule_for:
+        normalized["schedule_for"] = schedule_for
+
+    return normalized
+
+
+def _extract_follow_up_tasks(decision: Mapping[str, Any]) -> Tuple[Dict[str, Any], ...]:
+    """Return normalized follow-up tasks from a planner safety decision."""
+
+    raw_tasks = decision.get("follow_up_tasks")
+    if not raw_tasks:
+        raw_tasks = decision.get("compensating_actions") or decision.get(
+            "compensating_tasks"
+        )
+
+    candidates: List[Mapping[str, Any]]
+    if isinstance(raw_tasks, Mapping):
+        candidates = [raw_tasks]
+    elif isinstance(raw_tasks, Iterable):
+        candidates = [task for task in raw_tasks if isinstance(task, Mapping)]
+    else:
+        candidates = []
+
+    normalized: List[Dict[str, Any]] = []
+    for task in candidates:
+        parsed = _normalize_follow_up_task(task)
+        if parsed:
+            normalized.append(parsed)
+
+    return tuple(normalized)
+
+
+def _build_default_follow_up_task(
+    *,
+    session_id: str,
+    plan_step_id: str,
+    directive: SafetyDirective,
+    planner_context: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Construct a default guardrail follow-up task when none were supplied."""
+
+    payload: Dict[str, Any] = {
+        "sessionId": session_id,
+        "planStepId": plan_step_id,
+        "severity": directive.severity,
+        "policy_tags": list(directive.policy_tags),
+        "detected_issues": list(directive.detected_issues),
+        "requires_manual_review": directive.requires_manual_review,
+        "resolution": directive.resolution,
+    }
+    if planner_context:
+        payload["planner_context"] = dict(planner_context)
+
+    return {
+        "task_type": "agent_guardrail_follow_up",
+        "payload": payload,
+    }
 
 
 class TelemetryContextStore:
@@ -485,7 +620,7 @@ class AggregationCoordinator:
 
         should_short_circuit = severity == "block" or requires_manual_review
 
-        directive = SafetyDirective(
+        base_directive = SafetyDirective(
             severity=severity,
             requires_manual_review=requires_manual_review,
             fallback_step=str(fallback_step) if fallback_step else None,
@@ -493,6 +628,28 @@ class AggregationCoordinator:
             policy_tags=policy_tags,
             detected_issues=detected_issues,
             should_short_circuit=should_short_circuit,
+        )
+
+        follow_up_tasks = _extract_follow_up_tasks(decision)
+        if not follow_up_tasks and (should_short_circuit or requires_manual_review):
+            follow_up_tasks = (
+                _build_default_follow_up_task(
+                    session_id=session_id,
+                    plan_step_id=plan_step_id,
+                    directive=base_directive,
+                    planner_context=planner_context,
+                ),
+            )
+
+        directive = SafetyDirective(
+            severity=base_directive.severity,
+            requires_manual_review=base_directive.requires_manual_review,
+            fallback_step=base_directive.fallback_step,
+            resolution=base_directive.resolution,
+            policy_tags=base_directive.policy_tags,
+            detected_issues=base_directive.detected_issues,
+            should_short_circuit=base_directive.should_short_circuit,
+            follow_up_tasks=follow_up_tasks,
         )
 
         status_map = {
@@ -511,6 +668,8 @@ class AggregationCoordinator:
             payload["resolution"] = directive.resolution
         if directive.fallback_step:
             payload["fallback_step"] = directive.fallback_step
+        if directive.follow_up_tasks:
+            payload["follow_up_tasks"] = [dict(task) for task in directive.follow_up_tasks]
 
         await self.emit_subagent_event(
             session_id=session_id,

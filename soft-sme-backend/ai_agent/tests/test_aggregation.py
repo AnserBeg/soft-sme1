@@ -179,6 +179,60 @@ class AggregationCoordinatorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[1]["content"]["status"], "block")
         self.assertEqual(events[2]["content"]["status"], "blocked")
 
+    async def test_apply_safety_decision_default_follow_up_task(self):
+        decision = {
+            "severity": "block",
+            "policy_tags": ["finance"],
+            "detected_issues": ["High-risk fund transfer"],
+            "requires_manual_review": True,
+            "resolution": "Escalate to risk management",
+        }
+
+        directive = await self.coordinator.apply_safety_decision(
+            session_id=self.session_id,
+            plan_step_id="safety-step-2",
+            decision=decision,
+            planner_context={"description": "guardrail"},
+        )
+
+        payload = directive.to_payload()
+        self.assertTrue(directive.follow_up_tasks)
+        self.assertIn("follow_up_tasks", payload)
+        task = payload["follow_up_tasks"][0]
+        self.assertEqual(task["task_type"], "agent_guardrail_follow_up")
+        self.assertEqual(task["payload"]["sessionId"], self.session_id)
+        self.assertEqual(task["payload"]["planStepId"], "safety-step-2")
+
+    async def test_apply_safety_decision_uses_provided_follow_up_tasks(self):
+        decision = {
+            "severity": "warn",
+            "policy_tags": ["privacy"],
+            "detected_issues": ["PII export"],
+            "follow_up_tasks": [
+                {
+                    "task_type": "agent_tool",
+                    "tool": "notify_compliance",
+                    "payload": {"message": "Blocked request"},
+                    "scheduled_for": "2025-03-28T18:00:00Z",
+                }
+            ],
+        }
+
+        directive = await self.coordinator.apply_safety_decision(
+            session_id=self.session_id,
+            plan_step_id="safety-step-3",
+            decision=decision,
+        )
+
+        payload = directive.to_payload()
+        self.assertFalse(directive.should_short_circuit)
+        self.assertEqual(len(payload.get("follow_up_tasks", [])), 1)
+        task = payload["follow_up_tasks"][0]
+        self.assertEqual(task["task_type"], "agent_tool")
+        self.assertEqual(task["tool"], "notify_compliance")
+        self.assertEqual(task["payload"]["message"], "Blocked request")
+        self.assertEqual(task["schedule_for"], "2025-03-28T18:00:00Z")
+
     async def test_apply_safety_decision_pass_through(self):
         directive = await self.coordinator.apply_safety_decision(
             session_id=self.session_id,
