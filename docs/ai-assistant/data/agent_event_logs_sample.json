@@ -88,5 +88,41 @@
     "error_message": "relation \"inventory\" does not exist",
     "metadata": {"stage": "agent_wrapper"},
     "occurred_at": "2025-03-05T09:42:00Z"
+  },
+  {
+    "source": "python_agent",
+    "event_type": "tool_invocation",
+    "status": "completed",
+    "tool": "documentation_rag",
+    "metadata": {
+      "stage": "react_loop",
+      "latency_ms": 420,
+      "success": true
+    },
+    "occurred_at": "2025-03-05T10:15:00Z"
+  },
+  {
+    "source": "python_agent",
+    "event_type": "tool_invocation",
+    "status": "completed",
+    "tool": "agent_v2",
+    "metadata": {
+      "stage": "action_dispatch",
+      "latency_ms": 980,
+      "success": true
+    },
+    "occurred_at": "2025-03-05T10:16:00Z"
+  },
+  {
+    "source": "python_agent",
+    "event_type": "safety_override_triggered",
+    "status": "blocked",
+    "tool": null,
+    "metadata": {
+      "requires_manual_review": true,
+      "policy_tags": ["financial.compliance"],
+      "risk_level": "high"
+    },
+    "occurred_at": "2025-03-05T11:02:00Z"
   }
 ]

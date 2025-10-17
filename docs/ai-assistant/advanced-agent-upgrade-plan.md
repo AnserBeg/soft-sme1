@@ -216,3 +216,12 @@ CREATE INDEX IF NOT EXISTS idx_ai_conversation_reflections_conversation
 - Expand guardrail automation to react to branch assessments (auto-rollbacks, task queue compensations) and confirm analytics ingestion across environments.
 - Kick off Phase E governance work: contributor training, rollout playbooks, and security reviews of new tool surfaces.
 
+## Progress Update – 2025-03-26
+- **Phase D.1 — Benchmark ReAct behaviors:** Implemented evaluation metrics aggregation that combines synthetic regression outcomes with orchestrator analytics to report success rate, tool efficiency, and safety override indicators on the regression dashboard. The metrics module normalizes historical event logs, tolerates schema drift, and rounds latency statistics for quick trend reviews.
+- **Phase D.3 — Latency visibility:** Surfaced average per-run latency derived from synthetic harness timings alongside telemetry-driven tool health so stakeholders can quickly spot cost or performance regressions before promoting new orchestrations.
+
+### Remaining Focus After 2025-03-26
+- Extend evaluation harness with branch-specific stress tests and auto-run suites to populate the new metrics continuously.
+- Automate guardrail enforcement workflows (Phase D.2) so safety override telemetry links to compensating actions and queue backfills.
+- Transition into Phase E deliverables: rollout playbooks, contributor onboarding updates, and end-to-end governance sign-off using the richer evaluation signals.
+
