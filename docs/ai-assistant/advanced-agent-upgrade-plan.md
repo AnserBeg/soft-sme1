@@ -16,7 +16,7 @@ This plan consolidates the remaining items from `multi-agent-upgrade-task-board.
 | Phase A.3 | Action workflow skill library and verification callbacks | ✅ Complete | Implemented persistent skill store, reflection logging, and synchronous verification hooks. |
 | Phase B | Memory, critic, and reflection surfaces | ✅ Complete | Episodic summaries, critic workflows, and reinforcement signals wired into tool scoring. |
 | Phase C | Multi-agent orchestration graph and branching | ✅ Complete | Implemented branching runner, critic wiring, and voice subagent telemetry for LangGraph-ready orchestration. |
-| Phase D | Continuous evaluation and guardrail hardening | 🚧 In Progress | Guardrail automation queues follow-up tasks; evaluation harness expansion underway. |
+| Phase D | Continuous evaluation and guardrail hardening | ✅ Complete | Evaluation harness auto-runs branch scenarios and guardrail compensations integrate with downstream workers. |
 | Phase E | Governance, documentation, and rollout playbooks | ⏳ Not Started | To be activated once evaluation metrics stabilize. |
 
 ## Phase A – Control Loop & Tooling
@@ -230,7 +230,15 @@ CREATE INDEX IF NOT EXISTS idx_ai_conversation_reflections_conversation
 - **Evaluation harness coverage:** Added asynchronous regression tests for the aggregation coordinator and guardrail compensation flow, ensuring queued task metadata and follow-up payloads surface in telemetry for future dashboards.
 
 ### Remaining Focus After 2025-03-28
-- Expand synthetic scenario suite with branch-specific stress cases and schedule continuous runs to feed the evaluation dashboard (Phase D.1 extension).
-- Wire queued guardrail compensations into downstream workers and validate telemetry ingestion across staging and production (Phase D.2 hardening).
-- Kick off Phase E governance deliverables: contributor training updates, rollout playbooks, and security reviews leveraging the richer guardrail telemetry.
+- (Resolved in the 2025-04-02 update below.)
+
+## Progress Update – 2025-04-02
+- **Phase D.1 — Branch-aware evaluation automation:** Expanded the synthetic scenario harness with branching and guardrail edge cases, and configured scheduled runs so regression dashboards stay current without manual triggering. Aggregated metrics now distinguish baseline vs. branch stress outcomes for faster triage.
+- **Phase D.2 — Guardrail compensation integration:** Connected the orchestrator’s queued compensations to downstream workers, validated telemetry ingestion across staging and production, and added alerts for failed payouts/rollbacks so overrides resolve automatically.
+- **Phase D.3 — Latency & cost governance:** Tuned SLA thresholds using the expanded telemetry set and wired alerts into the analytics pipeline, ensuring runtime spikes or token overages page the responsible owners.
+
+### Remaining Focus After 2025-04-02
+- Initiate Phase E governance deliverables: contributor onboarding updates reflecting the completed ReAct + multi-agent stack, rollout playbooks with feature flag sequencing, and coordinated security reviews of new tool surfaces.
+- Produce executive-ready documentation (sequence diagrams, guardrail summaries) to support change management approvals.
+- Establish post-launch monitoring and escalation procedures that leverage the new telemetry streams for sustained reliability.
 
