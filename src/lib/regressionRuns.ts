@@ -9,6 +9,14 @@ export const RUN_DIRECTORY = path.join(
   "synthetic_runs",
 );
 
+const AGENT_EVENT_LOG_PATH = path.join(
+  process.cwd(),
+  "docs",
+  "ai-assistant",
+  "data",
+  "agent_event_logs_sample.json",
+);
+
 export type RawRegressionRun = {
   timestamp?: string;
   commit?: string;
@@ -86,11 +94,34 @@ export type RegressionDashboardSummary = {
   regressionTypeSummaries: RegressionTypeSummary[];
 };
 
+export type AgentEventLogEntry = {
+  source: string;
+  eventType: string;
+  status: string;
+  tool: string | null;
+  metadata: Record<string, unknown>;
+  occurredAt: string | null;
+};
+
+export type EvaluationMetrics = {
+  totalRuns: number;
+  successRate: number;
+  averageLatencyMs: number | null;
+  toolEfficiency: number;
+  toolFailureRate: number;
+  safetyOverrideRate: number;
+};
+
 export type RegressionDashboardPayload = {
   runs: RegressionRun[];
   summary: RegressionDashboardSummary;
+  metrics: EvaluationMetrics;
   errors: string[];
 };
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
 
 function slugify(value: string): string {
   return value
@@ -207,6 +238,38 @@ function normalizeRun(
   run.outcome.failureCategories = determineFailureCategories(run);
 
   return run;
+}
+
+function normalizeEvent(
+  value: unknown,
+  index: number,
+  errors: string[],
+): AgentEventLogEntry | null {
+  if (!isPlainRecord(value)) {
+    errors.push(`Event ${index}: invalid payload`);
+    return null;
+  }
+
+  const source = typeof value.source === "string" ? value.source : "unknown";
+  const eventType =
+    typeof value.event_type === "string"
+      ? value.event_type
+      : typeof value.eventType === "string"
+        ? value.eventType
+        : "unknown";
+  const status = typeof value.status === "string" ? value.status : "unknown";
+  const tool = typeof value.tool === "string" ? value.tool : null;
+  const metadata = isPlainRecord(value.metadata) ? value.metadata : {};
+  const occurredAtRaw =
+    typeof value.occurred_at === "string"
+      ? value.occurred_at
+      : typeof value.occurredAt === "string"
+        ? value.occurredAt
+        : null;
+
+  const occurredAt = occurredAtRaw && !Number.isNaN(new Date(occurredAtRaw).getTime()) ? occurredAtRaw : null;
+
+  return { source, eventType, status, tool, metadata, occurredAt };
 }
 
 async function readRunFile(
@@ -373,4 +436,116 @@ export async function loadRegressionRuns(): Promise<{
   runs.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
 
   return { runs, errors };
+}
+
+export async function loadAgentEventLogs(): Promise<{
+  events: AgentEventLogEntry[];
+  errors: string[];
+}> {
+  const errors: string[] = [];
+  let rawPayload: string;
+
+  try {
+    rawPayload = await fs.readFile(AGENT_EVENT_LOG_PATH, "utf-8");
+  } catch (error) {
+    errors.push(`Unable to read agent event log: ${(error as Error).message}`);
+    return { events: [], errors };
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawPayload);
+  } catch (error) {
+    errors.push(`Invalid JSON in agent event log: ${(error as Error).message}`);
+    return { events: [], errors };
+  }
+
+  if (!Array.isArray(parsed)) {
+    errors.push("Agent event log must contain a JSON array");
+    return { events: [], errors };
+  }
+
+  const events: AgentEventLogEntry[] = [];
+  parsed.forEach((value, index) => {
+    const normalized = normalizeEvent(value, index, errors);
+    if (normalized) {
+      events.push(normalized);
+    }
+  });
+
+  return { events, errors };
+}
+
+function calculateAverage(values: number[]): number | null {
+  if (values.length === 0) {
+    return null;
+  }
+
+  const total = values.reduce((sum, value) => sum + value, 0);
+  return Math.round(total / values.length);
+}
+
+export function computeEvaluationMetrics(
+  runs: RegressionRun[],
+  events: AgentEventLogEntry[],
+): EvaluationMetrics {
+  const totalRuns = runs.length;
+  const successCount = runs.filter((run) => run.outcome.passed).length;
+  const successRate = totalRuns === 0 ? 0 : Number((successCount / totalRuns).toFixed(3));
+
+  const latencyValues = runs
+    .map((run) => run.outcome.latencyMs)
+    .filter((value): value is number => typeof value === "number");
+  const averageLatencyMs = calculateAverage(latencyValues);
+
+  const toolEvents = events.filter((event) => event.eventType.toLowerCase().includes("tool"));
+  const toolFailures = toolEvents.filter((event) => {
+    const type = event.eventType.toLowerCase();
+    const status = event.status.toLowerCase();
+    return type.includes("fail") || status === "failed" || status === "error";
+  });
+
+  const toolEfficiency =
+    toolEvents.length === 0
+      ? 1
+      : Number(((toolEvents.length - toolFailures.length) / toolEvents.length).toFixed(3));
+  const toolFailureRate =
+    toolEvents.length === 0 ? 0 : Number((toolFailures.length / toolEvents.length).toFixed(3));
+
+  const safetyEvents = events.filter((event) => {
+    const type = event.eventType.toLowerCase();
+    if (type.includes("safety") || type.includes("guardrail")) {
+      return true;
+    }
+
+    const metadata = event.metadata || {};
+    const requiresManualReview = (metadata as { requires_manual_review?: unknown }).requires_manual_review;
+    if (typeof requiresManualReview === "boolean" && requiresManualReview) {
+      return true;
+    }
+
+    const policyTags = (metadata as { policy_tags?: unknown }).policy_tags;
+    if (Array.isArray(policyTags) && policyTags.length > 0) {
+      return true;
+    }
+
+    const riskLevel = (metadata as { risk_level?: unknown }).risk_level;
+    if (typeof riskLevel === "string") {
+      return true;
+    }
+
+    return false;
+  });
+
+  const safetyOverrideRate =
+    totalRuns === 0 ? 0 : Number((Math.min(safetyEvents.length, totalRuns) / totalRuns).toFixed(3));
+
+  return {
+    totalRuns,
+    successRate,
+    averageLatencyMs,
+    toolEfficiency,
+    toolFailureRate,
+    safetyOverrideRate,
+  };
 }

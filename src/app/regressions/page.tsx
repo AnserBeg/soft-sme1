@@ -29,6 +29,15 @@ type RegressionRun = {
   telemetryCount: number;
 };
 
+type AgentEvaluationMetrics = {
+  totalRuns: number;
+  successRate: number;
+  averageLatencyMs: number | null;
+  toolEfficiency: number;
+  toolFailureRate: number;
+  safetyOverrideRate: number;
+};
+
 type ScenarioSummary = {
   slug: string;
   title: string;
@@ -59,6 +68,7 @@ type RegressionDashboardResponse = {
     scenarioSummaries: ScenarioSummary[];
     regressionTypeSummaries: RegressionTypeSummary[];
   };
+  metrics: AgentEvaluationMetrics;
   errors: string[];
 };
 
@@ -76,6 +86,14 @@ function formatDate(timestamp: string | null): string {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(date);
+}
+
+function formatPercent(value: number, fractionDigits = 1): string {
+  const formatter = new Intl.NumberFormat("en", {
+    style: "percent",
+    maximumFractionDigits: fractionDigits,
+  });
+  return formatter.format(value);
 }
 
 async function fetchRegressionRuns(): Promise<RegressionDashboardResponse> {
@@ -142,6 +160,36 @@ export default function RegressionDashboardPage() {
       run.outcome.failureCategories.forEach((category) => categories.add(category));
     });
     return Array.from(categories).sort();
+  }, [data]);
+
+  const evaluationCards = useMemo(() => {
+    if (!data) {
+      return [];
+    }
+
+    const metrics = data.metrics;
+    return [
+      {
+        label: "Agent success rate",
+        value: formatPercent(metrics.successRate),
+      },
+      {
+        label: "Average latency",
+        value: metrics.averageLatencyMs === null ? "—" : `${metrics.averageLatencyMs} ms`,
+      },
+      {
+        label: "Tool efficiency",
+        value: formatPercent(metrics.toolEfficiency),
+      },
+      {
+        label: "Tool failure rate",
+        value: formatPercent(metrics.toolFailureRate),
+      },
+      {
+        label: "Safety override rate",
+        value: formatPercent(metrics.safetyOverrideRate),
+      },
+    ];
   }, [data]);
 
   const filteredRuns = useMemo(() => {
@@ -254,6 +302,21 @@ export default function RegressionDashboardPage() {
               <p className="mt-2 text-2xl font-semibold text-gray-900">{formatDate(data.summary.lastRunAt)}</p>
             </div>
           </div>
+
+          <section className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+            <h2 className="text-xl font-semibold text-gray-900">Evaluation metrics</h2>
+            <p className="mt-1 text-sm text-gray-500">
+              Benchmarks derived from synthetic regression runs and aggregated agent telemetry.
+            </p>
+            <div className="mt-4 grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+              {evaluationCards.map((card) => (
+                <div key={card.label} className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+                  <p className="text-sm font-medium text-gray-500">{card.label}</p>
+                  <p className="mt-2 text-2xl font-semibold text-gray-900">{card.value}</p>
+                </div>
+              ))}
+            </div>
+          </section>
 
           <section className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
             <h2 className="text-xl font-semibold text-gray-900">Filters</h2>
