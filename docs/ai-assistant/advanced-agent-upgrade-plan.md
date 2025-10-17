@@ -13,7 +13,7 @@ This plan consolidates the remaining items from `multi-agent-upgrade-task-board.
 | --- | --- | --- | --- |
 | Phase A.1 | ReAct loop embedded in `AivenAgent.process_message` with planner orchestration hooks | ✅ Complete | Replaced monolithic pipeline with LangGraph-inspired loop and planner-driven control nodes. |
 | Phase A.2 | Telemetry-driven `ToolScoringPolicy` for routing | ✅ Complete | Bayesian-smoothed success metrics rank planner + heuristic candidates with regression coverage. |
-| Phase A.3 | Action workflow skill library and verification callbacks | 🚧 In Progress | Architecture defined; persistent store and verification wiring queued. |
+| Phase A.3 | Action workflow skill library and verification callbacks | ✅ Complete | Implemented persistent skill store, reflection logging, and synchronous verification hooks. |
 | Phase B | Memory, critic, and reflection surfaces | ⏳ Not Started | Pending completion of Phase A skill persistence and telemetry schema rollout. |
 | Phase C | Multi-agent orchestration graph and branching | ⏳ Not Started | Requires Phase B reflection data to coordinate planner branching heuristics. |
 | Phase D | Continuous evaluation and guardrail hardening | ⏳ Not Started | Depends on LangGraph telemetry stream from Phases A–C. |
@@ -154,8 +154,12 @@ CREATE TABLE IF NOT EXISTS skill_run_reflections (
 );
 ```
 
-### Remaining Focus After 2025-02-20
-- Implement the Prisma migration and service logic that persist `skill_workflows`/`skill_run_reflections` records and expose verified skills as orchestrator tools (Phase A.3).
+## Progress Update – 2025-02-24
+- **Phase A.3 — Skill persistence & verification:** Added Prisma models, PostgreSQL migration, and a Node.js `AgentSkillLibraryService` with service endpoints so the Python orchestrator can persist reusable workflows and fetch them as tools. The `ActionWorkflowSubagent` now hydrates a skill cache, merges stored parameters, and records run reflections via the new API, promoting successful workflows into deterministic tools.
+- **Verification & telemetry:** Enabled synchronous dispatch for skill executions when supported, capturing rich verification payloads and emitting telemetry/analytics events. Successful runs record latency, trace metadata, and verification status, while queued/manual runs avoid premature success claims.
+- **Orchestrator awareness:** Surfaced skill entries in the tool catalog and dynamic registry so the LangGraph loop and Agent V2 orchestrator can route planner directives or ReAct iterations through the persisted workflows. Added Jest coverage for the library service and async unit tests for the upgraded subagent behaviors.
+
+### Remaining Focus After 2025-02-24
 - Build episodic memory summarization, critic agent workflows, and feedback ingestion feeding the scoring policy (Phase B).
 - Wire LangGraph branching, voice subagent integration, evaluation harness, and governance/security workstreams (Phases C–E).
 

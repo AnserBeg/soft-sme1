@@ -2,6 +2,7 @@ import { Pool } from 'pg';
 import { randomUUID } from 'crypto';
 import { AIService } from '../aiService';
 import { AgentAnalyticsLogger } from './analyticsLogger';
+import type { SkillWorkflowSummary } from './skillLibrary';
 
 export interface AgentToolRegistry {
   [name: string]: (args: any) => Promise<any>;
@@ -51,7 +52,7 @@ export class AgentOrchestratorV2 {
   private readonly toolCatalog: ToolCatalogEntry[];
   private readonly analytics: AgentAnalyticsLogger;
 
-  constructor(private pool: Pool, private tools: AgentToolRegistry) {
+  constructor(private pool: Pool, private tools: AgentToolRegistry, private skillCatalog: SkillWorkflowSummary[] = []) {
     this.toolCatalog = this.buildToolCatalog();
     this.analytics = new AgentAnalyticsLogger(pool);
   }
@@ -397,7 +398,7 @@ export class AgentOrchestratorV2 {
   }
 
   private buildToolCatalog(): ToolCatalogEntry[] {
-    return [
+    const catalog: ToolCatalogEntry[] = [
       { name: 'createSalesOrder', description: 'Create a new sales order from customer information and line items.' },
       { name: 'updateSalesOrder', description: 'Update an existing sales order header, line items, or related details.' },
       { name: 'createPurchaseOrder', description: 'Create a purchase order for a vendor including pickup details and items.' },
@@ -418,6 +419,31 @@ export class AgentOrchestratorV2 {
       { name: 'postTaskMessage', description: 'Post an update in the related task conversation.' },
       { name: 'retrieveDocs', description: 'Search internal documentation for workflows and UI guidance.' },
     ];
+
+    const skillEntries = this.skillCatalog
+      .map((skill) => {
+        const name = typeof skill.name === 'string' ? skill.name.trim() : '';
+        if (!name) {
+          return null;
+        }
+        const description =
+          typeof skill.description === 'string' && skill.description.trim().length > 0
+            ? skill.description.trim()
+            : `Reusable workflow built on ${skill.entrypoint}`;
+        const example =
+          skill.parameters && typeof skill.parameters === 'object' && !Array.isArray(skill.parameters)
+            ? String((skill.parameters as any).example ?? '')
+            : '';
+
+        return {
+          name: `skill:${name}`,
+          description,
+          example: example || undefined,
+        } as ToolCatalogEntry;
+      })
+      .filter((entry): entry is ToolCatalogEntry => Boolean(entry));
+
+    return catalog.concat(skillEntries);
   }
 
   private describeActionOutcome(tool: string, success: boolean, output?: any, error?: any): string {

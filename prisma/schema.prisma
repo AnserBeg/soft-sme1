@@ -73,6 +73,35 @@ model Task {
   @@index([ownerId, status])
 }
 
+model SkillWorkflow {
+  id          String                 @id @default(uuid()) @db.Uuid
+  name        String
+  version     Int                    @default(1)
+  description String?
+  entrypoint  String
+  parameters  Json
+  createdAt   DateTime               @default(now())
+  updatedAt   DateTime               @updatedAt
+
+  runReflections SkillRunReflection[]
+
+  @@unique([name, version])
+}
+
+model SkillRunReflection {
+  id                String        @id @default(uuid()) @db.Uuid
+  skillWorkflowId   String        @db.Uuid
+  skillWorkflow     SkillWorkflow @relation(fields: [skillWorkflowId], references: [id], onDelete: Cascade)
+  runId             String        @db.Uuid
+  outcome           String
+  success           Boolean
+  verificationPayload Json?
+  latencyMs         Int?
+  createdAt         DateTime      @default(now())
+
+  @@index([skillWorkflowId, createdAt])
+}
+
 enum TaskStatus {
   TODO
   IN_PROGRESS
