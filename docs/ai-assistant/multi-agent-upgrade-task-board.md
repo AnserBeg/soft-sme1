@@ -41,7 +41,7 @@
 - [x] Aggregator/orchestrator safety fallbacks
   - [x] `AggregationCoordinator.apply_safety_decision` emits block events and directives
   - [x] Orchestrator short-circuits risky plans and surfaces guardrail messaging
-- [ ] Conversation UI enhancements
+- [x] Conversation UI enhancements
   - [x] Draft actionable controls & transcript alignment design _(see `conversation-ui-enhancements.md`)_
   - [x] Implement acknowledge/dismiss controls in conversation UI
   - [x] Wire telemetry-preserving action handlers
@@ -65,4 +65,4 @@
 - [ ] Security review
 
 ### Recommended next task
-Implement Redis-backed telemetry context store so aggregation events survive worker restarts and horizontal scaling.
+Implement replay endpoint (`GET /planner/sessions/{session_id}/steps/{plan_step_id}/events`) so reconnecting clients can hydrate UI state without SSE subscriptions.

@@ -1,8 +1,15 @@
 import asyncio
 import unittest
+from typing import Dict, Optional
+from unittest import mock
 
-from ai_agent.aggregation import AggregationCoordinator
-from ai_agent.aggregation import SafetyDirective
+from ai_agent.aggregation import (
+    AggregationCoordinator,
+    InMemoryTelemetryContextStore,
+    RedisTelemetryContextStore,
+    SafetyDirective,
+    create_telemetry_store_from_env,
+)
 
 
 class AggregationCoordinatorTests(unittest.IsolatedAsyncioTestCase):
@@ -185,6 +192,65 @@ class AggregationCoordinatorTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(directive.should_short_circuit)
         self.assertEqual(directive.severity, "info")
+
+
+class FakeRedisClient:
+    def __init__(self) -> None:
+        self.store: Dict[str, Dict[str, str]] = {}
+        self.expirations: Dict[str, int] = {}
+
+    async def hset(self, key: str, field: str, value: str) -> None:
+        self.store.setdefault(key, {})[field] = value
+
+    async def hget(self, key: str, field: str) -> Optional[str]:
+        return self.store.get(key, {}).get(field)
+
+    async def expire(self, key: str, ttl: int) -> None:
+        self.expirations[key] = ttl
+
+    async def delete(self, key: str) -> None:
+        self.store.pop(key, None)
+        self.expirations.pop(key, None)
+
+
+class TelemetryStoreTests(unittest.IsolatedAsyncioTestCase):
+    async def test_redis_store_round_trip_with_fake_client(self) -> None:
+        fake_client = FakeRedisClient()
+        store = RedisTelemetryContextStore(
+            redis_client=fake_client,
+            ttl_seconds=42,
+            namespace="test-telemetry",
+        )
+
+        await store.set("s", "p", "sub", {"trace_id": "abc"})
+        telemetry = await store.get("s", "p", "sub")
+        self.assertEqual(telemetry, {"trace_id": "abc"})
+        self.assertEqual(fake_client.expirations["test-telemetry:s:p"], 42)
+
+        await store.clear("s", "p")
+        telemetry_after_clear = await store.get("s", "p", "sub")
+        self.assertEqual(telemetry_after_clear, {})
+
+    def test_create_store_from_env_prefers_redis_when_available(self) -> None:
+        env = {
+            "AI_TELEMETRY_REDIS_URL": "redis://unit-test",
+            "AI_TELEMETRY_REDIS_TTL_SECONDS": "120",
+        }
+
+        with mock.patch("ai_agent.aggregation.redis_asyncio") as redis_module:
+            fake_client = object()
+            redis_module.from_url.return_value = fake_client
+            store = create_telemetry_store_from_env(env)
+
+        self.assertIsInstance(store, RedisTelemetryContextStore)
+
+    def test_create_store_from_env_falls_back_when_redis_missing(self) -> None:
+        env = {"AI_TELEMETRY_REDIS_URL": "redis://unit-test"}
+
+        with mock.patch("ai_agent.aggregation.redis_asyncio", None):
+            store = create_telemetry_store_from_env(env)
+
+        self.assertIsInstance(store, InMemoryTelemetryContextStore)
 
 
 if __name__ == "__main__":  # pragma: no cover

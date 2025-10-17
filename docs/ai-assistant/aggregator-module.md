@@ -115,6 +115,7 @@ AggregationCoordinator
 - The aggregator enriches telemetry with its own spans (`aggregation.wait`, `aggregation.emit`, `aggregation.retry`) so trace visualizations show time spent buffering vs. streaming.
 - When subagents retry, the same `result_key` is reused, enabling deduplication while still emitting `retry` events for analytics.
 - The module logs structured breadcrumbs (`sequence`, `subagent`, `status`, `retry_count`) to a central analytics sink for historical analysis.
+- Redis-backed persistence keeps telemetry context available across worker restarts. Configure `AI_TELEMETRY_REDIS_URL` (and optional `AI_TELEMETRY_REDIS_TTL_SECONDS`) to enable the shared store; local development falls back to the in-memory implementation automatically.
 
 ## Failure Handling & Robustness
 1. **Timeouts**: Each subagent adapter honors planner-provided deadlines. If a subagent exceeds its budget, the aggregator emits a `timeout` event and marks the plan step as `partial_failure` while allowing other subagents to finish.
@@ -128,7 +129,7 @@ AggregationCoordinator
 - [x] Publish Phase 3 streaming rollout plan (see `reports/phase3-streaming-response-updates.md`).
 - [x] Implement `AggregationCoordinator` class inside `soft-sme-backend/ai_agent/aggregation.py` with live stream emission hooks.
 - [x] Add safety fallback orchestration so `apply_safety_decision` can terminate risky plans and notify the orchestrator.
-- [ ] Implement `TelemetryContextStore` using Redis (primary) with in-memory fallback for local dev.
+- [x] Implement `TelemetryContextStore` using Redis (primary) with in-memory fallback for local dev.
 - [x] Implement `StreamMux` with SSE first, then extend to WebSocket.
 - [ ] Build adapters for documentation QA, row-selection, action/workflow, and voice subagents.
 - [x] Write integration tests simulating concurrent subagent completions and reconnection replay.
