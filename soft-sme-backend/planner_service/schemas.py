@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional, Union
 
@@ -230,6 +230,39 @@ class PlannerResponse(BaseModel):
     metadata: PlannerMetadata = Field(default_factory=PlannerMetadata, description="Planner level metadata for analytics.")
 
 
+class PlannerStreamEvent(BaseModel):
+    """Serialized planner event emitted by the aggregator stream."""
+
+    session_id: str = Field(..., description="Conversation session identifier (string for compatibility with SSE headers).")
+    plan_step_id: str = Field(..., description="Identifier of the plan step the event belongs to.")
+    sequence: int = Field(..., ge=0, description="Monotonic sequence number assigned by the aggregator.")
+    type: str = Field(..., description="Event category such as `step_started` or `subagent_result`.")
+    timestamp: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        description="ISO timestamp when the event was recorded.",
+    )
+    content: Dict[str, Any] = Field(default_factory=dict, description="Arbitrary payload describing the planner update.")
+    telemetry: Dict[str, Any] = Field(default_factory=dict, description="Telemetry metadata associated with the event.")
+
+
+class PlannerReplayResponse(BaseModel):
+    """Response envelope for replay endpoint requests."""
+
+    session_id: str = Field(..., description="Conversation session identifier provided in the request.")
+    plan_step_id: str = Field(..., description="Plan step identifier provided in the request.")
+    events: List[PlannerStreamEvent] = Field(default_factory=list, description="Replay events ordered by sequence number.")
+    next_cursor: Optional[str] = Field(
+        default=None,
+        description=(
+            "Cursor pointing at the newest replayed event (use as `after` on subsequent calls)."
+        ),
+    )
+    has_more: bool = Field(
+        default=False,
+        description="Indicates more cached events are available beyond this response.",
+    )
+
+
 __all__ = [
     "PlannerContext",
     "PlannerStepType",
@@ -244,4 +277,6 @@ __all__ = [
     "PlannerRequest",
     "PlannerMetadata",
     "PlannerResponse",
+    "PlannerStreamEvent",
+    "PlannerReplayResponse",
 ]

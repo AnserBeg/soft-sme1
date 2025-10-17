@@ -18,6 +18,14 @@ type ForwardStreamOptions = {
   traceHeaders?: TraceHeaders;
 };
 
+type FetchReplayOptions = {
+  sessionId: string;
+  planStepId: string;
+  after?: string;
+  limit?: number;
+  traceHeaders?: TraceHeaders;
+};
+
 class PlannerStreamService {
   private readonly baseUrl: string;
 
@@ -90,6 +98,43 @@ class PlannerStreamService {
         }
       }
     }
+  }
+
+  async fetchReplay(options: FetchReplayOptions): Promise<any> {
+    const { sessionId, planStepId, after, limit, traceHeaders } = options;
+
+    const target = new URL(
+      `/planner/sessions/${encodeURIComponent(sessionId)}/steps/${encodeURIComponent(planStepId)}/events`,
+      this.baseUrl
+    );
+
+    if (after) {
+      target.searchParams.set('after', after);
+    }
+    if (typeof limit === 'number') {
+      target.searchParams.set('limit', String(limit));
+    }
+
+    const headers: Record<string, string> = {
+      Accept: 'application/json',
+    };
+
+    if (traceHeaders?.traceId) {
+      headers['X-Trace-Id'] = traceHeaders.traceId;
+    }
+    if (traceHeaders?.spanId) {
+      headers['X-Span-Id'] = traceHeaders.spanId;
+    }
+
+    const response = await fetch(target, { headers });
+    if (!response.ok) {
+      const body = await response.text().catch(() => '');
+      throw new Error(
+        `Planner replay request failed with ${response.status}: ${body || response.statusText}`
+      );
+    }
+
+    return response.json();
   }
 }
 

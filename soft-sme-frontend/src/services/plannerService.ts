@@ -9,6 +9,13 @@ interface PlannerActionArgs {
   sequence?: number;
 }
 
+interface PlannerReplayArgs {
+  sessionId: string;
+  planStepId: string;
+  after?: string | number | null;
+  limit?: number;
+}
+
 const buildTelemetryHeaders = (telemetry?: Record<string, any>, sequence?: number) => {
   const headers: Record<string, string> = {};
   if (telemetry) {
@@ -61,9 +68,33 @@ const dismiss = async (args: PlannerActionArgs) => {
   );
 };
 
+const fetchReplay = async (args: PlannerReplayArgs) => {
+  const { sessionId, planStepId, after, limit } = args;
+  const params: Record<string, string> = {};
+  if (after != null) {
+    params.after = String(after);
+  }
+  if (typeof limit === 'number') {
+    params.limit = String(limit);
+  }
+
+  const response = await api.get(
+    `/api/planner/sessions/${encodeURIComponent(sessionId)}/steps/${encodeURIComponent(planStepId)}/events`,
+    { params }
+  );
+  return response.data as {
+    session_id: string;
+    plan_step_id: string;
+    events: any[];
+    next_cursor?: string | null;
+    has_more?: boolean;
+  };
+};
+
 export const plannerService = {
   acknowledge,
   dismiss,
+  fetchReplay,
 };
 
 export default plannerService;
