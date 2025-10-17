@@ -49,4 +49,36 @@ router.get('/sessions/:sessionId/stream', authMiddleware, async (req: Request, r
   }
 });
 
+router.get(
+  '/sessions/:sessionId/steps/:planStepId/events',
+  authMiddleware,
+  async (req: Request, res: Response) => {
+    const { sessionId, planStepId } = req.params;
+    const after = typeof req.query.after === 'string' ? req.query.after : undefined;
+    const limitParam = req.query.limit;
+    const limit = typeof limitParam === 'string' ? Number(limitParam) : undefined;
+
+    try {
+      const payload = await plannerStreamService.fetchReplay({
+        sessionId,
+        planStepId,
+        after,
+        limit: Number.isFinite(limit) ? limit : undefined,
+        traceHeaders: {
+          traceId: req.header('x-trace-id') ?? undefined,
+          spanId: req.header('x-span-id') ?? undefined,
+        },
+      });
+      res.json(payload);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown planner replay error';
+      console.error('Planner replay error:', message);
+      res.status(502).json({
+        success: false,
+        message,
+      });
+    }
+  }
+);
+
 export default router;
