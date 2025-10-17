@@ -110,6 +110,12 @@ AggregationCoordinator
 - Partial payloads (e.g., documentation retrieval progress) can be coalesced by providing `revision` counters that allow the frontend to replace previous content without duplicate rendering.
 - When all expected subagents complete—or a terminal failure occurs—the coordinator emits a `plan_step_completed` event, closing the stream unless the planner has queued downstream steps.
 
+## Replay Endpoint
+- `GET /planner/sessions/{session_id}/steps/{plan_step_id}/events` surfaces cached planner events so clients that miss the initial stream can reconcile.
+- The endpoint accepts `after` (sequence cursor) and `limit` query parameters, returning `events`, `next_cursor`, and `has_more` metadata so the UI can paginate through the cache deterministically.
+- Events are stored in an in-memory `ReplayStore` (default depth 200 events per step) that deduplicates by sequence number to keep the replay idempotent.
+- Because the replay flow reuses the same normalized event payloads as the SSE stream, reconnecting clients converge on the exact state even if optimistic UI updates were applied locally.
+
 ## Telemetry Preservation
 - Incoming telemetry metadata is stored and automatically attached to every outgoing event.
 - The aggregator enriches telemetry with its own spans (`aggregation.wait`, `aggregation.emit`, `aggregation.retry`) so trace visualizations show time spent buffering vs. streaming.
@@ -133,7 +139,7 @@ AggregationCoordinator
 - [x] Implement `StreamMux` with SSE first, then extend to WebSocket.
 - [ ] Build adapters for documentation QA, row-selection, action/workflow, and voice subagents.
 - [x] Write integration tests simulating concurrent subagent completions and reconnection replay.
-- [ ] Add replay endpoint (`GET /planner/sessions/{session_id}/steps/{plan_step_id}/events`).
+- [x] Add replay endpoint (`GET /planner/sessions/{session_id}/steps/{plan_step_id}/events`).
 - [ ] Instrument analytics sink with aggregation events.
 
 ## Open Questions

@@ -65,4 +65,4 @@
 - [ ] Security review
 
 ### Recommended next task
-Implement replay endpoint (`GET /planner/sessions/{session_id}/steps/{plan_step_id}/events`) so reconnecting clients can hydrate UI state without SSE subscriptions.
+Document replay contract changes in contributor onboarding notes and circulate rollout plan with frontend team.
