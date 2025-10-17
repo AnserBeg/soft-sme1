@@ -8,6 +8,17 @@ This plan consolidates the remaining items from `multi-agent-upgrade-task-board.
 - **Tool minimalism**: expose only the tools required for each milestone and grow capabilities when reliability benchmarks are met.
 - **Guardrails and observability**: every new capability must emit telemetry compatible with the aggregator and support safety overrides.
 
+## Status Tracker
+| Scope | Deliverable | Status | Notes |
+| --- | --- | --- | --- |
+| Phase A.1 | ReAct loop embedded in `AivenAgent.process_message` with planner orchestration hooks | ✅ Complete | Replaced monolithic pipeline with LangGraph-inspired loop and planner-driven control nodes. |
+| Phase A.2 | Telemetry-driven `ToolScoringPolicy` for routing | ✅ Complete | Bayesian-smoothed success metrics rank planner + heuristic candidates with regression coverage. |
+| Phase A.3 | Action workflow skill library and verification callbacks | 🚧 In Progress | Architecture defined; persistent store and verification wiring queued. |
+| Phase B | Memory, critic, and reflection surfaces | ⏳ Not Started | Pending completion of Phase A skill persistence and telemetry schema rollout. |
+| Phase C | Multi-agent orchestration graph and branching | ⏳ Not Started | Requires Phase B reflection data to coordinate planner branching heuristics. |
+| Phase D | Continuous evaluation and guardrail hardening | ⏳ Not Started | Depends on LangGraph telemetry stream from Phases A–C. |
+| Phase E | Governance, documentation, and rollout playbooks | ⏳ Not Started | To be activated once evaluation metrics stabilize. |
+
 ## Phase A – Control Loop & Tooling
 1. **Embed a ReAct loop in the orchestrator**
    - Extend `AivenAgent.process_message` to run a LangGraph-inspired control loop where each turn chooses among documentation QA, SQL, action, or planner tools based on intermediate observations.
@@ -76,11 +87,17 @@ This plan consolidates the remaining items from `multi-agent-upgrade-task-board.
    - Conduct a security assessment focusing on new tool endpoints, AutoGen interactions, and stored skill scripts.
    - Implement mitigations (RBAC policies, audit logging) before enabling autonomous workflow execution.
 
-## Dependencies & Timeline
-- **Weeks 1–2**: Complete Phase A (control loop) while preparing documentation drafts.
-- **Weeks 3–4**: Implement memory/ reflection (Phase B) and begin multi-agent orchestration (Phase C).
-- **Weeks 5–6**: Finalize multi-agent branching, extend evaluation harness, and run security review (Phases C & D).
-- **Week 7**: Complete governance rollout tasks (Phase E) and enable feature flags in staging.
+## Execution Steps
+1. **Stabilize the core ReAct loop and skill tooling (Phase A)**
+   - Finish the skill library persistence layer, verification callbacks, and telemetry wiring needed for closed-loop tool learning.
+2. **Introduce memory and reflection systems (Phase B)**
+   - Layer episodic conversation summaries, critic reviews, and reinforcement signals onto the orchestrator state.
+3. **Expand into full multi-agent orchestration (Phase C)**
+   - Model planner, researcher, executor, and critic nodes in LangGraph/AutoGen with branching and convergence support.
+4. **Operationalize evaluation and safety guardrails (Phase D)**
+   - Automate synthetic scenario coverage, guardrail enforcement, and latency/cost monitoring across the agent graph.
+5. **Finalize governance and rollout practices (Phase E)**
+   - Deliver documentation, change management playbooks, and security approvals required for production enablement.
 
 ## Success Criteria
 - ReAct loop reliably chooses tools with >85% success rate in synthetic suite and <5% unsafe overrides.
@@ -102,8 +119,43 @@ This plan consolidates the remaining items from `multi-agent-upgrade-task-board.
 - **Phase A.1 — PlannerAction schema:** Added a `planner_action` step type to `planner-service` with validation and tests so plans can explicitly request `reason`, `act`, or `reflect` phases with hints and preferred tools. This unlocks planner-authored control directives that flow straight into the orchestrator loop.
 - **Phase A.1 — Aggregation streaming hooks:** Instrumented the control loop to register a synthetic planner step and stream `reason`/`act`/`reflect` events through the aggregation coordinator. Intermediate thoughts, tool observations, and loop completion metadata now surface to the UI/replay pipeline without waiting for the final response.
 
-### Remaining Focus After 2025-02-17
-- Wire LangGraph-style branching/execution graph support into `planner-service` so planner-authored `planner_action` hints can orchestrate concurrent research/execution nodes instead of the current sequential loop.
-- Persist tool reflection outcomes into telemetry storage and expose them to the scoring policy for closed-loop learning (Phase B.3).
-- Implement the critic/reflection agent and episodic memory surfaces defined in Phase B to close the loop between planner feedback and user responses.
+## Progress Update – 2025-02-20
+- **Phase A.3 — Expand skill execution surface:** Defined the skill library manager architecture by mapping `ActionWorkflowSubagent` capabilities into persistent `SkillWorkflow` entities, verification callbacks, and replay hooks so successful workflows become reusable tools.
+- **Telemetry & reflection schema:** Drafted normalized telemetry payloads and storage tables that capture workflow runs, verification outcomes, and reflection summaries needed for the scoring policy’s closed-loop learning.
+- **Plan realignment:** Converted the timeline into execution steps and introduced a status tracker so the team can execute remaining work sequentially without date gating.
+
+### Database Changes Required for Skill Persistence
+Run the following statements in PostgreSQL (ensure `pgcrypto` is enabled for `gen_random_uuid()`):
+
+```sql
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
+CREATE TABLE IF NOT EXISTS skill_workflows (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name TEXT NOT NULL,
+    version INTEGER NOT NULL DEFAULT 1,
+    description TEXT,
+    entrypoint TEXT NOT NULL,
+    parameters JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (name, version)
+);
+
+CREATE TABLE IF NOT EXISTS skill_run_reflections (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    skill_workflow_id UUID NOT NULL REFERENCES skill_workflows(id) ON DELETE CASCADE,
+    run_id UUID NOT NULL,
+    outcome TEXT NOT NULL,
+    success BOOLEAN NOT NULL,
+    verification_payload JSONB,
+    latency_ms INTEGER,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+```
+
+### Remaining Focus After 2025-02-20
+- Implement the Prisma migration and service logic that persist `skill_workflows`/`skill_run_reflections` records and expose verified skills as orchestrator tools (Phase A.3).
+- Build episodic memory summarization, critic agent workflows, and feedback ingestion feeding the scoring policy (Phase B).
+- Wire LangGraph branching, voice subagent integration, evaluation harness, and governance/security workstreams (Phases C–E).
 
