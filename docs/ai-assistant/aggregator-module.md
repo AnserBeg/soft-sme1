@@ -127,6 +127,7 @@ AggregationCoordinator
 - [x] Draft architecture/design document (this file).
 - [x] Publish Phase 3 streaming rollout plan (see `reports/phase3-streaming-response-updates.md`).
 - [x] Implement `AggregationCoordinator` class inside `soft-sme-backend/ai_agent/aggregation.py` with live stream emission hooks.
+- [x] Add safety fallback orchestration so `apply_safety_decision` can terminate risky plans and notify the orchestrator.
 - [ ] Implement `TelemetryContextStore` using Redis (primary) with in-memory fallback for local dev.
 - [x] Implement `StreamMux` with SSE first, then extend to WebSocket.
 - [ ] Build adapters for documentation QA, row-selection, action/workflow, and voice subagents.

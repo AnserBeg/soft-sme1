@@ -38,6 +38,9 @@
 ## Phase 3 – Aggregation & UX
 - [x] Aggregator module
 - [x] Streaming response updates _(SSE batching wired through planner stream hook and conversation UI progress panel)_
+- [x] Aggregator/orchestrator safety fallbacks
+  - [x] `AggregationCoordinator.apply_safety_decision` emits block events and directives
+  - [x] Orchestrator short-circuits risky plans and surfaces guardrail messaging
 - [ ] Conversation UI enhancements
   - [x] Draft actionable controls & transcript alignment design _(see `conversation-ui-enhancements.md`)_
   - [x] Implement acknowledge/dismiss controls in conversation UI
@@ -62,4 +65,4 @@
 - [ ] Security review
 
 ### Recommended next task
-Wire aggregator + orchestrator fallbacks so safety decisions short-circuit risky actions and prevent unsafe plan execution.
+Implement Redis-backed telemetry context store so aggregation events survive worker restarts and horizontal scaling.

@@ -16,7 +16,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import logging
-from typing import Any, AsyncIterator, Deque, Dict, List, Optional, Tuple
+from typing import Any, AsyncIterator, Deque, Dict, List, Mapping, Optional, Tuple
 
 from .analytics_sink import AnalyticsSink
 
@@ -70,6 +70,35 @@ class SessionStepState:
     planner_context: EventPayload
     sequence: int = 0
     closed: bool = False
+
+
+@dataclass(frozen=True)
+class SafetyDirective:
+    """Normalized instruction for the orchestrator based on a safety evaluation."""
+
+    severity: str
+    requires_manual_review: bool
+    fallback_step: Optional[str]
+    resolution: Optional[str]
+    policy_tags: Tuple[str, ...]
+    detected_issues: Tuple[str, ...]
+    should_short_circuit: bool
+
+    def to_payload(self) -> Dict[str, Any]:
+        """Serialize the directive for analytics or prompting."""
+
+        payload: Dict[str, Any] = {
+            "severity": self.severity,
+            "requires_manual_review": self.requires_manual_review,
+            "policy_tags": list(self.policy_tags),
+            "detected_issues": list(self.detected_issues),
+            "short_circuit": self.should_short_circuit,
+        }
+        if self.fallback_step:
+            payload["fallback_step"] = self.fallback_step
+        if self.resolution:
+            payload["resolution"] = self.resolution
+        return payload
 
 
 class TelemetryContextStore:
@@ -284,6 +313,94 @@ class AggregationCoordinator:
             telemetry=telemetry,
         )
         await self._telemetry_store.clear(session_id, plan_step_id)
+
+    async def apply_safety_decision(
+        self,
+        *,
+        session_id: str,
+        plan_step_id: str,
+        decision: Mapping[str, Any],
+        planner_context: Optional[Dict[str, Any]] = None,
+    ) -> SafetyDirective:
+        """Normalize a safety evaluation and emit corresponding aggregation events."""
+
+        key = (session_id, plan_step_id)
+        state = await self._get_state(key)
+        if state is None:
+            await self.register_plan_step(
+                session_id=session_id,
+                plan_step_id=plan_step_id,
+                expected_subagents=[{"key": "safety", "result_key": decision.get("fallback_step")}],
+                planner_context=planner_context,
+            )
+
+        severity = str(decision.get("severity", "info")).lower() or "info"
+        if severity not in {"info", "warn", "block"}:
+            severity = "info"
+
+        requires_manual_review = bool(decision.get("requires_manual_review"))
+        fallback_step = decision.get("fallback_step")
+        resolution = decision.get("resolution")
+
+        policy_tags = tuple(
+            str(tag)
+            for tag in decision.get("policy_tags", [])
+            if isinstance(tag, str) and tag
+        )
+        detected_issues = tuple(
+            str(issue)
+            for issue in decision.get("detected_issues", [])
+            if isinstance(issue, str) and issue
+        )
+
+        should_short_circuit = severity == "block" or requires_manual_review
+
+        directive = SafetyDirective(
+            severity=severity,
+            requires_manual_review=requires_manual_review,
+            fallback_step=str(fallback_step) if fallback_step else None,
+            resolution=str(resolution) if resolution else None,
+            policy_tags=policy_tags,
+            detected_issues=detected_issues,
+            should_short_circuit=should_short_circuit,
+        )
+
+        status_map = {
+            "info": "pass",
+            "warn": "warn",
+            "block": "block",
+        }
+
+        payload: Dict[str, Any] = {
+            "severity": directive.severity,
+            "policy_tags": list(directive.policy_tags),
+            "detected_issues": list(directive.detected_issues),
+            "requires_manual_review": directive.requires_manual_review,
+        }
+        if directive.resolution:
+            payload["resolution"] = directive.resolution
+        if directive.fallback_step:
+            payload["fallback_step"] = directive.fallback_step
+
+        await self.emit_subagent_event(
+            session_id=session_id,
+            plan_step_id=plan_step_id,
+            subagent="safety",
+            status=status_map[directive.severity],
+            payload=payload,
+        )
+
+        completion_payload = dict(payload)
+        completion_payload["short_circuit"] = directive.should_short_circuit
+
+        await self.emit_step_completed(
+            session_id=session_id,
+            plan_step_id=plan_step_id,
+            status="blocked" if directive.should_short_circuit else "completed",
+            payload=completion_payload,
+        )
+
+        return directive
 
     async def stream_events(
         self,
@@ -518,4 +635,5 @@ __all__ = [
     "TelemetryContextStore",
     "ResultCache",
     "SubagentExpectation",
+    "SafetyDirective",
 ]

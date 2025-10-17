@@ -2,6 +2,7 @@ import asyncio
 import unittest
 
 from ai_agent.aggregation import AggregationCoordinator
+from ai_agent.aggregation import SafetyDirective
 
 
 class AggregationCoordinatorTests(unittest.IsolatedAsyncioTestCase):
@@ -136,6 +137,54 @@ class AggregationCoordinatorTests(unittest.IsolatedAsyncioTestCase):
         telemetry = events[1]["telemetry"]
         self.assertEqual(telemetry["trace_id"], "trace-1")
         self.assertEqual(telemetry["span_id"], "span-99")
+
+    async def test_apply_safety_decision_short_circuits(self):
+        collector = asyncio.create_task(
+            self._collect_events(
+                session_id=self.session_id,
+                plan_step_id="safety-step-1",
+            )
+        )
+
+        decision = {
+            "severity": "block",
+            "policy_tags": ["privacy"],
+            "detected_issues": ["Contains PII"],
+            "requires_manual_review": True,
+            "resolution": "Escalate to compliance",
+            "fallback_step": "create-compliance-task",
+        }
+
+        directive = await self.coordinator.apply_safety_decision(
+            session_id=self.session_id,
+            plan_step_id="safety-step-1",
+            decision=decision,
+            planner_context={"description": "safety check"},
+        )
+
+        events = await collector
+
+        self.assertIsInstance(directive, SafetyDirective)
+        self.assertTrue(directive.should_short_circuit)
+        self.assertEqual(directive.severity, "block")
+        self.assertEqual(directive.policy_tags, ("privacy",))
+        self.assertEqual(events[0]["type"], "step_started")
+        self.assertEqual(events[1]["content"]["status"], "block")
+        self.assertEqual(events[2]["content"]["status"], "blocked")
+
+    async def test_apply_safety_decision_pass_through(self):
+        directive = await self.coordinator.apply_safety_decision(
+            session_id=self.session_id,
+            plan_step_id="safety-step-2",
+            decision={
+                "severity": "info",
+                "policy_tags": [],
+                "detected_issues": [],
+            },
+        )
+
+        self.assertFalse(directive.should_short_circuit)
+        self.assertEqual(directive.severity, "info")
 
 
 if __name__ == "__main__":  # pragma: no cover
