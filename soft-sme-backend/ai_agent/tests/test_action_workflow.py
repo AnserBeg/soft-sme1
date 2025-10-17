@@ -1,5 +1,6 @@
 import unittest
 
+from ai_agent.skill_library import SkillWorkflow
 from ai_agent.subagents.action_workflow import ActionWorkflowSubagent
 
 
@@ -25,6 +26,32 @@ class FakeTaskQueue:
             }
         )
         return "task-123"
+
+
+class StubSkillLibrary:
+    def __init__(self) -> None:
+        self.skills = [
+            SkillWorkflow(
+                id="wf-1",
+                name="confirm_vendor_pickup",
+                version=1,
+                description="Confirm pickup details",
+                entrypoint="updatePickupDetails",
+                parameters={"confirmation": "Vendor will pick up"},
+            )
+        ]
+        self.upserts = []
+        self.reflections = []
+
+    async def list_workflows(self):  # pragma: no cover - simple async stub
+        return list(self.skills)
+
+    async def upsert_workflow(self, definition):  # pragma: no cover - simple async stub
+        self.upserts.append(definition)
+        return self.skills[0]
+
+    async def record_run_reflection(self, payload):  # pragma: no cover - simple async stub
+        self.reflections.append(payload)
 
 
 class ActionWorkflowSubagentTests(unittest.IsolatedAsyncioTestCase):
@@ -64,6 +91,50 @@ class ActionWorkflowSubagentTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.queue.enqueued[0]["payload"]["parameters"], {"quote_id": "Q-100"})
         self.assertGreaterEqual(result.metrics["latency_ms"], 0)
         self.assertTrue(any(event[0] == "subagent_invocation_completed" for event in self.analytics.events))
+        self.assertIsNone(result.skill_workflow_id)
+        self.assertIsNone(result.skill_run_id)
+        self.assertIsNone(result.verified)
+
+    async def test_execute_with_skill_verifies_sync_action(self):
+        skill_library = StubSkillLibrary()
+
+        class DummyActionTool:
+            async def invoke(self, message, conversation_id=None):  # pragma: no cover - simple stub
+                return {
+                    "message": "Pickup details updated",
+                    "actions": [
+                        {
+                            "tool": "updatePickupDetails",
+                            "success": True,
+                            "summary": "Updated pickup",
+                        }
+                    ],
+                }
+
+        subagent = ActionWorkflowSubagent(
+            analytics_sink=self.analytics,
+            task_queue=self.queue,
+            action_tool=DummyActionTool(),
+            allow_direct_dispatch=True,
+            skill_library=skill_library,
+        )
+
+        result = await subagent.execute(
+            step_id="step-2",
+            action="skill:confirm_vendor_pickup",
+            parameters={"notes": "Call vendor"},
+            planner_payload={"execution_mode": "sync", "skill_run_id": "run-1"},
+            conversation_id="conv-2",
+            session_id=99,
+        )
+
+        self.assertEqual(result.status, "success")
+        self.assertEqual(result.skill_workflow_id, "wf-1")
+        self.assertEqual(result.skill_run_id, "run-1")
+        self.assertTrue(result.verified)
+        self.assertIn("notes", result.parameters)
+        self.assertEqual(skill_library.reflections[0]["skillWorkflowId"], "wf-1")
+        self.assertTrue(skill_library.reflections[0]["success"])
 
 
 if __name__ == "__main__":

@@ -4,9 +4,11 @@ import { authMiddleware } from '../middleware/authMiddleware';
 import { AgentOrchestratorV2, AgentToolRegistry } from '../services/agentV2/orchestrator';
 import { AgentAnalyticsLogger } from '../services/agentV2/analyticsLogger';
 import { AgentToolsV2 } from '../services/agentV2/tools';
+import { AgentSkillLibraryService, SkillWorkflowSummary } from '../services/agentV2/skillLibrary';
 
 const router = express.Router();
 const analyticsLogger = new AgentAnalyticsLogger(pool);
+const skillLibrary = new AgentSkillLibraryService(pool);
 
 const parseNumeric = (value: unknown): number | null => {
   if (value === null || value === undefined) {
@@ -90,6 +92,36 @@ const buildToolRegistry = (
     ),
 });
 
+const buildSkillToolRegistry = (
+  skills: SkillWorkflowSummary[],
+  baseRegistry: AgentToolRegistry
+): AgentToolRegistry => {
+  const registry: AgentToolRegistry = {};
+  for (const skill of skills) {
+    const normalizedName = skill.name?.trim();
+    if (!normalizedName) {
+      continue;
+    }
+    const entrypoint = skill.entrypoint?.trim();
+    if (!entrypoint || typeof baseRegistry[entrypoint] !== 'function') {
+      continue;
+    }
+    const defaults =
+      skill.parameters && typeof skill.parameters === 'object' && !Array.isArray(skill.parameters)
+        ? (skill.parameters as Record<string, unknown>)
+        : {};
+
+    registry[`skill:${normalizedName}`] = async (args: any) =>
+      baseRegistry[entrypoint]({ ...defaults, ...(args ?? {}) });
+  }
+  return registry;
+};
+
+const requireServiceAuth = (req: Request): boolean => {
+  const authContext = (req as any).auth;
+  return Boolean(authContext && authContext.kind === 'service');
+};
+
 router.post('/session', authMiddleware, async (req: Request, res: Response) => {
   try {
     const userId = parseNumeric(req.user?.id);
@@ -149,6 +181,98 @@ router.post('/analytics/events', authMiddleware, async (req: Request, res: Respo
   }
 });
 
+router.get('/skills', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    if (!requireServiceAuth(req)) {
+      return res.status(403).json({ error: 'Service credentials required' });
+    }
+
+    const skills = await skillLibrary.listWorkflows();
+    res.json({
+      skills: skills.map((skill) => ({
+        id: skill.id,
+        name: skill.name,
+        version: skill.version,
+        description: skill.description,
+        entrypoint: skill.entrypoint,
+        parameters: skill.parameters,
+        updatedAt: skill.updatedAt.toISOString(),
+      })),
+    });
+  } catch (error) {
+    console.error('agentV2: list skills error', error);
+    res.status(500).json({ error: 'Failed to list skills' });
+  }
+});
+
+router.post('/skills', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    if (!requireServiceAuth(req)) {
+      return res.status(403).json({ error: 'Service credentials required' });
+    }
+
+    const { name, entrypoint, version, description, parameters } = req.body || {};
+
+    if (typeof name !== 'string' || !name.trim()) {
+      return res.status(400).json({ error: 'Skill name is required' });
+    }
+    if (typeof entrypoint !== 'string' || !entrypoint.trim()) {
+      return res.status(400).json({ error: 'Skill entrypoint is required' });
+    }
+
+    const skill = await skillLibrary.upsertWorkflow({
+      name: name.trim(),
+      entrypoint: entrypoint.trim(),
+      version: typeof version === 'number' ? version : undefined,
+      description: typeof description === 'string' ? description : undefined,
+      parameters: parameters && typeof parameters === 'object' ? parameters : undefined,
+    });
+
+    res.json({ skill });
+  } catch (error: any) {
+    console.error('agentV2: upsert skill error', error);
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Failed to upsert skill' });
+  }
+});
+
+router.post('/skills/runs', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    if (!requireServiceAuth(req)) {
+      return res.status(403).json({ error: 'Service credentials required' });
+    }
+
+    const { skillWorkflowId, runId, outcome, success, verificationPayload, latencyMs } = req.body || {};
+
+    if (typeof skillWorkflowId !== 'string' || !skillWorkflowId.trim()) {
+      return res.status(400).json({ error: 'skillWorkflowId is required' });
+    }
+    if (typeof runId !== 'string' || !runId.trim()) {
+      return res.status(400).json({ error: 'runId is required' });
+    }
+    if (typeof outcome !== 'string' || !outcome.trim()) {
+      return res.status(400).json({ error: 'outcome is required' });
+    }
+    if (typeof success !== 'boolean') {
+      return res.status(400).json({ error: 'success must be a boolean' });
+    }
+
+    const reflection = await skillLibrary.recordRunReflection({
+      skillWorkflowId: skillWorkflowId.trim(),
+      runId: runId.trim(),
+      outcome: outcome.trim(),
+      success,
+      verificationPayload:
+        verificationPayload && typeof verificationPayload === 'object' ? verificationPayload : undefined,
+      latencyMs: typeof latencyMs === 'number' ? latencyMs : undefined,
+    });
+
+    res.json({ reflection });
+  } catch (error) {
+    console.error('agentV2: record skill reflection error', error);
+    res.status(500).json({ error: 'Failed to record skill run reflection' });
+  }
+});
+
 router.post('/chat', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { sessionId, message } = req.body || {};
@@ -187,7 +311,9 @@ router.post('/chat', authMiddleware, async (req: Request, res: Response) => {
 
     const tools = new AgentToolsV2(pool);
     const registry = buildToolRegistry(tools, Number(sessionId), companyId, userId);
-    const orchestrator = new AgentOrchestratorV2(pool, registry);
+    const skillCatalog = await skillLibrary.listWorkflows();
+    const skillRegistry = buildSkillToolRegistry(skillCatalog, registry);
+    const orchestrator = new AgentOrchestratorV2(pool, { ...registry, ...skillRegistry }, skillCatalog);
     let agentResponse;
     try {
       agentResponse = await orchestrator.handleMessage(Number(sessionId), message, { companyId, userId });

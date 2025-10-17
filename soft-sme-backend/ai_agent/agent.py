@@ -30,6 +30,7 @@ try:  # pragma: no cover - support direct execution and package import
     from .analytics_sink import AnalyticsSink
     from .aggregation import AggregationCoordinator
     from .planner_client import PlannerClient, PlannerServiceError
+    from .skill_library import SkillLibraryClient
     from .subagents import (
         ActionWorkflowSubagent,
         DocumentationQASubagent,
@@ -46,6 +47,7 @@ except ImportError:  # pragma: no cover - fallback when executed as script
     from analytics_sink import AnalyticsSink
     from aggregation import AggregationCoordinator
     from planner_client import PlannerClient, PlannerServiceError
+    from skill_library import SkillLibraryClient
     from subagents import (
         ActionWorkflowSubagent,
         DocumentationQASubagent,
@@ -97,6 +99,7 @@ class AivenAgent:
         self.messages = []  # Add messages list for conversation history
         self.documentation_enabled = os.getenv("AI_ENABLE_DOCUMENTATION", "true").lower() == "true"
         self.analytics_sink = AnalyticsSink()
+        self.skill_library = SkillLibraryClient()
         self.aggregation_coordinator = AggregationCoordinator(
             analytics_sink=self.analytics_sink
         )
@@ -270,6 +273,8 @@ class AivenAgent:
                 analytics_sink=self.analytics_sink,
                 task_queue=self.task_queue,
                 action_tool=self.action_tool,
+                allow_direct_dispatch=True,
+                skill_library=self.skill_library,
             )
             logger.info("Action workflow subagent initialized")
         else:
