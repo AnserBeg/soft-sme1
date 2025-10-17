@@ -17,7 +17,7 @@ import uuid
 from collections import deque
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
-from typing import Dict, Any, List, Optional, Sequence, Tuple
+from typing import Dict, Any, List, Mapping, Optional, Sequence, Tuple
 
 from langchain_core.messages import HumanMessage, AIMessage
 
@@ -31,6 +31,7 @@ try:  # pragma: no cover - support direct execution and package import
     from .aggregation import AggregationCoordinator
     from .planner_client import PlannerClient, PlannerServiceError
     from .skill_library import SkillLibraryClient
+    from .critic_agent import CriticAgent
     from .subagents import (
         ActionWorkflowSubagent,
         DocumentationQASubagent,
@@ -48,6 +49,7 @@ except ImportError:  # pragma: no cover - fallback when executed as script
     from aggregation import AggregationCoordinator
     from planner_client import PlannerClient, PlannerServiceError
     from skill_library import SkillLibraryClient
+    from critic_agent import CriticAgent
     from subagents import (
         ActionWorkflowSubagent,
         DocumentationQASubagent,
@@ -126,7 +128,12 @@ class AivenAgent:
             in {"1", "true", "yes", "on"}
         )
         self.voice_call_subagent: Optional[VoiceCallSubagent] = None
-        
+        self.critic_subagent_enabled = (
+            os.getenv("AI_ENABLE_CRITIC_SUBAGENT", "true").strip().lower()
+            in {"1", "true", "yes", "on"}
+        )
+        self.critic_subagent: Optional[CriticAgent] = None
+
         # Statistics
         self.stats = {
             "total_queries": 0,
@@ -291,6 +298,18 @@ class AivenAgent:
                 logger.exception("Voice call subagent initialization failed: %s", exc)
         else:
             logger.info("Voice call subagent disabled via feature flag")
+
+        if self.critic_subagent_enabled:
+            try:
+                self.critic_subagent = CriticAgent(
+                    analytics_sink=self.analytics_sink,
+                    conversation_manager=self.conversation_manager,
+                )
+                logger.info("Critic subagent initialized")
+            except Exception as exc:  # pylint: disable=broad-except
+                logger.exception("Critic subagent initialization failed: %s", exc)
+        else:
+            logger.info("Critic subagent disabled via feature flag")
 
     def _extract_follow_up_instructions(self, raw_message: str) -> Tuple[str, List[Dict[str, Any]]]:
         """Parse structured follow-up task instructions embedded in the user message."""
@@ -583,7 +602,47 @@ Provide a helpful, complete answer."""
             # Generate final response
             final_response = await self.llm.ainvoke(response_prompt)
             response = final_response.content
-            
+
+            critic_feedback: Optional[Dict[str, Any]] = None
+            if self.critic_subagent_enabled and self.critic_subagent:
+                try:
+                    critic_feedback = await self.critic_subagent.review(
+                        conversation_id=conversation_id,
+                        user_message=prompt_text,
+                        final_response=response,
+                        actions_summary=actions_summary,
+                        planner_plan=planner_plan,
+                        safety_results=safety_results,
+                        gathered_info=gathered_info,
+                    )
+                except Exception as exc:  # pragma: no cover - critic failures should not break the loop
+                    logger.debug("Critic review failed: %s", exc)
+                    critic_feedback = None
+
+                if critic_feedback:
+                    impacted = critic_feedback.get("impacted_tools") or []
+                    if impacted:
+                        self.tool_policy.apply_reflection_feedback(impacted)
+
+                    if critic_feedback.get("requires_revision"):
+                        revision_context = dict(gathered_info)
+                        revision_context["critic_feedback"] = critic_feedback
+                        revision_prompt = self._compose_revision_prompt(
+                            prompt_text=prompt_text,
+                            original_response=response,
+                            critic_feedback=critic_feedback,
+                            gathered_info=revision_context,
+                        )
+                        try:
+                            revised = await self.llm.ainvoke(revision_prompt)
+                            response = revised.content
+                            critic_feedback = dict(critic_feedback)
+                            critic_feedback["revised_response"] = response
+                        except Exception as exc:  # pragma: no cover - revision failures fall back to original answer
+                            logger.debug("Critic revision failed: %s", exc)
+
+                    gathered_info["critic_feedback"] = critic_feedback
+
             # Determine tool used based on what was actually used
             tools_used = list(gathered_info.keys())
             if actions_summary.get("actions"):
@@ -639,8 +698,12 @@ Provide a helpful, complete answer."""
                 "actions": actions_summary.get("actions", []),
                 "action_message": actions_summary.get("message"),
                 "action_catalog": actions_summary.get("catalog", []),
-                "planner_plan": planner_plan,
+                "critic_feedback": critic_feedback,
+                "documentation_results": documentation_results,
                 "documentation_subagent": documentation_results,
+                "row_selection_candidates": row_selection_candidates,
+                "planner_plan": gathered_info.get("planner_plan"),
+                "safety_results": safety_results,
             }
 
         except Exception as e:
@@ -1084,6 +1147,39 @@ Provide a helpful, complete answer."""
 
         pending_clause = f". Pending afterwards: {', '.join(pending)}" if pending else ""
         return f"Iteration {iteration}: selecting {tool} because {', '.join(reasons)}{pending_clause}".strip()
+
+    def _compose_revision_prompt(
+        self,
+        *,
+        prompt_text: str,
+        original_response: str,
+        critic_feedback: Mapping[str, Any],
+        gathered_info: Mapping[str, Any],
+    ) -> str:
+        revision_instructions = critic_feedback.get("revision_instructions") or ""
+        summary = critic_feedback.get("summary") or "The critic requested adjustments."
+        info_json = json.dumps(gathered_info, indent=2, default=str)
+
+        return f"""{self.system_prompt}
+
+The assistant drafted the following response:
+<DRAFT>
+{original_response}
+</DRAFT>
+
+A critic agent reviewed the draft and reported:
+{summary}
+
+Follow these revision instructions:
+{revision_instructions}
+
+User question: {prompt_text}
+
+Context collected during the ReAct loop:
+{info_json}
+
+Produce a corrected answer that resolves the critic findings, stays concise, and clearly communicates any required follow-up actions.
+"""
 
     async def _execute_react_action(
         self,

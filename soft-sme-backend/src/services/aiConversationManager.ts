@@ -13,6 +13,29 @@ export interface ConversationMessage {
   createdAt: Date;
 }
 
+export interface ConversationReflection {
+  id: string;
+  conversationId: string;
+  trigger: string;
+  riskLevel: string;
+  summary: string;
+  recommendation: string | null;
+  requiresRevision: boolean;
+  impactedTools: string[];
+  metadata: Record<string, unknown>;
+  createdAt: Date;
+}
+
+export interface ConversationReflectionInput {
+  trigger: string;
+  riskLevel?: string;
+  summary: string;
+  recommendation?: string | null;
+  requiresRevision?: boolean;
+  impactedTools?: string[];
+  metadata?: Record<string, unknown>;
+}
+
 export interface ConversationSummaryMetadata {
   highlights: string[];
   resolution: string | null;
@@ -254,5 +277,113 @@ export class ConversationManager {
       totalMessages: messageCount.rows[0].count,
       activeConversations: activeCount.rows[0].count
     };
+  }
+
+  async addReflection(
+    conversationId: string,
+    input: ConversationReflectionInput,
+    client?: PoolClient
+  ): Promise<string> {
+    const db = client ?? this.pool;
+    const id = crypto.randomUUID();
+    const impactedTools = Array.isArray(input.impactedTools) ? input.impactedTools : [];
+    const metadata = input.metadata ?? {};
+
+    await db.query(
+      `INSERT INTO ai_conversation_reflections (
+         id,
+         conversation_id,
+         trigger,
+         risk_level,
+         summary,
+         recommendation,
+         requires_revision,
+         impacted_tools,
+         metadata
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb)`,
+      [
+        id,
+        conversationId,
+        input.trigger,
+        (input.riskLevel ?? 'normal').toLowerCase(),
+        input.summary,
+        input.recommendation ?? null,
+        input.requiresRevision ?? false,
+        JSON.stringify(impactedTools),
+        JSON.stringify(metadata)
+      ]
+    );
+
+    return id;
+  }
+
+  async listReflections(
+    conversationId: string,
+    limit = 20,
+    client?: PoolClient
+  ): Promise<ConversationReflection[]> {
+    const db = client ?? this.pool;
+    const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.min(Math.floor(limit), 200) : 20;
+    const result = await db.query(
+      `SELECT
+         id,
+         conversation_id,
+         trigger,
+         risk_level,
+         summary,
+         recommendation,
+         requires_revision,
+         impacted_tools,
+         metadata,
+         created_at
+       FROM ai_conversation_reflections
+       WHERE conversation_id = $1
+       ORDER BY created_at DESC
+       LIMIT $2`,
+      [conversationId, safeLimit]
+    );
+
+    return result.rows.map(row => {
+      let impactedTools: string[] = [];
+      if (Array.isArray(row.impacted_tools)) {
+        impactedTools = row.impacted_tools.filter((item: unknown): item is string => typeof item === 'string');
+      } else if (typeof row.impacted_tools === 'string') {
+        try {
+          const parsed = JSON.parse(row.impacted_tools);
+          if (Array.isArray(parsed)) {
+            impactedTools = parsed.filter((item: unknown): item is string => typeof item === 'string');
+          }
+        } catch (error) {
+          console.warn('[AI Conversations] Failed to parse impacted tools JSON:', error);
+        }
+      }
+
+      let metadata: Record<string, unknown> = {};
+      if (row.metadata) {
+        if (typeof row.metadata === 'string') {
+          try {
+            metadata = JSON.parse(row.metadata);
+          } catch (error) {
+            console.warn('[AI Conversations] Failed to parse reflection metadata JSON:', error);
+          }
+        } else {
+          metadata = row.metadata;
+        }
+      }
+
+      return {
+        id: row.id,
+        conversationId: row.conversation_id,
+        trigger: row.trigger,
+        riskLevel: row.risk_level,
+        summary: row.summary,
+        recommendation: row.recommendation ?? null,
+        requiresRevision: row.requires_revision ?? false,
+        impactedTools,
+        metadata,
+        createdAt: new Date(row.created_at)
+      };
+    });
   }
 }

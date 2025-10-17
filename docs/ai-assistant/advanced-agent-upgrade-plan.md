@@ -14,7 +14,7 @@ This plan consolidates the remaining items from `multi-agent-upgrade-task-board.
 | Phase A.1 | ReAct loop embedded in `AivenAgent.process_message` with planner orchestration hooks | ✅ Complete | Replaced monolithic pipeline with LangGraph-inspired loop and planner-driven control nodes. |
 | Phase A.2 | Telemetry-driven `ToolScoringPolicy` for routing | ✅ Complete | Bayesian-smoothed success metrics rank planner + heuristic candidates with regression coverage. |
 | Phase A.3 | Action workflow skill library and verification callbacks | ✅ Complete | Implemented persistent skill store, reflection logging, and synchronous verification hooks. |
-| Phase B | Memory, critic, and reflection surfaces | 🚧 In Progress | Episodic summaries live; critic workflows and reinforcement still pending. |
+| Phase B | Memory, critic, and reflection surfaces | ✅ Complete | Episodic summaries, critic workflows, and reinforcement signals wired into tool scoring. |
 | Phase C | Multi-agent orchestration graph and branching | ⏳ Not Started | Requires Phase B reflection data to coordinate planner branching heuristics. |
 | Phase D | Continuous evaluation and guardrail hardening | ⏳ Not Started | Depends on LangGraph telemetry stream from Phases A–C. |
 | Phase E | Governance, documentation, and rollout playbooks | ⏳ Not Started | To be activated once evaluation metrics stabilize. |
@@ -154,6 +154,28 @@ CREATE TABLE IF NOT EXISTS skill_run_reflections (
 );
 ```
 
+### Database Changes Required for Critic Reflections
+
+Run these statements to persist critic agent feedback for each conversation:
+
+```sql
+CREATE TABLE IF NOT EXISTS ai_conversation_reflections (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    conversation_id UUID NOT NULL REFERENCES ai_conversations(id) ON DELETE CASCADE,
+    trigger VARCHAR(64) NOT NULL,
+    risk_level VARCHAR(32) NOT NULL DEFAULT 'normal',
+    summary TEXT NOT NULL,
+    recommendation TEXT,
+    requires_revision BOOLEAN NOT NULL DEFAULT FALSE,
+    impacted_tools JSONB NOT NULL DEFAULT '[]'::jsonb,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_conversation_reflections_conversation
+  ON ai_conversation_reflections(conversation_id, created_at DESC);
+```
+
 ## Progress Update – 2025-02-24
 - **Phase A.3 — Skill persistence & verification:** Added Prisma models, PostgreSQL migration, and a Node.js `AgentSkillLibraryService` with service endpoints so the Python orchestrator can persist reusable workflows and fetch them as tools. The `ActionWorkflowSubagent` now hydrates a skill cache, merges stored parameters, and records run reflections via the new API, promoting successful workflows into deterministic tools.
 - **Verification & telemetry:** Enabled synchronous dispatch for skill executions when supported, capturing rich verification payloads and emitting telemetry/analytics events. Successful runs record latency, trace metadata, and verification status, while queued/manual runs avoid premature success claims.
@@ -164,8 +186,13 @@ CREATE TABLE IF NOT EXISTS skill_run_reflections (
 - **Phase B.1 — Storage & access patterns:** Added PostgreSQL summary columns and `ConversationManager` helpers so planners, subagents, and telemetry dashboards can consume highlights/resolutions in a structured, cache-friendly shape.
 - **Reliability safeguards:** Extended the AI task worker with a `conversation_summary` task, added duplicate detection (last summarized message guard), and covered heuristics with Jest tests to prevent regressions.
 
-### Remaining Focus After 2025-03-05
-- Stand up critic agent reviews and reflection ingestion so summaries can feed reinforcement signals (Phase B).
+## Progress Update – 2025-03-10
+- **Phase B.2 — Critic reviews & persistence:** Introduced a heuristic critic subagent that inspects high-risk planner runs, emits structured telemetry, and writes findings to the new `ai_conversation_reflections` table for audit and replay.
+- **Phase B.3 — Reflection-driven reinforcement:** Wired critic feedback into the `ToolScoringPolicy`, allowing reflections to automatically penalize unreliable tools while exposing conversation-level reflection APIs for downstream services.
+- **Revision workflow:** Added an optional critic-guided revision pass so the orchestrator can synthesize corrected answers whenever the review flags blocking issues before responding to the user.
+
+### Remaining Focus After 2025-03-10
 - Expand to multi-agent branching, voice subagent integration, and AutoGen critic orchestration (Phase C).
 - Automate evaluation harness, safety guardrails, and telemetry-driven governance rollouts (Phases D–E).
+- Finalize governance playbooks, documentation updates, and security approvals ahead of rollout (Phase E).
 

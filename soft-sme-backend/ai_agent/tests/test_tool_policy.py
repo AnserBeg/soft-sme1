@@ -47,6 +47,24 @@ class ToolScoringPolicyTests(unittest.TestCase):
         ranked = policy.rank_candidates(["sql", "rag"], ToolUsageContext(message="Need help"))
         self.assertEqual(ranked[0], "rag")
 
+    def test_apply_reflection_feedback_penalizes_tool(self) -> None:
+        policy = ToolScoringPolicy()
+        policy.record_observation("sql", success=True, latency_ms=2000)
+
+        policy.apply_reflection_feedback(
+            [
+                {
+                    "name": "sql",
+                    "success": False,
+                    "weight": 2.0,
+                    "reason": "Critic identified a regression",
+                }
+            ]
+        )
+
+        ranked = policy.rank_candidates(["sql", "rag"], ToolUsageContext(message="Need help"))
+        self.assertEqual(ranked[-1], "sql")
+
 
 if __name__ == "__main__":
     unittest.main()

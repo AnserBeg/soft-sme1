@@ -155,3 +155,59 @@ class ConversationManager:
             "total_messages": int(total_messages or 0),
             "active_conversations": int(active or 0),
         }
+
+    def record_reflection(
+        self,
+        conversation_id: str,
+        *,
+        trigger: str,
+        summary: str,
+        risk_level: str = "normal",
+        recommendation: Optional[str] = None,
+        requires_revision: bool = False,
+        impacted_tools: Optional[List[str]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """Persist a critic or reflection entry for the conversation."""
+
+        reflection_id = str(uuid.uuid4())
+        impacted_tools = impacted_tools or []
+        payload = Json(metadata or {})
+
+        with self._get_connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO ai_conversation_reflections (
+                    id,
+                    conversation_id,
+                    trigger,
+                    risk_level,
+                    summary,
+                    recommendation,
+                    requires_revision,
+                    impacted_tools,
+                    metadata
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s)
+                """,
+                (
+                    reflection_id,
+                    conversation_id,
+                    trigger,
+                    risk_level.lower(),
+                    summary,
+                    recommendation,
+                    requires_revision,
+                    Json(list(impacted_tools or [])),
+                    payload,
+                ),
+            )
+
+        logger.debug(
+            "Recorded reflection %s for conversation %s with trigger %s",
+            reflection_id,
+            conversation_id,
+            trigger,
+        )
+
+        return reflection_id
