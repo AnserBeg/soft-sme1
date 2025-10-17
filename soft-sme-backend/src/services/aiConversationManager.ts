@@ -13,6 +13,18 @@ export interface ConversationMessage {
   createdAt: Date;
 }
 
+export interface ConversationSummaryMetadata {
+  highlights: string[];
+  resolution: string | null;
+  lastSummarizedMessageId: string | null;
+}
+
+export interface ConversationSummarySnapshot {
+  summaryText: string | null;
+  metadata: ConversationSummaryMetadata;
+  updatedAt: Date | null;
+}
+
 export interface ConversationRecord {
   id: string;
   userId: number | null;
@@ -21,6 +33,14 @@ export interface ConversationRecord {
   createdAt: Date;
   updatedAt: Date;
   lastMessageAt: Date;
+  summary: ConversationSummarySnapshot;
+}
+
+export interface ConversationSummaryUpdate {
+  summaryText: string | null;
+  highlights: string[];
+  resolution: string | null;
+  lastSummarizedMessageId: string | null;
 }
 
 export class ConversationManager {
@@ -120,7 +140,7 @@ export class ConversationManager {
 
   async getConversation(conversationId: string): Promise<ConversationRecord | null> {
     const result = await this.pool.query(
-      `SELECT id, user_id, status, metadata, created_at, updated_at, last_message_at
+      `SELECT id, user_id, status, metadata, created_at, updated_at, last_message_at, summary, summary_metadata, summary_updated_at
          FROM ai_conversations
         WHERE id = $1`,
       [conversationId]
@@ -144,6 +164,42 @@ export class ConversationManager {
       }
     }
 
+    let summaryMetadata: ConversationSummaryMetadata = {
+      highlights: [],
+      resolution: null,
+      lastSummarizedMessageId: null
+    };
+
+    if (row.summary_metadata) {
+      if (typeof row.summary_metadata === 'string') {
+        try {
+          const parsed = JSON.parse(row.summary_metadata);
+          summaryMetadata = {
+            highlights: Array.isArray(parsed?.highlights) ? parsed.highlights : [],
+            resolution: typeof parsed?.resolution === 'string' ? parsed.resolution : null,
+            lastSummarizedMessageId:
+              typeof parsed?.lastSummarizedMessageId === 'string' ? parsed.lastSummarizedMessageId : null
+          };
+        } catch (error) {
+          console.warn('[AI Conversations] Failed to parse conversation summary metadata JSON:', error);
+        }
+      } else {
+        summaryMetadata = {
+          highlights: Array.isArray((row.summary_metadata as any)?.highlights)
+            ? (row.summary_metadata as any).highlights
+            : [],
+          resolution:
+            typeof (row.summary_metadata as any)?.resolution === 'string'
+              ? (row.summary_metadata as any).resolution
+              : null,
+          lastSummarizedMessageId:
+            typeof (row.summary_metadata as any)?.lastSummarizedMessageId === 'string'
+              ? (row.summary_metadata as any).lastSummarizedMessageId
+              : null
+        };
+      }
+    }
+
     return {
       id: row.id,
       userId: row.user_id ?? null,
@@ -151,8 +207,34 @@ export class ConversationManager {
       metadata,
       createdAt: new Date(row.created_at),
       updatedAt: new Date(row.updated_at),
-      lastMessageAt: new Date(row.last_message_at)
+      lastMessageAt: new Date(row.last_message_at),
+      summary: {
+        summaryText: row.summary ?? null,
+        metadata: summaryMetadata,
+        updatedAt: row.summary_updated_at ? new Date(row.summary_updated_at) : null
+      }
     };
+  }
+
+  async updateConversationSummary(
+    conversationId: string,
+    update: ConversationSummaryUpdate
+  ): Promise<void> {
+    const payload = {
+      highlights: update.highlights ?? [],
+      resolution: update.resolution ?? null,
+      lastSummarizedMessageId: update.lastSummarizedMessageId ?? null
+    };
+
+    await this.pool.query(
+      `UPDATE ai_conversations
+          SET summary = $2,
+              summary_metadata = jsonb_strip_nulls($3::jsonb),
+              summary_updated_at = NOW(),
+              updated_at = NOW()
+        WHERE id = $1`,
+      [conversationId, update.summaryText ?? null, JSON.stringify(payload)]
+    );
   }
 
   async clearConversation(conversationId: string): Promise<void> {

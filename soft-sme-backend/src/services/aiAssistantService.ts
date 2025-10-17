@@ -6,6 +6,7 @@ import crypto from 'crypto';
 import { pool } from '../db';
 import { AIService } from './aiService';
 import { ConversationManager, ConversationMessage } from './aiConversationManager';
+import { AITaskQueueService } from './aiTaskQueueService';
 
 const sanitizeEnvValue = (value?: string | null): string | undefined => {
   if (!value) {
@@ -51,6 +52,7 @@ class AIAssistantService {
   private isLocalMode: boolean;
   private missingAuthWarningLogged = false;
   private conversationManager: ConversationManager;
+  private taskQueue: AITaskQueueService;
 
   constructor() {
     const configuredMode = process.env.AI_AGENT_MODE?.trim().toLowerCase();
@@ -69,6 +71,7 @@ class AIAssistantService {
     this.isLocalMode = desiredMode === 'local' || endpointIsLocal;
     this.aiEndpoint = resolvedEndpoint;
     this.conversationManager = new ConversationManager(pool);
+    this.taskQueue = new AITaskQueueService(pool);
 
     const modeNote = desiredMode === 'remote' && this.isLocalMode ? ' (auto-local mode)' : '';
 
@@ -382,6 +385,24 @@ class AIAssistantService {
         tool_used: response.tool_used
       }
     );
+
+    await this.scheduleConversationSummary(conversationId, 'assistant_response');
+  }
+
+  private async scheduleConversationSummary(
+    conversationId: string,
+    reason: 'assistant_response' | 'manual'
+  ): Promise<void> {
+    try {
+      await this.taskQueue.enqueueTask(
+        'conversation_summary',
+        { reason },
+        conversationId,
+        new Date(Date.now() + 2000)
+      );
+    } catch (error) {
+      console.warn('[AI Assistant] Failed to enqueue conversation summary task:', error);
+    }
   }
 
   /**
