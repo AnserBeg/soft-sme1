@@ -15,13 +15,13 @@ import sys
 import logging
 from dotenv import load_dotenv
 
-from ai_agent.cache_setup import configure_cache_paths
+from ai_agent.cache_setup import StoragePaths, configure_cache_paths
 
 # Load environment variables from .env file
 load_dotenv()
 
 # Ensure cache directories are prepared before imports that rely on them
-configure_cache_paths()
+STORAGE_PATHS: StoragePaths = configure_cache_paths()
 
 # Add the ai_agent directory to the path
 sys.path.append(os.path.join(os.path.dirname(__file__), 'ai_agent'))
@@ -37,7 +37,8 @@ async def setup_ai_agent():
     """Set up the AI agent with documentation"""
     try:
         logger.info("Setting up Aiven AI Agent...")
-        
+        logger.info("Using agent data directory: %s", STORAGE_PATHS.data_root)
+
         # Initialize the agent
         agent = AivenAgent()
         await agent.initialize()

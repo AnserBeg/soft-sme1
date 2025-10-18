@@ -12,6 +12,8 @@ import sys
 import logging
 import platform
 import uuid
+import pathlib
+import shutil
 from dataclasses import asdict
 from typing import Dict, Any, List, Optional
 from fastapi import FastAPI, HTTPException, BackgroundTasks
@@ -25,11 +27,11 @@ from dotenv import load_dotenv
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 try:  # pragma: no cover - support both package and script execution
-    from .cache_setup import configure_cache_paths
+    from .cache_setup import StoragePaths, configure_cache_paths
     from .db import database_url_present, get_conn, reset_connection
     from .conversation_manager import DB_UNAVAILABLE_MESSAGE
 except ImportError:  # pragma: no cover - fallback when executed as script
-    from cache_setup import configure_cache_paths
+    from cache_setup import StoragePaths, configure_cache_paths
     from db import database_url_present, get_conn, reset_connection
     from conversation_manager import DB_UNAVAILABLE_MESSAGE
 
@@ -40,7 +42,7 @@ from conversation_manager import ConversationManager
 load_dotenv()
 
 # Ensure persistent cache directories are configured
-configure_cache_paths()
+STORAGE_PATHS: StoragePaths = configure_cache_paths()
 
 # Configure logging
 logging.basicConfig(
@@ -137,6 +139,8 @@ async def startup_event():
         logger.info("Python version: %s", platform.python_version())
         logger.info("DATABASE_URL present: %s", "true" if database_url_present() else "false")
         logger.info("AGENT_DATA_DIR: %s", os.getenv("AGENT_DATA_DIR", "<not set>"))
+        for label, path in STORAGE_PATHS.to_mapping().items():
+            logger.info("Storage directory [%s]: %s", label, path)
         ai_agent = AivenAgent()
         await ai_agent.initialize()
         logger.info("AI Agent initialized successfully")
@@ -168,6 +172,38 @@ async def shutdown_event():
 async def health_check():
     """Readiness probe that only reports application availability."""
     return {"status": "ok"}
+
+
+@app.get("/storage-health")
+async def storage_health_check():
+    """Report storage directory availability and free space."""
+
+    def _directory_health(name: str, path: os.PathLike[str] | str) -> Dict[str, Any]:
+        dir_path = pathlib.Path(path)
+        exists = dir_path.exists()
+        disk_probe = dir_path if exists else dir_path.parent
+        free_bytes: Optional[int] = None
+        if disk_probe.exists():
+            usage = shutil.disk_usage(disk_probe)
+            free_bytes = usage.free
+        return {
+            "path": str(dir_path),
+            "exists": exists,
+            "free_bytes": free_bytes,
+        }
+
+    directories = {
+        "data_root": STORAGE_PATHS.data_root,
+        "vectors": STORAGE_PATHS.vectors_dir,
+        "models": STORAGE_PATHS.models_dir,
+        "cache": STORAGE_PATHS.cache_dir,
+    }
+
+    return {
+        "directories": {
+            name: _directory_health(name, path) for name, path in directories.items()
+        }
+    }
 
 
 @app.get("/db-health")
