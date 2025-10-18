@@ -143,7 +143,7 @@ STARTUP_RETRY_DELAY_SECONDS = _float_from_env("AI_AGENT_STARTUP_RETRY_DELAY", 15
 
 ai_agent: AivenAgent | None = None
 conversation_manager = ConversationManager()
-is_ready: bool = False
+IS_READY: bool = False
 startup_error: Optional[str] = None
 startup_attempts: int = 0
 last_startup_duration: Optional[float] = None
@@ -297,9 +297,9 @@ class StatsResponse(BaseModel):
 async def startup_event():
     """Initialize the AI agent on startup with readiness tracking."""
 
-    global is_ready, startup_error, startup_attempts, last_startup_duration, ai_agent
+    global IS_READY, startup_error, startup_attempts, last_startup_duration, ai_agent
 
-    is_ready = False
+    IS_READY = False
     startup_error = None
     startup_attempts = 0
     last_startup_duration = None
@@ -349,10 +349,12 @@ async def startup_event():
             last_startup_duration,
         )
         startup_error = None
-        is_ready = True
+        if not IS_READY:
+            logger.info("AI Agent ready")
+        IS_READY = True
         break
 
-    if not is_ready:
+    if not IS_READY:
         logger.error(
             "AI Agent failed to initialize after %s attempts. Service will remain unavailable until manually reinitialized.",
             STARTUP_MAX_ATTEMPTS,
@@ -361,10 +363,10 @@ async def startup_event():
 @app.on_event("shutdown")
 async def shutdown_event():
     """Cleanup on shutdown"""
-    global is_ready
+    global IS_READY
 
     logger.info("Shutting down AI Agent...")
-    is_ready = False
+    IS_READY = False
     if ai_agent:
         await ai_agent.cleanup()
 
@@ -373,20 +375,9 @@ async def shutdown_event():
 async def readiness_health_check():
     """Readiness probe that reports when initialization has completed."""
 
-    status = "ok" if is_ready else "starting"
-    payload: Dict[str, Any] = {
-        "status": status,
-        "ready": is_ready,
-        "attempts": startup_attempts,
-    }
-
-    if last_startup_duration is not None:
-        payload["startup_duration_seconds"] = round(last_startup_duration, 2)
-
-    if not is_ready and startup_error:
-        payload["error"] = startup_error
-
-    status_code = 200 if is_ready else 503
+    status = "ok" if IS_READY else "starting"
+    status_code = 200 if IS_READY else 503
+    payload: Dict[str, Any] = {"status": status}
     return JSONResponse(status_code=status_code, content=payload)
 
 
@@ -456,16 +447,19 @@ async def database_health_check():
 async def initialize_agent():
     """Initialize the AI agent (re-initialize if needed)"""
     try:
-        global ai_agent, is_ready, startup_attempts, last_startup_duration, startup_error
+        global ai_agent, IS_READY, startup_attempts, last_startup_duration, startup_error
         if ai_agent:
             await ai_agent.cleanup()
 
+        IS_READY = False
         attempt_start = time.perf_counter()
         await _initialize_agent_once()
         last_startup_duration = time.perf_counter() - attempt_start
         startup_attempts += 1
         startup_error = None
-        is_ready = True
+        if not IS_READY:
+            logger.info("AI Agent ready")
+        IS_READY = True
 
         return InitializeResponse(
             status="success",
@@ -698,5 +692,6 @@ if __name__ == "__main__":
         host=host,
         port=port,
         reload=False,  # Disable reload for production
-        log_level="info"
+        log_level="info",
+        workers=1,
     )
