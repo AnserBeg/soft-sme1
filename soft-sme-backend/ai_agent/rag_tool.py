@@ -10,12 +10,21 @@ Uses ChromaDB for vector storage and sentence-transformers for embeddings.
 import os
 import logging
 import hashlib
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from langchain.tools import BaseTool
 import chromadb
 from chromadb.config import Settings
 from sentence_transformers import SentenceTransformer
 import asyncio
+
+try:  # pragma: no cover - allow execution in package and script contexts
+    from .cache_setup import configure_cache_paths
+except ImportError:  # pragma: no cover - fallback for script execution
+    from cache_setup import configure_cache_paths
+
+
+_CACHE_ROOT = configure_cache_paths()
+_DEFAULT_CHROMA_PATH = os.getenv("CHROMA_PERSIST_DIRECTORY", str(_CACHE_ROOT / "chroma"))
 
 
 def _ensure_hf_cache_dirs() -> None:
@@ -47,15 +56,15 @@ class DocumentationRAGTool(BaseTool):
     
     name: str = "documentation_search"
     description: str = "Search Aiven documentation for answers to user questions about features, workflows, and system usage"
-    db_path: str = "./chroma_db"
+    db_path: str = _DEFAULT_CHROMA_PATH
     client: Any = None
     collection: Any = None
     embedding_model: Any = None
     initialized: bool = False
     
-    def __init__(self, db_path: str = "./chroma_db"):
+    def __init__(self, db_path: Optional[str] = None):
         super().__init__()
-        self.db_path = db_path
+        self.db_path = db_path or _DEFAULT_CHROMA_PATH
         self.client = None
         self.collection = None
         self.embedding_model = None
@@ -67,6 +76,8 @@ class DocumentationRAGTool(BaseTool):
     def _initialize(self):
         """Initialize ChromaDB and embedding model"""
         try:
+            os.makedirs(self.db_path, exist_ok=True)
+
             # Initialize ChromaDB
             self.client = chromadb.PersistentClient(
                 path=self.db_path,

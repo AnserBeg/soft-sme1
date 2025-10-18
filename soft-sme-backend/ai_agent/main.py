@@ -22,11 +22,19 @@ from dotenv import load_dotenv
 # Add current directory to Python path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
+try:  # pragma: no cover - support both package and script execution
+    from .cache_setup import configure_cache_paths
+except ImportError:  # pragma: no cover - fallback when executed as script
+    from cache_setup import configure_cache_paths
+
 from agent import AivenAgent
 from conversation_manager import ConversationManager
 
 # Load environment variables
 load_dotenv()
+
+# Ensure persistent cache directories are configured
+configure_cache_paths()
 
 # Configure logging
 logging.basicConfig(
