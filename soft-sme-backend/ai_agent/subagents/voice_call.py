@@ -22,7 +22,7 @@ from ..task_queue import TaskQueue, TaskQueueFanoutTarget, TaskQueueSpec
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_BASE_URL = "http://127.0.0.1:5000/api/voice"
+_DEFAULT_BASE_URL = "http://127.0.0.1:10000/api/voice"
 _DEFAULT_TIMEOUT = 12.0
 _DEFAULT_MAX_RETRIES = 3
 _DEFAULT_INITIAL_BACKOFF = 0.75

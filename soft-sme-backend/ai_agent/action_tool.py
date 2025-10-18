@@ -13,7 +13,7 @@ from analytics_sink import AnalyticsSink
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_BASE_URL = "http://127.0.0.1:5000/api/agent/v2"
+DEFAULT_BASE_URL = "http://127.0.0.1:10000/api/agent/v2"
 
 
 class AgentActionTool:
