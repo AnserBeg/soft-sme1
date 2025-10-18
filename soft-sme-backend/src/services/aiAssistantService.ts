@@ -60,6 +60,7 @@ class AIAssistantService {
 
     const resolvedEndpoint = this.resolveAgentEndpoint(desiredMode);
     const endpointIsLocal = this.isLocalEndpoint(resolvedEndpoint);
+    const endpointIsRemote = this.isRemoteEndpoint(resolvedEndpoint);
 
     if (desiredMode === 'remote' && endpointIsLocal) {
       console.warn(
@@ -68,7 +69,7 @@ class AIAssistantService {
       );
     }
 
-    this.isLocalMode = desiredMode === 'local' || endpointIsLocal;
+    this.isLocalMode = !endpointIsRemote && (desiredMode === 'local' || endpointIsLocal);
     this.aiEndpoint = resolvedEndpoint;
     this.conversationManager = new ConversationManager(pool);
     this.taskQueue = new AITaskQueueService(pool);
@@ -152,93 +153,147 @@ class AIAssistantService {
    * Start the Python AI agent process
    */
   async startAIAgent(): Promise<void> {
-    if (this.isLocalMode) {
-      await this.startLocalAIAgent();
-      
-                              // Wait for the agent to be ready
-      let retries = 0;
-      const maxRetries = 60; // Increased to 60 (120 seconds total)
-      
-      while (retries < maxRetries) {
-        try {
-          const health = await this.getHealthStatus();
-          console.log(`Health check attempt ${retries + 1}:`, health);
-          
-          // Check if the agent is healthy or still starting
-          if (health.status === 'healthy' || health.status === 'starting') {
-            if (health.status === 'healthy') {
-              console.log('AI Agent is ready');
-              return;
-            } else {
-              console.log('AI Agent is starting, continuing to wait...');
-            }
-          }
-        } catch (error) {
-          console.log(`Waiting for AI Agent to be ready... (attempt ${retries + 1}/${maxRetries})`);
-        }
-        
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        retries++;
+    if (!this.isLocalMode) {
+      console.log('[AI Assistant] Remote AI agent configured; skipping local process spawn.');
+      return;
+    }
+
+    const config = await this.startLocalAIAgent();
+    const normalizedEndpoint = this.normalizeEndpoint(config.url);
+    this.aiEndpoint = normalizedEndpoint;
+
+    try {
+      console.log(`[AI Agent] waiting for health check at ${normalizedEndpoint}`);
+      await this.waitForAgentHealthy(normalizedEndpoint);
+    } catch (error) {
+      console.error('[AI Agent] Failed health checks during startup:', error);
+
+      if (this.aiProcess) {
+        this.aiProcess.kill();
+        this.aiProcess = null;
       }
-      
-      throw new Error('AI Agent failed to start within expected time');
+
+      throw error instanceof Error ? error : new Error(String(error));
     }
   }
 
   /**
    * Start local Python AI agent as child process
    */
-  private async startLocalAIAgent(): Promise<void> {
+  private async startLocalAIAgent(): Promise<{ host: string; port: number; url: string }> {
     try {
       const aiAgentPath = path.join(__dirname, '..', '..', 'ai_agent');
       const pythonPath = process.env.PYTHON_PATH || 'python3';
       const pythonExecutable = this.preparePythonEnvironment(pythonPath, aiAgentPath);
 
-      const defaultHost = process.env.AI_AGENT_HOST?.trim() || (process.env.RENDER ? '0.0.0.0' : '127.0.0.1');
-      
-      // Check if AI agent directory exists
       if (!fs.existsSync(aiAgentPath)) {
-        console.error('AI agent directory not found:', aiAgentPath);
+        console.error('[AI Agent] Directory not found:', aiAgentPath);
         throw new Error('AI agent not properly configured');
       }
 
-      // Start Python AI agent
-      this.aiProcess = spawn(pythonExecutable, ['main.py'], {
+      const host = sanitizeEnvValue(process.env.AI_AGENT_HOST) || '127.0.0.1';
+      const portRaw = sanitizeEnvValue(process.env.AI_AGENT_PORT);
+      const parsedPort = portRaw ? Number(portRaw) : undefined;
+      const port = Number.isFinite(parsedPort) && parsedPort ? parsedPort : 15000;
+      const portString = port.toString();
+      const url = `http://${host}:${portString}`;
+
+      const pythonPathEntries = [aiAgentPath, path.join(aiAgentPath, '..')];
+      const pythonPathValue = pythonPathEntries.join(path.delimiter);
+      const existingPythonPath = sanitizeEnvValue(process.env.PYTHONPATH);
+      const pythonPathEnvValue = existingPythonPath
+        ? `${pythonPathValue}${path.delimiter}${existingPythonPath}`
+        : pythonPathValue;
+
+      const spawnArgs = [
+        '-m',
+        'uvicorn',
+        'ai_agent.app:app',
+        '--host',
+        host,
+        '--port',
+        portString,
+        '--workers',
+        '1'
+      ];
+
+      console.log(`[AI Agent] Spawning local process: ${pythonExecutable} ${spawnArgs.join(' ')}`);
+
+      this.aiProcess = spawn(pythonExecutable, spawnArgs, {
         cwd: aiAgentPath,
         stdio: ['pipe', 'pipe', 'pipe'],
         env: {
           ...process.env,
-          PYTHONPATH: aiAgentPath,
-          AI_AGENT_PORT: process.env.AI_AGENT_PORT || '15000',
-          AI_AGENT_HOST: defaultHost
+          PYTHONPATH: pythonPathEnvValue,
+          AI_AGENT_PORT: portString,
+          AI_AGENT_HOST: host
         }
       });
 
-      // Handle process events
-      this.aiProcess.stdout?.on('data', (data) => {
-        console.log('AI Agent:', data.toString());
-      });
+      const logStream = (prefix: string, data: Buffer) => {
+        data
+          .toString()
+          .split(/\r?\n/)
+          .map(line => line.trimEnd())
+          .filter(line => line.length > 0)
+          .forEach(line => console[prefix === 'stderr' ? 'error' : 'log'](`[AI Agent] ${line}`));
+      };
 
-      this.aiProcess.stderr?.on('data', (data) => {
-        console.error('AI Agent Error:', data.toString());
-      });
+      this.aiProcess.stdout?.on('data', data => logStream('stdout', data));
+      this.aiProcess.stderr?.on('data', data => logStream('stderr', data));
 
-      this.aiProcess.on('close', (code) => {
-        console.log('AI Agent process closed with code:', code);
+      this.aiProcess.on('close', code => {
+        console.error('[AI Agent] process closed with code:', code);
         this.aiProcess = null;
       });
 
-      this.aiProcess.on('error', (error) => {
-        console.error('AI Agent process error:', error);
+      this.aiProcess.on('error', error => {
+        console.error('[AI Agent] process error:', error);
         this.aiProcess = null;
       });
 
-      console.log('AI Agent process started');
+      console.log(`[AI Agent] process started on ${host}:${portString}`);
 
+      return { host, port, url };
     } catch (error) {
       console.error('Failed to start AI agent:', error);
       throw error;
     }
+  }
+
+  private async waitForAgentHealthy(url: string, tries = 20): Promise<void> {
+    const fetchImpl = globalThis.fetch;
+
+    if (typeof fetchImpl !== 'function') {
+      throw new Error('Global fetch API is not available in this runtime.');
+    }
+
+    const normalizedUrl = url.replace(/\/+$/, '');
+
+    for (let attempt = 0; attempt < tries; attempt++) {
+      let retryNote: string | null = null;
+
+      try {
+        const response = await fetchImpl(`${normalizedUrl}/health`, { method: 'GET' });
+
+        if (response.ok) {
+          console.log(`[AI Agent] healthy at ${normalizedUrl}`);
+          return;
+        }
+
+        retryNote = `status ${response.status}`;
+      } catch (error) {
+        retryNote = error instanceof Error ? error.message : String(error);
+      }
+
+      const suffix = retryNote ? ` (${retryNote})` : '';
+      console.log(`[AI Agent] health not ready, retry ${attempt + 1}/${tries}${suffix}`);
+
+      const backoff = Math.min(2000 + attempt * 250, 5000);
+      await new Promise(resolve => setTimeout(resolve, backoff));
+    }
+
+    throw new Error('AI Agent failed health check');
   }
 
   private preparePythonEnvironment(pythonPath: string, aiAgentPath: string): string {
@@ -315,7 +370,7 @@ class AIAssistantService {
     if (this.aiProcess) {
       this.aiProcess.kill();
       this.aiProcess = null;
-      console.log('AI Agent stopped');
+      console.log('[AI Agent] stopped');
     }
   }
 
@@ -590,12 +645,18 @@ class AIAssistantService {
       console.log(`✅ Health check successful: ${response.status} - ${JSON.stringify(response.data)}`);
       
       // The Python endpoint returns a HealthResponse object
-      const healthData = response.data;
-      
+      const healthData = response.data ?? {};
+      const rawStatus = typeof healthData.status === 'string' ? healthData.status.toLowerCase() : 'unknown';
+      const normalizedStatus = rawStatus === 'ok'
+        ? 'healthy'
+        : rawStatus === 'error'
+          ? 'unhealthy'
+          : rawStatus;
+
       // Return a simplified status for the Node.js logic
       return {
-        status: healthData.status,
-        details: healthData.details || healthData
+        status: normalizedStatus,
+        details: healthData.details ?? healthData
       };
     } catch (error) {
       console.log(`❌ Health check failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -697,10 +758,27 @@ class AIAssistantService {
   private isLocalEndpoint(endpoint: string): boolean {
     try {
       const url = new URL(endpoint);
-      const localHosts = new Set(['localhost', '127.0.0.1', '::1']);
+      const localHosts = new Set(['localhost', '127.0.0.1', '::1', '0.0.0.0']);
       return localHosts.has(url.hostname);
     } catch (error) {
       console.warn('[AI Assistant] Unable to parse AI endpoint URL:', error);
+      return false;
+    }
+  }
+
+  private isRemoteEndpoint(endpoint: string): boolean {
+    if (!endpoint) {
+      return false;
+    }
+
+    if (endpoint.startsWith('/')) {
+      return true;
+    }
+
+    try {
+      return !this.isLocalEndpoint(endpoint);
+    } catch (error) {
+      console.warn('[AI Assistant] Unable to determine if endpoint is remote:', error);
       return false;
     }
   }

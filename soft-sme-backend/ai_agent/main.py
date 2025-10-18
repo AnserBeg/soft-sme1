@@ -150,26 +150,27 @@ async def health_check():
     try:
         if not ai_agent:
             return HealthResponse(
-                status="unhealthy",
+                status="starting",
                 agent_status="not_initialized",
                 vector_db_status="unknown",
-                database_status="unknown"
+                database_status="unknown",
+                details={"message": "AI agent is still starting"}
             )
-        
-        # Check agent health
+
         agent_health = await ai_agent.health_check()
-        
+        overall_ok = bool(agent_health.get("overall"))
+
         return HealthResponse(
-            status="healthy" if agent_health["overall"] else "unhealthy",
-            agent_status=agent_health["agent"],
-            vector_db_status=agent_health["vector_db"],
-            database_status=agent_health["database"],
+            status="ok" if overall_ok else "error",
+            agent_status=agent_health.get("agent", "unknown"),
+            vector_db_status=agent_health.get("vector_db", "unknown"),
+            database_status=agent_health.get("database", "unknown"),
             details=agent_health
         )
     except Exception as e:
         logger.error(f"Health check failed: {e}")
         return HealthResponse(
-            status="unhealthy",
+            status="error",
             agent_status="error",
             vector_db_status="error",
             database_status="error",
@@ -388,9 +389,9 @@ if __name__ == "__main__":
     logger.info(f"Starting AI Agent server on {host}:{port}")
     
     uvicorn.run(
-        "main:app",
+        "ai_agent.app:app",
         host=host,
         port=port,
         reload=False,  # Disable reload for production
         log_level="info"
-    ) 
+    )
