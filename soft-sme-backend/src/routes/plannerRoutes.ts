@@ -17,15 +17,35 @@ router.get('/sessions/:sessionId/stream', authMiddleware, async (req: Request, r
   }
 
   res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
   res.flushHeaders?.();
 
   const abortController = new AbortController();
   const lastEventIdHeader = req.header('last-event-id') ?? undefined;
 
+  const heartbeatIntervalMs = Number(process.env.PLANNER_STREAM_HEARTBEAT_MS ?? '15000');
+  const resolvedHeartbeat = Number.isFinite(heartbeatIntervalMs) && heartbeatIntervalMs > 0 ? heartbeatIntervalMs : 15000;
+
+  const sendHeartbeat = () => {
+    if (res.writableEnded) {
+      return;
+    }
+    res.write('event: heartbeat\ndata: {}\n\n');
+    res.flush?.();
+  };
+
+  const heartbeat = setInterval(sendHeartbeat, resolvedHeartbeat);
+  // Send an initial heartbeat so proxies flush the headers immediately.
+  sendHeartbeat();
+
+  let connectionClosed = false;
+
   req.on('close', () => {
+    connectionClosed = true;
     abortController.abort();
+    clearInterval(heartbeat);
   });
 
   try {
@@ -43,9 +63,19 @@ router.get('/sessions/:sessionId/stream', authMiddleware, async (req: Request, r
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     console.error('Planner stream error:', message);
-    res.write(`event: error\ndata: ${JSON.stringify({ message })}\n\n`);
+    if (!res.writableEnded) {
+      res.write(`event: error\ndata: ${JSON.stringify({ message })}\n\n`);
+      res.flush?.();
+    }
   } finally {
-    res.end();
+    clearInterval(heartbeat);
+    if (!connectionClosed && !res.writableEnded) {
+      res.write('event: end\ndata: {"reason":"complete"}\n\n');
+      res.flush?.();
+    }
+    if (!res.writableEnded) {
+      res.end();
+    }
   }
 });
 

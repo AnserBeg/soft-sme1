@@ -5,6 +5,7 @@ import { AgentOrchestratorV2, AgentToolRegistry } from '../services/agentV2/orch
 import { AgentAnalyticsLogger } from '../services/agentV2/analyticsLogger';
 import { AgentToolsV2 } from '../services/agentV2/tools';
 import { AgentSkillLibraryService, SkillWorkflowSummary } from '../services/agentV2/skillLibrary';
+import aiAssistantService from '../services/aiAssistantService';
 
 const router = express.Router();
 const analyticsLogger = new AgentAnalyticsLogger(pool);
@@ -194,6 +195,28 @@ router.post('/analytics/events', authMiddleware, async (req: Request, res: Respo
   } catch (error) {
     console.error('agentV2: analytics event error', error);
     res.status(500).json({ error: 'Failed to record analytics event' });
+  }
+});
+
+router.get('/health', authMiddleware, async (_req: Request, res: Response) => {
+  try {
+    const info = aiAssistantService.getEndpointInfo();
+    const health = await aiAssistantService.getHealthStatus();
+
+    res.json({
+      status: health.status ?? 'unknown',
+      details: health.details ?? null,
+      endpoint: info.endpoint,
+      healthUrl: info.healthUrl,
+      mode: info.mode,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Agent health check failed';
+    console.error('agentV2: health check failed', error);
+    res.status(503).json({
+      status: 'unhealthy',
+      error: message,
+    });
   }
 });
 

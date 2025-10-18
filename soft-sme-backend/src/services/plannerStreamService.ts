@@ -80,6 +80,7 @@ class PlannerStreamService {
           break;
         }
         res.write(chunk);
+        res.flush?.();
       }
     } catch (error) {
       if (signal.aborted) {

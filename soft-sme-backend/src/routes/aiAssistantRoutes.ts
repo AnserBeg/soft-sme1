@@ -3,12 +3,21 @@ import { authMiddleware } from '../middleware/authMiddleware';
 import aiAssistantService from '../services/aiAssistantService';
 
 const router = express.Router();
+const allowLegacyAssistant = (process.env.ALLOW_LEGACY_AI_ASSISTANT ?? '').trim().toLowerCase() === 'true';
 
 /**
  * Send message to AI assistant
  * POST /api/ai-assistant/chat
  */
 router.post('/chat', authMiddleware, async (req: Request, res: Response) => {
+  if (!allowLegacyAssistant) {
+    console.warn('Legacy /api/ai-assistant/chat endpoint invoked while disabled. Returning 426.');
+    return res.status(426).json({
+      success: false,
+      message: 'Legacy AI assistant API has been disabled. Please use /api/agent/v2/chat.',
+    });
+  }
+
   try {
     const { message, conversationId } = req.body;
     const userId = req.user?.id;
