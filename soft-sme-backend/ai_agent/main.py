@@ -93,6 +93,7 @@ def _bootstrap_configured_directories() -> None:
         "AGENT_DATA_DIR",
         "HF_HOME",
         "TRANSFORMERS_CACHE",
+        "SENTENCE_TRANSFORMERS_HOME",
         "XDG_CACHE_HOME",
     )
 
@@ -103,13 +104,13 @@ def _bootstrap_configured_directories() -> None:
 
         path_value = pathlib.Path(value).expanduser()
         os.environ[key] = str(path_value)
-        path_value.mkdir(parents=True, exist_ok=True)
+        os.makedirs(path_value, exist_ok=True)
         logger.info("Ensured %s directory exists at %s", key, path_value)
 
         # XDG_CACHE_HOME may contain multiple caches; ensure Hugging Face cache subdir exists as well
         if key == "XDG_CACHE_HOME":
             hf_cache_path = path_value / "huggingface"
-            hf_cache_path.mkdir(parents=True, exist_ok=True)
+            os.makedirs(hf_cache_path, exist_ok=True)
             logger.info("Ensured huggingface cache directory exists at %s", hf_cache_path)
 
 

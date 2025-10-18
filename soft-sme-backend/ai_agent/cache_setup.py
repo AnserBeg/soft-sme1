@@ -6,7 +6,7 @@ import pathlib
 from dataclasses import dataclass
 from typing import Dict
 
-DEFAULT_DATA_ROOT = pathlib.Path.home() / ".cache" / "soft-sme"
+DEFAULT_DATA_ROOT = pathlib.Path("/var/lib/render/ai-cache/soft-sme")
 FALLBACK_DATA_ROOT = pathlib.Path("/tmp/soft-sme")
 CACHE_ENV_VAR = "AI_CACHE_DIR"
 
@@ -97,6 +97,7 @@ def configure_cache_paths() -> StoragePaths:
     env_defaults = {
         "HF_HOME": models_dir / "huggingface",
         "TRANSFORMERS_CACHE": models_dir / "transformers",
+        "SENTENCE_TRANSFORMERS_HOME": models_dir / "sentence-transformers",
         "XDG_CACHE_HOME": cache_dir,
         "PIP_CACHE_DIR": cache_dir / "pip",
         "TMPDIR": tmp_dir,
@@ -113,6 +114,7 @@ def configure_cache_paths() -> StoragePaths:
     for key in (
         "HF_HOME",
         "TRANSFORMERS_CACHE",
+        "SENTENCE_TRANSFORMERS_HOME",
         "XDG_CACHE_HOME",
         "PIP_CACHE_DIR",
         "CHROMA_PERSIST_DIRECTORY",
