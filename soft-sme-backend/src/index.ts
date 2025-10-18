@@ -488,23 +488,69 @@ app.get('/api/db-check', async (req, res) => {
 });
 console.log('Registered database check route at /api/db-check');
 
-// Test database connection
-pool.query('SELECT NOW()', err => {
-  if (err) {
-    console.error('Error connecting to the database:', err);
-    if (process.env.DATABASE_URL) {
-      console.error('DATABASE_URL is configured; verify the connection string.');
-    } else {
-      console.error('Environment variables check:');
-      console.error('DB_HOST:', process.env.DB_HOST);
-      console.error('DB_PORT:', process.env.DB_PORT);
-      console.error('DB_DATABASE:', process.env.DB_DATABASE);
-      console.error('DB_USER:', process.env.DB_USER);
-    }
-    console.error('NODE_ENV:', process.env.NODE_ENV);
-    process.exit(1);
+const parsePositiveInt = (value: string | undefined, fallback: number): number => {
+  const parsed = Number.parseInt(value ?? '', 10);
+  if (Number.isNaN(parsed) || parsed <= 0) {
+    return fallback;
   }
-  console.log('Database connected successfully');
+  return parsed;
+};
+
+const wait = (durationMs: number) =>
+  new Promise<void>(resolve => {
+    setTimeout(resolve, durationMs);
+  });
+
+const shouldSkipDbStartupCheck =
+  (process.env.DB_SKIP_STARTUP_CHECK ?? '').trim().toLowerCase() === 'true';
+
+const dbStartupRetryAttempts = parsePositiveInt(
+  process.env.DB_STARTUP_RETRY_ATTEMPTS,
+  5
+);
+const dbStartupRetryDelayMs = parsePositiveInt(
+  process.env.DB_STARTUP_RETRY_DELAY_MS,
+  5000
+);
+
+const verifyDatabaseConnection = async (): Promise<void> => {
+  if (shouldSkipDbStartupCheck) {
+    console.warn('[db] Startup connectivity check skipped via DB_SKIP_STARTUP_CHECK');
+    return;
+  }
+
+  for (let attempt = 1; attempt <= dbStartupRetryAttempts; attempt += 1) {
+    try {
+      await pool.query('SELECT 1');
+      console.log(`[db] Database connection verified on attempt ${attempt}`);
+      return;
+    } catch (error) {
+      console.error(`[db] Database connection attempt ${attempt} failed`, error);
+
+      if (attempt === dbStartupRetryAttempts) {
+        console.error(
+          '[db] Unable to verify database connectivity after retries. The server will continue to start, but database-dependent requests may fail until the connection is restored.'
+        );
+        if (process.env.DATABASE_URL) {
+          console.error('[db] DATABASE_URL is configured; verify the connection string.');
+        } else {
+          console.error('[db] Environment variables check:');
+          console.error('[db] DB_HOST:', process.env.DB_HOST);
+          console.error('[db] DB_PORT:', process.env.DB_PORT);
+          console.error('[db] DB_DATABASE:', process.env.DB_DATABASE);
+          console.error('[db] DB_USER:', process.env.DB_USER);
+        }
+        console.error('[db] NODE_ENV:', process.env.NODE_ENV);
+        return;
+      }
+
+      await wait(dbStartupRetryDelayMs);
+    }
+  }
+};
+
+pool.on('error', error => {
+  console.error('[db] Unexpected error on idle client', error);
 });
 
 app.get('/ping', (req, res) => res.send('pong'));
@@ -522,6 +568,8 @@ if (process.env.ENABLE_VENDOR_CALLING !== 'false') {
 // Use the regular app for all functionality
 const server = app.listen(PORT, HOST, async () => {
   console.log(`Server is running on port ${PORT}`);
+
+  await verifyDatabaseConnection();
 
   if (shouldAutoStartAiAssistant) {
     // Start AI agent automatically
