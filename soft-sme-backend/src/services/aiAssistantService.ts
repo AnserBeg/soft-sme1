@@ -25,6 +25,7 @@ const sanitizeEnvValue = (value?: string | null): string | undefined => {
 };
 
 const DEFAULT_HEALTH_URL = 'http://127.0.0.1:15000/healthz';
+const PROD_AGENT_BASE_URL = sanitizeEnvValue(process.env.PROD_AGENT_BASE_URL);
 const parseEnvInt = (value: string | undefined, fallback: number): number => {
   if (!value) {
     return fallback;
@@ -109,6 +110,10 @@ class AIAssistantService {
   }
 
   private resolveAgentEndpoint(desiredMode: 'local' | 'remote'): string {
+    if (PROD_AGENT_BASE_URL) {
+      return this.normalizeEndpoint(PROD_AGENT_BASE_URL);
+    }
+
     const remoteUrlOverride = process.env.AI_AGENT_REMOTE_URL?.trim();
     if (remoteUrlOverride) {
       const normalizedRemote = this.normalizeEndpoint(remoteUrlOverride);
@@ -180,7 +185,19 @@ class AIAssistantService {
    */
   async startAIAgent(): Promise<void> {
     if (!this.isLocalMode) {
-      console.log('[AI Assistant] Remote AI agent configured; skipping local process spawn.');
+      const healthUrl = this.aiHealthUrl ?? this.resolveHealthCheckUrl(this.aiEndpoint);
+      const hasAbsoluteUrl = typeof healthUrl === 'string' && /^https?:\/\//i.test(healthUrl);
+
+      if (!hasAbsoluteUrl) {
+        console.warn(
+          `[AI Assistant] Remote AI agent configured but health URL "${healthUrl}" is not absolute. Skipping startup health check.`
+        );
+        return;
+      }
+
+      console.log(`[AI Assistant] Remote AI agent configured; verifying health at ${healthUrl}`);
+      await this.waitForAgentHealthy(healthUrl);
+      console.log('[AI Assistant] Remote AI agent health verified');
       return;
     }
 
@@ -869,6 +886,15 @@ class AIAssistantService {
     }
 
     return false;
+  }
+
+  getEndpointInfo(): { endpoint: string; healthUrl: string | null; mode: 'local' | 'remote' } {
+    const healthUrl = this.aiHealthUrl ?? this.resolveHealthCheckUrl(this.aiEndpoint);
+    return {
+      endpoint: this.aiEndpoint,
+      healthUrl,
+      mode: this.isLocalMode ? 'local' : 'remote',
+    };
   }
 
   private serializeHistory(history: ConversationMessage[]): any[] {
