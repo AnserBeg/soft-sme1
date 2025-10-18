@@ -14,9 +14,10 @@ from typing import Dict, Any, List, Optional
 from langchain.tools import BaseTool
 from langchain_openai import ChatOpenAI
 from langchain.prompts import PromptTemplate
-import psycopg2
 from psycopg2.extras import RealDictCursor
 import asyncio
+
+from .db import get_conn
 
 logger = logging.getLogger(__name__)
 
@@ -271,32 +272,33 @@ Examples:
             if not self._validate_sql(sql_query):
                 return "Error: Query contains unsafe operations or accesses unauthorized tables."
             
-            # Connect to database
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_conn()
+            if conn is None:
+                logger.error("SQL Tool cannot access the database: connection unavailable")
+                return "Database error: connection unavailable"
             cursor = conn.cursor(cursor_factory=RealDictCursor)
-            
+
             # Execute query
             cursor.execute(sql_query)
             results = cursor.fetchall()
-            
+
             # Format results
             if not results:
                 return "No data found for this query."
-            
+
             # Convert to readable format
             formatted_results = []
             for row in results[:20]:  # Limit to 20 rows
                 formatted_results.append(dict(row))
-            
+
             cursor.close()
-            conn.close()
-            
+
             # Format the response
             if len(results) > 20:
                 return f"Found {len(results)} results (showing first 20):\n{formatted_results}"
             else:
                 return f"Found {len(results)} results:\n{formatted_results}"
-            
+
         except Exception as e:
             logger.error(f"SQL execution error: {e}")
             return f"Database error: {str(e)}"
@@ -310,24 +312,28 @@ Examples:
     def test_connection(self) -> bool:
         """Test database connection"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_conn()
+            if conn is None:
+                return False
             cursor = conn.cursor()
             cursor.execute("SELECT 1")
             cursor.fetchone()
             cursor.close()
-            conn.close()
             return True
         except Exception as e:
             logger.error(f"Database connection test failed: {e}")
             return False
-    
+
     def get_table_info(self, table_name: str) -> List[Dict[str, Any]]:
         """Get information about a specific table"""
         try:
             if table_name.lower() not in self.safe_tables:
                 return []
             
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_conn()
+            if conn is None:
+                logger.error("Table info request failed: database connection unavailable")
+                return []
             cursor = conn.cursor(cursor_factory=RealDictCursor)
             
             # Get column information
@@ -341,10 +347,9 @@ Examples:
             columns = cursor.fetchall()
             
             cursor.close()
-            conn.close()
-            
+
             return [dict(col) for col in columns]
-            
+
         except Exception as e:
             logger.error(f"Error getting table info for {table_name}: {e}")
             return []
@@ -355,7 +360,10 @@ Examples:
             if table_name.lower() not in self.safe_tables:
                 return []
             
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_conn()
+            if conn is None:
+                logger.error("Sample data request failed: database connection unavailable")
+                return []
             cursor = conn.cursor(cursor_factory=RealDictCursor)
             
             # Get sample data
@@ -363,8 +371,7 @@ Examples:
             results = cursor.fetchall()
             
             cursor.close()
-            conn.close()
-            
+
             return [dict(row) for row in results]
             
         except Exception as e:
