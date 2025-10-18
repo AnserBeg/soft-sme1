@@ -8,35 +8,19 @@ using the NEURATASK documentation files. It supports multiple vector database
 options and provides a simple interface for the AI assistant to query the docs.
 
 Requirements:
-- pip install chromadb sentence-transformers
-- or pip install pinecone-client sentence-transformers
-- or pip install qdrant-client sentence-transformers
+- pip install chromadb langchain-google-genai google-generativeai
+- or pip install pinecone-client langchain-google-genai google-generativeai
+- or pip install qdrant-client langchain-google-genai google-generativeai
 """
 
 import os
 import json
 import hashlib
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from pathlib import Path
 import logging
 
-
-def _ensure_hf_cache_dirs() -> None:
-    """Ensure any configured Hugging Face cache directories exist."""
-    cache_env_vars = (
-        "TRANSFORMERS_CACHE",
-        "HUGGINGFACE_HUB_CACHE",
-        "HF_HOME",
-    )
-
-    for env_var in cache_env_vars:
-        cache_dir = os.getenv(env_var)
-        if cache_dir:
-            os.makedirs(cache_dir, exist_ok=True)
-
-    xdg_cache_home = os.getenv("XDG_CACHE_HOME")
-    if xdg_cache_home:
-        os.makedirs(os.path.join(xdg_cache_home, "huggingface"), exist_ok=True)
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -56,6 +40,7 @@ class DocumentationVectorDB:
         self.db_type = db_type
         self.db_path = db_path
         self.embedding_model = None
+        self.embedding_dimension: Optional[int] = None
         self.db = None
         
         # Initialize the database
@@ -80,6 +65,17 @@ class DocumentationVectorDB:
             logger.info("Falling back to ChromaDB...")
             self.db_type = "chroma"
             self._init_chroma()
+
+    def _ensure_embedding_dimension(self) -> int:
+        """Determine and cache the embedding dimensionality."""
+
+        if self.embedding_dimension is None:
+            sample = self._get_embeddings(["dimension probe"])
+            if not sample or not sample[0]:
+                raise RuntimeError("Failed to determine embedding dimensionality from Gemini embeddings")
+            self.embedding_dimension = len(sample[0])
+
+        return self.embedding_dimension
     
     def _init_chroma(self):
         """Initialize ChromaDB"""
@@ -123,9 +119,10 @@ class DocumentationVectorDB:
             # Create or get index
             index_name = "soft-sme-docs"
             if index_name not in pinecone.list_indexes():
+                dimension = self._ensure_embedding_dimension()
                 pinecone.create_index(
                     name=index_name,
-                    dimension=384,  # sentence-transformers/all-MiniLM-L6-v2 dimension
+                    dimension=dimension,
                     metric="cosine"
                 )
             
@@ -150,9 +147,10 @@ class DocumentationVectorDB:
             
             # Create collection
             collection_name = "soft_sme_docs"
+            dimension = self._ensure_embedding_dimension()
             self.client.recreate_collection(
                 collection_name=collection_name,
-                vectors_config=VectorParams(size=384, distance=Distance.COSINE)
+                vectors_config=VectorParams(size=dimension, distance=Distance.COSINE)
             )
             
             self.collection_name = collection_name
@@ -164,19 +162,19 @@ class DocumentationVectorDB:
     
     def _get_embeddings(self, texts: List[str]) -> List[List[float]]:
         """Generate embeddings for text chunks"""
-        try:
-            from sentence_transformers import SentenceTransformer
-            
-            if self.embedding_model is None:
-                _ensure_hf_cache_dirs()
-                self.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
-            
-            embeddings = self.embedding_model.encode(texts, convert_to_tensor=False)
-            return embeddings.tolist()
-            
-        except ImportError:
-            logger.error("Sentence transformers not installed. Install with: pip install sentence-transformers")
-            raise
+        if self.embedding_model is None:
+            api_key = os.getenv("GEMINI_API_KEY")
+            if not api_key:
+                raise ValueError("GEMINI_API_KEY environment variable required for embeddings")
+
+            model_name = os.getenv("AI_AGENT_EMBEDDING_MODEL", "models/text-embedding-004")
+            self.embedding_model = GoogleGenerativeAIEmbeddings(
+                model=model_name,
+                google_api_key=api_key,
+            )
+
+        embeddings = self.embedding_model.embed_documents(texts)
+        return embeddings
     
     def _chunk_text(self, text: str, chunk_size: int = 1000, overlap: int = 200) -> List[str]:
         """Split text into overlapping chunks"""

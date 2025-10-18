@@ -3,7 +3,8 @@
 
 # Core dependencies for vector database
 chromadb>=0.4.0
-sentence-transformers>=2.2.0
+langchain-google-genai==2.0.10
+google-generativeai>=0.8.5
 
 # Alternative vector databases (choose one)
 # pinecone-client>=2.2.0
@@ -17,8 +18,4 @@ tqdm>=4.64.0
 # Optional: For better text processing
 nltk>=3.8
 spacy>=3.5.0
-
-# Optional: For advanced embeddings
-transformers>=4.21.0
-torch>=1.12.0
 

@@ -20,12 +20,12 @@ from datetime import datetime
 from dataclasses import asdict
 from typing import Dict, Any, List, Optional
 from fastapi import FastAPI, HTTPException, BackgroundTasks
-from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 import uvicorn
 from dotenv import load_dotenv
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
 # Add current directory to Python path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -136,8 +136,7 @@ app.add_middleware(
 )
 
 # Initialize AI agent and conversation manager
-MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
-MODEL_LOAD_TIMEOUT_SECONDS = _int_from_env("AI_AGENT_MODEL_TIMEOUT", 600, minimum=60)
+MODEL_NAME = os.getenv("AI_AGENT_EMBEDDING_MODEL", "models/text-embedding-004")
 MODEL_LOAD_MAX_ATTEMPTS = _int_from_env("AI_AGENT_MODEL_RETRIES", 3, minimum=1)
 MODEL_LOAD_RETRY_DELAY_SECONDS = _float_from_env("AI_AGENT_MODEL_RETRY_DELAY", 3.0, minimum=0.1)
 STARTUP_MAX_ATTEMPTS = _int_from_env("AI_AGENT_STARTUP_RETRIES", 3, minimum=1)
@@ -150,7 +149,7 @@ startup_error: Optional[str] = None
 startup_attempts: int = 0
 last_startup_duration: Optional[float] = None
 
-# Keep a handle to the shared embedding model so repeated startup attempts reuse downloads
+# Keep a handle to the shared embedding model so repeated startup attempts reuse configuration
 _shared_embedding_model: Any | None = None
 
 
@@ -159,8 +158,20 @@ def _raise_if_db_unavailable(exc: Exception) -> None:
         raise HTTPException(status_code=503, detail="Database temporarily unavailable") from exc
 
 
-async def _load_sentence_transformer() -> Any:
-    """Load the shared SentenceTransformer model with a timeout and retries."""
+def _build_embedding_client() -> GoogleGenerativeAIEmbeddings:
+    """Create a Google Generative AI embedding client using the Gemini API."""
+
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise RuntimeError(
+            "GEMINI_API_KEY environment variable must be set for documentation embeddings"
+        )
+
+    return GoogleGenerativeAIEmbeddings(model=MODEL_NAME, google_api_key=api_key)
+
+
+async def _load_embedding_client() -> Any:
+    """Load the shared embedding client with retries."""
 
     last_error: Exception | None = None
 
@@ -168,40 +179,20 @@ async def _load_sentence_transformer() -> Any:
         start_perf = time.perf_counter()
         start_wall = datetime.utcnow().isoformat()
         logger.info(
-            "Loading SentenceTransformer model '%s' (attempt %s/%s started at %s UTC). "
-            "Downloads may take a while on first run.",
+            "Initializing Gemini embedding model '%s' (attempt %s/%s started at %s UTC).",
             MODEL_NAME,
             attempt,
             MODEL_LOAD_MAX_ATTEMPTS,
             start_wall,
         )
 
-        def _load_model() -> Any:
-            from sentence_transformers import SentenceTransformer  # Local import to defer heavy dependency
-
-            return SentenceTransformer(MODEL_NAME)
-
         try:
-            model = await asyncio.wait_for(
-                run_in_threadpool(_load_model),
-                timeout=MODEL_LOAD_TIMEOUT_SECONDS,
-            )
-        except asyncio.TimeoutError as exc:  # pragma: no cover - defensive
-            elapsed = time.perf_counter() - start_perf
-            end_wall = datetime.utcnow().isoformat()
-            message = (
-                "Timed out after "
-                f"{MODEL_LOAD_TIMEOUT_SECONDS} seconds while loading model '{MODEL_NAME}'. "
-                f"Attempt {attempt}/{MODEL_LOAD_MAX_ATTEMPTS} elapsed {elapsed:.2f}s (ended at {end_wall} UTC)."
-            )
-            timeout_error = RuntimeError(message)
-            timeout_error.__cause__ = exc
-            last_error = timeout_error
+            model = _build_embedding_client()
         except Exception as exc:  # pylint: disable=broad-except
             elapsed = time.perf_counter() - start_perf
             end_wall = datetime.utcnow().isoformat()
             message = (
-                f"Failed to load model '{MODEL_NAME}' on attempt {attempt}/{MODEL_LOAD_MAX_ATTEMPTS} "
+                f"Failed to initialize embedding model '{MODEL_NAME}' on attempt {attempt}/{MODEL_LOAD_MAX_ATTEMPTS} "
                 f"after {elapsed:.2f}s (ended at {end_wall} UTC): {exc}"
             )
             model_error = RuntimeError(message)
@@ -211,7 +202,7 @@ async def _load_sentence_transformer() -> Any:
             elapsed = time.perf_counter() - start_perf
             end_wall = datetime.utcnow().isoformat()
             logger.info(
-                "Loaded SentenceTransformer model '%s' in %.2f seconds on attempt %s/%s (completed at %s UTC).",
+                "Initialized Gemini embedding model '%s' in %.2f seconds on attempt %s/%s (completed at %s UTC).",
                 MODEL_NAME,
                 elapsed,
                 attempt,
@@ -225,7 +216,7 @@ async def _load_sentence_transformer() -> Any:
         if attempt < MODEL_LOAD_MAX_ATTEMPTS:
             backoff = MODEL_LOAD_RETRY_DELAY_SECONDS * attempt
             logger.info(
-                "Retrying SentenceTransformer model load in %.2f seconds (attempt %s/%s failed).",
+                "Retrying Gemini embedding client initialization in %.2f seconds (attempt %s/%s failed).",
                 backoff,
                 attempt,
                 MODEL_LOAD_MAX_ATTEMPTS,
@@ -244,10 +235,10 @@ async def _initialize_agent_once() -> None:
     # Load shared embedding model first so downstream tooling can reuse it
     shared_model = _shared_embedding_model
     if shared_model is None:
-        shared_model = await _load_sentence_transformer()
+        shared_model = await _load_embedding_client()
         _shared_embedding_model = shared_model
     else:
-        logger.info("Reusing cached SentenceTransformer model already in memory")
+        logger.info("Reusing cached Gemini embedding client already in memory")
 
     set_shared_embedding_model(shared_model)
 

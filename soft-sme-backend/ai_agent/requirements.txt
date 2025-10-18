@@ -2,10 +2,6 @@
 # ====================
 
 # Core AI/ML libraries
---extra-index-url https://download.pytorch.org/whl/cpu
-torch==2.8.0+cpu
-sentence-transformers==5.1.1
-transformers==4.57.0
 langgraph>=0.2.0
 langchain>=0.2.0
 langchain-openai>=0.1.0

@@ -4,7 +4,7 @@ Documentation RAG Tool
 =====================
 
 RAG (Retrieval-Augmented Generation) tool for Aiven documentation.
-Uses ChromaDB for vector storage and sentence-transformers for embeddings.
+Uses ChromaDB for vector storage and Google Gemini hosted embeddings.
 """
 
 import os
@@ -14,7 +14,7 @@ from typing import List, Dict, Any, Optional
 from langchain.tools import BaseTool
 import chromadb
 from chromadb.config import Settings
-from sentence_transformers import SentenceTransformer
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
 import asyncio
 
 try:  # pragma: no cover - allow execution in package and script contexts
@@ -25,39 +25,23 @@ except ImportError:  # pragma: no cover - fallback for script execution
 
 _STORAGE_PATHS: StoragePaths = configure_cache_paths()
 _DEFAULT_CHROMA_PATH = str(_STORAGE_PATHS.vectors_dir)
-_EMBEDDING_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
-_SHARED_EMBEDDING_MODEL: Optional[SentenceTransformer] = None
+_EMBEDDING_MODEL_NAME = os.getenv("AI_AGENT_EMBEDDING_MODEL", "models/text-embedding-004")
+_GEMINI_API_KEY_ENV_VAR = "GEMINI_API_KEY"
+_SHARED_EMBEDDING_MODEL: Optional[Any] = None
 
 
-def set_shared_embedding_model(model: Optional[SentenceTransformer]) -> None:
+def set_shared_embedding_model(model: Optional[Any]) -> None:
     """Expose a setter so the FastAPI app can inject a preloaded model."""
 
     global _SHARED_EMBEDDING_MODEL
     _SHARED_EMBEDDING_MODEL = model
 
 
-def get_shared_embedding_model() -> Optional[SentenceTransformer]:
+def get_shared_embedding_model() -> Optional[Any]:
     """Return the shared embedding model if available."""
 
     return _SHARED_EMBEDDING_MODEL
 
-
-def _ensure_hf_cache_dirs() -> None:
-    """Ensure any configured Hugging Face cache directories exist."""
-    cache_env_vars = (
-        "TRANSFORMERS_CACHE",
-        "HUGGINGFACE_HUB_CACHE",
-        "HF_HOME",
-    )
-
-    for env_var in cache_env_vars:
-        cache_dir = os.getenv(env_var)
-        if cache_dir:
-            os.makedirs(cache_dir, exist_ok=True)
-
-    xdg_cache_home = os.getenv("XDG_CACHE_HOME")
-    if xdg_cache_home:
-        os.makedirs(os.path.join(xdg_cache_home, "huggingface"), exist_ok=True)
 
 logger = logging.getLogger(__name__)
 
@@ -106,19 +90,27 @@ class DocumentationRAGTool(BaseTool):
             )
             
             # Initialize embedding model
-            _ensure_hf_cache_dirs()
             shared_model = get_shared_embedding_model()
             if shared_model is not None:
                 self.embedding_model = shared_model
                 logger.info("Using shared embedding model for documentation search")
             else:
                 try:
-                    self.embedding_model = SentenceTransformer(_EMBEDDING_MODEL_NAME)
+                    api_key = os.getenv(_GEMINI_API_KEY_ENV_VAR)
+                    if not api_key:
+                        raise EmbeddingModelLoadError(
+                            "GEMINI_API_KEY environment variable must be set to use Gemini embeddings"
+                        )
+
+                    self.embedding_model = GoogleGenerativeAIEmbeddings(
+                        model=_EMBEDDING_MODEL_NAME,
+                        google_api_key=api_key,
+                    )
                 except Exception as exc:
                     raise EmbeddingModelLoadError(
-                        "Failed to load sentence-transformer model '"
-                        f"{_EMBEDDING_MODEL_NAME}'. Ensure the model is available locally or that the "
-                        "environment has access to download it."
+                        "Failed to initialize Gemini embedding model '"
+                        f"{_EMBEDDING_MODEL_NAME}'. Ensure the GEMINI_API_KEY is valid and the environment "
+                        "can reach the Google Generative AI service."
                     ) from exc
 
                 set_shared_embedding_model(self.embedding_model)
@@ -222,7 +214,7 @@ class DocumentationRAGTool(BaseTool):
                         chunks = self._chunk_text(content)
                         
                         # Generate embeddings
-                        embeddings = self.embedding_model.encode(chunks)
+                        embeddings = self.embedding_model.embed_documents(chunks)
                         
                         # Generate IDs for chunks
                         base_id = hashlib.md5(file_path.encode()).hexdigest()[:8]
@@ -240,7 +232,7 @@ class DocumentationRAGTool(BaseTool):
                         self.collection.add(
                             ids=chunk_ids,
                             documents=chunks,
-                            embeddings=embeddings.tolist(),
+                            embeddings=embeddings,
                             metadatas=chunk_metadata
                         )
                         
@@ -267,11 +259,11 @@ class DocumentationRAGTool(BaseTool):
             logger.info(f"RAG _run called with query: '{query}'")
             
             # Generate query embedding
-            query_embedding = self.embedding_model.encode([query])
-            
+            query_embedding = self.embedding_model.embed_query(query)
+
             # Search ChromaDB
             results = self.collection.query(
-                query_embeddings=query_embedding.tolist(),
+                query_embeddings=[query_embedding],
                 n_results=5,
                 include=["documents", "metadatas", "distances"]
             )
@@ -341,11 +333,11 @@ class DocumentationRAGTool(BaseTool):
                 return []
             
             # Generate query embedding
-            query_embedding = self.embedding_model.encode([query])
-            
+            query_embedding = self.embedding_model.embed_query(query)
+
             # Search ChromaDB
             results = self.collection.query(
-                query_embeddings=query_embedding.tolist(),
+                query_embeddings=[query_embedding],
                 n_results=top_k,
                 include=["documents", "metadatas", "distances"]
             )
