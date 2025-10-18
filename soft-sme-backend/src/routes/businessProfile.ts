@@ -246,26 +246,15 @@ router.post('/', authMiddleware, upload.single('logo'), async (req, res) => {
 // Database check endpoint for debugging
 router.get('/db-check', async (req, res) => {
   try {
-    // Check if business_profile table exists and has postal_code column
-    const tableCheck = await pool.query(`
-      SELECT column_name, data_type 
-      FROM information_schema.columns 
-      WHERE table_name = 'business_profile' 
-      ORDER BY ordinal_position
-    `);
-    
-    res.json({
-      tableExists: tableCheck.rows.length > 0,
-      columns: tableCheck.rows,
-      hasPostalCode: tableCheck.rows.some(col => col.column_name === 'postal_code')
-    });
+    await pool.query({ text: 'SELECT 1', statement_timeout: 5000 });
+    res.json({ ok: true });
   } catch (error: any) {
     console.error('Database check error:', error);
-    res.status(500).json({ 
-      error: 'Database check failed',
-      details: error.message
+    res.status(500).json({
+      ok: false,
+      error: error.message,
     });
   }
 });
 
-export default router; 
+export default router;

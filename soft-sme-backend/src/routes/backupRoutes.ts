@@ -7,6 +7,7 @@ import archiver from 'archiver';
 // @ts-ignore
 import unzipper from 'unzipper';
 import multer from 'multer';
+import { URL } from 'url';
 
 const router = express.Router();
 
@@ -37,6 +38,16 @@ interface Backup {
     arch: string;
   };
   size: number;
+}
+
+interface DbConnectionDetails {
+  host: string;
+  port: string;
+  database: string;
+  user?: string;
+  password?: string;
+  ssl: boolean;
+  connectionString?: string;
 }
 
 function isValidDate(d: any): d is Date {
@@ -70,6 +81,30 @@ function getBackupDir(): string {
     }
   }
   return path.join(__dirname, '../../backups');
+}
+
+function getDbConnectionDetails(): DbConnectionDetails {
+  if (process.env.DATABASE_URL) {
+    const connectionUrl = new URL(process.env.DATABASE_URL);
+    return {
+      connectionString: process.env.DATABASE_URL,
+      host: connectionUrl.hostname,
+      port: connectionUrl.port || '5432',
+      database: connectionUrl.pathname.replace(/^\//, ''),
+      user: connectionUrl.username ? decodeURIComponent(connectionUrl.username) : undefined,
+      password: connectionUrl.password ? decodeURIComponent(connectionUrl.password) : undefined,
+      ssl: true,
+    };
+  }
+
+  return {
+    host: process.env.DB_HOST || 'localhost',
+    port: process.env.DB_PORT || '5432',
+    database: process.env.DB_DATABASE || 'soft_sme_db',
+    user: process.env.DB_USER || 'postgres',
+    password: process.env.DB_PASSWORD || '123',
+    ssl: process.env.DB_SSL === 'true',
+  };
 }
 
 // Get list of available backups
@@ -122,20 +157,19 @@ router.post('/create', authMiddleware, async (req: Request, res: Response) => {
     // Backup database
     try {
       const dbBackupFile = path.join(backupDir, `database_backup_${timestamp}.sql`);
-      const dbConfig = {
-        host: process.env.DB_HOST || 'localhost',
-        port: process.env.DB_PORT || '5432',
-        database: process.env.DB_DATABASE || 'soft_sme_db',
-        user: process.env.DB_USER || 'postgres',
-        password: process.env.DB_PASSWORD || '123'
+      const dbConfig = getDbConnectionDetails();
+      const pgDumpCommand = dbConfig.connectionString
+        ? `pg_dump "${dbConfig.connectionString}" -f "${dbBackupFile}"`
+        : `pg_dump -h ${dbConfig.host} -p ${dbConfig.port} -U ${dbConfig.user} -d ${dbConfig.database} -f "${dbBackupFile}"`;
+
+      const execEnv = {
+        ...process.env,
+        ...(dbConfig.password ? { PGPASSWORD: dbConfig.password } : {}),
+        ...(dbConfig.ssl ? { PGSSLMODE: 'require' } : {}),
       };
 
-      const pgDumpCommand = `pg_dump -h ${dbConfig.host} -p ${dbConfig.port} -U ${dbConfig.user} -d ${dbConfig.database} -f "${dbBackupFile}"`;
-
       await new Promise<void>((resolve, reject) => {
-        exec(pgDumpCommand, {
-          env: { ...process.env, PGPASSWORD: dbConfig.password }
-        }, (error) => {
+        exec(pgDumpCommand, { env: execEnv }, error => {
           if (error) {
             reject(error);
           } else {
@@ -335,20 +369,19 @@ router.post('/restore/:manifest', authMiddleware, async (req: Request, res: Resp
       try {
         const dbBackupFile = path.join(backupDir, manifestData.components.database);
         if (fs.existsSync(dbBackupFile)) {
-          const dbConfig = {
-            host: process.env.DB_HOST || 'localhost',
-            port: process.env.DB_PORT || '5432',
-            database: process.env.DB_DATABASE || 'soft_sme_db',
-            user: process.env.DB_USER || 'postgres',
-            password: process.env.DB_PASSWORD || '123'
+          const dbConfig = getDbConnectionDetails();
+          const psqlCommand = dbConfig.connectionString
+            ? `psql "${dbConfig.connectionString}" -f "${dbBackupFile}"`
+            : `psql -h ${dbConfig.host} -p ${dbConfig.port} -U ${dbConfig.user} -d ${dbConfig.database} -f "${dbBackupFile}"`;
+
+          const execEnv = {
+            ...process.env,
+            ...(dbConfig.password ? { PGPASSWORD: dbConfig.password } : {}),
+            ...(dbConfig.ssl ? { PGSSLMODE: 'require' } : {}),
           };
 
-          const psqlCommand = `psql -h ${dbConfig.host} -p ${dbConfig.port} -U ${dbConfig.user} -d ${dbConfig.database} -f "${dbBackupFile}"`;
-
           await new Promise<void>((resolve, reject) => {
-            exec(psqlCommand, {
-              env: { ...process.env, PGPASSWORD: dbConfig.password }
-            }, (error) => {
+            exec(psqlCommand, { env: execEnv }, error => {
               if (error) {
                 reject(error);
               } else {

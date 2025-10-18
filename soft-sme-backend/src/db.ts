@@ -26,17 +26,23 @@ const shouldUseSSL = (() => {
 })();
 
 const commonPoolOptions: Partial<PoolConfig> = {
-  max: 20, // Maximum number of clients in the pool
-  idleTimeoutMillis: 30000, // Close idle clients after 30 seconds
-  connectionTimeoutMillis: 2000, // Return an error after 2 seconds if connection could not be established
+  max: 10,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 10000,
   keepAlive: true,
   keepAliveInitialDelayMillis: 10000,
 };
 
+/**
+ * Render managed Postgres databases require SSL but provide certificates that
+ * are not signed by a public CA, so we disable certificate verification.
+ */
+const renderSslConfig = { rejectUnauthorized: false } as const;
+
 const dbConfig: PoolConfig = useDatabaseUrl
   ? {
       connectionString: process.env.DATABASE_URL,
-      ssl: { rejectUnauthorized: false },
+      ssl: renderSslConfig,
       ...commonPoolOptions,
     }
   : {
@@ -46,18 +52,15 @@ const dbConfig: PoolConfig = useDatabaseUrl
       password: process.env.DB_PASSWORD || '123',
       port: parseInt(process.env.DB_PORT || '5432', 10),
       ...commonPoolOptions,
-      ...(shouldUseSSL ? { ssl: { rejectUnauthorized: false } } : {}),
+      ...(shouldUseSSL ? { ssl: renderSslConfig } : {}),
     };
 
 const sslEnabled = Boolean((dbConfig as PoolConfig).ssl);
 
-// Debug: Log database configuration (without sensitive details)
-console.log('Database configuration source:', useDatabaseUrl ? 'DATABASE_URL' : 'individual environment variables');
-console.log('Database host:', useDatabaseUrl ? 'From connection string' : dbConfig.host);
-console.log('Database name:', useDatabaseUrl ? 'From connection string' : dbConfig.database);
-console.log('Database port:', useDatabaseUrl ? 'From connection string' : dbConfig.port);
-console.log('Database connection SSL enabled:', sslEnabled);
-
 const pool = new Pool(dbConfig);
+
+console.log(
+  `[db] Pool initialized with connectionString=${useDatabaseUrl} sslEnabled=${sslEnabled}`
+);
 
 export { pool };
