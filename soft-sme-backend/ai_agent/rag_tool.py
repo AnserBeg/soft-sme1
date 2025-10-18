@@ -25,6 +25,21 @@ except ImportError:  # pragma: no cover - fallback for script execution
 
 _STORAGE_PATHS: StoragePaths = configure_cache_paths()
 _DEFAULT_CHROMA_PATH = str(_STORAGE_PATHS.vectors_dir)
+_EMBEDDING_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
+_SHARED_EMBEDDING_MODEL: Optional[SentenceTransformer] = None
+
+
+def set_shared_embedding_model(model: Optional[SentenceTransformer]) -> None:
+    """Expose a setter so the FastAPI app can inject a preloaded model."""
+
+    global _SHARED_EMBEDDING_MODEL
+    _SHARED_EMBEDDING_MODEL = model
+
+
+def get_shared_embedding_model() -> Optional[SentenceTransformer]:
+    """Return the shared embedding model if available."""
+
+    return _SHARED_EMBEDDING_MODEL
 
 
 def _ensure_hf_cache_dirs() -> None:
@@ -92,14 +107,21 @@ class DocumentationRAGTool(BaseTool):
             
             # Initialize embedding model
             _ensure_hf_cache_dirs()
-            try:
-                self.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
-            except Exception as exc:
-                raise EmbeddingModelLoadError(
-                    "Failed to load sentence-transformer model 'all-MiniLM-L6-v2'. "
-                    "Ensure the model is available locally or that the environment has access "
-                    "to download it."
-                ) from exc
+            shared_model = get_shared_embedding_model()
+            if shared_model is not None:
+                self.embedding_model = shared_model
+                logger.info("Using shared embedding model for documentation search")
+            else:
+                try:
+                    self.embedding_model = SentenceTransformer(_EMBEDDING_MODEL_NAME)
+                except Exception as exc:
+                    raise EmbeddingModelLoadError(
+                        "Failed to load sentence-transformer model '"
+                        f"{_EMBEDDING_MODEL_NAME}'. Ensure the model is available locally or that the "
+                        "environment has access to download it."
+                    ) from exc
+
+                set_shared_embedding_model(self.embedding_model)
 
             self.initialized = True
             logger.info("Documentation RAG Tool initialized successfully")
@@ -306,7 +328,7 @@ class DocumentationRAGTool(BaseTool):
             return {
                 "total_chunks": count,
                 "database_type": "chromadb",
-                "embedding_model": "all-MiniLM-L6-v2"
+                "embedding_model": _EMBEDDING_MODEL_NAME
             }
         except Exception as e:
             logger.error(f"Error getting RAG stats: {e}")
