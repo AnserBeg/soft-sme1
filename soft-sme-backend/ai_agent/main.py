@@ -27,16 +27,15 @@ from dotenv import load_dotenv
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 try:  # pragma: no cover - support both package and script execution
+    from .agent import AivenAgent
     from .cache_setup import StoragePaths, configure_cache_paths
+    from .conversation_manager import ConversationManager, DB_UNAVAILABLE_MESSAGE
     from .db import database_url_present, get_conn, reset_connection
-    from .conversation_manager import DB_UNAVAILABLE_MESSAGE
 except ImportError:  # pragma: no cover - fallback when executed as script
+    from agent import AivenAgent
     from cache_setup import StoragePaths, configure_cache_paths
+    from conversation_manager import ConversationManager, DB_UNAVAILABLE_MESSAGE
     from db import database_url_present, get_conn, reset_connection
-    from conversation_manager import DB_UNAVAILABLE_MESSAGE
-
-from agent import AivenAgent
-from conversation_manager import ConversationManager
 
 # Load environment variables
 load_dotenv()
