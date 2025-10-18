@@ -261,7 +261,7 @@ class AIAssistantService {
     }
   }
 
-  private async waitForAgentHealthy(url: string, tries = 20): Promise<void> {
+  private async waitForAgentHealthy(url: string): Promise<void> {
     const fetchImpl = globalThis.fetch;
 
     if (typeof fetchImpl !== 'function') {
@@ -270,30 +270,53 @@ class AIAssistantService {
 
     const normalizedUrl = url.replace(/\/+$/, '');
 
-    for (let attempt = 0; attempt < tries; attempt++) {
-      let retryNote: string | null = null;
+    const retryLimitEnv = sanitizeEnvValue(process.env.AI_HEALTH_RETRIES);
+    const retryIntervalEnv = sanitizeEnvValue(process.env.AI_HEALTH_INTERVAL_MS);
+
+    const parsedRetries = retryLimitEnv ? Number.parseInt(retryLimitEnv, 10) : NaN;
+    const parsedInterval = retryIntervalEnv ? Number.parseInt(retryIntervalEnv, 10) : NaN;
+
+    const retryLimit = Number.isFinite(parsedRetries) && parsedRetries > 0 ? parsedRetries : 60;
+    const retryIntervalMs = Number.isFinite(parsedInterval) && parsedInterval > 0 ? parsedInterval : 1000;
+
+    for (let attempt = 1; attempt <= retryLimit; attempt++) {
+      let failureReason: string | null = null;
 
       try {
         const response = await fetchImpl(`${normalizedUrl}/health`, { method: 'GET' });
 
         if (response.ok) {
-          console.log(`[AI Agent] healthy at ${normalizedUrl}`);
-          return;
-        }
+          try {
+            const body = await response.json();
 
-        retryNote = `status ${response.status}`;
+            if (body && typeof body === 'object' && body.status === 'ok') {
+              console.log('[AI Agent] AI agent ready');
+              return;
+            }
+
+            const statusValue =
+              body && typeof body === 'object' && 'status' in body ? (body as { status?: unknown }).status : undefined;
+            failureReason = `unexpected health payload (status=${String(statusValue)})`;
+          } catch (parseError) {
+            const message = parseError instanceof Error ? parseError.message : String(parseError);
+            failureReason = `failed to parse health response: ${message}`;
+          }
+        } else {
+          failureReason = `HTTP ${response.status}`;
+        }
       } catch (error) {
-        retryNote = error instanceof Error ? error.message : String(error);
+        failureReason = error instanceof Error ? error.message : String(error);
       }
 
-      const suffix = retryNote ? ` (${retryNote})` : '';
-      console.log(`[AI Agent] health not ready, retry ${attempt + 1}/${tries}${suffix}`);
+      const reasonToReport = failureReason ?? 'unknown error';
+      console.log(`[AI Agent] health attempt ${attempt}/${retryLimit} failed: ${reasonToReport}`);
 
-      const backoff = Math.min(2000 + attempt * 250, 5000);
-      await new Promise(resolve => setTimeout(resolve, backoff));
+      if (attempt < retryLimit) {
+        await new Promise(resolve => setTimeout(resolve, retryIntervalMs));
+      }
     }
 
-    throw new Error('AI Agent failed health check');
+    throw new Error(`AI Agent failed health check after ${retryLimit} attempts.`);
   }
 
   private preparePythonEnvironment(pythonPath: string, aiAgentPath: string): string {
