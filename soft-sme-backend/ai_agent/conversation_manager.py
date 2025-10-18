@@ -2,39 +2,31 @@
 from __future__ import annotations
 
 import logging
-import os
 import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-import psycopg2
 from psycopg2.extras import Json, RealDictCursor
+
+from .db import get_conn
 
 logger = logging.getLogger(__name__)
 
-
-def _connection_params() -> Dict[str, Any]:
-    return {
-        "host": os.getenv("DB_HOST", "localhost"),
-        "dbname": os.getenv("DB_DATABASE", "soft_sme_db"),
-        "user": os.getenv("DB_USER", "postgres"),
-        "password": os.getenv("DB_PASSWORD", "123"),
-        "port": int(os.getenv("DB_PORT", "5432")),
-    }
-
+DB_UNAVAILABLE_MESSAGE = "Database connection unavailable"
 
 class ConversationManager:
     """Persist conversations to PostgreSQL."""
 
-    def __init__(self):
-        self._conn_params = _connection_params()
-
     def _get_connection(self):
-        return psycopg2.connect(**self._conn_params)
+        conn = get_conn()
+        if conn is None:
+            raise RuntimeError(DB_UNAVAILABLE_MESSAGE)
+        return conn
 
     def create_conversation(self, user_id: Optional[int] = None) -> str:
         conversation_id = str(uuid.uuid4())
-        with self._get_connection() as conn, conn.cursor() as cur:
+        conn = self._get_connection()
+        with conn.cursor() as cur:
             cur.execute(
                 """
                 INSERT INTO ai_conversations (id, user_id)
@@ -55,7 +47,8 @@ class ConversationManager:
     ) -> str:
         role = "user" if is_user else "assistant"
         message_id = str(uuid.uuid4())
-        with self._get_connection() as conn, conn.cursor() as cur:
+        conn = self._get_connection()
+        with conn.cursor() as cur:
             cur.execute(
                 """
                 INSERT INTO ai_messages (id, conversation_id, role, content, metadata)
@@ -92,7 +85,8 @@ class ConversationManager:
         else:
             params = (conversation_id,)
 
-        with self._get_connection() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+        conn = self._get_connection()
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(sql, params)
             rows = cur.fetchall()
 
@@ -112,7 +106,8 @@ class ConversationManager:
         return history
 
     def get_conversation(self, conversation_id: str) -> Optional[Dict[str, Any]]:
-        with self._get_connection() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+        conn = self._get_connection()
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
                 """
                 SELECT id, user_id, status, metadata, created_at, updated_at, last_message_at
@@ -137,12 +132,14 @@ class ConversationManager:
         }
 
     def clear_conversation(self, conversation_id: str) -> None:
-        with self._get_connection() as conn, conn.cursor() as cur:
+        conn = self._get_connection()
+        with conn.cursor() as cur:
             cur.execute("DELETE FROM ai_conversations WHERE id = %s", (conversation_id,))
         logger.info("Cleared conversation %s", conversation_id)
 
     def get_statistics(self) -> Dict[str, Any]:
-        with self._get_connection() as conn, conn.cursor() as cur:
+        conn = self._get_connection()
+        with conn.cursor() as cur:
             cur.execute("SELECT COUNT(*) FROM ai_conversations")
             total_conversations = cur.fetchone()[0]
             cur.execute("SELECT COUNT(*) FROM ai_messages")
@@ -174,7 +171,8 @@ class ConversationManager:
         impacted_tools = impacted_tools or []
         payload = Json(metadata or {})
 
-        with self._get_connection() as conn, conn.cursor() as cur:
+        conn = self._get_connection()
+        with conn.cursor() as cur:
             cur.execute(
                 """
                 INSERT INTO ai_conversation_reflections (

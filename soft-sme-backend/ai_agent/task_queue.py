@@ -2,25 +2,17 @@
 from __future__ import annotations
 
 import logging
-import os
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
-import psycopg2
 from psycopg2.extras import Json
+
+from .db import get_conn
 
 logger = logging.getLogger(__name__)
 
-
-def _connection_params() -> Dict[str, Any]:
-    return {
-        "host": os.getenv("DB_HOST", "localhost"),
-        "dbname": os.getenv("DB_DATABASE", "soft_sme_db"),
-        "user": os.getenv("DB_USER", "postgres"),
-        "password": os.getenv("DB_PASSWORD", "123"),
-        "port": int(os.getenv("DB_PORT", "5432")),
-    }
+DB_UNAVAILABLE_MESSAGE = "Database connection unavailable"
 
 
 def _parse_datetime(value: Any) -> Optional[datetime]:
@@ -167,10 +159,13 @@ class TaskQueueFanoutTarget:
 
 class TaskQueue:
     def __init__(self) -> None:
-        self._conn_params = _connection_params()
+        self._conn_error = DB_UNAVAILABLE_MESSAGE
 
     def _get_connection(self):
-        return psycopg2.connect(**self._conn_params)
+        conn = get_conn()
+        if conn is None:
+            raise RuntimeError(self._conn_error)
+        return conn
 
     def enqueue(
         self,
@@ -195,7 +190,8 @@ class TaskQueue:
             return []
 
         task_ids: List[str] = []
-        with self._get_connection() as conn, conn.cursor() as cur:
+        conn = self._get_connection()
+        with conn.cursor() as cur:
             for spec in tasks:
                 cur.execute(
                     """

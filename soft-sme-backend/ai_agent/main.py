@@ -10,10 +10,12 @@ This server runs as a child process of the main Node.js backend.
 import os
 import sys
 import logging
+import platform
 import uuid
 from dataclasses import asdict
 from typing import Dict, Any, List, Optional
 from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 import uvicorn
@@ -24,8 +26,12 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 try:  # pragma: no cover - support both package and script execution
     from .cache_setup import configure_cache_paths
+    from .db import database_url_present, get_conn, reset_connection
+    from .conversation_manager import DB_UNAVAILABLE_MESSAGE
 except ImportError:  # pragma: no cover - fallback when executed as script
     from cache_setup import configure_cache_paths
+    from db import database_url_present, get_conn, reset_connection
+    from conversation_manager import DB_UNAVAILABLE_MESSAGE
 
 from agent import AivenAgent
 from conversation_manager import ConversationManager
@@ -62,6 +68,12 @@ app.add_middleware(
 # Initialize AI agent and conversation manager
 ai_agent = None
 conversation_manager = ConversationManager()
+
+
+def _raise_if_db_unavailable(exc: Exception) -> None:
+    if isinstance(exc, RuntimeError) and str(exc) == DB_UNAVAILABLE_MESSAGE:
+        raise HTTPException(status_code=503, detail="Database temporarily unavailable") from exc
+
 
 # Pydantic models
 class ChatRequest(BaseModel):
@@ -109,13 +121,6 @@ class InitializeResponse(BaseModel):
     message: str
     details: Optional[Dict[str, Any]] = None
 
-class HealthResponse(BaseModel):
-    status: str
-    agent_status: str
-    vector_db_status: str
-    database_status: str
-    details: Optional[Dict[str, Any]] = None
-
 class StatsResponse(BaseModel):
     total_conversations: int
     total_messages: int
@@ -129,6 +134,9 @@ async def startup_event():
     global ai_agent
     try:
         logger.info("Starting Aiven AI Agent...")
+        logger.info("Python version: %s", platform.python_version())
+        logger.info("DATABASE_URL present: %s", "true" if database_url_present() else "false")
+        logger.info("AGENT_DATA_DIR: %s", os.getenv("AGENT_DATA_DIR", "<not set>"))
         ai_agent = AivenAgent()
         await ai_agent.initialize()
         logger.info("AI Agent initialized successfully")
@@ -136,8 +144,12 @@ async def startup_event():
         # Ingest documentation when enabled
         if ai_agent.documentation_enabled:
             logger.info("Documentation ingestion enabled, starting ingestion...")
-            await ai_agent.ingest_documentation()
-            logger.info("Documentation ingestion completed")
+            try:
+                await ai_agent.ingest_documentation()
+            except Exception as exc:  # pylint: disable=broad-except
+                logger.warning("Documentation ingestion failed: %s", exc)
+            else:
+                logger.info("Documentation ingestion completed")
         else:
             logger.info("Documentation ingestion skipped (AI_ENABLE_DOCUMENTATION disabled)")
         
@@ -152,38 +164,34 @@ async def shutdown_event():
     if ai_agent:
         await ai_agent.cleanup()
 
-@app.get("/health", response_model=HealthResponse)
+@app.get("/health")
 async def health_check():
-    """Health check endpoint"""
-    try:
-        if not ai_agent:
-            return HealthResponse(
-                status="starting",
-                agent_status="not_initialized",
-                vector_db_status="unknown",
-                database_status="unknown",
-                details={"message": "AI agent is still starting"}
-            )
+    """Readiness probe that only reports application availability."""
+    return {"status": "ok"}
 
-        agent_health = await ai_agent.health_check()
-        overall_ok = bool(agent_health.get("overall"))
 
-        return HealthResponse(
-            status="ok" if overall_ok else "error",
-            agent_status=agent_health.get("agent", "unknown"),
-            vector_db_status=agent_health.get("vector_db", "unknown"),
-            database_status=agent_health.get("database", "unknown"),
-            details=agent_health
-        )
-    except Exception as e:
-        logger.error(f"Health check failed: {e}")
-        return HealthResponse(
-            status="error",
-            agent_status="error",
-            vector_db_status="error",
-            database_status="error",
-            details={"error": str(e)}
-        )
+@app.get("/db-health")
+async def database_health_check():
+    """Database health endpoint that reports connectivity status."""
+
+    def _check_database() -> Dict[str, Any]:
+        conn = get_conn()
+        if conn is None:
+            logger.warning("Database health check: connection unavailable")
+            return {"db": "down", "error": "connection unavailable"}
+
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+                cur.fetchone()
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.warning("Database health check failed: %s", exc)
+            reset_connection()
+            return {"db": "down", "error": str(exc)}
+
+        return {"db": "ok"}
+
+    return await run_in_threadpool(_check_database)
 
 @app.post("/initialize", response_model=InitializeResponse)
 async def initialize_agent():
@@ -281,6 +289,9 @@ async def chat(request: ChatRequest):
             documentation_subagent=response.get("documentation_subagent"),
         )
 
+    except RuntimeError as exc:
+        _raise_if_db_unavailable(exc)
+        raise
     except Exception as e:
         logger.error(f"Chat processing failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -342,6 +353,9 @@ async def get_conversation(conversation_id: str):
             "conversation_id": conversation_id,
             "messages": messages
         }
+    except RuntimeError as exc:
+        _raise_if_db_unavailable(exc)
+        raise
     except Exception as e:
         logger.error(f"Failed to get conversation: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -352,6 +366,9 @@ async def clear_conversation(conversation_id: str):
     try:
         conversation_manager.clear_conversation(conversation_id)
         return {"message": "Conversation cleared successfully"}
+    except RuntimeError as exc:
+        _raise_if_db_unavailable(exc)
+        raise
     except Exception as e:
         logger.error(f"Failed to clear conversation: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -361,12 +378,15 @@ async def get_stats():
     """Get AI agent statistics"""
     try:
         stats = conversation_manager.get_statistics()
-        
+
         if ai_agent:
             agent_stats = await ai_agent.get_statistics()
             stats.update(agent_stats)
-        
+
         return StatsResponse(**stats)
+    except RuntimeError as exc:
+        _raise_if_db_unavailable(exc)
+        raise
     except Exception as e:
         logger.error(f"Failed to get statistics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
