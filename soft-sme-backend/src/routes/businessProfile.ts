@@ -246,7 +246,7 @@ router.post('/', authMiddleware, upload.single('logo'), async (req, res) => {
 // Database check endpoint for debugging
 router.get('/db-check', async (req, res) => {
   try {
-    await pool.query({ text: 'SELECT 1', statement_timeout: 5000 });
+    await pool.query('SELECT 1');
     res.json({ ok: true });
   } catch (error: any) {
     console.error('Database check error:', error);

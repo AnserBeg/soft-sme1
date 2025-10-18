@@ -477,7 +477,7 @@ try {
 // Database check endpoint
 app.get('/api/db-check', async (req, res) => {
   try {
-    await pool.query({ text: 'SELECT 1', statement_timeout: 5000 });
+    await pool.query('SELECT 1');
     res.json({ ok: true });
   } catch (error) {
     res.status(500).json({
