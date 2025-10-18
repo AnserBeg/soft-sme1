@@ -6,7 +6,8 @@ import pathlib
 from dataclasses import dataclass
 from typing import Dict
 
-DEFAULT_DATA_ROOT = "/var/opt/soft-sme"
+DEFAULT_DATA_ROOT = pathlib.Path.home() / ".cache" / "soft-sme"
+FALLBACK_DATA_ROOT = pathlib.Path("/tmp/soft-sme")
 CACHE_ENV_VAR = "AI_CACHE_DIR"
 
 
@@ -49,6 +50,30 @@ def _print_mapping(key: str, path: pathlib.Path) -> None:
     print(f"[AI Agent] Using {key} -> {path}")
 
 
+def _select_data_root() -> pathlib.Path:
+    """Return the first writable data directory from the candidate list."""
+
+    candidates = []
+    env_value = os.getenv("AGENT_DATA_DIR")
+    if env_value:
+        candidates.append(pathlib.Path(env_value).expanduser())
+    candidates.extend([DEFAULT_DATA_ROOT, FALLBACK_DATA_ROOT])
+
+    for candidate in candidates:
+        try:
+            _mkdir(candidate)
+        except PermissionError as exc:
+            print(f"[AI Agent] Unable to use data directory {candidate}: {exc}")
+            continue
+        else:
+            return candidate
+
+    raise RuntimeError(
+        "Unable to create a writable directory for the AI agent. "
+        "Set AGENT_DATA_DIR to a directory the process can access."
+    )
+
+
 def configure_cache_paths() -> StoragePaths:
     """Ensure the AI data directories are configured and created."""
 
@@ -56,8 +81,8 @@ def configure_cache_paths() -> StoragePaths:
     if _STORAGE_PATHS is not None:
         return _STORAGE_PATHS
 
-    data_root = pathlib.Path(os.getenv("AGENT_DATA_DIR", DEFAULT_DATA_ROOT)).expanduser()
-    os.environ.setdefault("AGENT_DATA_DIR", str(data_root))
+    data_root = _select_data_root()
+    os.environ["AGENT_DATA_DIR"] = str(data_root)
 
     vectors_dir = data_root / "vectors"
     models_dir = data_root / "models"
@@ -121,5 +146,6 @@ __all__ = [
     "configure_cache_paths",
     "StoragePaths",
     "DEFAULT_DATA_ROOT",
+    "FALLBACK_DATA_ROOT",
     "CACHE_ENV_VAR",
 ]
