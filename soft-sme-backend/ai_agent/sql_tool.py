@@ -165,11 +165,18 @@ PURCHASELINEITEMS:
 
 QUOTES:
 - quote_id (INTEGER)
+- quote_number (VARCHAR)
 - customer_id (INTEGER)
 - quote_date (DATE)
+- valid_until (DATE)
+- estimated_cost (DECIMAL)
 - status (VARCHAR)
-- total_amount (DECIMAL)
 - sequence_number (INTEGER)
+- terms (TEXT)
+- customer_po_number (VARCHAR)
+- vin_number (VARCHAR)
+- vehicle_make (VARCHAR)
+- vehicle_model (VARCHAR)
 
 TIME_ENTRIES:
 - entry_id (INTEGER)
