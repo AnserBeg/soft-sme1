@@ -52,6 +52,20 @@ describe('AgentOrchestratorV2 intent routing', () => {
     expect(response.events[0].type).toBe('docs');
   });
 
+  it('treats help requests for quotes as documentation lookups instead of actions', async () => {
+    mockSendMessage.mockResolvedValue({ response: '', sources: [], confidence: 0, tool_used: 'llm' });
+
+    const retrieveDocs = jest.fn().mockResolvedValue([{ path: 'docs/quotes.md', section: 'Creating quotes', chunk: 'Step 1' }]);
+    const createQuote = jest.fn();
+    const orchestrator = buildOrchestrator({ retrieveDocs, createQuote });
+
+    const response = await orchestrator.handleMessage(4, 'Help me make a quote', { companyId: 1, userId: 2 });
+
+    expect(retrieveDocs).toHaveBeenCalledTimes(1);
+    expect(createQuote).not.toHaveBeenCalled();
+    expect(response.events[0].type).toBe('docs');
+  });
+
   it('executes registered tools for agent-origin instructions', async () => {
     mockSendMessage.mockResolvedValue({ response: '', sources: [], confidence: 0, tool_used: 'llm' });
 
