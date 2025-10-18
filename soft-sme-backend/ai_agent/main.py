@@ -276,15 +276,20 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     response: str
-    sources: list[str]
+    sources: List[str]
     confidence: float
     tool_used: str
     conversation_id: str
-    actions: list[Dict[str, Any]] | None = None
+    actions: Optional[List[Dict[str, Any]]] = None
     action_message: Optional[str] = None
-    action_catalog: list[Dict[str, Any]] | None = None
+    action_catalog: Optional[List[Dict[str, Any]]] = None
     planner_plan: Optional[Dict[str, Any]] = None
     documentation_subagent: Optional[List[Dict[str, Any]]] = None
+    processing_time: Optional[float] = None
+    critic_feedback: Optional[Dict[str, Any]] = None
+    documentation_results: Optional[List[Dict[str, Any]]] = None
+    row_selection_candidates: Optional[List[Dict[str, Any]]] = None
+    safety_results: Optional[List[Dict[str, Any]]] = None
 
 class DocumentationQARequest(BaseModel):
     question: str
@@ -571,6 +576,11 @@ async def chat(request: ChatRequest):
             action_catalog=response.get("action_catalog", []),
             planner_plan=response.get("planner_plan"),
             documentation_subagent=response.get("documentation_subagent"),
+            processing_time=response.get("processing_time"),
+            critic_feedback=response.get("critic_feedback"),
+            documentation_results=response.get("documentation_results"),
+            row_selection_candidates=response.get("row_selection_candidates"),
+            safety_results=response.get("safety_results"),
         )
 
     except RuntimeError as exc:

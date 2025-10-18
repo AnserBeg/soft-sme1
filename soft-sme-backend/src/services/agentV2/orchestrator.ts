@@ -88,6 +88,12 @@ interface AssistantLLMResponse {
   action_message?: string | null;
   action_catalog?: any[];
   documentation_subagent?: any;
+  planner_plan?: any;
+  documentation_results?: any[];
+  processing_time?: number;
+  critic_feedback?: Record<string, any> | null;
+  row_selection_candidates?: any[];
+  safety_results?: any[];
 }
 
 export interface ToolCatalogEntry {
