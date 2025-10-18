@@ -138,6 +138,8 @@ app.add_middleware(
 # Initialize AI agent and conversation manager
 MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 MODEL_LOAD_TIMEOUT_SECONDS = _int_from_env("AI_AGENT_MODEL_TIMEOUT", 600, minimum=60)
+MODEL_LOAD_MAX_ATTEMPTS = _int_from_env("AI_AGENT_MODEL_RETRIES", 3, minimum=1)
+MODEL_LOAD_RETRY_DELAY_SECONDS = _float_from_env("AI_AGENT_MODEL_RETRY_DELAY", 3.0, minimum=0.1)
 STARTUP_MAX_ATTEMPTS = _int_from_env("AI_AGENT_STARTUP_RETRIES", 3, minimum=1)
 STARTUP_RETRY_DELAY_SECONDS = _float_from_env("AI_AGENT_STARTUP_RETRY_DELAY", 15.0, minimum=1.0)
 
@@ -158,46 +160,80 @@ def _raise_if_db_unavailable(exc: Exception) -> None:
 
 
 async def _load_sentence_transformer() -> Any:
-    """Load the shared SentenceTransformer model with a timeout."""
+    """Load the shared SentenceTransformer model with a timeout and retries."""
 
-    start_perf = time.perf_counter()
-    start_wall = datetime.utcnow().isoformat()
-    logger.info(
-        "Loading SentenceTransformer model '%s' (started at %s UTC). "
-        "Downloads may take a while on first run.",
-        MODEL_NAME,
-        start_wall,
-    )
+    last_error: Exception | None = None
 
-    def _load_model() -> Any:
-        from sentence_transformers import SentenceTransformer  # Local import to defer heavy dependency
-
-        return SentenceTransformer(MODEL_NAME)
-
-    try:
-        model = await asyncio.wait_for(
-            run_in_threadpool(_load_model),
-            timeout=MODEL_LOAD_TIMEOUT_SECONDS,
+    for attempt in range(1, MODEL_LOAD_MAX_ATTEMPTS + 1):
+        start_perf = time.perf_counter()
+        start_wall = datetime.utcnow().isoformat()
+        logger.info(
+            "Loading SentenceTransformer model '%s' (attempt %s/%s started at %s UTC). "
+            "Downloads may take a while on first run.",
+            MODEL_NAME,
+            attempt,
+            MODEL_LOAD_MAX_ATTEMPTS,
+            start_wall,
         )
-    except asyncio.TimeoutError as exc:  # pragma: no cover - defensive
-        elapsed = time.perf_counter() - start_perf
-        raise RuntimeError(
-            "Timed out after "
-            f"{MODEL_LOAD_TIMEOUT_SECONDS} seconds while loading model '{MODEL_NAME}'. "
-            f"Elapsed {elapsed:.2f}s."
-        ) from exc
-    except Exception as exc:  # pylint: disable=broad-except
-        raise RuntimeError(f"Failed to load model '{MODEL_NAME}': {exc}") from exc
 
-    elapsed = time.perf_counter() - start_perf
-    end_wall = datetime.utcnow().isoformat()
-    logger.info(
-        "Loaded SentenceTransformer model '%s' in %.2f seconds (completed at %s UTC).",
-        MODEL_NAME,
-        elapsed,
-        end_wall,
-    )
-    return model
+        def _load_model() -> Any:
+            from sentence_transformers import SentenceTransformer  # Local import to defer heavy dependency
+
+            return SentenceTransformer(MODEL_NAME)
+
+        try:
+            model = await asyncio.wait_for(
+                run_in_threadpool(_load_model),
+                timeout=MODEL_LOAD_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError as exc:  # pragma: no cover - defensive
+            elapsed = time.perf_counter() - start_perf
+            end_wall = datetime.utcnow().isoformat()
+            message = (
+                "Timed out after "
+                f"{MODEL_LOAD_TIMEOUT_SECONDS} seconds while loading model '{MODEL_NAME}'. "
+                f"Attempt {attempt}/{MODEL_LOAD_MAX_ATTEMPTS} elapsed {elapsed:.2f}s (ended at {end_wall} UTC)."
+            )
+            timeout_error = RuntimeError(message)
+            timeout_error.__cause__ = exc
+            last_error = timeout_error
+        except Exception as exc:  # pylint: disable=broad-except
+            elapsed = time.perf_counter() - start_perf
+            end_wall = datetime.utcnow().isoformat()
+            message = (
+                f"Failed to load model '{MODEL_NAME}' on attempt {attempt}/{MODEL_LOAD_MAX_ATTEMPTS} "
+                f"after {elapsed:.2f}s (ended at {end_wall} UTC): {exc}"
+            )
+            model_error = RuntimeError(message)
+            model_error.__cause__ = exc
+            last_error = model_error
+        else:
+            elapsed = time.perf_counter() - start_perf
+            end_wall = datetime.utcnow().isoformat()
+            logger.info(
+                "Loaded SentenceTransformer model '%s' in %.2f seconds on attempt %s/%s (completed at %s UTC).",
+                MODEL_NAME,
+                elapsed,
+                attempt,
+                MODEL_LOAD_MAX_ATTEMPTS,
+                end_wall,
+            )
+            return model
+
+        logger.warning("%s", last_error)
+
+        if attempt < MODEL_LOAD_MAX_ATTEMPTS:
+            backoff = MODEL_LOAD_RETRY_DELAY_SECONDS * attempt
+            logger.info(
+                "Retrying SentenceTransformer model load in %.2f seconds (attempt %s/%s failed).",
+                backoff,
+                attempt,
+                MODEL_LOAD_MAX_ATTEMPTS,
+            )
+            await asyncio.sleep(backoff)
+
+    assert last_error is not None
+    raise last_error
 
 
 async def _initialize_agent_once() -> None:
