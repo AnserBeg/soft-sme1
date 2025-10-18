@@ -477,36 +477,30 @@ try {
 // Database check endpoint
 app.get('/api/db-check', async (req, res) => {
   try {
-    const result = await pool.query(`
-      SELECT table_name 
-      FROM information_schema.tables 
-      WHERE table_schema = 'public' 
-      ORDER BY table_name;
-    `);
-    
-    res.json({
-      success: true,
-      tables: result.rows.map(row => row.table_name),
-      count: result.rows.length
-    });
+    await pool.query({ text: 'SELECT 1', statement_timeout: 5000 });
+    res.json({ ok: true });
   } catch (error) {
     res.status(500).json({
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
+      ok: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
     });
   }
 });
 console.log('Registered database check route at /api/db-check');
 
 // Test database connection
-pool.query('SELECT NOW()', (err, res) => {
+pool.query('SELECT NOW()', err => {
   if (err) {
     console.error('Error connecting to the database:', err);
-    console.error('Environment variables check:');
-    console.error('DB_HOST:', process.env.DB_HOST);
-    console.error('DB_PORT:', process.env.DB_PORT);
-    console.error('DB_DATABASE:', process.env.DB_DATABASE);
-    console.error('DB_USER:', process.env.DB_USER);
+    if (process.env.DATABASE_URL) {
+      console.error('DATABASE_URL is configured; verify the connection string.');
+    } else {
+      console.error('Environment variables check:');
+      console.error('DB_HOST:', process.env.DB_HOST);
+      console.error('DB_PORT:', process.env.DB_PORT);
+      console.error('DB_DATABASE:', process.env.DB_DATABASE);
+      console.error('DB_USER:', process.env.DB_USER);
+    }
     console.error('NODE_ENV:', process.env.NODE_ENV);
     process.exit(1);
   }
