@@ -672,6 +672,15 @@ export class AgentOrchestratorV2 {
       'guide me',
       'can you guide',
       'walk me through',
+      'help me',
+      'help us',
+      'help with',
+      'help to',
+      'assist me',
+      'assist us',
+      'assist with',
+      'assist to',
+      'can you help',
     ];
 
     if (normalized.includes('doc') || normalized.includes('documentation') || includesAny(howToPhrases)) {
