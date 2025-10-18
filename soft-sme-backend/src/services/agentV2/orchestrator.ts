@@ -1,5 +1,6 @@
 import { Pool } from 'pg';
 import { randomUUID } from 'crypto';
+import aiAssistantService from '../aiAssistantService';
 import { AIService } from '../aiService';
 import { AgentAnalyticsLogger } from './analyticsLogger';
 import type { SkillWorkflowSummary } from './skillLibrary';
@@ -40,6 +41,53 @@ export type AgentEvent =
 
 export interface AgentResponse {
   events: AgentEvent[];
+  reply?: AgentReply;
+}
+
+interface AgentReplyActionTrace {
+  tool?: string;
+  success?: boolean;
+  message?: string;
+  input?: any;
+  output?: any;
+  error?: string;
+  link?: string;
+  link_label?: string;
+  summary?: string;
+}
+
+interface AgentReply {
+  type: string;
+  message: string;
+  catalog?: ToolCatalogEntry[];
+  traces?: AgentReplyActionTrace[];
+  docs?: any[];
+}
+
+type AgentInvocationOrigin = 'user' | 'agent';
+
+interface HandleMessageOptions {
+  origin?: AgentInvocationOrigin;
+  conversationId?: string;
+  userId?: number | null;
+  companyId?: number | null;
+}
+
+interface AgentInstruction {
+  tool: string;
+  args: any;
+  message?: string;
+}
+
+interface AssistantLLMResponse {
+  response: string;
+  sources: string[];
+  confidence: number;
+  tool_used: string;
+  actions?: any[];
+  action_message?: string | null;
+  action_catalog?: any[];
+  documentation_subagent?: any;
 }
 
 export interface ToolCatalogEntry {
@@ -64,7 +112,52 @@ export class AgentOrchestratorV2 {
   async handleMessage(
     sessionId: number,
     message: string,
-    _context?: { companyId?: number | null; userId?: number | null }
+    context?: { companyId?: number | null; userId?: number | null },
+    options: HandleMessageOptions = {}
+  ): Promise<AgentResponse> {
+    const origin: AgentInvocationOrigin = options.origin ?? 'user';
+    const normalizedContext = {
+      userId: options.userId ?? context?.userId ?? null,
+      companyId: options.companyId ?? context?.companyId ?? null,
+    };
+
+    if (origin === 'agent') {
+      return this.processAgentInstruction(sessionId, message, normalizedContext);
+    }
+
+    const conversationId = options.conversationId ?? this.buildConversationId(sessionId);
+    const events: AgentEvent[] = [];
+    let assistantResponse: AssistantLLMResponse | null = null;
+
+    try {
+      assistantResponse = (await aiAssistantService.sendMessage(
+        message,
+        normalizedContext.userId ?? undefined,
+        conversationId
+      )) as AssistantLLMResponse;
+    } catch (error) {
+      console.error('agentV2: aiAssistantService error', error);
+    }
+
+    if (assistantResponse && typeof assistantResponse.response === 'string') {
+      const trimmed = assistantResponse.response.trim();
+      if (trimmed.length > 0) {
+        events.push({
+          type: 'text',
+          content: trimmed,
+          timestamp: new Date().toISOString(),
+        });
+        return { events };
+      }
+    }
+
+    return this.legacyHandleMessage(sessionId, message, normalizedContext);
+  }
+
+  private async legacyHandleMessage(
+    sessionId: number,
+    message: string,
+    context: { companyId?: number | null; userId?: number | null }
   ): Promise<AgentResponse> {
     const events: AgentEvent[] = [];
     const intent = this.classifyIntent(message);
@@ -118,10 +211,12 @@ export class AgentOrchestratorV2 {
       }
     }
 
-    if (events.length === 0) {
+    const hasTextEvent = events.some((event) => event.type === 'text');
+
+    if (!hasTextEvent) {
       try {
         const fallbackTraceId = randomUUID();
-        const aiReply = await AIService.sendMessage(message, _context?.userId ?? undefined);
+        const aiReply = await AIService.sendMessage(message, context?.userId ?? undefined);
         await this.analytics.logEvent({
           source: 'orchestrator',
           sessionId,
@@ -129,7 +224,7 @@ export class AgentOrchestratorV2 {
           status: 'llm_fallback',
           traceId: fallbackTraceId,
           metadata: {
-            reason: 'no_tool_match',
+            reason: events.length === 0 ? 'no_tool_match' : 'no_text_event',
           },
         });
         events.push({
@@ -173,6 +268,283 @@ export class AgentOrchestratorV2 {
     }
 
     return { events };
+  }
+
+  private async processAgentInstruction(
+    sessionId: number,
+    message: string,
+    _context: { companyId?: number | null; userId?: number | null }
+  ): Promise<AgentResponse> {
+    const events: AgentEvent[] = [];
+    const instruction = this.parseAgentInstruction(message) ?? this.classifyIntent(message);
+
+    if (!instruction) {
+      await this.analytics.logEvent({
+        source: 'orchestrator',
+        sessionId,
+        eventType: 'agent_instruction_unmatched',
+        status: 'skipped',
+        metadata: { message: message.slice(0, 200) },
+      });
+
+      return {
+        events,
+        reply: {
+          type: 'actions',
+          message: 'No matching tool found for the requested action.',
+          catalog: this.toolCatalog,
+          traces: [],
+          docs: [],
+        },
+      };
+    }
+
+    const toolName = instruction.tool;
+    const handler = this.tools[toolName];
+    const traces: AgentReplyActionTrace[] = [];
+
+    if (!handler) {
+      await this.analytics.logEvent({
+        source: 'orchestrator',
+        sessionId,
+        tool: toolName,
+        eventType: 'tool_unavailable',
+        status: 'missing',
+        metadata: { reason: 'tool_not_registered', origin: 'agent_instruction' },
+      });
+
+      return {
+        events,
+        reply: {
+          type: 'actions',
+          message: `Tool ${toolName} is not available for agent execution.`,
+          catalog: this.toolCatalog,
+          traces: [],
+          docs: [],
+        },
+      };
+    }
+
+    const trace = this.analytics.startToolTrace(sessionId, toolName, instruction.args);
+    let replyMessage: string;
+
+    try {
+      const result = await handler(instruction.args);
+      await this.analytics.finishToolTrace(trace, { status: 'success', output: result });
+      const normalizedEvents = this.normalizeToolResult(toolName, result);
+      events.push(...normalizedEvents);
+      replyMessage = this.describeActionOutcome(toolName, true, result);
+
+      traces.push({
+        tool: toolName,
+        success: true,
+        message: replyMessage,
+        input: instruction.args ?? null,
+        output: result ?? null,
+        summary: replyMessage,
+      });
+    } catch (error: any) {
+      await this.analytics.finishToolTrace(trace, { status: 'failure', error });
+      replyMessage = this.describeActionOutcome(toolName, false, undefined, error);
+
+      events.push({
+        type: 'text',
+        content: replyMessage,
+        timestamp: new Date().toISOString(),
+      });
+
+      traces.push({
+        tool: toolName,
+        success: false,
+        message: replyMessage,
+        input: instruction.args ?? null,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    return {
+      events,
+      reply: {
+        type: 'actions',
+        message: replyMessage,
+        catalog: this.toolCatalog,
+        traces,
+        docs: [],
+      },
+    };
+  }
+
+  private buildConversationId(sessionId: number): string {
+    return `agent-v2-session-${sessionId}`;
+  }
+
+  private parseAgentInstruction(message: string): AgentInstruction | null {
+    if (typeof message !== 'string') {
+      return null;
+    }
+
+    const trimmed = message.trim();
+    if (!trimmed) {
+      return null;
+    }
+
+    const jsonCandidate = this.tryParseJson(trimmed);
+    if (jsonCandidate && typeof jsonCandidate === 'object') {
+      const directToolCandidate =
+        this.resolveToolName(
+          (jsonCandidate as any).tool ||
+            (jsonCandidate as any).action ||
+            (jsonCandidate as any).entrypoint ||
+            (jsonCandidate as any).name
+        );
+
+      if (directToolCandidate) {
+        return {
+          tool: directToolCandidate,
+          args: this.extractInstructionArguments(jsonCandidate),
+          message: trimmed,
+        };
+      }
+
+      const toolFromObject = this.findToolInObject(jsonCandidate as Record<string, any>);
+      if (toolFromObject) {
+        const argsSource = (jsonCandidate as Record<string, any>)[toolFromObject.key];
+        return {
+          tool: toolFromObject.tool,
+          args: this.ensureRecord(argsSource),
+          message: trimmed,
+        };
+      }
+    }
+
+    const toolFromKeyValue = this.extractToolFromKeyValue(trimmed);
+    if (toolFromKeyValue) {
+      const argsObject = this.parseJsonSubstring(trimmed);
+      return {
+        tool: toolFromKeyValue,
+        args: this.extractInstructionArguments(argsObject),
+        message: trimmed,
+      };
+    }
+
+    const directTool = this.resolveToolName(trimmed);
+    if (directTool) {
+      return { tool: directTool, args: {}, message: trimmed };
+    }
+
+    const canonicalMessage = this.canonicalize(trimmed);
+    for (const name of Object.keys(this.tools)) {
+      const canonicalTool = this.canonicalize(name);
+      if (canonicalTool && canonicalMessage.includes(canonicalTool)) {
+        return { tool: name, args: {}, message: trimmed };
+      }
+    }
+
+    return null;
+  }
+
+  private extractInstructionArguments(source: any): any {
+    if (!source || typeof source !== 'object') {
+      return {};
+    }
+
+    const record = this.ensureRecord(source);
+    const candidateKeys = ['args', 'parameters', 'payload', 'input', 'data'];
+
+    for (const key of candidateKeys) {
+      if (record[key] && typeof record[key] === 'object') {
+        return this.ensureRecord(record[key]);
+      }
+    }
+
+    const nestedTool = this.findToolInObject(record);
+    if (nestedTool) {
+      return this.ensureRecord(record[nestedTool.key]);
+    }
+
+    return {};
+  }
+
+  private ensureRecord(value: any): Record<string, any> {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      return value as Record<string, any>;
+    }
+    return {};
+  }
+
+  private findToolInObject(source: Record<string, any>): { key: string; tool: string } | null {
+    for (const key of Object.keys(source)) {
+      const resolved = this.resolveToolName(key);
+      if (resolved) {
+        return { key, tool: resolved };
+      }
+    }
+    return null;
+  }
+
+  private extractToolFromKeyValue(message: string): string | null {
+    const match = message.match(/(?:tool|action|entrypoint)\s*[:=]\s*([\w:-]+)/i);
+    if (!match) {
+      return null;
+    }
+    return this.resolveToolName(match[1]);
+  }
+
+  private parseJsonSubstring(value: string): any {
+    const start = value.indexOf('{');
+    if (start === -1) {
+      return {};
+    }
+
+    let depth = 0;
+    for (let i = start; i < value.length; i += 1) {
+      const char = value[i];
+      if (char === '{') {
+        depth += 1;
+      } else if (char === '}') {
+        depth -= 1;
+        if (depth === 0) {
+          const candidate = value.slice(start, i + 1);
+          const parsed = this.tryParseJson(candidate);
+          if (parsed && typeof parsed === 'object') {
+            return parsed;
+          }
+        }
+      }
+    }
+
+    return {};
+  }
+
+  private tryParseJson(value: string): any | null {
+    try {
+      return JSON.parse(value);
+    } catch (error) {
+      return null;
+    }
+  }
+
+  private resolveToolName(candidate?: string | null): string | null {
+    if (!candidate || typeof candidate !== 'string') {
+      return null;
+    }
+
+    const normalized = this.canonicalize(candidate);
+    if (!normalized) {
+      return null;
+    }
+
+    for (const name of Object.keys(this.tools)) {
+      if (this.canonicalize(name) === normalized) {
+        return name;
+      }
+    }
+
+    return null;
+  }
+
+  private canonicalize(value: string): string {
+    return value.toLowerCase().replace(/[^a-z0-9]+/g, '');
   }
 
   private normalizeToolResult(tool: string, result: any): AgentEvent[] {

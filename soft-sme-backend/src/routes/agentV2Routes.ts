@@ -37,6 +37,22 @@ const requireId = (value: unknown, label: string): number => {
   return parsed;
 };
 
+const loadSessionContext = async (
+  sessionId: number
+): Promise<{ userId: number | null; companyId: number | null }> => {
+  const sessionResult = await pool.query('SELECT user_id FROM agent_sessions WHERE id = $1', [sessionId]);
+  const userId = parseNumeric(sessionResult.rows?.[0]?.user_id);
+
+  if (!userId) {
+    return { userId: null, companyId: null };
+  }
+
+  const userResult = await pool.query('SELECT company_id FROM users WHERE id = $1', [userId]);
+  const companyId = parseNumeric(userResult.rows?.[0]?.company_id);
+
+  return { userId, companyId };
+};
+
 const buildToolRegistry = (
   tools: AgentToolsV2,
   sessionId: number,
@@ -280,34 +296,63 @@ router.post('/chat', authMiddleware, async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'sessionId and message required' });
     }
 
-    const userId = parseNumeric(req.user?.id);
-    const companyId = parseNumeric(req.user?.company_id);
+    const authContext = (req as any).auth;
+    const isServiceRequest = authContext?.kind === 'service';
+    const sessionNumeric = parseNumeric(sessionId);
 
-    if (!userId) {
-      return res.status(400).json({ error: 'Authenticated user context is required for agent chat' });
+    if (!sessionNumeric) {
+      return res.status(400).json({ error: 'Invalid sessionId' });
     }
-    if (!companyId) {
-      return res.status(400).json({ error: 'Company context is required for agent chat' });
+
+    let userId = parseNumeric(req.user?.id);
+    let companyId = parseNumeric(req.user?.company_id);
+
+    if (isServiceRequest) {
+      const bodyUserId = parseNumeric(req.body?.userId ?? req.body?.user_id);
+      const bodyCompanyId = parseNumeric(req.body?.companyId ?? req.body?.company_id);
+
+      userId = userId ?? bodyUserId ?? null;
+      companyId = companyId ?? bodyCompanyId ?? null;
+
+      if (!userId || !companyId) {
+        const sessionContext = await loadSessionContext(sessionNumeric);
+        userId = userId ?? bodyUserId ?? sessionContext.userId;
+        companyId = companyId ?? bodyCompanyId ?? sessionContext.companyId;
+      }
+    }
+
+    if (!isServiceRequest) {
+      if (!userId) {
+        return res.status(400).json({ error: 'Authenticated user context is required for agent chat' });
+      }
+      if (!companyId) {
+        return res.status(400).json({ error: 'Company context is required for agent chat' });
+      }
+    } else if (!userId || !companyId) {
+      return res.status(400).json({ error: 'User and company context are required for agent actions' });
     }
 
     console.log('agentV2: chat request', {
       sessionId,
       userId,
       companyId,
+      origin: isServiceRequest ? 'agent' : 'user',
       messagePreview: typeof message === 'string' ? `${message.slice(0, 120)}${message.length > 120 ? '…' : ''}` : '',
     });
 
-    const timestamp = new Date().toISOString();
-    const userPayload = {
-      type: 'user_text',
-      content: message,
-      timestamp,
-    };
-    await pool.query('INSERT INTO agent_messages (session_id, role, content) VALUES ($1, $2, $3)', [
-      sessionId,
-      'user',
-      JSON.stringify(userPayload),
-    ]);
+    if (!isServiceRequest) {
+      const timestamp = new Date().toISOString();
+      const userPayload = {
+        type: 'user_text',
+        content: message,
+        timestamp,
+      };
+      await pool.query('INSERT INTO agent_messages (session_id, role, content) VALUES ($1, $2, $3)', [
+        sessionId,
+        'user',
+        JSON.stringify(userPayload),
+      ]);
+    }
 
     const tools = new AgentToolsV2(pool);
     const registry = buildToolRegistry(tools, Number(sessionId), companyId, userId);
@@ -316,7 +361,12 @@ router.post('/chat', authMiddleware, async (req: Request, res: Response) => {
     const orchestrator = new AgentOrchestratorV2(pool, { ...registry, ...skillRegistry }, skillCatalog);
     let agentResponse;
     try {
-      agentResponse = await orchestrator.handleMessage(Number(sessionId), message, { companyId, userId });
+      agentResponse = await orchestrator.handleMessage(Number(sessionId), message, { companyId, userId }, {
+        origin: isServiceRequest ? 'agent' : 'user',
+        conversationId: `agent-v2-session-${sessionNumeric}`,
+        userId,
+        companyId,
+      });
     } catch (error: any) {
       if (error instanceof Error && /is required/i.test(error.message)) {
         return res.status(400).json({ error: error.message });
