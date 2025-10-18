@@ -54,7 +54,14 @@ router.post('/chat', authMiddleware, async (req: Request, res: Response) => {
         timestamp: new Date(),
         actions: aiResponse.actions || [],
         actionMessage: aiResponse.action_message || null,
-        actionCatalog: aiResponse.action_catalog || []
+        actionCatalog: aiResponse.action_catalog || [],
+        plannerPlan: aiResponse.planner_plan ?? null,
+        documentationSubagent: aiResponse.documentation_subagent ?? null,
+        documentationResults: aiResponse.documentation_results ?? null,
+        processingTime: aiResponse.processing_time ?? null,
+        criticFeedback: aiResponse.critic_feedback ?? null,
+        rowSelectionCandidates: aiResponse.row_selection_candidates || [],
+        safetyResults: aiResponse.safety_results || []
       }
     });
 
