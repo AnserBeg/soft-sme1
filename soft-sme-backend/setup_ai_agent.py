@@ -15,8 +15,13 @@ import sys
 import logging
 from dotenv import load_dotenv
 
+from ai_agent.cache_setup import configure_cache_paths
+
 # Load environment variables from .env file
 load_dotenv()
+
+# Ensure cache directories are prepared before imports that rely on them
+configure_cache_paths()
 
 # Add the ai_agent directory to the path
 sys.path.append(os.path.join(os.path.dirname(__file__), 'ai_agent'))
