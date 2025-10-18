@@ -24,6 +24,30 @@ const sanitizeEnvValue = (value?: string | null): string | undefined => {
   return withoutQuotes.length > 0 ? withoutQuotes : undefined;
 };
 
+const DEFAULT_HEALTH_URL = 'http://127.0.0.1:15000/healthz';
+const parseEnvInt = (value: string | undefined, fallback: number): number => {
+  if (!value) {
+    return fallback;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
+
+const HEALTH_URL_OVERRIDE = sanitizeEnvValue(process.env.AI_AGENT_HEALTH_URL);
+const HEALTH_URL = HEALTH_URL_OVERRIDE ?? DEFAULT_HEALTH_URL;
+const MAX_ATTEMPTS = parseEnvInt(
+  sanitizeEnvValue(process.env.AI_AGENT_HEALTH_RETRIES)
+    ?? sanitizeEnvValue(process.env.AI_HEALTH_RETRIES),
+  60
+);
+const DELAY_MS = parseEnvInt(
+  sanitizeEnvValue(process.env.AI_AGENT_HEALTH_DELAY_MS)
+    ?? sanitizeEnvValue(process.env.AI_HEALTH_INTERVAL_MS),
+  1000
+);
+const INITIAL_DELAY_MS = parseEnvInt(sanitizeEnvValue(process.env.AI_AGENT_HEALTH_INITIAL_DELAY_MS), 0);
+
 interface AIResponse {
   response: string;
   sources: string[];
@@ -272,25 +296,20 @@ class AIAssistantService {
       throw new Error('Global fetch API is not available in this runtime.');
     }
 
-    const retriesEnv = sanitizeEnvValue(process.env.AI_AGENT_HEALTH_RETRIES)
-      ?? sanitizeEnvValue(process.env.AI_HEALTH_RETRIES);
-    const delayEnv = sanitizeEnvValue(process.env.AI_AGENT_HEALTH_DELAY_MS)
-      ?? sanitizeEnvValue(process.env.AI_HEALTH_INTERVAL_MS);
-
-    const parsedRetries = retriesEnv ? Number.parseInt(retriesEnv, 10) : NaN;
-    const parsedDelay = delayEnv ? Number.parseInt(delayEnv, 10) : NaN;
-
-    const retryLimit = Number.isFinite(parsedRetries) && parsedRetries > 0 ? parsedRetries : 60;
-    const baseDelayMs = Number.isFinite(parsedDelay) && parsedDelay > 0 ? parsedDelay : 1000;
-
+    const targetUrl = HEALTH_URL_OVERRIDE ?? healthUrl ?? HEALTH_URL;
+    const retryLimit = MAX_ATTEMPTS;
     const maxDelayMs = 5000;
     const backoffFactor = 1.2;
-    let currentDelay = baseDelayMs;
+    let currentDelay = DELAY_MS;
     let lastFailureReason: string | null = null;
+
+    if (INITIAL_DELAY_MS > 0) {
+      await this.delay(INITIAL_DELAY_MS);
+    }
 
     for (let attempt = 1; attempt <= retryLimit; attempt++) {
       try {
-        const response = await fetchImpl(healthUrl, { method: 'GET' });
+        const response = await fetchImpl(targetUrl, { method: 'GET' });
         const status = response.status;
 
         if (status === 200) {
@@ -649,9 +668,8 @@ class AIAssistantService {
   }
 
   private resolveHealthCheckUrl(endpoint: string): string {
-    const override = sanitizeEnvValue(process.env.AI_AGENT_HEALTH_URL);
-    if (override) {
-      return override;
+    if (HEALTH_URL_OVERRIDE) {
+      return HEALTH_URL_OVERRIDE;
     }
 
     const replaced = this.replaceEndpointPath(endpoint, '/healthz');
@@ -659,7 +677,7 @@ class AIAssistantService {
       return replaced;
     }
 
-    return 'http://127.0.0.1:15000/healthz';
+    return HEALTH_URL;
   }
 
   private async delay(ms: number): Promise<void> {
