@@ -2,6 +2,9 @@ import crypto from 'crypto';
 import { Pool, PoolClient } from 'pg';
 import { pool as defaultPool } from '../db';
 
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 type MessageRole = 'user' | 'assistant' | 'system';
 
 export interface ConversationMessage {
@@ -67,13 +70,18 @@ export interface ConversationSummaryUpdate {
 }
 
 export class ConversationManager {
+  private readonly loggedIdentifierWarnings = new Set<string>();
+
   constructor(private readonly pool: Pool = defaultPool) {}
 
   async ensureConversation(conversationId?: string | null, userId?: number | null): Promise<string> {
-    if (conversationId) {
+    const normalized = this.normalizeConversationIdentifier(conversationId);
+    const existingId = normalized?.id ?? null;
+
+    if (existingId) {
       const existing = await this.pool.query(
         'SELECT id FROM ai_conversations WHERE id = $1',
-        [conversationId]
+        [existingId]
       );
 
       const existingCount = existing.rowCount ?? 0;
@@ -81,14 +89,14 @@ export class ConversationManager {
         if (userId) {
           await this.pool.query(
             'UPDATE ai_conversations SET user_id = COALESCE(user_id, $2) WHERE id = $1',
-            [conversationId, userId]
+            [existingId, userId]
           );
         }
-        return conversationId;
+        return existingId;
       }
     }
 
-    const id = conversationId || crypto.randomUUID();
+    const id = existingId ?? crypto.randomUUID();
     await this.pool.query(
       `INSERT INTO ai_conversations (id, user_id)
        VALUES ($1, $2)
@@ -385,5 +393,47 @@ export class ConversationManager {
         createdAt: new Date(row.created_at)
       };
     });
+  }
+
+  private normalizeConversationIdentifier(
+    conversationId?: string | null
+  ): { id: string } | null {
+    if (!conversationId) {
+      return null;
+    }
+
+    const trimmed = conversationId.trim();
+    if (trimmed.length === 0) {
+      return null;
+    }
+
+    if (UUID_PATTERN.test(trimmed)) {
+      return { id: trimmed };
+    }
+
+    const deterministicId = ConversationManager.deterministicUuidFromString(trimmed);
+    if (!this.loggedIdentifierWarnings.has(trimmed)) {
+      console.warn(
+        `[AI Conversations] Received non-UUID conversation identifier "${trimmed}". ` +
+          `Using deterministic UUID "${deterministicId}" instead.`
+      );
+      this.loggedIdentifierWarnings.add(trimmed);
+    }
+
+    return { id: deterministicId };
+  }
+
+  private static deterministicUuidFromString(input: string): string {
+    const hash = crypto.createHash('sha256').update(input).digest();
+    const bytes = Buffer.from(hash.slice(0, 16));
+
+    // Conform to RFC 4122 variant and set version 5 (name-based, SHA-1 in the spec).
+    // We're using SHA-256 for the hash to reduce collision risk, then forcing the
+    // version/variant bits so the resulting string is a valid UUID.
+    bytes[6] = (bytes[6] & 0x0f) | 0x50;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+
+    const hex = bytes.toString('hex');
+    return `${hex.substring(0, 8)}-${hex.substring(8, 12)}-${hex.substring(12, 16)}-${hex.substring(16, 20)}-${hex.substring(20)}`;
   }
 }
