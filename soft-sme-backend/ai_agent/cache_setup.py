@@ -3,25 +3,42 @@ from __future__ import annotations
 
 import os
 import pathlib
-from typing import Iterable, Tuple
+from dataclasses import dataclass
+from typing import Dict
 
-DEFAULT_CACHE_ROOT = "/var/lib/render/ai-cache"
+DEFAULT_DATA_ROOT = "/var/opt/soft-sme"
 CACHE_ENV_VAR = "AI_CACHE_DIR"
 
-# Keys that should point at directories which must exist
-_CACHE_DIR_KEYS: Tuple[str, ...] = (
-    "HF_HOME",
-    "TRANSFORMERS_CACHE",
-    "PIP_CACHE_DIR",
-    "TMPDIR",
-    "CHROMA_PERSIST_DIRECTORY",
-)
 
-_OPTIONAL_DIR_KEYS: Tuple[str, ...] = (
-    "XDG_CACHE_HOME",
-)
+@dataclass(frozen=True)
+class StoragePaths:
+    """Resolved storage directories used by the AI agent."""
 
-_CONFIGURED = False
+    data_root: pathlib.Path
+    vectors_dir: pathlib.Path
+    models_dir: pathlib.Path
+    cache_dir: pathlib.Path
+    transformers_cache: pathlib.Path
+    hf_home: pathlib.Path
+    xdg_cache_home: pathlib.Path
+    tmp_dir: pathlib.Path
+
+    def to_mapping(self) -> Dict[str, str]:
+        """Return a mapping of descriptive keys to directory strings."""
+
+        return {
+            "data_root": str(self.data_root),
+            "vectors": str(self.vectors_dir),
+            "models": str(self.models_dir),
+            "cache": str(self.cache_dir),
+            "transformers_cache": str(self.transformers_cache),
+            "hf_home": str(self.hf_home),
+            "xdg_cache": str(self.xdg_cache_home),
+            "tmp": str(self.tmp_dir),
+        }
+
+
+_STORAGE_PATHS: StoragePaths | None = None
 
 
 def _mkdir(path: pathlib.Path) -> None:
@@ -32,71 +49,77 @@ def _print_mapping(key: str, path: pathlib.Path) -> None:
     print(f"[AI Agent] Using {key} -> {path}")
 
 
-def _ensure_directories(keys: Iterable[str]) -> None:
-    for key in keys:
-        value = os.environ.get(key)
-        if not value:
-            continue
-        path = pathlib.Path(value).expanduser()
+def configure_cache_paths() -> StoragePaths:
+    """Ensure the AI data directories are configured and created."""
+
+    global _STORAGE_PATHS
+    if _STORAGE_PATHS is not None:
+        return _STORAGE_PATHS
+
+    data_root = pathlib.Path(os.getenv("AGENT_DATA_DIR", DEFAULT_DATA_ROOT)).expanduser()
+    os.environ.setdefault("AGENT_DATA_DIR", str(data_root))
+
+    vectors_dir = data_root / "vectors"
+    models_dir = data_root / "models"
+    cache_dir = data_root / "cache"
+    tmp_dir = cache_dir / "tmp"
+
+    for path in (data_root, vectors_dir, models_dir, cache_dir, tmp_dir):
         _mkdir(path)
-        _print_mapping(key, path)
 
+    os.environ.setdefault(CACHE_ENV_VAR, str(cache_dir))
 
-def configure_cache_paths() -> pathlib.Path:
-    """Ensure the AI cache directories are configured and created.
+    env_defaults = {
+        "HF_HOME": models_dir / "huggingface",
+        "TRANSFORMERS_CACHE": models_dir / "transformers",
+        "XDG_CACHE_HOME": cache_dir,
+        "PIP_CACHE_DIR": cache_dir / "pip",
+        "TMPDIR": tmp_dir,
+        "TMP": tmp_dir,
+        "TEMP": tmp_dir,
+        "CHROMA_PERSIST_DIRECTORY": vectors_dir,
+    }
 
-    Returns the resolved cache root path.
-    """
-    global _CONFIGURED
-    if _CONFIGURED:
-        return pathlib.Path(os.environ.get(CACHE_ENV_VAR, DEFAULT_CACHE_ROOT))
+    for key, default_path in env_defaults.items():
+        os.environ.setdefault(key, str(default_path))
 
-    cache_root = pathlib.Path(os.getenv(CACHE_ENV_VAR, DEFAULT_CACHE_ROOT)).expanduser()
-    os.environ.setdefault(CACHE_ENV_VAR, str(cache_root))
-
-    # Hugging Face / Transformers cache
-    os.environ.setdefault("HF_HOME", str(cache_root / "huggingface"))
-    os.environ.setdefault("TRANSFORMERS_CACHE", str(cache_root / "huggingface"))
-
-    # Generic cache root used by various tools
-    os.environ.setdefault("XDG_CACHE_HOME", str(cache_root))
-
-    # Pip cache
-    os.environ.setdefault("PIP_CACHE_DIR", str(cache_root / "pip"))
-
-    # Temporary files
-    tmp_dir = cache_root / "tmp"
-    os.environ.setdefault("TMPDIR", str(tmp_dir))
-    os.environ.setdefault("TMP", str(tmp_dir))
-    os.environ.setdefault("TEMP", str(tmp_dir))
-
-    # Vector database persistence
-    os.environ.setdefault("CHROMA_PERSIST_DIRECTORY", str(cache_root / "chroma"))
-
-    # Ensure the cache root itself exists before other directories
-    _mkdir(cache_root)
-
-    # Create and log the configured directories
-    _ensure_directories(_CACHE_DIR_KEYS)
-
-    # Ensure optional directories exist but avoid duplicate logs when they overlap
-    for key in _OPTIONAL_DIR_KEYS:
+    # Ensure configured directories exist and log the mapping
+    logged_paths: Dict[pathlib.Path, str] = {}
+    for key in (
+        "HF_HOME",
+        "TRANSFORMERS_CACHE",
+        "XDG_CACHE_HOME",
+        "PIP_CACHE_DIR",
+        "CHROMA_PERSIST_DIRECTORY",
+        "TMPDIR",
+    ):
         value = os.environ.get(key)
         if not value:
             continue
-        path = pathlib.Path(value).expanduser()
-        if key not in _CACHE_DIR_KEYS:
-            _mkdir(path)
-            _print_mapping(key, path)
+        path_value = pathlib.Path(value).expanduser()
+        _mkdir(path_value)
+        if path_value not in logged_paths:
+            _print_mapping(key, path_value)
+            logged_paths[path_value] = key
         else:
-            _mkdir(path)
+            _print_mapping(key, path_value)
 
-    _CONFIGURED = True
-    return cache_root
+    _STORAGE_PATHS = StoragePaths(
+        data_root=data_root,
+        vectors_dir=vectors_dir,
+        models_dir=models_dir,
+        cache_dir=cache_dir,
+        transformers_cache=pathlib.Path(os.environ["TRANSFORMERS_CACHE"]).expanduser(),
+        hf_home=pathlib.Path(os.environ["HF_HOME"]).expanduser(),
+        xdg_cache_home=pathlib.Path(os.environ["XDG_CACHE_HOME"]).expanduser(),
+        tmp_dir=tmp_dir,
+    )
+    return _STORAGE_PATHS
 
 
 __all__ = [
     "configure_cache_paths",
-    "DEFAULT_CACHE_ROOT",
+    "StoragePaths",
+    "DEFAULT_DATA_ROOT",
     "CACHE_ENV_VAR",
 ]

@@ -18,13 +18,13 @@ from sentence_transformers import SentenceTransformer
 import asyncio
 
 try:  # pragma: no cover - allow execution in package and script contexts
-    from .cache_setup import configure_cache_paths
+    from .cache_setup import StoragePaths, configure_cache_paths
 except ImportError:  # pragma: no cover - fallback for script execution
-    from cache_setup import configure_cache_paths
+    from cache_setup import StoragePaths, configure_cache_paths
 
 
-_CACHE_ROOT = configure_cache_paths()
-_DEFAULT_CHROMA_PATH = os.getenv("CHROMA_PERSIST_DIRECTORY", str(_CACHE_ROOT / "chroma"))
+_STORAGE_PATHS: StoragePaths = configure_cache_paths()
+_DEFAULT_CHROMA_PATH = str(_STORAGE_PATHS.vectors_dir)
 
 
 def _ensure_hf_cache_dirs() -> None:
