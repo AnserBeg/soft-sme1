@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from typing import Any, Dict, List, Optional
@@ -23,6 +24,8 @@ class AgentActionTool:
         self.service_token = self._sanitize(os.getenv("AI_AGENT_SERVICE_TOKEN"))
         self.service_api_key = self._sanitize(os.getenv("AI_AGENT_SERVICE_API_KEY"))
         self.timeout = float(os.getenv("AGENT_V2_HTTP_TIMEOUT", "15"))
+        self.max_retries = max(1, int(os.getenv("AGENT_V2_HTTP_RETRIES", "3")))
+        self.retry_backoff = float(os.getenv("AGENT_V2_HTTP_BACKOFF", "0.5"))
         self._session_map: Dict[str, int] = {}
         self._client: Optional[httpx.AsyncClient] = None
         self.analytics_sink = analytics_sink
@@ -40,14 +43,8 @@ class AgentActionTool:
         if conversation_id in self._session_map:
             return self._session_map[conversation_id]
 
-        client = await self.ensure_client()
         try:
-            response = await client.post(
-                f"{self.base_url}/session",
-                headers=self._build_headers(),
-                json={},
-            )
-            response.raise_for_status()
+            response = await self._request_with_retries("POST", "/session", json={})
             data = response.json()
             session_id = data.get("sessionId")
             if session_id is not None:
@@ -65,7 +62,6 @@ class AgentActionTool:
             return None
 
     async def invoke(self, message: str, conversation_id: Optional[str] = None) -> Dict[str, Any]:
-        client = await self.ensure_client()
         session_id = None
         if conversation_id:
             session_id = await self.ensure_session(conversation_id)
@@ -75,12 +71,7 @@ class AgentActionTool:
             payload["sessionId"] = session_id
 
         try:
-            response = await client.post(
-                f"{self.base_url}/chat",
-                headers=self._build_headers(),
-                json=payload,
-            )
-            response.raise_for_status()
+            response = await self._request_with_retries("POST", "/chat", json=payload)
             data = response.json() or {}
             reply = data.get("reply")
             if not isinstance(reply, dict):
@@ -300,4 +291,44 @@ class AgentActionTool:
     async def cleanup(self):
         await self.aclose()
         self._session_map.clear()
+
+    async def _request_with_retries(
+        self,
+        method: str,
+        path: str,
+        *,
+        json: Optional[Dict[str, Any]] = None,
+    ) -> httpx.Response:
+        client = await self.ensure_client()
+        url = f"{self.base_url}{path}"
+        headers = self._build_headers()
+
+        last_error: Optional[Exception] = None
+        for attempt in range(1, self.max_retries + 1):
+            try:
+                response = await client.request(method, url, headers=headers, json=json)
+                response.raise_for_status()
+                return response
+            except httpx.HTTPStatusError:
+                raise
+            except httpx.RequestError as exc:
+                last_error = exc
+                if attempt >= self.max_retries:
+                    raise
+
+                delay = self.retry_backoff * (2 ** (attempt - 1))
+                logger.warning(
+                    "Agent V2 request to %s failed on attempt %s/%s: %s. Retrying in %.2f seconds",
+                    url,
+                    attempt,
+                    self.max_retries,
+                    exc,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+
+        if last_error:
+            raise last_error
+
+        raise RuntimeError("Agent V2 request retries exhausted without specific error")
 
