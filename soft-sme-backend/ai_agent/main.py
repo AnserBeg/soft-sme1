@@ -7,18 +7,22 @@ FastAPI server that provides AI assistant capabilities for the Aiven application
 This server runs as a child process of the main Node.js backend.
 """
 
+import asyncio
 import os
 import sys
 import logging
 import platform
+import time
 import uuid
 import pathlib
 import shutil
+from datetime import datetime
 from dataclasses import asdict
 from typing import Dict, Any, List, Optional
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 import uvicorn
 from dotenv import load_dotenv
@@ -31,24 +35,88 @@ try:  # pragma: no cover - support both package and script execution
     from .cache_setup import StoragePaths, configure_cache_paths
     from .conversation_manager import ConversationManager, DB_UNAVAILABLE_MESSAGE
     from .db import database_url_present, get_conn, reset_connection
+    from .rag_tool import set_shared_embedding_model
 except ImportError:  # pragma: no cover - fallback when executed as script
     from agent import AivenAgent
     from cache_setup import StoragePaths, configure_cache_paths
     from conversation_manager import ConversationManager, DB_UNAVAILABLE_MESSAGE
     from db import database_url_present, get_conn, reset_connection
+    from rag_tool import set_shared_embedding_model
 
 # Load environment variables
 load_dotenv()
 
-# Ensure persistent cache directories are configured
-STORAGE_PATHS: StoragePaths = configure_cache_paths()
-
-# Configure logging
+# Configure logging early so startup bootstrap logs are captured
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+
+def _int_from_env(name: str, default: int, minimum: int = 1) -> int:
+    """Read a positive integer value from the environment."""
+
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+
+    try:
+        parsed = int(raw_value)
+    except (TypeError, ValueError):
+        logger.warning("Invalid integer for %s: %s. Using default %s.", name, raw_value, default)
+        return default
+
+    return max(parsed, minimum)
+
+
+def _float_from_env(name: str, default: float, minimum: float = 0.0) -> float:
+    """Read a floating point value from the environment with a lower bound."""
+
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+
+    try:
+        parsed = float(raw_value)
+    except (TypeError, ValueError):
+        logger.warning("Invalid float for %s: %s. Using default %.2f.", name, raw_value, default)
+        return default
+
+    return max(parsed, minimum)
+
+
+def _bootstrap_configured_directories() -> None:
+    """Ensure cache directories provided via environment variables exist."""
+
+    env_keys = (
+        "AGENT_DATA_DIR",
+        "HF_HOME",
+        "TRANSFORMERS_CACHE",
+        "XDG_CACHE_HOME",
+    )
+
+    for key in env_keys:
+        value = os.getenv(key)
+        if not value:
+            continue
+
+        path_value = pathlib.Path(value).expanduser()
+        os.environ[key] = str(path_value)
+        path_value.mkdir(parents=True, exist_ok=True)
+        logger.info("Ensured %s directory exists at %s", key, path_value)
+
+        # XDG_CACHE_HOME may contain multiple caches; ensure Hugging Face cache subdir exists as well
+        if key == "XDG_CACHE_HOME":
+            hf_cache_path = path_value / "huggingface"
+            hf_cache_path.mkdir(parents=True, exist_ok=True)
+            logger.info("Ensured huggingface cache directory exists at %s", hf_cache_path)
+
+
+_bootstrap_configured_directories()
+
+# Ensure persistent cache directories are configured
+STORAGE_PATHS: StoragePaths = configure_cache_paths()
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -67,13 +135,108 @@ app.add_middleware(
 )
 
 # Initialize AI agent and conversation manager
-ai_agent = None
+MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
+MODEL_LOAD_TIMEOUT_SECONDS = _int_from_env("AI_AGENT_MODEL_TIMEOUT", 600, minimum=60)
+STARTUP_MAX_ATTEMPTS = _int_from_env("AI_AGENT_STARTUP_RETRIES", 3, minimum=1)
+STARTUP_RETRY_DELAY_SECONDS = _float_from_env("AI_AGENT_STARTUP_RETRY_DELAY", 15.0, minimum=1.0)
+
+ai_agent: AivenAgent | None = None
 conversation_manager = ConversationManager()
+is_ready: bool = False
+startup_error: Optional[str] = None
+startup_attempts: int = 0
+last_startup_duration: Optional[float] = None
+
+# Keep a handle to the shared embedding model so repeated startup attempts reuse downloads
+_shared_embedding_model: Any | None = None
 
 
 def _raise_if_db_unavailable(exc: Exception) -> None:
     if isinstance(exc, RuntimeError) and str(exc) == DB_UNAVAILABLE_MESSAGE:
         raise HTTPException(status_code=503, detail="Database temporarily unavailable") from exc
+
+
+async def _load_sentence_transformer() -> Any:
+    """Load the shared SentenceTransformer model with a timeout."""
+
+    start_perf = time.perf_counter()
+    start_wall = datetime.utcnow().isoformat()
+    logger.info(
+        "Loading SentenceTransformer model '%s' (started at %s UTC). "
+        "Downloads may take a while on first run.",
+        MODEL_NAME,
+        start_wall,
+    )
+
+    def _load_model() -> Any:
+        from sentence_transformers import SentenceTransformer  # Local import to defer heavy dependency
+
+        return SentenceTransformer(MODEL_NAME)
+
+    try:
+        model = await asyncio.wait_for(
+            run_in_threadpool(_load_model),
+            timeout=MODEL_LOAD_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError as exc:  # pragma: no cover - defensive
+        elapsed = time.perf_counter() - start_perf
+        raise RuntimeError(
+            "Timed out after "
+            f"{MODEL_LOAD_TIMEOUT_SECONDS} seconds while loading model '{MODEL_NAME}'. "
+            f"Elapsed {elapsed:.2f}s."
+        ) from exc
+    except Exception as exc:  # pylint: disable=broad-except
+        raise RuntimeError(f"Failed to load model '{MODEL_NAME}': {exc}") from exc
+
+    elapsed = time.perf_counter() - start_perf
+    end_wall = datetime.utcnow().isoformat()
+    logger.info(
+        "Loaded SentenceTransformer model '%s' in %.2f seconds (completed at %s UTC).",
+        MODEL_NAME,
+        elapsed,
+        end_wall,
+    )
+    return model
+
+
+async def _initialize_agent_once() -> None:
+    """Perform a single initialization attempt for the AI agent."""
+
+    global ai_agent, _shared_embedding_model
+
+    # Load shared embedding model first so downstream tooling can reuse it
+    shared_model = _shared_embedding_model
+    if shared_model is None:
+        shared_model = await _load_sentence_transformer()
+        _shared_embedding_model = shared_model
+    else:
+        logger.info("Reusing cached SentenceTransformer model already in memory")
+
+    set_shared_embedding_model(shared_model)
+
+    candidate_agent = AivenAgent()
+
+    try:
+        await candidate_agent.initialize()
+        logger.info("AI Agent core initialized successfully")
+    except Exception:
+        # Ensure the shared model isn't exposed until the next retry reconfigures the agent
+        set_shared_embedding_model(None)
+        raise
+
+    # Ingest documentation when enabled
+    if candidate_agent.documentation_enabled:
+        logger.info("Documentation ingestion enabled, starting ingestion...")
+        try:
+            await candidate_agent.ingest_documentation()
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.warning("Documentation ingestion failed: %s", exc)
+        else:
+            logger.info("Documentation ingestion completed")
+    else:
+        logger.info("Documentation ingestion skipped (AI_ENABLE_DOCUMENTATION disabled)")
+
+    ai_agent = candidate_agent
 
 
 # Pydantic models
@@ -131,46 +294,106 @@ class StatsResponse(BaseModel):
 
 @app.on_event("startup")
 async def startup_event():
-    """Initialize the AI agent on startup"""
-    global ai_agent
-    try:
-        logger.info("Starting Aiven AI Agent...")
-        logger.info("Python version: %s", platform.python_version())
-        logger.info("DATABASE_URL present: %s", "true" if database_url_present() else "false")
-        logger.info("AGENT_DATA_DIR: %s", os.getenv("AGENT_DATA_DIR", "<not set>"))
-        for label, path in STORAGE_PATHS.to_mapping().items():
-            logger.info("Storage directory [%s]: %s", label, path)
-        ai_agent = AivenAgent()
-        await ai_agent.initialize()
-        logger.info("AI Agent initialized successfully")
-        
-        # Ingest documentation when enabled
-        if ai_agent.documentation_enabled:
-            logger.info("Documentation ingestion enabled, starting ingestion...")
-            try:
-                await ai_agent.ingest_documentation()
-            except Exception as exc:  # pylint: disable=broad-except
-                logger.warning("Documentation ingestion failed: %s", exc)
-            else:
-                logger.info("Documentation ingestion completed")
-        else:
-            logger.info("Documentation ingestion skipped (AI_ENABLE_DOCUMENTATION disabled)")
-        
-    except Exception as e:
-        logger.error(f"Failed to initialize AI Agent: {e}")
-        raise
+    """Initialize the AI agent on startup with readiness tracking."""
+
+    global is_ready, startup_error, startup_attempts, last_startup_duration, ai_agent
+
+    is_ready = False
+    startup_error = None
+    startup_attempts = 0
+    last_startup_duration = None
+    ai_agent = None
+
+    logger.info("Starting Aiven AI Agent initialization sequence")
+    logger.info("Python version: %s", platform.python_version())
+    logger.info("DATABASE_URL present: %s", "true" if database_url_present() else "false")
+    logger.info("AGENT_DATA_DIR: %s", os.getenv("AGENT_DATA_DIR", "<not set>"))
+    for label, path in STORAGE_PATHS.to_mapping().items():
+        logger.info("Storage directory [%s]: %s", label, path)
+
+    for attempt in range(1, STARTUP_MAX_ATTEMPTS + 1):
+        startup_attempts = attempt
+        attempt_start = time.perf_counter()
+        logger.info(
+            "AI Agent startup attempt %s/%s", attempt, STARTUP_MAX_ATTEMPTS
+        )
+
+        try:
+            await _initialize_agent_once()
+        except Exception as exc:  # pylint: disable=broad-except
+            elapsed = time.perf_counter() - attempt_start
+            last_startup_duration = elapsed
+            startup_error = str(exc)
+            ai_agent = None
+            logger.exception(
+                "AI Agent startup attempt %s/%s failed after %.2f seconds: %s",
+                attempt,
+                STARTUP_MAX_ATTEMPTS,
+                elapsed,
+                exc,
+            )
+
+            if attempt < STARTUP_MAX_ATTEMPTS:
+                logger.info(
+                    "Retrying AI Agent startup in %.2f seconds", STARTUP_RETRY_DELAY_SECONDS
+                )
+                await asyncio.sleep(STARTUP_RETRY_DELAY_SECONDS)
+            continue
+
+        last_startup_duration = time.perf_counter() - attempt_start
+        logger.info(
+            "AI Agent startup attempt %s/%s completed in %.2f seconds",
+            attempt,
+            STARTUP_MAX_ATTEMPTS,
+            last_startup_duration,
+        )
+        startup_error = None
+        is_ready = True
+        break
+
+    if not is_ready:
+        logger.error(
+            "AI Agent failed to initialize after %s attempts. Service will remain unavailable until manually reinitialized.",
+            STARTUP_MAX_ATTEMPTS,
+        )
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """Cleanup on shutdown"""
+    global is_ready
+
     logger.info("Shutting down AI Agent...")
+    is_ready = False
     if ai_agent:
         await ai_agent.cleanup()
 
+
+@app.get("/healthz")
+async def readiness_health_check():
+    """Readiness probe that reports when initialization has completed."""
+
+    status = "ok" if is_ready else "starting"
+    payload: Dict[str, Any] = {
+        "status": status,
+        "ready": is_ready,
+        "attempts": startup_attempts,
+    }
+
+    if last_startup_duration is not None:
+        payload["startup_duration_seconds"] = round(last_startup_duration, 2)
+
+    if not is_ready and startup_error:
+        payload["error"] = startup_error
+
+    status_code = 200 if is_ready else 503
+    return JSONResponse(status_code=status_code, content=payload)
+
+
 @app.get("/health")
-async def health_check():
-    """Readiness probe that only reports application availability."""
-    return {"status": "ok"}
+async def legacy_health_check():
+    """Backward compatible health endpoint."""
+
+    return await readiness_health_check()
 
 
 @app.get("/storage-health")
@@ -232,13 +455,17 @@ async def database_health_check():
 async def initialize_agent():
     """Initialize the AI agent (re-initialize if needed)"""
     try:
-        global ai_agent
+        global ai_agent, is_ready, startup_attempts, last_startup_duration, startup_error
         if ai_agent:
             await ai_agent.cleanup()
-        
-        ai_agent = AivenAgent()
-        await ai_agent.initialize()
-        
+
+        attempt_start = time.perf_counter()
+        await _initialize_agent_once()
+        last_startup_duration = time.perf_counter() - attempt_start
+        startup_attempts += 1
+        startup_error = None
+        is_ready = True
+
         return InitializeResponse(
             status="success",
             message="AI Agent initialized successfully",
@@ -445,12 +672,26 @@ async def ingest_documentation(background_tasks: BackgroundTasks):
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
-    # Get port from environment variable
-    port = int(os.getenv("AI_AGENT_PORT", 15000))
-    host = os.getenv("AI_AGENT_HOST", "127.0.0.1")
-    
-    logger.info(f"Starting AI Agent server on {host}:{port}")
-    
+    # Bind explicitly to the local interface to avoid accidental exposure
+    host_override = os.getenv("AI_AGENT_HOST")
+    port_override = os.getenv("AI_AGENT_PORT")
+
+    if host_override and host_override.strip() != "127.0.0.1":
+        logger.warning(
+            "AI_AGENT_HOST override (%s) ignored; binding to 127.0.0.1 for security.",
+            host_override,
+        )
+    if port_override and port_override.strip() not in {"", "15000"}:
+        logger.warning(
+            "AI_AGENT_PORT override (%s) ignored; binding to port 15000.",
+            port_override,
+        )
+
+    host = "127.0.0.1"
+    port = 15000
+
+    logger.info("Starting AI Agent server on %s:%s", host, port)
+
     uvicorn.run(
         "ai_agent.app:app",
         host=host,

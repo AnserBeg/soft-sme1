@@ -53,6 +53,7 @@ class AIAssistantService {
   private missingAuthWarningLogged = false;
   private conversationManager: ConversationManager;
   private taskQueue: AITaskQueueService;
+  private aiHealthUrl: string | null = null;
 
   constructor() {
     const configuredMode = process.env.AI_AGENT_MODE?.trim().toLowerCase();
@@ -71,6 +72,7 @@ class AIAssistantService {
 
     this.isLocalMode = !endpointIsRemote && (desiredMode === 'local' || endpointIsLocal);
     this.aiEndpoint = resolvedEndpoint;
+    this.aiHealthUrl = this.resolveHealthCheckUrl(this.aiEndpoint);
     this.conversationManager = new ConversationManager(pool);
     this.taskQueue = new AITaskQueueService(pool);
 
@@ -161,10 +163,12 @@ class AIAssistantService {
     const config = await this.startLocalAIAgent();
     const normalizedEndpoint = this.normalizeEndpoint(config.url);
     this.aiEndpoint = normalizedEndpoint;
+    const healthUrl = this.resolveHealthCheckUrl(normalizedEndpoint);
+    this.aiHealthUrl = healthUrl;
 
     try {
-      console.log(`[AI Agent] waiting for health check at ${normalizedEndpoint}`);
-      await this.waitForAgentHealthy(normalizedEndpoint);
+      console.log(`[AI Agent] waiting for health check at ${healthUrl}`);
+      await this.waitForAgentHealthy(healthUrl);
     } catch (error) {
       console.error('[AI Agent] Failed health checks during startup:', error);
 
@@ -261,62 +265,56 @@ class AIAssistantService {
     }
   }
 
-  private async waitForAgentHealthy(url: string): Promise<void> {
+  private async waitForAgentHealthy(healthUrl: string): Promise<void> {
     const fetchImpl = globalThis.fetch;
 
     if (typeof fetchImpl !== 'function') {
       throw new Error('Global fetch API is not available in this runtime.');
     }
 
-    const normalizedUrl = url.replace(/\/+$/, '');
+    const retriesEnv = sanitizeEnvValue(process.env.AI_AGENT_HEALTH_RETRIES)
+      ?? sanitizeEnvValue(process.env.AI_HEALTH_RETRIES);
+    const delayEnv = sanitizeEnvValue(process.env.AI_AGENT_HEALTH_DELAY_MS)
+      ?? sanitizeEnvValue(process.env.AI_HEALTH_INTERVAL_MS);
 
-    const retryLimitEnv = sanitizeEnvValue(process.env.AI_HEALTH_RETRIES);
-    const retryIntervalEnv = sanitizeEnvValue(process.env.AI_HEALTH_INTERVAL_MS);
-
-    const parsedRetries = retryLimitEnv ? Number.parseInt(retryLimitEnv, 10) : NaN;
-    const parsedInterval = retryIntervalEnv ? Number.parseInt(retryIntervalEnv, 10) : NaN;
+    const parsedRetries = retriesEnv ? Number.parseInt(retriesEnv, 10) : NaN;
+    const parsedDelay = delayEnv ? Number.parseInt(delayEnv, 10) : NaN;
 
     const retryLimit = Number.isFinite(parsedRetries) && parsedRetries > 0 ? parsedRetries : 60;
-    const retryIntervalMs = Number.isFinite(parsedInterval) && parsedInterval > 0 ? parsedInterval : 1000;
+    const baseDelayMs = Number.isFinite(parsedDelay) && parsedDelay > 0 ? parsedDelay : 1000;
+
+    const maxDelayMs = 5000;
+    const backoffFactor = 1.2;
+    let currentDelay = baseDelayMs;
+    let lastFailureReason: string | null = null;
 
     for (let attempt = 1; attempt <= retryLimit; attempt++) {
-      let failureReason: string | null = null;
-
       try {
-        const response = await fetchImpl(`${normalizedUrl}/health`, { method: 'GET' });
+        const response = await fetchImpl(healthUrl, { method: 'GET' });
+        const status = response.status;
 
-        if (response.ok) {
-          try {
-            const body = await response.json();
-
-            if (body && typeof body === 'object' && body.status === 'ok') {
-              console.log('[AI Agent] AI agent ready');
-              return;
-            }
-
-            const statusValue =
-              body && typeof body === 'object' && 'status' in body ? (body as { status?: unknown }).status : undefined;
-            failureReason = `unexpected health payload (status=${String(statusValue)})`;
-          } catch (parseError) {
-            const message = parseError instanceof Error ? parseError.message : String(parseError);
-            failureReason = `failed to parse health response: ${message}`;
-          }
-        } else {
-          failureReason = `HTTP ${response.status}`;
+        if (status === 200) {
+          console.log(`[AI Agent] health attempt ${attempt}/${retryLimit}: HTTP ${status}`);
+          console.log('[AI Agent] AI agent ready');
+          return;
         }
+
+        lastFailureReason = `HTTP ${status}`;
       } catch (error) {
-        failureReason = error instanceof Error ? error.message : String(error);
+        lastFailureReason = error instanceof Error ? error.message : String(error);
       }
 
-      const reasonToReport = failureReason ?? 'unknown error';
-      console.log(`[AI Agent] health attempt ${attempt}/${retryLimit} failed: ${reasonToReport}`);
+      const reasonToReport = lastFailureReason ?? 'unknown error';
+      console.log(`[AI Agent] health attempt ${attempt}/${retryLimit}: ${reasonToReport}`);
 
       if (attempt < retryLimit) {
-        await new Promise(resolve => setTimeout(resolve, retryIntervalMs));
+        await this.delay(currentDelay);
+        currentDelay = Math.min(Math.round(currentDelay * backoffFactor), maxDelayMs);
       }
     }
 
-    throw new Error(`AI Agent failed health check after ${retryLimit} attempts.`);
+    const suffix = lastFailureReason ? ` Last error: ${lastFailureReason}` : '';
+    throw new Error(`AI Agent failed health check after ${retryLimit} attempts.${suffix}`);
   }
 
   private preparePythonEnvironment(pythonPath: string, aiAgentPath: string): string {
@@ -650,36 +648,63 @@ class AIAssistantService {
     return null;
   }
 
+  private resolveHealthCheckUrl(endpoint: string): string {
+    const override = sanitizeEnvValue(process.env.AI_AGENT_HEALTH_URL);
+    if (override) {
+      return override;
+    }
+
+    const replaced = this.replaceEndpointPath(endpoint, '/healthz');
+    if (replaced) {
+      return replaced;
+    }
+
+    return 'http://127.0.0.1:15000/healthz';
+  }
+
+  private async delay(ms: number): Promise<void> {
+    await new Promise(resolve => setTimeout(resolve, ms));
+  }
+
   /**
    * Get AI agent health status
    */
   async getHealthStatus(): Promise<{ status: string; details?: any }> {
     try {
-      const healthUrl = `${this.aiEndpoint}/health`;
+      const healthUrl = this.aiHealthUrl ?? this.resolveHealthCheckUrl(this.aiEndpoint);
       console.log(`🔍 Health check: Attempting to access ${healthUrl}`);
-      
+
       const response = await axios.get(
         healthUrl,
         this.createRequestConfig({
-          timeout: 5000
+          timeout: 5000,
+          validateStatus: () => true
         })
       );
-      
-      console.log(`✅ Health check successful: ${response.status} - ${JSON.stringify(response.data)}`);
-      
-      // The Python endpoint returns a HealthResponse object
-      const healthData = response.data ?? {};
-      const rawStatus = typeof healthData.status === 'string' ? healthData.status.toLowerCase() : 'unknown';
-      const normalizedStatus = rawStatus === 'ok'
-        ? 'healthy'
-        : rawStatus === 'error'
-          ? 'unhealthy'
-          : rawStatus;
 
-      // Return a simplified status for the Node.js logic
+      const healthData = response.data ?? {};
+      console.log(`✅ Health check response ${response.status} - ${JSON.stringify(healthData)}`);
+
+      const statusCode = response.status;
+      const bodyStatus = typeof healthData.status === 'string' ? healthData.status.toLowerCase() : undefined;
+      let normalizedStatus: string;
+
+      if (statusCode === 200 && bodyStatus === 'ok') {
+        normalizedStatus = 'healthy';
+      } else if (bodyStatus === 'starting' || bodyStatus === 'initializing') {
+        normalizedStatus = 'initializing';
+      } else {
+        normalizedStatus = statusCode === 200 ? bodyStatus ?? 'healthy' : 'unhealthy';
+      }
+
+      const details =
+        typeof healthData === 'object' && healthData !== null
+          ? { ...(healthData as Record<string, unknown>), httpStatus: statusCode }
+          : { httpStatus: statusCode, body: healthData };
+
       return {
         status: normalizedStatus,
-        details: healthData.details ?? healthData
+        details
       };
     } catch (error) {
       console.log(`❌ Health check failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
