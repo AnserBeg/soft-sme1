@@ -40,16 +40,15 @@ Render will automatically set these from the database:
 You need to manually set:
 - `JWT_SECRET`: Generate a secure random string
 - `CORS_ORIGIN`: Set to `*` for development, or your domain for production
-- Hugging Face cache location (choose whichever variables you already rely on, such as `TRANSFORMERS_CACHE`, `HUGGINGFACE_HUB_CACHE`, `HF_HOME`, or `XDG_CACHE_HOME`). Point them to the mounted persistent disk (for example `/var/lib/render/ai-cache/huggingface`). If these variables are already defined in your environment, no additional configuration is required.
+- `GEMINI_API_KEY`: Required for the hosted embedding model used by the AI assistant
 
-### 3a. Persist the Hugging Face Cache (Optional but Recommended)
-If you plan to use the AI assistant features, the backend downloads the `sentence-transformers` model the first time it boots. Attach a Render disk so the model is only downloaded once:
+### 3a. Gemini Configuration (Recommended)
+The AI assistant now calls the Google Gemini embeddings API at runtime instead of downloading a local `sentence-transformers` model. Make sure:
 
-1. In the Render dashboard, open **Disks** → **New Disk** and give it a name such as `ai-cache`. Mount it at `/var/lib/render/ai-cache` with the size you need (20 GB is plenty).
-2. In your service settings (or in `render.yaml`), attach that disk to the backend service.
-3. Point your chosen Hugging Face cache variables (for example `TRANSFORMERS_CACHE`, `HUGGINGFACE_HUB_CACHE`, `HF_HOME`, or `XDG_CACHE_HOME`) to `/var/lib/render/ai-cache/huggingface`.
+1. `GEMINI_API_KEY` is present in your Render environment variables (or `render.yaml`).
+2. Outbound internet access is allowed so the backend can reach the Gemini API.
 
-The backend will create that folder automatically if it doesn’t exist, ensuring the Hugging Face cache survives restarts and redeploys. The `render-start.sh` script runs before `npm start` and takes care of provisioning any cache directories configured through these variables.
+No persistent disk is required for embedding caches anymore, since embeddings are generated remotely.
 
 ### 4. Database Setup
 1. In Render dashboard, go to your service

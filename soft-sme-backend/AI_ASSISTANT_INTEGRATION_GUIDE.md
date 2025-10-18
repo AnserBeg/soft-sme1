@@ -282,7 +282,7 @@ The system automatically determines whether to:
 
 ### Embedding Models
 
-- **all-MiniLM-L6-v2** (default): Fast, local embeddings
+- **models/text-embedding-004** (default): Google Gemini hosted embeddings (requires `GEMINI_API_KEY`)
 - **text-embedding-3-large**: OpenAI embeddings (requires API key)
 
 ## Troubleshooting
@@ -317,7 +317,7 @@ cd ai_agent
 python main.py --test
 
 # Check Python dependencies
-pip list | grep -E "(langgraph|chromadb|sentence-transformers)"
+pip list | grep -E "(langgraph|chromadb|langchain-google-genai)"
 
 # Test database connection
 python -c "import psycopg2; print('Database connection OK')"
