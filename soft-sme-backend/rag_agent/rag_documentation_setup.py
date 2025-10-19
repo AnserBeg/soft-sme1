@@ -16,7 +16,7 @@ Requirements:
 import os
 import json
 import hashlib
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Union
 from pathlib import Path
 import logging
 
@@ -25,6 +25,10 @@ from langchain_google_genai import GoogleGenerativeAIEmbeddings
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_DOCS_DIR = REPO_ROOT / "docs" / "rag"
 
 class DocumentationVectorDB:
     """Vector database for NEURATASK documentation"""
@@ -416,33 +420,41 @@ class DocumentationVectorDB:
             return {"error": str(e)}
 
 
-def load_documentation_files(docs_dir: str = ".") -> List[Dict[str, str]]:
+def load_documentation_files(docs_dir: Union[str, Path] = DEFAULT_DOCS_DIR) -> List[Dict[str, str]]:
     """Load all documentation files from the directory"""
-    docs = []
-    doc_files = [
-        "documentation_rag"
-    ]
-    
-    for filename in doc_files:
-        file_path = os.path.join(docs_dir, filename)
-        if os.path.exists(file_path):
+    docs: List[Dict[str, str]] = []
+    docs_path = Path(docs_dir)
+
+    if not docs_path.exists():
+        logger.warning(f"Documentation directory not found: {docs_path}")
+        return docs
+
+    markdown_files = sorted(docs_path.rglob("*.md"))
+
+    if not markdown_files:
+        logger.warning(f"No markdown files discovered under {docs_path}")
+        return docs
+
+    for file_path in markdown_files:
+        try:
+            content = file_path.read_text(encoding="utf-8")
             try:
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                docs.append({
-                    "file_path": file_path,
-                    "content": content
-                })
-                logger.info(f"Loaded {filename}")
-            except Exception as e:
-                logger.error(f"Error loading {filename}: {e}")
-        else:
-            logger.warning(f"File not found: {filename}")
-    
+                relative_path = file_path.relative_to(REPO_ROOT)
+            except ValueError:
+                relative_path = file_path
+
+            docs.append({
+                "file_path": str(relative_path),
+                "content": content
+            })
+            logger.info(f"Loaded documentation: {relative_path}")
+        except Exception as e:
+            logger.error(f"Error loading {file_path}: {e}")
+
     return docs
 
 
-def setup_vector_database(db_type: str = "chroma", docs_dir: str = "."):
+def setup_vector_database(db_type: str = "chroma", docs_dir: Union[str, Path] = DEFAULT_DOCS_DIR):
     """Set up the vector database with all documentation"""
     logger.info(f"Setting up {db_type} vector database...")
     
@@ -453,6 +465,9 @@ def setup_vector_database(db_type: str = "chroma", docs_dir: str = "."):
     
     # Load documentation files
     docs = load_documentation_files(docs_dir)
+
+    if not docs:
+        logger.warning("No documentation was ingested into the vector database.")
     
     # Add documents to database
     for doc in docs:
@@ -492,7 +507,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Set up vector database for NEURATASK documentation")
     parser.add_argument("--db-type", choices=["chroma", "pinecone", "qdrant"], 
                        default="chroma", help="Vector database type")
-    parser.add_argument("--docs-dir", default=".", help="Directory containing documentation files")
+    parser.add_argument(
+        "--docs-dir",
+        default=str(DEFAULT_DOCS_DIR),
+        help="Directory containing documentation files"
+    )
     parser.add_argument("--test", action="store_true", help="Run search tests after setup")
     
     args = parser.parse_args()
