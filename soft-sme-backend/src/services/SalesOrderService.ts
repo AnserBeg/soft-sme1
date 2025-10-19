@@ -1,5 +1,11 @@
 import { Pool, PoolClient } from 'pg';
+import { getNextSalesOrderSequenceNumberForYear } from '../utils/sequence';
 import { InventoryService } from './InventoryService';
+
+export interface CreateSalesOrderInput {
+  header?: any;
+  lineItems?: any[];
+}
 
 export class SalesOrderService {
   private pool: Pool;
@@ -7,6 +13,162 @@ export class SalesOrderService {
   constructor(pool: Pool) {
     this.pool = pool;
     this.inventoryService = new InventoryService(pool);
+  }
+
+  static normalizeInvoiceStatus(value: any): 'needed' | 'done' | null {
+    if (value === null || value === undefined) return null;
+    if (typeof value === 'string') {
+      const normalized = value.trim().toLowerCase();
+      if (!normalized) return null;
+      if (['needed', 'need', 'required', 'pending'].includes(normalized)) return 'needed';
+      if (['done', 'complete', 'completed', 'sent'].includes(normalized)) return 'done';
+      if (['true', 't', 'yes', 'y', '1', 'on'].includes(normalized)) return 'needed';
+      if (['false', 'f', 'no', 'n', '0', 'off'].includes(normalized)) return null;
+    }
+    if (typeof value === 'boolean') {
+      return value ? 'needed' : null;
+    }
+    if (typeof value === 'number') {
+      return value > 0 ? 'needed' : null;
+    }
+    return null;
+  }
+
+  async createSalesOrder(payload: CreateSalesOrderInput, user?: any, clientArg?: PoolClient) {
+    const client = clientArg ?? (await this.pool.connect());
+    let startedTransaction = false;
+
+    try {
+      if (!clientArg) {
+        await client.query('BEGIN');
+        startedTransaction = true;
+      }
+
+      const headerSource = payload.header ?? payload ?? {};
+      const {
+        sales_date,
+        product_name,
+        product_description,
+        terms,
+        customer_po_number,
+        vin_number,
+        vehicle_make,
+        vehicle_model,
+        invoice_status,
+        invoice_required,
+        status,
+        estimated_cost,
+        quote_id,
+        source_quote_number,
+      } = headerSource;
+
+      const customerId = headerSource.customer_id !== undefined && headerSource.customer_id !== null
+        ? Number(headerSource.customer_id)
+        : NaN;
+      if (!Number.isFinite(customerId)) {
+        throw new Error('customer_id is required to create a sales order');
+      }
+
+      const trimmedProductName = product_name ? String(product_name).trim() : '';
+      if (!trimmedProductName) {
+        throw new Error('product_name is required to create a sales order');
+      }
+
+      const normalizedInvoiceStatus = SalesOrderService.normalizeInvoiceStatus(invoice_status ?? invoice_required);
+
+      const trimmedLineItemsSource = Array.isArray(payload.lineItems)
+        ? payload.lineItems
+        : Array.isArray((headerSource as any).lineItems)
+          ? (headerSource as any).lineItems
+          : [];
+
+      const trimmedLineItems = trimmedLineItemsSource.map((item: any) => ({
+        ...item,
+        part_number: item?.part_number ? String(item.part_number).trim() : '',
+        part_description: item?.part_description ? String(item.part_description).trim() : '',
+        unit: item?.unit ? String(item.unit).trim() : '',
+        quantity_sold:
+          item?.quantity_sold !== undefined && item?.quantity_sold !== null
+            ? parseFloat(item.quantity_sold)
+            : item?.quantity !== undefined && item?.quantity !== null
+              ? parseFloat(item.quantity)
+              : 0,
+        unit_price:
+          item?.unit_price !== undefined && item?.unit_price !== null
+            ? parseFloat(item.unit_price)
+            : 0,
+        line_amount:
+          item?.line_amount !== undefined && item?.line_amount !== null
+            ? parseFloat(item.line_amount)
+            : 0,
+      }));
+
+      const idRes = await client.query("SELECT nextval('salesorderhistory_sales_order_id_seq')");
+      const newSalesOrderId = Number(idRes.rows[0].nextval);
+
+      const salesDate = sales_date ? new Date(sales_date) : new Date();
+      const currentYear = salesDate.getFullYear();
+      const { sequenceNumber, nnnnn } = await getNextSalesOrderSequenceNumberForYear(currentYear);
+      const formattedSONumber = `SO-${currentYear}-${nnnnn.toString().padStart(5, '0')}`;
+
+      const estimatedCostNum = estimated_cost !== undefined && estimated_cost !== null ? parseFloat(estimated_cost) : 0;
+      const quoteIdInt = quote_id !== undefined && quote_id !== null ? Number(quote_id) : null;
+      const sourceQuoteNumberStr = source_quote_number ? String(source_quote_number) : null;
+
+      await client.query(
+        `INSERT INTO salesorderhistory (
+          sales_order_id, sales_order_number, customer_id, sales_date, product_name, product_description, terms,
+          customer_po_number, vin_number, vehicle_make, vehicle_model, invoice_status, subtotal, total_gst_amount, total_amount,
+          status, estimated_cost, sequence_number, quote_id, source_quote_number
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
+        [
+          newSalesOrderId,
+          formattedSONumber,
+          customerId,
+          salesDate,
+          trimmedProductName,
+          product_description ? String(product_description).trim() : '',
+          terms ? String(terms).trim() : '',
+          customer_po_number ? String(customer_po_number).trim() : '',
+          vin_number ? String(vin_number).trim() : '',
+          vehicle_make ? String(vehicle_make).trim() : '',
+          vehicle_model ? String(vehicle_model).trim() : '',
+          normalizedInvoiceStatus,
+          0,
+          0,
+          0,
+          status ? String(status) : 'Open',
+          estimatedCostNum,
+          sequenceNumber,
+          quoteIdInt,
+          sourceQuoteNumberStr,
+        ]
+      );
+
+      for (const item of trimmedLineItems) {
+        await this.upsertLineItem(newSalesOrderId, item, client, user ?? { access_role: 'Admin' });
+      }
+
+      await this.recalculateAndUpdateSummary(newSalesOrderId, client);
+
+      if (startedTransaction) {
+        await client.query('COMMIT');
+      }
+
+      return {
+        sales_order_id: newSalesOrderId,
+        sales_order_number: formattedSONumber,
+      };
+    } catch (error) {
+      if (startedTransaction) {
+        await client.query('ROLLBACK');
+      }
+      throw error;
+    } finally {
+      if (!clientArg) {
+        client.release();
+      }
+    }
   }
 
   // Helper function to automatically add supply line items based on labour amount

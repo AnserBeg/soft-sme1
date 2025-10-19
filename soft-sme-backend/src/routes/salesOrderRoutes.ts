@@ -1,6 +1,5 @@
 import express, { Request, Response } from 'express';
 import { pool } from '../db';
-import { getNextSalesOrderSequenceNumberForYear } from '../utils/sequence';
 import PDFDocument from 'pdfkit';
 import fs from 'fs';
 import path from 'path';
@@ -316,108 +315,26 @@ router.post('/:id/recalculate', async (req: Request, res: Response) => {
 
 // Create a new sales order
 router.post('/', async (req: Request, res: Response) => {
-  const { customer_id, sales_date, product_name, product_description, terms, customer_po_number, vin_number, vehicle_make, vehicle_model, invoice_status, invoice_required, status, estimated_cost, lineItems, user_id } = req.body;
+  const { lineItems, ...header } = req.body ?? {};
 
-  // Trim string fields
-  const trimmedProductName = product_name ? product_name.trim() : '';
-  const trimmedProductDescription = product_description ? product_description.trim() : '';
-  const trimmedTerms = terms ? terms.trim() : '';
-  const trimmedCustomerPoNumber = customer_po_number ? customer_po_number.trim() : '';
-  const trimmedVinNumber = vin_number ? vin_number.trim() : '';
-  const trimmedVehicleMake = vehicle_make ? vehicle_make.trim() : '';
-  const trimmedVehicleModel = vehicle_model ? vehicle_model.trim() : '';
-  const normalizedInvoiceStatus = normalizeInvoiceStatus(invoice_status ?? invoice_required);
-  const trimmedLineItems = lineItems.map((item: any) => ({
-    ...item,
-    part_number: item.part_number ? item.part_number.trim() : '',
-    part_description: item.part_description ? item.part_description.trim() : '',
-    unit: item.unit ? item.unit.trim() : ''
-  }));
-  // Add this logging block:
-  console.log('Incoming sales order POST request body:', req.body);
-  console.log('Summary fields:', {
-    estimated_cost, estimatedCostType: typeof estimated_cost,
-  });
-  if (lineItems && lineItems.length > 0) {
-    lineItems.forEach((item: any, idx: number) => {
-      console.log(`Line item ${idx}:`, {
-        part_number: item.part_number,
-        quantity: item.quantity, quantityType: typeof item.quantity,
-        quantity_sold: item.quantity_sold, quantitySoldType: typeof item.quantity_sold,
-        unit_price: item.unit_price, unitPriceType: typeof item.unit_price,
-        line_amount: item.line_amount, lineAmountType: typeof item.line_amount,
-      });
-    });
-  }
-  console.log('Integer fields:', {
-    sales_order_id: req.body.sales_order_id, sales_order_id_type: typeof req.body.sales_order_id,
-    customer_id: req.body.customer_id, customer_id_type: typeof req.body.customer_id,
-    quote_id: req.body.quote_id, quote_id_type: typeof req.body.quote_id,
-  });
-  const client = await pool.connect();
   try {
-    await client.query('BEGIN');
-    // Insert the sales order (status: OPEN, no line items yet)
-    const idRes = await client.query("SELECT nextval('salesorderhistory_sales_order_id_seq')");
-    const newSalesOrderId = idRes.rows[0].nextval;
-    const currentYear = new Date().getFullYear();
-    const { sequenceNumber, nnnnn } = await getNextSalesOrderSequenceNumberForYear(currentYear);
-    const formattedSONumber = `SO-${currentYear}-${nnnnn.toString().padStart(5, '0')}`;
-    const salesOrderQuery = `
-      INSERT INTO salesorderhistory (sales_order_id, sales_order_number, customer_id, sales_date, product_name, product_description, terms, customer_po_number, vin_number, vehicle_make, vehicle_model, invoice_status, subtotal, total_gst_amount, total_amount, status, estimated_cost, sequence_number, quote_id, source_quote_number)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20);
-    `;
-    const customerIdInt = customer_id !== undefined && customer_id !== null ? parseInt(customer_id, 10) : null;
-    const quoteIdInt = req.body.quote_id !== undefined && req.body.quote_id !== null ? parseInt(req.body.quote_id, 10) : null;
-    const sourceQuoteNumber = req.body.source_quote_number || null;
-    const estimatedCostNum = estimated_cost !== undefined && estimated_cost !== null ? parseFloat(estimated_cost) : 0;
-    const lineItemsParsed = (trimmedLineItems || []).map((item: any) => ({
-      ...item,
-      quantity_sold: item.quantity_sold !== undefined && item.quantity_sold !== null ? parseFloat(item.quantity_sold) : 0,
-      unit_price: item.unit_price !== undefined && item.unit_price !== null ? parseFloat(item.unit_price) : 0,
-      line_amount: item.line_amount !== undefined && item.line_amount !== null ? parseFloat(item.line_amount) : 0,
-    }));
-    const salesOrderValues = [
-      newSalesOrderId,
-      formattedSONumber,
-      customerIdInt,
-      sales_date,
-      trimmedProductName,
-      trimmedProductDescription,
-      trimmedTerms,
-      trimmedCustomerPoNumber,
-      trimmedVinNumber,
-      trimmedVehicleMake,
-      trimmedVehicleModel,
-      normalizedInvoiceStatus,
-      0, // subtotal - will be calculated by backend
-      0, // total_gst_amount - will be calculated by backend
-      0, // total_amount - will be calculated by backend
-      status || 'Open',
-      estimatedCostNum,
-      sequenceNumber,
-      quoteIdInt,
-      sourceQuoteNumber,
-    ];
-    await client.query(salesOrderQuery, salesOrderValues);
-    // For each line item, upsert all fields
-    for (const item of lineItemsParsed) {
-      await salesOrderService.upsertLineItem(newSalesOrderId, item, client, req.user);
-    }
-    // Recalculate and update summary fields
-    await salesOrderService.recalculateAndUpdateSummary(newSalesOrderId, client);
-    await client.query('COMMIT');
-    
-    // Recalculate aggregated parts to order after sales order creation
+    const created = await salesOrderService.createSalesOrder({ header, lineItems }, req.user);
+
     await recalculateAggregatedPartsToOrder();
-    
-    res.status(201).json({ message: 'Sales order created successfully', sales_order_id: newSalesOrderId, sales_order_number: formattedSONumber });
+
+    res.status(201).json({
+      message: 'Sales order created successfully',
+      sales_order_id: created.sales_order_id,
+      sales_order_number: created.sales_order_number,
+    });
   } catch (err: any) {
-    await client.query('ROLLBACK');
     console.error('Error in POST /api/sales-orders:', err);
-    res.status(500).json({ error: err.message || 'Internal server error' });
-  } finally {
-    client.release();
+    const message = err?.message ?? 'Internal server error';
+    if (typeof message === 'string' && (message.includes('required') || message.includes('not found') || message.includes('must be'))) {
+      res.status(400).json({ error: message });
+      return;
+    }
+    res.status(500).json({ error: message || 'Internal server error' });
   }
 });
 

@@ -1,10 +1,13 @@
-import { Pool } from 'pg';
+import { Pool, PoolClient } from 'pg';
 import { SalesOrderService } from '../SalesOrderService';
 import { EmailService } from '../emailService';
 import { PDFService } from '../pdfService';
 import { AgentTaskEvent, AgentTaskFacade } from './AgentTaskFacade';
 import { VoiceService } from '../voice/VoiceService';
 import { TaskInput, TaskStatus } from '../TaskService';
+import { QuoteService } from '../QuoteService';
+import { PurchaseOrderService } from '../PurchaseOrderService';
+import DocumentEmailService from '../DocumentEmailService';
 
 export class AgentToolsV2 {
   private soService: SalesOrderService;
@@ -12,12 +15,30 @@ export class AgentToolsV2 {
   private pdfService: PDFService;
   private taskFacade: AgentTaskFacade;
   private voiceService: VoiceService;
+  private quoteService: QuoteService;
+  private purchaseOrderService: PurchaseOrderService;
+  private documentEmailService: DocumentEmailService;
   constructor(private pool: Pool) {
     this.soService = new SalesOrderService(pool);
     this.emailService = new EmailService(pool);
     this.pdfService = new PDFService(pool);
     this.taskFacade = new AgentTaskFacade(pool);
     this.voiceService = new VoiceService(pool);
+    this.quoteService = new QuoteService(pool);
+    this.purchaseOrderService = new PurchaseOrderService(pool);
+    this.documentEmailService = new DocumentEmailService(pool, this.emailService, this.pdfService);
+  }
+
+  private requireEmailUser(userId: number | null | undefined): number {
+    if (userId === null || userId === undefined) {
+      throw new Error('Authenticated user context is required for email operations');
+    }
+
+    if (typeof userId !== 'number' || !Number.isFinite(userId)) {
+      throw new Error('Invalid user id provided for email operation');
+    }
+
+    return userId;
   }
 
   private toBoolean(value: any): boolean {
@@ -264,67 +285,13 @@ export class AgentToolsV2 {
 
   // Sales Orders
   async createSalesOrder(sessionId: number, payload: any) {
-    const client = await this.pool.connect();
     try {
-      await client.query('BEGIN');
-      const now = new Date();
-      const year = now.getFullYear();
-      const seqRes = await client.query(
-        `SELECT MAX(CAST(SUBSTRING(CAST(sequence_number AS TEXT), 5, 5) AS INTEGER)) AS max_seq
-         FROM salesorderhistory
-         WHERE sequence_number IS NOT NULL
-           AND CAST(sequence_number AS TEXT) LIKE $1`,
-        [`${year}%`]
-      );
-      const seq = (parseInt(seqRes.rows[0]?.max_seq, 10) || 0) + 1;
-      const sequenceNumber = `${year}${String(seq).padStart(5, '0')}`;
-      const soNum = `SO-${year}-${String(seq).padStart(5, '0')}`;
-      const header = payload.header || {};
-      const subtotal = Number(header.subtotal || 0);
-      const gst = Number(header.total_gst_amount || subtotal * 0.05);
-      const total = Number(header.total_amount || subtotal + gst);
-      const invoiceStatus = this.normalizeInvoiceStatus(header.invoice_status ?? header.invoice_required);
-      const insert = await client.query(
-        `INSERT INTO salesorderhistory (sales_order_number, customer_id, sales_date, product_name, product_description, terms, customer_po_number, vin_number, vehicle_make, vehicle_model, invoice_status, subtotal, total_gst_amount, total_amount, status, estimated_cost, sequence_number, quote_id, source_quote_number)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING sales_order_id`,
-        [
-          soNum,
-          header.customer_id || null,
-          header.sales_date || now,
-          header.product_name || '',
-          header.product_description || '',
-          header.terms || '',
-          header.customer_po_number || '',
-          header.vin_number || '',
-          header.vehicle_make || '',
-          header.vehicle_model || '',
-          invoiceStatus,
-          subtotal,
-          gst,
-          total,
-          header.status || 'Open',
-          Number(header.estimated_cost || 0),
-          sequenceNumber,
-          header.quote_id !== undefined && header.quote_id !== null ? Number(header.quote_id) : null,
-          header.source_quote_number || null,
-        ]
-      );
-      const soId = insert.rows[0].sales_order_id;
-      const lines = Array.isArray(payload.lineItems) ? payload.lineItems : [];
-      for (const item of lines) {
-        await this.soService.upsertLineItem(soId, item, client, { access_role: 'Admin' }); // Agent V2 has admin privileges
-      }
-      await this.soService.recalculateAndUpdateSummary(soId, client);
-      await client.query('COMMIT');
-      const out = { sales_order_id: soId, sales_order_number: soNum };
-      await this.audit(sessionId, 'createSalesOrder', payload, out, true);
-      return out;
-    } catch (e:any) {
-      await client.query('ROLLBACK');
+      const result = await this.soService.createSalesOrder(payload, { access_role: 'Admin' });
+      await this.audit(sessionId, 'createSalesOrder', payload, result, true);
+      return result;
+    } catch (e: any) {
       await this.audit(sessionId, 'createSalesOrder', payload, { error: e.message }, false);
       throw e;
-    } finally {
-      client.release();
     }
   }
 
@@ -382,46 +349,14 @@ export class AgentToolsV2 {
 
   // Purchase Orders
   async createPurchaseOrder(sessionId: number, payload: any) {
-    const client = await this.pool.connect();
     try {
-      await client.query('BEGIN');
-      const now = new Date();
-      const year = now.getFullYear();
-      const seqRes = await client.query(`SELECT COALESCE(MAX(sequence_number),0)+1 as seq FROM purchasehistory WHERE EXTRACT(YEAR FROM purchase_date)= $1`, [year]);
-      const seq = parseInt(seqRes.rows[0].seq) || 1;
-      const poNum = `PO-${year}-${String(seq).padStart(5, '0')}`;
-      const header = payload.header || {};
-      const subtotal = Number(header.subtotal || 0);
-      const gst = Number(header.total_gst_amount || (subtotal * 0.05));
-      const total = Number(header.total_amount || (subtotal + gst));
-      const insert = await client.query(
-        `INSERT INTO purchasehistory (purchase_number, vendor_id, purchase_date, subtotal, total_gst_amount, total_amount, status, sequence_number, pickup_notes, pickup_time, pickup_location, pickup_contact_person, pickup_phone, pickup_instructions)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING purchase_id` ,
-        [poNum, header.vendor_id || null, header.purchase_date || now, subtotal, gst, total, header.status || 'Open', seq, header.pickup_notes || null, header.pickup_time || null, header.pickup_location || null, header.pickup_contact_person || null, header.pickup_phone || null, header.pickup_instructions || null]
-      );
-      const poId = insert.rows[0].purchase_id;
-      const lines = Array.isArray(payload.lineItems) ? payload.lineItems : [];
-      for (const item of lines) {
-        const normalized = String(item.part_number || '').trim().toUpperCase();
-        const invQ = await client.query(
-          `SELECT part_id FROM inventory WHERE REPLACE(REPLACE(UPPER(part_number), '-', ''), ' ', '') = REPLACE(REPLACE(UPPER($1), '-', ''), ' ', '')`,
-          [normalized]
-        );
-        const resolvedPartId = invQ.rows[0]?.part_id || null;
-        await client.query(
-          'INSERT INTO purchaselineitems (purchase_id, part_number, part_description, quantity, unit_cost, line_amount, unit, part_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
-          [poId, item.part_number || '', item.part_description || '', Number(item.quantity || 0), Number(item.unit_cost || 0), Number(item.line_amount || 0), item.unit || 'Each', resolvedPartId]
-        );
-      }
-      await client.query('COMMIT');
-      const out = { purchase_id: poId, purchase_number: poNum };
-      await this.audit(sessionId, 'createPurchaseOrder', payload, out, true);
-      return out;
-    } catch (e:any) {
-      await client.query('ROLLBACK');
+      const result = await this.purchaseOrderService.createPurchaseOrder(payload);
+      await this.audit(sessionId, 'createPurchaseOrder', payload, result, true);
+      return result;
+    } catch (e: any) {
       await this.audit(sessionId, 'createPurchaseOrder', payload, { error: e.message }, false);
       throw e;
-    } finally { client.release(); }
+    }
   }
 
   async updatePurchaseOrder(sessionId: number, purchaseOrderId: number, patch: any) {
@@ -519,43 +454,62 @@ export class AgentToolsV2 {
     return out;
   }
 
-  async emailPurchaseOrder(sessionId: number, purchaseId: number, to: string, customMessage?: string) {
-    const userId = undefined; // optionally pass authenticated user id
-    const pdfBuffer = await this.pdfService.generatePurchaseOrderPDF(purchaseId);
-    const template = this.emailService.getPurchaseOrderEmailTemplate({ purchaseOrderNumber: String(purchaseId), vendorName: '', totalAmount: 0, items: [], customMessage });
-    const success = await this.emailService.sendEmail({ to, subject: template.subject, html: template.html, text: template.text, attachments:[{ filename:`purchase_order_${purchaseId}.pdf`, content: pdfBuffer, contentType: 'application/pdf' }]}, userId);
-    await this.audit(sessionId,'emailPurchaseOrder',{purchaseId,to,customMessage},{success},success);
-    return { success };
+  async emailPurchaseOrder(
+    sessionId: number,
+    purchaseId: number,
+    to: string | string[],
+    customMessage: string | undefined,
+    userId?: number | null
+  ) {
+    try {
+      const result = await this.documentEmailService.sendPurchaseOrderEmail(purchaseId, to, {
+        customMessage,
+        userId: userId ?? undefined,
+      });
+
+      if (!result.success) {
+        await this.audit(sessionId, 'emailPurchaseOrder', { purchaseId, to, customMessage }, result, false);
+        throw new Error(result.message || 'Failed to send purchase order email');
+      }
+
+      await this.audit(sessionId, 'emailPurchaseOrder', { purchaseId, to, customMessage }, result, true);
+      return result;
+    } catch (error: any) {
+      await this.audit(
+        sessionId,
+        'emailPurchaseOrder',
+        { purchaseId, to, customMessage },
+        { error: error?.message ?? String(error) },
+        false
+      );
+      throw error;
+    }
   }
 
   // Quotes
   async createQuote(sessionId: number, payload: any) {
-    const res = await this.pool.query(
-      `INSERT INTO quotes (
-        customer_id, quote_number, quote_date, valid_until, product_name, product_description,
-        estimated_cost, status, terms, customer_po_number, vin_number, vehicle_make, vehicle_model
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING quote_id`,
-      [
-        payload.customer_id || null,
-        payload.quote_number || null,
-        payload.quote_date || new Date(),
-        payload.valid_until || new Date(),
-        payload.product_name || '',
-        payload.product_description || '',
-        Number(payload.estimated_cost || 0),
-        payload.status || 'Open',
-        payload.terms || '',
-        payload.customer_po_number || '',
-        payload.vin_number || '',
-        payload.vehicle_make || '',
-        payload.vehicle_model || ''
-      ]
-    );
-    const out = { quote_id: res.rows[0].quote_id };
-    await this.audit(sessionId,'createQuote',payload,out,true);
-    return out;
-  }
+    const baseQuoteDate = payload?.quote_date ? new Date(payload.quote_date) : new Date();
+    const quoteDate = Number.isNaN(baseQuoteDate.getTime()) ? new Date() : baseQuoteDate;
+    const validUntilCandidate = payload?.valid_until ? new Date(payload.valid_until) : null;
+    const resolvedValidUntil = validUntilCandidate && !Number.isNaN(validUntilCandidate.getTime())
+      ? validUntilCandidate
+      : new Date(quoteDate.getTime() + 30 * 24 * 60 * 60 * 1000);
 
+    const quoteInput = {
+      ...payload,
+      quote_date: quoteDate,
+      valid_until: resolvedValidUntil,
+    };
+
+    try {
+      const result = await this.quoteService.createQuote(quoteInput as any);
+      await this.audit(sessionId, 'createQuote', payload, result, true);
+      return result;
+    } catch (error: any) {
+      await this.audit(sessionId, 'createQuote', payload, { error: error?.message }, false);
+      throw error;
+    }
+  }
   async updateQuote(sessionId: number, quoteId: number, patch: any) {
     const allowed=['customer_id','quote_date','valid_until','product_name','product_description','estimated_cost','status','terms','customer_po_number','vin_number','vehicle_make','vehicle_model'];
     const fields:string[]=[]; const vals:any[]=[]; let i=1;
@@ -566,12 +520,321 @@ export class AgentToolsV2 {
     return out;
   }
 
-  async emailQuote(sessionId: number, quoteId: number, to: string) {
-    const pdfBuffer = await this.pdfService.generateQuotePDF(quoteId);
-    const template = this.emailService.getQuoteEmailTemplate({ quoteNumber: String(quoteId), customerName:'', productName:'', productDescription:'', estimatedCost:0, validUntil: new Date().toLocaleDateString() });
-    const success = await this.emailService.sendEmail({ to, subject: template.subject, html: template.html, text: template.text, attachments:[{ filename:`quote_${quoteId}.pdf`, content: pdfBuffer, contentType:'application/pdf' }]}, undefined);
-    await this.audit(sessionId,'emailQuote',{quoteId,to},{success},success);
-    return { success };
+  async emailQuote(
+    sessionId: number,
+    quoteId: number,
+    to: string | string[],
+    userId?: number | null
+  ) {
+    try {
+      const result = await this.documentEmailService.sendQuoteEmail(quoteId, to, { userId: userId ?? undefined });
+
+      if (!result.success) {
+        await this.audit(sessionId, 'emailQuote', { quoteId, to }, result, false);
+        throw new Error(result.message || 'Failed to send quote email');
+      }
+
+      await this.audit(sessionId, 'emailQuote', { quoteId, to }, result, true);
+      return result;
+    } catch (error: any) {
+      await this.audit(
+        sessionId,
+        'emailQuote',
+        { quoteId, to },
+        { error: error?.message ?? String(error) },
+        false
+      );
+      throw error;
+    }
+  }
+
+  async getEmailSettings(sessionId: number, userId: number | null | undefined) {
+    const resolvedUserId = this.requireEmailUser(userId);
+    try {
+      const settings = await this.emailService.getUserEmailSettings(resolvedUserId);
+      const { email_pass: _password, ...safeSettings } = settings ?? {};
+      const output = { settings: settings ? safeSettings : null };
+      await this.audit(sessionId, 'getEmailSettings', { userId: resolvedUserId }, output, true);
+      return output;
+    } catch (error: any) {
+      await this.audit(
+        sessionId,
+        'getEmailSettings',
+        { userId: resolvedUserId },
+        { error: error?.message ?? String(error) },
+        false
+      );
+      throw error;
+    }
+  }
+
+  async saveEmailSettings(sessionId: number, userId: number | null | undefined, payload: any) {
+    const resolvedUserId = this.requireEmailUser(userId);
+    try {
+      const emailHost = typeof payload?.email_host === 'string' ? payload.email_host.trim() : '';
+      const emailPortRaw = payload?.email_port;
+      const emailUser = typeof payload?.email_user === 'string' ? payload.email_user.trim() : '';
+
+      if (!emailHost || !emailUser || emailPortRaw === undefined) {
+        throw new Error('email_host, email_port, and email_user are required to save email settings');
+      }
+
+      const emailPort = Number(emailPortRaw);
+      if (!Number.isFinite(emailPort)) {
+        throw new Error('email_port must be a valid number');
+      }
+
+      const emailSecureSource = payload?.email_secure;
+      const emailSecure =
+        emailSecureSource === true ||
+        emailSecureSource === 'true' ||
+        emailSecureSource === 1 ||
+        emailSecureSource === '1';
+
+      const success = await this.emailService.saveUserEmailSettings(resolvedUserId, {
+        email_provider:
+          typeof payload?.email_provider === 'string' && payload.email_provider.trim().length > 0
+            ? payload.email_provider.trim()
+            : 'custom',
+        email_host: emailHost,
+        email_port: emailPort,
+        email_secure: emailSecure,
+        email_user: emailUser,
+        email_pass: typeof payload?.email_pass === 'string' && payload.email_pass.trim().length > 0
+          ? payload.email_pass
+          : undefined,
+        email_from: typeof payload?.email_from === 'string' && payload.email_from.trim().length > 0
+          ? payload.email_from.trim()
+          : undefined,
+      });
+
+      const output = {
+        success,
+        message: success
+          ? 'Email settings saved successfully'
+          : 'Failed to save email settings',
+      };
+
+      await this.audit(sessionId, 'saveEmailSettings', { userId: resolvedUserId, payload }, output, success);
+
+      if (!success) {
+        throw new Error(output.message);
+      }
+
+      return output;
+    } catch (error: any) {
+      await this.audit(
+        sessionId,
+        'saveEmailSettings',
+        { userId: resolvedUserId, payload },
+        { error: error?.message ?? String(error) },
+        false
+      );
+      throw error;
+    }
+  }
+
+  async testEmailConnection(sessionId: number, userId: number | null | undefined) {
+    const resolvedUserId = this.requireEmailUser(userId);
+    try {
+      const success = await this.emailService.testUserEmailConnection(resolvedUserId);
+      const output = {
+        success,
+        message: success
+          ? 'Email connection test successful'
+          : 'Email connection test failed',
+      };
+      await this.audit(sessionId, 'testEmailConnection', { userId: resolvedUserId }, output, success);
+      if (!success) {
+        throw new Error(output.message);
+      }
+      return output;
+    } catch (error: any) {
+      await this.audit(
+        sessionId,
+        'testEmailConnection',
+        { userId: resolvedUserId },
+        { error: error?.message ?? String(error) },
+        false
+      );
+      throw error;
+    }
+  }
+
+  async listEmailTemplates(sessionId: number, userId: number | null | undefined) {
+    const resolvedUserId = this.requireEmailUser(userId);
+    try {
+      const templates = await this.emailService.getUserEmailTemplates(resolvedUserId);
+      const output = { templates };
+      await this.audit(sessionId, 'listEmailTemplates', { userId: resolvedUserId }, output, true);
+      return output;
+    } catch (error: any) {
+      await this.audit(
+        sessionId,
+        'listEmailTemplates',
+        { userId: resolvedUserId },
+        { error: error?.message ?? String(error) },
+        false
+      );
+      throw error;
+    }
+  }
+
+  async getEmailTemplate(
+    sessionId: number,
+    userId: number | null | undefined,
+    templateId: number
+  ) {
+    const resolvedUserId = this.requireEmailUser(userId);
+    try {
+      const template = await this.emailService.getEmailTemplate(templateId, resolvedUserId);
+      if (!template) {
+        throw new Error('Email template not found');
+      }
+      await this.audit(
+        sessionId,
+        'getEmailTemplate',
+        { userId: resolvedUserId, templateId },
+        { template },
+        true
+      );
+      return { template };
+    } catch (error: any) {
+      await this.audit(
+        sessionId,
+        'getEmailTemplate',
+        { userId: resolvedUserId, templateId },
+        { error: error?.message ?? String(error) },
+        false
+      );
+      throw error;
+    }
+  }
+
+  async saveEmailTemplate(sessionId: number, userId: number | null | undefined, payload: any) {
+    const resolvedUserId = this.requireEmailUser(userId);
+    const templateIdRaw = payload?.template_id ?? payload?.id;
+    const templateId = Number(templateIdRaw);
+
+    const hasTemplateId = Number.isFinite(templateId);
+
+    try {
+      const name = typeof payload?.name === 'string' ? payload.name.trim() : '';
+      const subject = typeof payload?.subject === 'string' ? payload.subject.trim() : '';
+      const htmlContent = typeof payload?.html_content === 'string' ? payload.html_content : '';
+
+      if (!name || !subject || !htmlContent) {
+        throw new Error('name, subject, and html_content are required for email templates');
+      }
+
+      const textContent = typeof payload?.text_content === 'string' ? payload.text_content : undefined;
+      const isDefault =
+        payload?.is_default === true ||
+        payload?.is_default === 'true' ||
+        payload?.is_default === 1 ||
+        payload?.is_default === '1';
+
+      if (hasTemplateId) {
+        const success = await this.emailService.updateEmailTemplate(templateId, resolvedUserId, {
+          name,
+          subject,
+          html_content: htmlContent,
+          text_content: textContent,
+          is_default: isDefault,
+        });
+
+        const output = {
+          success,
+          templateId,
+          message: success
+            ? 'Email template updated successfully'
+            : 'Template not found or update failed',
+        };
+
+        await this.audit(
+          sessionId,
+          'saveEmailTemplate',
+          { userId: resolvedUserId, payload },
+          output,
+          success
+        );
+
+        if (!success) {
+          throw new Error(output.message);
+        }
+
+        return output;
+      }
+
+      const type = typeof payload?.type === 'string' ? payload.type.trim() : '';
+      if (!type) {
+        throw new Error('type is required when creating a new email template');
+      }
+
+      const createdId = await this.emailService.createEmailTemplate(resolvedUserId, {
+        name,
+        type: type as any,
+        subject,
+        html_content: htmlContent,
+        text_content: textContent,
+        is_default: isDefault,
+      });
+
+      const output = {
+        success: true,
+        templateId: createdId,
+        message: 'Email template created successfully',
+      };
+
+      await this.audit(sessionId, 'saveEmailTemplate', { userId: resolvedUserId, payload }, output, true);
+      return output;
+    } catch (error: any) {
+      await this.audit(
+        sessionId,
+        'saveEmailTemplate',
+        { userId: resolvedUserId, payload },
+        { error: error?.message ?? String(error) },
+        false
+      );
+      throw error;
+    }
+  }
+
+  async deleteEmailTemplate(
+    sessionId: number,
+    userId: number | null | undefined,
+    templateId: number
+  ) {
+    const resolvedUserId = this.requireEmailUser(userId);
+    try {
+      const success = await this.emailService.deleteEmailTemplate(templateId, resolvedUserId);
+      const output = {
+        success,
+        message: success
+          ? 'Email template deleted successfully'
+          : 'Template not found or delete failed',
+      };
+      await this.audit(
+        sessionId,
+        'deleteEmailTemplate',
+        { userId: resolvedUserId, templateId },
+        output,
+        success
+      );
+      if (!success) {
+        throw new Error(output.message);
+      }
+      return output;
+    } catch (error: any) {
+      await this.audit(
+        sessionId,
+        'deleteEmailTemplate',
+        { userId: resolvedUserId, templateId },
+        { error: error?.message ?? String(error) },
+        false
+      );
+      throw error;
+    }
   }
 
   async convertQuoteToSO(sessionId: number, quoteId: number) {
