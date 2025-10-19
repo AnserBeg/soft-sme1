@@ -43,6 +43,22 @@ You need to manually set:
 - `GEMINI_API_KEY`: Required for the hosted embedding model used by the AI assistant
 - `AGENT_V2_DEFAULT_USER_ID`: Numeric user ID that the AI agent should act on behalf of when it calls the backend with service credentials
 - `AGENT_V2_DEFAULT_COMPANY_ID`: Matching company ID for the default agent context
+- `AGENT_V2_DEFAULT_USER_EMAIL` / `AGENT_V2_DEFAULT_USERNAME` (optional): Email or username that the backend can use to auto-detect the service account when numeric IDs are not supplied
+
+#### Finding the values for the Agent V2 defaults
+
+1. Connect to your production database (Render "Connect" tab → "psql" button or a local client) and run:
+   ```sql
+   SELECT id, email, username, company_id
+   FROM users
+   WHERE email = '<service user email>'
+      OR username = '<service username>'
+   LIMIT 1;
+   ```
+   Replace the placeholders with the account the agent should impersonate. The resulting `id` and `company_id` become the values for `AGENT_V2_DEFAULT_USER_ID` and `AGENT_V2_DEFAULT_COMPANY_ID`.
+2. If you do not already have a dedicated service account, create one through the product UI or by inserting a row into `users`. Make sure it is attached to the company whose data the agent should manage.
+3. Optionally set `AGENT_V2_DEFAULT_USER_EMAIL` and/or `AGENT_V2_DEFAULT_USERNAME` to the same email/username. These fallbacks let the backend auto-detect the record if the numeric IDs are removed in the future.
+4. Restart the service after updating the variables so the backend picks up the new defaults.
 
 ### 3a. Gemini Configuration (Recommended)
 The AI assistant now calls the Google Gemini embeddings API at runtime instead of downloading a local `sentence-transformers` model. Make sure:

@@ -25,13 +25,96 @@ const parseEnvNumeric = (value?: string | null): number | null => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
-const defaultServiceUserId =
-  parseEnvNumeric(process.env.AGENT_V2_DEFAULT_USER_ID) ??
-  parseEnvNumeric(process.env.AI_AGENT_DEFAULT_USER_ID);
+type ServiceContext = { userId: number | null; companyId: number | null };
 
-const defaultServiceCompanyId =
-  parseEnvNumeric(process.env.AGENT_V2_DEFAULT_COMPANY_ID) ??
-  parseEnvNumeric(process.env.AI_AGENT_DEFAULT_COMPANY_ID);
+const parseEnvServiceContext = (): ServiceContext => ({
+  userId:
+    parseEnvNumeric(process.env.AGENT_V2_DEFAULT_USER_ID) ??
+    parseEnvNumeric(process.env.AI_AGENT_DEFAULT_USER_ID),
+  companyId:
+    parseEnvNumeric(process.env.AGENT_V2_DEFAULT_COMPANY_ID) ??
+    parseEnvNumeric(process.env.AI_AGENT_DEFAULT_COMPANY_ID),
+});
+
+const fallbackServiceEmail = process.env.AGENT_V2_DEFAULT_USER_EMAIL?.trim() || 'agent-service@softsme.local';
+const fallbackServiceUsername = process.env.AGENT_V2_DEFAULT_USERNAME?.trim() || 'ai_agent_service';
+
+let cachedServiceContext: ServiceContext | null = null;
+
+const loadDefaultServiceContext = async (): Promise<ServiceContext> => {
+  const envContext = parseEnvServiceContext();
+
+  if (envContext.userId && envContext.companyId) {
+    cachedServiceContext = envContext;
+    return envContext;
+  }
+
+  if (cachedServiceContext && (!envContext.userId || !envContext.companyId)) {
+    const merged = {
+      userId: envContext.userId ?? cachedServiceContext.userId ?? null,
+      companyId: envContext.companyId ?? cachedServiceContext.companyId ?? null,
+    };
+    if (merged.userId && merged.companyId) {
+      return merged;
+    }
+  }
+
+  const context: ServiceContext = { ...envContext };
+
+  if (context.userId && !context.companyId) {
+    const userResult = await pool.query('SELECT company_id FROM users WHERE id = $1', [context.userId]);
+    const derivedCompanyId = parseNumeric(userResult.rows?.[0]?.company_id);
+    if (derivedCompanyId) {
+      context.companyId = derivedCompanyId;
+    }
+  }
+
+  if (!context.userId && context.companyId) {
+    const userResult = await pool.query('SELECT id FROM users WHERE company_id = $1 ORDER BY id LIMIT 1', [context.companyId]);
+    const derivedUserId = parseNumeric(userResult.rows?.[0]?.id);
+    if (derivedUserId) {
+      context.userId = derivedUserId;
+    }
+  }
+
+  if (!context.userId || !context.companyId) {
+    const fallbackResult = await pool.query(
+      `SELECT id, company_id FROM users WHERE ($1 <> '' AND LOWER(email) = LOWER($1)) OR ($2 <> '' AND LOWER(username) = LOWER($2)) ORDER BY id LIMIT 1`,
+      [fallbackServiceEmail, fallbackServiceUsername]
+    );
+    const fallbackRow = fallbackResult.rows?.[0];
+    const fallbackUserId = parseNumeric(fallbackRow?.id);
+    const fallbackCompanyId = parseNumeric(fallbackRow?.company_id);
+    if (fallbackUserId) {
+      context.userId = context.userId ?? fallbackUserId;
+    }
+    if (fallbackCompanyId) {
+      context.companyId = context.companyId ?? fallbackCompanyId;
+    }
+  }
+
+  if (!context.userId || !context.companyId) {
+    const anyUserResult = await pool.query(
+      'SELECT id, company_id FROM users WHERE company_id IS NOT NULL ORDER BY id LIMIT 1'
+    );
+    const anyRow = anyUserResult.rows?.[0];
+    const anyUserId = parseNumeric(anyRow?.id);
+    const anyCompanyId = parseNumeric(anyRow?.company_id);
+    if (anyUserId) {
+      context.userId = context.userId ?? anyUserId;
+    }
+    if (anyCompanyId) {
+      context.companyId = context.companyId ?? anyCompanyId;
+    }
+  }
+
+  if (!context.userId || !context.companyId) {
+    console.warn('agentV2: Unable to determine default service context automatically');
+  }
+
+  cachedServiceContext = context;
+  return context;
+};
 
 const parseNumeric = (value: unknown): number | null => {
   if (value === null || value === undefined) {
@@ -165,7 +248,11 @@ router.post('/session', authMiddleware, async (req: Request, res: Response) => {
   try {
     const authContext = (req as any).auth;
     const isServiceRequest = authContext?.kind === 'service';
-    const userId = parseNumeric(req.user?.id) ?? (isServiceRequest ? defaultServiceUserId : null);
+    let userId = parseNumeric(req.user?.id);
+    if (isServiceRequest) {
+      const defaultContext = await loadDefaultServiceContext();
+      userId = userId ?? defaultContext.userId ?? null;
+    }
     const result = await pool.query('INSERT INTO agent_sessions (user_id) VALUES ($1) RETURNING id', [userId]);
     res.json({ sessionId: result.rows[0].id });
   } catch (err) {
@@ -357,14 +444,16 @@ router.post('/chat', authMiddleware, async (req: Request, res: Response) => {
     if (isServiceRequest) {
       const bodyUserId = parseNumeric(req.body?.userId ?? req.body?.user_id);
       const bodyCompanyId = parseNumeric(req.body?.companyId ?? req.body?.company_id);
+      const defaultContext = await loadDefaultServiceContext();
 
-      userId = userId ?? bodyUserId ?? defaultServiceUserId ?? null;
-      companyId = companyId ?? bodyCompanyId ?? defaultServiceCompanyId ?? null;
+      userId = userId ?? bodyUserId ?? defaultContext.userId ?? null;
+      companyId = companyId ?? bodyCompanyId ?? defaultContext.companyId ?? null;
 
       if (!userId || !companyId) {
         const sessionContext = await loadSessionContext(sessionNumeric);
-        userId = userId ?? bodyUserId ?? sessionContext.userId ?? defaultServiceUserId;
-        companyId = companyId ?? bodyCompanyId ?? sessionContext.companyId ?? defaultServiceCompanyId;
+        userId = userId ?? bodyUserId ?? sessionContext.userId ?? defaultContext.userId ?? null;
+        companyId =
+          companyId ?? bodyCompanyId ?? sessionContext.companyId ?? defaultContext.companyId ?? null;
       }
     }
 
@@ -378,7 +467,7 @@ router.post('/chat', authMiddleware, async (req: Request, res: Response) => {
     } else if (!userId || !companyId) {
       return res.status(400).json({
         error:
-          'User and company context are required for agent actions. Configure AGENT_V2_DEFAULT_USER_ID and AGENT_V2_DEFAULT_COMPANY_ID for service requests.',
+          'User and company context are required for agent actions. Configure AGENT_V2_DEFAULT_USER_ID/AGENT_V2_DEFAULT_COMPANY_ID or provide a service user via AGENT_V2_DEFAULT_USER_EMAIL.',
       });
     }
 
