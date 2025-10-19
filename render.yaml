@@ -37,6 +37,11 @@ services:
         generateValue: true
       - key: CORS_ORIGIN
         value: "*"
+      # Set these to the numeric user/company IDs that the AI agent should impersonate
+      - key: AGENT_V2_DEFAULT_USER_ID
+        value: ""
+      - key: AGENT_V2_DEFAULT_COMPANY_ID
+        value: ""
       - key: TRANSFORMERS_CACHE
         value: "/var/lib/render/ai-cache/hf/transformers"
       - key: HUGGINGFACE_HUB_CACHE

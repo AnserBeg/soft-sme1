@@ -11,6 +11,28 @@ const router = express.Router();
 const analyticsLogger = new AgentAnalyticsLogger(pool);
 const skillLibrary = new AgentSkillLibraryService(pool);
 
+const parseEnvNumeric = (value?: string | null): number | null => {
+  if (value == null) {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const defaultServiceUserId =
+  parseEnvNumeric(process.env.AGENT_V2_DEFAULT_USER_ID) ??
+  parseEnvNumeric(process.env.AI_AGENT_DEFAULT_USER_ID);
+
+const defaultServiceCompanyId =
+  parseEnvNumeric(process.env.AGENT_V2_DEFAULT_COMPANY_ID) ??
+  parseEnvNumeric(process.env.AI_AGENT_DEFAULT_COMPANY_ID);
+
 const parseNumeric = (value: unknown): number | null => {
   if (value === null || value === undefined) {
     return null;
@@ -141,7 +163,9 @@ const requireServiceAuth = (req: Request): boolean => {
 
 router.post('/session', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const userId = parseNumeric(req.user?.id);
+    const authContext = (req as any).auth;
+    const isServiceRequest = authContext?.kind === 'service';
+    const userId = parseNumeric(req.user?.id) ?? (isServiceRequest ? defaultServiceUserId : null);
     const result = await pool.query('INSERT INTO agent_sessions (user_id) VALUES ($1) RETURNING id', [userId]);
     res.json({ sessionId: result.rows[0].id });
   } catch (err) {
@@ -334,13 +358,13 @@ router.post('/chat', authMiddleware, async (req: Request, res: Response) => {
       const bodyUserId = parseNumeric(req.body?.userId ?? req.body?.user_id);
       const bodyCompanyId = parseNumeric(req.body?.companyId ?? req.body?.company_id);
 
-      userId = userId ?? bodyUserId ?? null;
-      companyId = companyId ?? bodyCompanyId ?? null;
+      userId = userId ?? bodyUserId ?? defaultServiceUserId ?? null;
+      companyId = companyId ?? bodyCompanyId ?? defaultServiceCompanyId ?? null;
 
       if (!userId || !companyId) {
         const sessionContext = await loadSessionContext(sessionNumeric);
-        userId = userId ?? bodyUserId ?? sessionContext.userId;
-        companyId = companyId ?? bodyCompanyId ?? sessionContext.companyId;
+        userId = userId ?? bodyUserId ?? sessionContext.userId ?? defaultServiceUserId;
+        companyId = companyId ?? bodyCompanyId ?? sessionContext.companyId ?? defaultServiceCompanyId;
       }
     }
 
@@ -352,7 +376,10 @@ router.post('/chat', authMiddleware, async (req: Request, res: Response) => {
         return res.status(400).json({ error: 'Company context is required for agent chat' });
       }
     } else if (!userId || !companyId) {
-      return res.status(400).json({ error: 'User and company context are required for agent actions' });
+      return res.status(400).json({
+        error:
+          'User and company context are required for agent actions. Configure AGENT_V2_DEFAULT_USER_ID and AGENT_V2_DEFAULT_COMPANY_ID for service requests.',
+      });
     }
 
     console.log('agentV2: chat request', {
