@@ -118,6 +118,20 @@ When you rely on an API key (for example, using a Gemini key provided via
 that header and skip the normal JWT session validation for trusted
 service-to-service calls.
 
+> **Render / managed Postgres note:** If your database requires SSL (Render
+> does by default), set `DB_SSL=true` or specify an explicit
+> `DB_SSLMODE=require`. When a `DATABASE_URL` from Render is present, the
+> AI agent automatically appends `sslmode=require` so live data queries
+> work without additional configuration.
+
+> **How much of the database can the AI see?** The agent connects with the
+> exact credentials you provide through `DATABASE_URL` or the `DB_*`
+> environment variables. It can only query the schemas, tables, and rows
+> that user account is allowed to read. If you want the assistant to see
+> everything your application sees, supply the same credentials the app
+> uses. Conversely, you can restrict the agent by granting a read-only role
+> limited to the datasets you are comfortable exposing.
+
 ### 3. Run Setup Script
 
 **Windows:**
