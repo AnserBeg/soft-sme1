@@ -42,6 +42,10 @@ services:
         value: ""
       - key: AGENT_V2_DEFAULT_COMPANY_ID
         value: ""
+      - key: AGENT_V2_DEFAULT_USER_EMAIL
+        value: "agent-service@softsme.local"
+      - key: AGENT_V2_DEFAULT_USERNAME
+        value: "ai_agent_service"
       - key: TRANSFORMERS_CACHE
         value: "/var/lib/render/ai-cache/hf/transformers"
       - key: HUGGINGFACE_HUB_CACHE
