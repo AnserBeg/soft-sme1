@@ -2160,6 +2160,12 @@ Produce a corrected answer that resolves the critic findings, stays concise, and
         message_lower = message.lower()
         tools: List[str] = []
 
+        def add_tool(name: str) -> None:
+            """Append tool name preserving order and avoiding duplicates."""
+
+            if name not in tools:
+                tools.append(name)
+
         # Helper function to inspect recent conversation context for keywords
         def history_contains(keywords: List[str]) -> bool:
             if not conversation_history:
@@ -2187,8 +2193,9 @@ Produce a corrected answer that resolves the critic findings, stays concise, and
             "workflow",
         ]
 
-        if any(keyword in message_lower for keyword in documentation_keywords) or history_contains(documentation_keywords):
-            tools.append("rag")
+        documentation_in_message = any(
+            keyword in message_lower for keyword in documentation_keywords
+        )
 
         # Decide on SQL usage
         sql_keywords = [
@@ -2223,9 +2230,16 @@ Produce a corrected answer that resolves the critic findings, stays concise, and
 
         wants_data = any(keyword in message_lower for keyword in sql_keywords)
         references_entity = any(entity in message_lower for entity in business_entities)
+        history_mentions_entity = history_contains(business_entities)
 
-        if (wants_data and references_entity) or history_contains(business_entities):
-            tools.append("sql")
+        if (wants_data and references_entity) or history_mentions_entity:
+            add_tool("sql")
+
+        doc_triggered_by_history = history_contains(documentation_keywords)
+        if documentation_in_message or (
+            doc_triggered_by_history and not (wants_data and references_entity)
+        ):
+            add_tool("rag")
 
         action_keywords = [
             "create",
@@ -2256,11 +2270,10 @@ Produce a corrected answer that resolves the critic findings, stays concise, and
         targets_entity = any(entity in message_lower for entity in action_entities)
 
         if (wants_action and targets_entity) or history_contains(action_entities):
-            tools.append("action")
+            add_tool("action")
 
         # Always ensure LLM knowledge is available as a baseline option
-        if "llm_knowledge" not in tools:
-            tools.append("llm_knowledge")
+        add_tool("llm_knowledge")
 
         return tools
     
@@ -2284,6 +2297,58 @@ Produce a corrected answer that resolves the critic findings, stays concise, and
                 schema_info = await self.rag_tool.ainvoke(schema_query)
             else:
                 schema_info = "Documentation lookup disabled."
+
+            if not isinstance(schema_info, str):
+                schema_info = json.dumps(schema_info, indent=2, default=str)
+
+            schema_info = schema_info or ""
+            schema_lower = schema_info.lower()
+
+            essential_schema_sections = {
+                "salesorderhistory": (
+                    "**salesorderhistory Table (Sales Orders):**\n"
+                    "- sales_order_id (SERIAL PRIMARY KEY)\n"
+                    "- sales_order_number (VARCHAR)\n"
+                    "- customer_id (INTEGER FK → customermaster.customer_id)\n"
+                    "- sales_date (DATE)\n"
+                    "- product_name (VARCHAR)\n"
+                    "- product_description (TEXT)\n"
+                    "- subtotal, total_gst_amount, total_amount (DECIMAL)\n"
+                    "- status, estimated_cost, default_hourly_rate, created_at, updated_at"
+                ),
+                "salesorderlineitems": (
+                    "**salesorderlineitems Table (Sales Order Line Items):**\n"
+                    "- sales_order_line_item_id (SERIAL PRIMARY KEY)\n"
+                    "- sales_order_id (INTEGER FK → salesorderhistory.sales_order_id)\n"
+                    "- part_number, part_description, quantity_sold, unit, unit_price, line_amount\n"
+                    "- created_at, updated_at"
+                ),
+                "products": (
+                    "**products Table (Product Catalog):**\n"
+                    "- product_id (SERIAL PRIMARY KEY)\n"
+                    "- product_name (VARCHAR UNIQUE)\n"
+                    "- product_description (TEXT)\n"
+                    "- created_at, updated_at"
+                ),
+            }
+
+            supplemental_sections: List[str] = []
+            for key, section in essential_schema_sections.items():
+                if key not in schema_lower:
+                    supplemental_sections.append(section)
+
+            if "key relationships" not in schema_lower:
+                supplemental_sections.append(
+                    "**Key Relationships:**\n"
+                    "- salesorderhistory.customer_id → customermaster.customer_id\n"
+                    "- salesorderlineitems.sales_order_id → salesorderhistory.sales_order_id\n"
+                    "- Match salesorderhistory.product_name to products.product_name for catalog details"
+                )
+
+            if supplemental_sections:
+                schema_info = (schema_info.strip() + "\n\n" if schema_info.strip() else "") + "\n\n".join(
+                    supplemental_sections
+                )
 
             # Build conversation context for SQL generation
             conversation_context = ""
