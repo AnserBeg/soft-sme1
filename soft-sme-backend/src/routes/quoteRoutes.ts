@@ -1,6 +1,7 @@
 import express, { Request, Response } from 'express';
 import { pool } from '../db';
-import { getNextQuoteSequenceNumberForYear, getNextSalesOrderSequenceNumberForYear } from '../utils/sequence';
+import { getNextSalesOrderSequenceNumberForYear } from '../utils/sequence';
+import { QuoteService } from '../services/QuoteService';
 import PDFDocument from 'pdfkit';
 import fs from 'fs';
 import path from 'path';
@@ -20,6 +21,7 @@ const formatCurrency = (value: number | string | null | undefined): string => {
 };
 
 const router = express.Router();
+const quoteService = new QuoteService(pool);
 
 // Get all quotes'
 router.get('/', async (req: Request, res: Response) => {
@@ -69,72 +71,17 @@ router.get('/:id', async (req: Request, res: Response) => {
 
 // Create a new quote
 router.post('/', async (req: Request, res: Response) => {
-  const {
-    customer_id,
-    quote_date,
-    valid_until,
-    product_name,
-    product_description,
-    estimated_cost,
-    status,
-    terms,
-    customer_po_number,
-    vin_number,
-    vehicle_make,
-    vehicle_model
-  } = req.body;
-
-  if (!customer_id || !quote_date || !valid_until || !product_name || !estimated_cost) {
-    return res.status(400).json({ error: 'Missing required fields' });
-  }
-
-  const client = await pool.connect();
   try {
-    await client.query('BEGIN');
-
-    // First verify that the customer exists
-    const customerCheck = await client.query('SELECT customer_id FROM customermaster WHERE customer_id = $1', [customer_id]);
-    if (customerCheck.rows.length === 0) {
-      return res.status(400).json({ error: `Customer with ID ${customer_id} not found` });
-    }
-
-    const currentYear = new Date().getFullYear();
-    const { sequenceNumber, nnnnn } = await getNextQuoteSequenceNumberForYear(currentYear);
-    const formattedQuoteNumber = `QO-${currentYear}-${nnnnn.toString().padStart(5, '0')}`;
-
-    const result = await client.query(
-      `INSERT INTO quotes (
-        quote_number, customer_id, quote_date, valid_until, product_name, product_description,
-        estimated_cost, status, sequence_number, terms, customer_po_number, vin_number,
-        vehicle_make, vehicle_model
-      ) VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
-      ) RETURNING *;`,
-      [
-        formattedQuoteNumber,
-        customer_id,
-        quote_date,
-        valid_until,
-        product_name,
-        product_description,
-        estimated_cost,
-        status || 'Draft',
-        sequenceNumber,
-        terms || null,
-        customer_po_number || null,
-        vin_number || null,
-        vehicle_make || null,
-        vehicle_model || null
-      ]
-    );
-    await client.query('COMMIT');
-    res.status(201).json(result.rows[0]);
+    const created = await quoteService.createQuote(req.body);
+    res.status(201).json(created);
   } catch (error) {
-    await client.query('ROLLBACK');
     console.error('quoteRoutes: Error creating quote:', error);
-    res.status(500).json({ error: 'Internal server error', details: (error as any).message });
-  } finally {
-    client.release();
+    const message = error instanceof Error ? error.message : 'Internal server error';
+    if (message.includes('required') || message.includes('not found') || message.includes('must be')) {
+      res.status(400).json({ error: message });
+      return;
+    }
+    res.status(500).json({ error: 'Internal server error', details: message });
   }
 });
 

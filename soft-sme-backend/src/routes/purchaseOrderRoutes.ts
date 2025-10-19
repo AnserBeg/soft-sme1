@@ -6,6 +6,7 @@ import fs from 'fs';
 import path from 'path';
 import axios from 'axios'; // Added for QBO API integration
 import { PurchaseOrderCalculationService } from '../services/PurchaseOrderCalculationService';
+import { PurchaseOrderService } from '../services/PurchaseOrderService';
 
 // Utility function to create vendor mappings for parts in a purchase order
 async function createVendorMappingsForPO(client: any, lineItems: any[], vendorId: number) {
@@ -65,6 +66,7 @@ async function createVendorMappingsForPO(client: any, lineItems: any[], vendorId
 
 const router = express.Router();
 const calculationService = new PurchaseOrderCalculationService(pool);
+const purchaseOrderService = new PurchaseOrderService(pool);
 
 // Get all open purchase orders
 router.get('/open', async (req: Request, res: Response) => {
@@ -892,211 +894,38 @@ router.post('/:id/recalculate', async (req: Request, res: Response) => {
 
 // Create a new parts purchase
 router.post('/', async (req: Request, res: Response) => {
-  const {
-    vendor_id,
-    bill_number,
-    bill_date,
-    subtotal,
-    total_gst_amount,
-    total_amount,
-    global_gst_rate,
-    gst_rate,
-    lineItems,
-    company_id, // Extract but don't use in DB insert
-    created_by, // Extract but don't use in DB insert
-    ...otherFields // Ignore any other unexpected fields
-  } = req.body;
-
-  // Trim string fields
-  const trimmedBillNumber = bill_number ? bill_number.trim() : '';
-  const itemsArray = Array.isArray(lineItems) ? lineItems : [];
-  const trimmedLineItems = itemsArray.map((item: any) => ({
-    ...item,
-    part_number: item.part_number ? item.part_number.trim() : '',
-    part_description: item.part_description ? item.part_description.trim() : '',
-    unit: item.unit ? item.unit.trim() : ''
-  }));
-
-  // Basic validation
-  if (!vendor_id) {
-    return res.status(400).json({ error: 'vendor_id is required' });
-  }
-  // Allow creation without line items (header-only PO). lineItems may be empty.
-
-  const client = await pool.connect();
+  const { lineItems, ...header } = req.body ?? {};
 
   try {
-    await client.query('BEGIN');
-
-    // Check for duplicate bill number if bill number is provided
-    if (bill_number && bill_number.trim()) {
-      const duplicateCheck = await client.query(
-        'SELECT COUNT(*) as count FROM purchasehistory WHERE bill_number = $1',
-        [bill_number.trim()]
-      );
-      const count = parseInt(duplicateCheck.rows[0].count);
-      if (count > 0) {
-        await client.query('ROLLBACK');
-        return res.status(409).json({ 
-          error: 'Duplicate bill number',
-          message: `Bill number "${bill_number}" already exists in another purchase order.`
-        });
-      }
-    }
-
-    // Generate PO number with retry logic for duplicate key handling
-    let poNumber: string;
-    let retryCount = 0;
-    const maxRetries = 5;
-    
-    do {
-      const now = new Date();
-      const year = now.getFullYear();
-      
-      // Get all existing PO numbers for this year to find the next available one
-      const existingPOsResult = await client.query(
-        `SELECT purchase_number 
-         FROM purchasehistory 
-         WHERE purchase_number LIKE $1 
-         ORDER BY purchase_number`,
-        [`PO-${year}-%`]
-      );
-      
-      const existingNumbers = existingPOsResult.rows.map(row => 
-        parseInt(row.purchase_number.substring(8))
-      ).sort((a, b) => a - b);
-      
-      // Find the first gap or use the next number after the highest
-      let nextNumber = 1;
-      for (const num of existingNumbers) {
-        if (num !== nextNumber) {
-          break; // Found a gap
-        }
-        nextNumber++;
-      }
-      
-      poNumber = `PO-${year}-${nextNumber.toString().padStart(5, '0')}`;
-      console.log(`Generated PO number: ${poNumber} (next_number: ${nextNumber}, existing_count: ${existingNumbers.length})`);
-      
-      // Double-check if this PO number already exists (race condition protection)
-      const existingResult = await client.query(
-        'SELECT COUNT(*) as count FROM purchasehistory WHERE purchase_number = $1',
-        [poNumber]
-      );
-      
-      if (parseInt(existingResult.rows[0].count) === 0) {
-        break; // PO number is unique, proceed
-      }
-      
-      retryCount++;
-      console.log(`PO number ${poNumber} already exists, retrying... (attempt ${retryCount}/${maxRetries})`);
-      
-      if (retryCount >= maxRetries) {
-        // Emergency fallback: use timestamp-based number
-        const timestamp = Date.now();
-        const emergencyNumber = timestamp % 100000; // Use last 5 digits of timestamp
-        poNumber = `PO-${year}-${emergencyNumber.toString().padStart(5, '0')}`;
-        console.log(`Using emergency PO number: ${poNumber}`);
-        break;
-      }
-    } while (retryCount < maxRetries);
-
-    // Use bill_date if provided, otherwise use current date
-    const purchaseDate = bill_date ? new Date(bill_date) : new Date();
-
-    const effectiveGstRate = typeof gst_rate === 'number' && !isNaN(gst_rate) ? gst_rate : (typeof global_gst_rate === 'number' && !isNaN(global_gst_rate) ? global_gst_rate : 5.0);
-
-    const purchaseResult = await client.query(
-      `INSERT INTO purchasehistory (
-        vendor_id, purchase_number, purchase_date, bill_number, status, subtotal, total_gst_amount, total_amount, gst_rate, created_at, updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW()) RETURNING purchase_id`,
-      [
-        vendor_id,
-        poNumber,
-        purchaseDate, // Use the extracted bill_date or current date
-        trimmedBillNumber,
-        'Open',
-        subtotal || 0,
-        total_gst_amount || 0,
-        total_amount || 0,
-        effectiveGstRate
-      ]
-    );
-
-    const purchase_id = purchaseResult.rows[0].purchase_id;
-
-    for (const item of itemsArray) {
-      // Use line_total if available, otherwise calculate it
-      const line_total = item.line_total || (item.quantity || 0) * (item.unit_cost || 0);
-      const gst_amount = line_total * (effectiveGstRate / 100);
-
-      // Find the corresponding trimmed line item
-      const trimmedItem = trimmedLineItems.find((ti: any) => ti.part_number === item.part_number);
-
-      await client.query(
-        `INSERT INTO purchaselineitems (
-          purchase_id, part_number, part_description, unit, quantity, unit_cost, gst_amount, line_total
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-        [
-          purchase_id,
-          trimmedItem.part_number,
-          trimmedItem.part_description,
-          trimmedItem.unit,
-          item.quantity,
-          item.unit_cost,
-          gst_amount,
-          line_total,
-        ]
-      );
-    }
-
-    // Recalculate and update purchase order totals after creation
-    console.log(`Recalculating totals for new PO ${purchase_id}...`);
-    try {
-      const updatedTotals = await calculationService.recalculateAndUpdateTotals(purchase_id, client);
-      console.log(`✅ Updated totals for new PO ${purchase_id}:`, updatedTotals);
-    } catch (calcError) {
-      console.error(`❌ Error recalculating totals for new PO ${purchase_id}:`, calcError);
-      // Don't fail the entire operation, but log the error
-    }
-
-    await client.query('COMMIT');
-    res.status(201).json({ purchase_id, purchase_number: poNumber });
-
+    const created = await purchaseOrderService.createPurchaseOrder({ ...header, lineItems });
+    res.status(201).json(created);
   } catch (err) {
-    await client.query('ROLLBACK');
     console.error('partsPurchaseRoutes: Error creating parts purchase:', err);
-    console.error('partsPurchaseRoutes: Request body:', JSON.stringify(req.body, null, 2));
-    
-    // Check if it's a duplicate key violation
-    if (err instanceof Error && err.message.includes('duplicate key value violates unique constraint')) {
-      res.status(409).json({ 
-        error: 'Purchase order number conflict', 
-        details: 'The generated purchase order number already exists. This might be due to concurrent requests or existing data. Please try again.',
-        code: 'DUPLICATE_PO_NUMBER',
-        suggestion: 'Try refreshing the page and creating the purchase order again.'
-      });
-    } else if (err instanceof Error && err.message.includes('violates not-null constraint')) {
-      res.status(400).json({ 
-        error: 'Missing required data', 
-        details: 'Some required fields are missing from the request.',
-        code: 'MISSING_REQUIRED_FIELDS'
-      });
-    } else if (err instanceof Error && err.message.includes('violates foreign key constraint')) {
-      res.status(400).json({ 
-        error: 'Invalid reference', 
-        details: 'The vendor ID or other referenced data does not exist.',
-        code: 'INVALID_REFERENCE'
-      });
-    } else {
-      res.status(500).json({ 
-        error: 'Internal server error', 
-        details: err instanceof Error ? err.message : 'Unknown error',
-        code: 'INTERNAL_ERROR'
-      });
+    const message = err instanceof Error ? err.message : 'Internal server error';
+
+    if (message.includes('vendor_id is required')) {
+      res.status(400).json({ error: 'vendor_id is required' });
+      return;
     }
-  } finally {
-    client.release();
+
+    if (message.includes('already exists in another purchase order')) {
+      res.status(409).json({
+        error: 'Duplicate bill number',
+        message,
+      });
+      return;
+    }
+
+    if (message.includes('required')) {
+      res.status(400).json({ error: message });
+      return;
+    }
+
+    res.status(500).json({
+      error: 'Internal server error',
+      details: message,
+      code: 'INTERNAL_ERROR',
+    });
   }
 });
 
