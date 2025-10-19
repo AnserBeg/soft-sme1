@@ -41,6 +41,8 @@ You need to manually set:
 - `JWT_SECRET`: Generate a secure random string
 - `CORS_ORIGIN`: Set to `*` for development, or your domain for production
 - `GEMINI_API_KEY`: Required for the hosted embedding model used by the AI assistant
+- `AGENT_V2_DEFAULT_USER_ID`: Numeric user ID that the AI agent should act on behalf of when it calls the backend with service credentials
+- `AGENT_V2_DEFAULT_COMPANY_ID`: Matching company ID for the default agent context
 
 ### 3a. Gemini Configuration (Recommended)
 The AI assistant now calls the Google Gemini embeddings API at runtime instead of downloading a local `sentence-transformers` model. Make sure:
