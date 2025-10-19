@@ -1,12 +1,14 @@
 import express, { Request, Response } from 'express';
 import { EmailService } from '../services/emailService';
 import { PDFService } from '../services/pdfService';
+import DocumentEmailService from '../services/DocumentEmailService';
 import { pool } from '../db';
 import { authMiddleware } from '../middleware/authMiddleware';
 
 const router = express.Router();
 const emailService = new EmailService(pool);
 const pdfService = new PDFService(pool);
+const documentEmailService = new DocumentEmailService(pool, emailService, pdfService);
 
 // Test email configuration
 router.get('/test', async (req: Request, res: Response) => {
@@ -108,82 +110,34 @@ router.post('/sales-order/:salesOrderId', authMiddleware, async (req: Request, r
 // Send purchase order email
 router.post('/purchase-order/:purchaseOrderId', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const { purchaseOrderId } = req.params;
+    const purchaseOrderId = Number(req.params.purchaseOrderId);
     const { to, customMessage } = req.body;
     const userId = req.user?.id ? parseInt(req.user.id) : undefined;
 
-    if (!to) {
-      return res.status(400).json({ success: false, message: 'Missing recipient email' });
+    if (!Number.isFinite(purchaseOrderId)) {
+      return res.status(400).json({ success: false, message: 'Invalid purchase order id' });
     }
 
-    // Get business profile for company information
-    const businessProfileResult = await pool.query('SELECT * FROM business_profile ORDER BY id DESC LIMIT 1');
-    const businessProfile = businessProfileResult.rows[0];
-
-    // Get purchase order details
-    const purchaseOrderResult = await pool.query(`
-      SELECT ph.*, vm.vendor_name 
-      FROM purchasehistory ph
-      LEFT JOIN vendormaster vm ON ph.vendor_id = vm.vendor_id
-      WHERE ph.purchase_id = $1
-    `, [purchaseOrderId]);
-
-    if (purchaseOrderResult.rows.length === 0) {
-      return res.status(404).json({ success: false, message: 'Purchase order not found' });
-    }
-
-    const purchaseOrder = purchaseOrderResult.rows[0];
-
-    // Get line items with additional details
-    const lineItemsResult = await pool.query(`
-      SELECT part_number, part_description, quantity, unit, unit_cost
-      FROM purchaselineitems
-      WHERE purchase_id = $1
-    `, [purchaseOrderId]);
-
-    const items = lineItemsResult.rows;
-    const totalAmount = items.reduce((sum, item) => sum + (parseFloat(item.quantity) * parseFloat(item.unit_cost)), 0);
-
-    // Generate PDF attachment using the same professional format as download
-    const pdfBuffer = await pdfService.generatePurchaseOrderPDF(parseInt(purchaseOrderId));
-
-    const template = emailService.getPurchaseOrderEmailTemplate({
-      purchaseOrderNumber: purchaseOrder.purchase_number,
-      vendorName: purchaseOrder.vendor_name || 'Unknown Vendor',
-      totalAmount,
-      items: items.map(item => ({
-        part_number: item.part_number,
-        quantity: parseFloat(item.quantity),
-        unit_cost: parseFloat(item.unit_cost)
-      })),
-      customMessage: customMessage || undefined,
-      companyInfo: businessProfile ? {
-        business_name: businessProfile.business_name,
-        street_address: businessProfile.street_address,
-        city: businessProfile.city,
-        province: businessProfile.province,
-        country: businessProfile.country,
-        postal_code: businessProfile.postal_code,
-        email: businessProfile.email,
-        telephone_number: businessProfile.telephone_number
-      } : undefined
+    const result = await documentEmailService.sendPurchaseOrderEmail(purchaseOrderId, to, {
+      customMessage,
+      userId,
     });
 
-    const success = await emailService.sendEmail({
-      to,
-      subject: template.subject,
-      html: template.html,
-      text: template.text,
-      attachments: [{
-        filename: `purchase_order_${purchaseOrder.purchase_number}.pdf`,
-        content: pdfBuffer,
-        contentType: 'application/pdf'
-      }]
-    }, userId);
-
-    res.json({ success, message: success ? 'Purchase order email sent successfully' : 'Failed to send purchase order email' });
-  } catch (error) {
+    res.json({
+      success: result.success,
+      message: result.message,
+      purchaseOrderNumber: result.purchaseNumber,
+      emailed_to: result.emailedTo,
+    });
+  } catch (error: any) {
     console.error('Error sending purchase order email:', error);
+    const message = error?.message ?? 'Failed to send purchase order email';
+    if (typeof message === 'string' && message.toLowerCase().includes('not found')) {
+      return res.status(404).json({ success: false, message });
+    }
+    if (typeof message === 'string' && message.toLowerCase().includes('recipient')) {
+      return res.status(400).json({ success: false, message });
+    }
     res.status(500).json({ success: false, message: 'Failed to send purchase order email' });
   }
 });
@@ -191,62 +145,31 @@ router.post('/purchase-order/:purchaseOrderId', authMiddleware, async (req: Requ
 // Send quote email
 router.post('/quote/:quoteId', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const { quoteId } = req.params;
-    const { to, customMessage } = req.body;
+    const quoteId = Number(req.params.quoteId);
+    const { to } = req.body;
     const userId = req.user?.id ? parseInt(req.user.id) : undefined;
 
-    if (!to) {
-      return res.status(400).json({ success: false, message: 'Missing recipient email' });
+    if (!Number.isFinite(quoteId)) {
+      return res.status(400).json({ success: false, message: 'Invalid quote id' });
     }
 
-    // Get quote details
-    const quoteResult = await pool.query(`
-      SELECT q.*, cm.customer_name, cm.email as customer_email
-      FROM quotes q
-      LEFT JOIN customermaster cm ON q.customer_id = cm.customer_id
-      WHERE q.quote_id = $1
-    `, [quoteId]);
+    const result = await documentEmailService.sendQuoteEmail(quoteId, to, { userId });
 
-    if (quoteResult.rows.length === 0) {
-      return res.status(404).json({ success: false, message: 'Quote not found' });
-    }
-
-    const quote = quoteResult.rows[0];
-
-    // In quotes, we treat the quote as a single product with estimated cost (no line items)
-    const estimatedCost = parseFloat(quote.estimated_cost);
-
-    // Calculate valid until date (30 days from quote date)
-    const validUntil = new Date(quote.quote_date);
-    validUntil.setDate(validUntil.getDate() + 30);
-
-    // Generate PDF attachment using the exact same renderer as the download endpoint
-    const pdfBuffer = await pdfService.generateQuotePDF(parseInt(quoteId));
-
-    const template = emailService.getQuoteEmailTemplate({
-      quoteNumber: quote.quote_number,
-      customerName: quote.customer_name || 'Unknown Customer',
-      productName: quote.product_name,
-      productDescription: quote.product_description || '',
-      estimatedCost: estimatedCost,
-      validUntil: validUntil.toLocaleDateString()
+    res.json({
+      success: result.success,
+      message: result.message,
+      quoteNumber: result.quoteNumber,
+      emailed_to: result.emailedTo,
     });
-
-    const success = await emailService.sendEmail({
-      to,
-      subject: template.subject,
-      html: template.html,
-      text: template.text,
-      attachments: [{
-        filename: `quote_${quote.quote_number}.pdf`,
-        content: pdfBuffer,
-        contentType: 'application/pdf'
-      }]
-    }, userId);
-
-    res.json({ success, message: success ? 'Quote email sent successfully' : 'Failed to send quote email' });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error sending quote email:', error);
+    const message = error?.message ?? 'Failed to send quote email';
+    if (typeof message === 'string' && message.toLowerCase().includes('not found')) {
+      return res.status(404).json({ success: false, message });
+    }
+    if (typeof message === 'string' && message.toLowerCase().includes('recipient')) {
+      return res.status(400).json({ success: false, message });
+    }
     res.status(500).json({ success: false, message: 'Failed to send quote email' });
   }
 });

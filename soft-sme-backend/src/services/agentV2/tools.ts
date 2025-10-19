@@ -7,6 +7,7 @@ import { VoiceService } from '../voice/VoiceService';
 import { TaskInput, TaskStatus } from '../TaskService';
 import { QuoteService } from '../QuoteService';
 import { PurchaseOrderService } from '../PurchaseOrderService';
+import DocumentEmailService from '../DocumentEmailService';
 
 export class AgentToolsV2 {
   private soService: SalesOrderService;
@@ -16,6 +17,7 @@ export class AgentToolsV2 {
   private voiceService: VoiceService;
   private quoteService: QuoteService;
   private purchaseOrderService: PurchaseOrderService;
+  private documentEmailService: DocumentEmailService;
   constructor(private pool: Pool) {
     this.soService = new SalesOrderService(pool);
     this.emailService = new EmailService(pool);
@@ -24,6 +26,19 @@ export class AgentToolsV2 {
     this.voiceService = new VoiceService(pool);
     this.quoteService = new QuoteService(pool);
     this.purchaseOrderService = new PurchaseOrderService(pool);
+    this.documentEmailService = new DocumentEmailService(pool, this.emailService, this.pdfService);
+  }
+
+  private requireEmailUser(userId: number | null | undefined): number {
+    if (userId === null || userId === undefined) {
+      throw new Error('Authenticated user context is required for email operations');
+    }
+
+    if (typeof userId !== 'number' || !Number.isFinite(userId)) {
+      throw new Error('Invalid user id provided for email operation');
+    }
+
+    return userId;
   }
 
   private toBoolean(value: any): boolean {
@@ -439,13 +454,36 @@ export class AgentToolsV2 {
     return out;
   }
 
-  async emailPurchaseOrder(sessionId: number, purchaseId: number, to: string, customMessage?: string) {
-    const userId = undefined; // optionally pass authenticated user id
-    const pdfBuffer = await this.pdfService.generatePurchaseOrderPDF(purchaseId);
-    const template = this.emailService.getPurchaseOrderEmailTemplate({ purchaseOrderNumber: String(purchaseId), vendorName: '', totalAmount: 0, items: [], customMessage });
-    const success = await this.emailService.sendEmail({ to, subject: template.subject, html: template.html, text: template.text, attachments:[{ filename:`purchase_order_${purchaseId}.pdf`, content: pdfBuffer, contentType: 'application/pdf' }]}, userId);
-    await this.audit(sessionId,'emailPurchaseOrder',{purchaseId,to,customMessage},{success},success);
-    return { success };
+  async emailPurchaseOrder(
+    sessionId: number,
+    purchaseId: number,
+    to: string | string[],
+    customMessage: string | undefined,
+    userId?: number | null
+  ) {
+    try {
+      const result = await this.documentEmailService.sendPurchaseOrderEmail(purchaseId, to, {
+        customMessage,
+        userId: userId ?? undefined,
+      });
+
+      if (!result.success) {
+        await this.audit(sessionId, 'emailPurchaseOrder', { purchaseId, to, customMessage }, result, false);
+        throw new Error(result.message || 'Failed to send purchase order email');
+      }
+
+      await this.audit(sessionId, 'emailPurchaseOrder', { purchaseId, to, customMessage }, result, true);
+      return result;
+    } catch (error: any) {
+      await this.audit(
+        sessionId,
+        'emailPurchaseOrder',
+        { purchaseId, to, customMessage },
+        { error: error?.message ?? String(error) },
+        false
+      );
+      throw error;
+    }
   }
 
   // Quotes
@@ -482,12 +520,321 @@ export class AgentToolsV2 {
     return out;
   }
 
-  async emailQuote(sessionId: number, quoteId: number, to: string) {
-    const pdfBuffer = await this.pdfService.generateQuotePDF(quoteId);
-    const template = this.emailService.getQuoteEmailTemplate({ quoteNumber: String(quoteId), customerName:'', productName:'', productDescription:'', estimatedCost:0, validUntil: new Date().toLocaleDateString() });
-    const success = await this.emailService.sendEmail({ to, subject: template.subject, html: template.html, text: template.text, attachments:[{ filename:`quote_${quoteId}.pdf`, content: pdfBuffer, contentType:'application/pdf' }]}, undefined);
-    await this.audit(sessionId,'emailQuote',{quoteId,to},{success},success);
-    return { success };
+  async emailQuote(
+    sessionId: number,
+    quoteId: number,
+    to: string | string[],
+    userId?: number | null
+  ) {
+    try {
+      const result = await this.documentEmailService.sendQuoteEmail(quoteId, to, { userId: userId ?? undefined });
+
+      if (!result.success) {
+        await this.audit(sessionId, 'emailQuote', { quoteId, to }, result, false);
+        throw new Error(result.message || 'Failed to send quote email');
+      }
+
+      await this.audit(sessionId, 'emailQuote', { quoteId, to }, result, true);
+      return result;
+    } catch (error: any) {
+      await this.audit(
+        sessionId,
+        'emailQuote',
+        { quoteId, to },
+        { error: error?.message ?? String(error) },
+        false
+      );
+      throw error;
+    }
+  }
+
+  async getEmailSettings(sessionId: number, userId: number | null | undefined) {
+    const resolvedUserId = this.requireEmailUser(userId);
+    try {
+      const settings = await this.emailService.getUserEmailSettings(resolvedUserId);
+      const { email_pass: _password, ...safeSettings } = settings ?? {};
+      const output = { settings: settings ? safeSettings : null };
+      await this.audit(sessionId, 'getEmailSettings', { userId: resolvedUserId }, output, true);
+      return output;
+    } catch (error: any) {
+      await this.audit(
+        sessionId,
+        'getEmailSettings',
+        { userId: resolvedUserId },
+        { error: error?.message ?? String(error) },
+        false
+      );
+      throw error;
+    }
+  }
+
+  async saveEmailSettings(sessionId: number, userId: number | null | undefined, payload: any) {
+    const resolvedUserId = this.requireEmailUser(userId);
+    try {
+      const emailHost = typeof payload?.email_host === 'string' ? payload.email_host.trim() : '';
+      const emailPortRaw = payload?.email_port;
+      const emailUser = typeof payload?.email_user === 'string' ? payload.email_user.trim() : '';
+
+      if (!emailHost || !emailUser || emailPortRaw === undefined) {
+        throw new Error('email_host, email_port, and email_user are required to save email settings');
+      }
+
+      const emailPort = Number(emailPortRaw);
+      if (!Number.isFinite(emailPort)) {
+        throw new Error('email_port must be a valid number');
+      }
+
+      const emailSecureSource = payload?.email_secure;
+      const emailSecure =
+        emailSecureSource === true ||
+        emailSecureSource === 'true' ||
+        emailSecureSource === 1 ||
+        emailSecureSource === '1';
+
+      const success = await this.emailService.saveUserEmailSettings(resolvedUserId, {
+        email_provider:
+          typeof payload?.email_provider === 'string' && payload.email_provider.trim().length > 0
+            ? payload.email_provider.trim()
+            : 'custom',
+        email_host: emailHost,
+        email_port: emailPort,
+        email_secure: emailSecure,
+        email_user: emailUser,
+        email_pass: typeof payload?.email_pass === 'string' && payload.email_pass.trim().length > 0
+          ? payload.email_pass
+          : undefined,
+        email_from: typeof payload?.email_from === 'string' && payload.email_from.trim().length > 0
+          ? payload.email_from.trim()
+          : undefined,
+      });
+
+      const output = {
+        success,
+        message: success
+          ? 'Email settings saved successfully'
+          : 'Failed to save email settings',
+      };
+
+      await this.audit(sessionId, 'saveEmailSettings', { userId: resolvedUserId, payload }, output, success);
+
+      if (!success) {
+        throw new Error(output.message);
+      }
+
+      return output;
+    } catch (error: any) {
+      await this.audit(
+        sessionId,
+        'saveEmailSettings',
+        { userId: resolvedUserId, payload },
+        { error: error?.message ?? String(error) },
+        false
+      );
+      throw error;
+    }
+  }
+
+  async testEmailConnection(sessionId: number, userId: number | null | undefined) {
+    const resolvedUserId = this.requireEmailUser(userId);
+    try {
+      const success = await this.emailService.testUserEmailConnection(resolvedUserId);
+      const output = {
+        success,
+        message: success
+          ? 'Email connection test successful'
+          : 'Email connection test failed',
+      };
+      await this.audit(sessionId, 'testEmailConnection', { userId: resolvedUserId }, output, success);
+      if (!success) {
+        throw new Error(output.message);
+      }
+      return output;
+    } catch (error: any) {
+      await this.audit(
+        sessionId,
+        'testEmailConnection',
+        { userId: resolvedUserId },
+        { error: error?.message ?? String(error) },
+        false
+      );
+      throw error;
+    }
+  }
+
+  async listEmailTemplates(sessionId: number, userId: number | null | undefined) {
+    const resolvedUserId = this.requireEmailUser(userId);
+    try {
+      const templates = await this.emailService.getUserEmailTemplates(resolvedUserId);
+      const output = { templates };
+      await this.audit(sessionId, 'listEmailTemplates', { userId: resolvedUserId }, output, true);
+      return output;
+    } catch (error: any) {
+      await this.audit(
+        sessionId,
+        'listEmailTemplates',
+        { userId: resolvedUserId },
+        { error: error?.message ?? String(error) },
+        false
+      );
+      throw error;
+    }
+  }
+
+  async getEmailTemplate(
+    sessionId: number,
+    userId: number | null | undefined,
+    templateId: number
+  ) {
+    const resolvedUserId = this.requireEmailUser(userId);
+    try {
+      const template = await this.emailService.getEmailTemplate(templateId, resolvedUserId);
+      if (!template) {
+        throw new Error('Email template not found');
+      }
+      await this.audit(
+        sessionId,
+        'getEmailTemplate',
+        { userId: resolvedUserId, templateId },
+        { template },
+        true
+      );
+      return { template };
+    } catch (error: any) {
+      await this.audit(
+        sessionId,
+        'getEmailTemplate',
+        { userId: resolvedUserId, templateId },
+        { error: error?.message ?? String(error) },
+        false
+      );
+      throw error;
+    }
+  }
+
+  async saveEmailTemplate(sessionId: number, userId: number | null | undefined, payload: any) {
+    const resolvedUserId = this.requireEmailUser(userId);
+    const templateIdRaw = payload?.template_id ?? payload?.id;
+    const templateId = Number(templateIdRaw);
+
+    const hasTemplateId = Number.isFinite(templateId);
+
+    try {
+      const name = typeof payload?.name === 'string' ? payload.name.trim() : '';
+      const subject = typeof payload?.subject === 'string' ? payload.subject.trim() : '';
+      const htmlContent = typeof payload?.html_content === 'string' ? payload.html_content : '';
+
+      if (!name || !subject || !htmlContent) {
+        throw new Error('name, subject, and html_content are required for email templates');
+      }
+
+      const textContent = typeof payload?.text_content === 'string' ? payload.text_content : undefined;
+      const isDefault =
+        payload?.is_default === true ||
+        payload?.is_default === 'true' ||
+        payload?.is_default === 1 ||
+        payload?.is_default === '1';
+
+      if (hasTemplateId) {
+        const success = await this.emailService.updateEmailTemplate(templateId, resolvedUserId, {
+          name,
+          subject,
+          html_content: htmlContent,
+          text_content: textContent,
+          is_default: isDefault,
+        });
+
+        const output = {
+          success,
+          templateId,
+          message: success
+            ? 'Email template updated successfully'
+            : 'Template not found or update failed',
+        };
+
+        await this.audit(
+          sessionId,
+          'saveEmailTemplate',
+          { userId: resolvedUserId, payload },
+          output,
+          success
+        );
+
+        if (!success) {
+          throw new Error(output.message);
+        }
+
+        return output;
+      }
+
+      const type = typeof payload?.type === 'string' ? payload.type.trim() : '';
+      if (!type) {
+        throw new Error('type is required when creating a new email template');
+      }
+
+      const createdId = await this.emailService.createEmailTemplate(resolvedUserId, {
+        name,
+        type: type as any,
+        subject,
+        html_content: htmlContent,
+        text_content: textContent,
+        is_default: isDefault,
+      });
+
+      const output = {
+        success: true,
+        templateId: createdId,
+        message: 'Email template created successfully',
+      };
+
+      await this.audit(sessionId, 'saveEmailTemplate', { userId: resolvedUserId, payload }, output, true);
+      return output;
+    } catch (error: any) {
+      await this.audit(
+        sessionId,
+        'saveEmailTemplate',
+        { userId: resolvedUserId, payload },
+        { error: error?.message ?? String(error) },
+        false
+      );
+      throw error;
+    }
+  }
+
+  async deleteEmailTemplate(
+    sessionId: number,
+    userId: number | null | undefined,
+    templateId: number
+  ) {
+    const resolvedUserId = this.requireEmailUser(userId);
+    try {
+      const success = await this.emailService.deleteEmailTemplate(templateId, resolvedUserId);
+      const output = {
+        success,
+        message: success
+          ? 'Email template deleted successfully'
+          : 'Template not found or delete failed',
+      };
+      await this.audit(
+        sessionId,
+        'deleteEmailTemplate',
+        { userId: resolvedUserId, templateId },
+        output,
+        success
+      );
+      if (!success) {
+        throw new Error(output.message);
+      }
+      return output;
+    } catch (error: any) {
+      await this.audit(
+        sessionId,
+        'deleteEmailTemplate',
+        { userId: resolvedUserId, templateId },
+        { error: error?.message ?? String(error) },
+        false
+      );
+      throw error;
+    }
   }
 
   async convertQuoteToSO(sessionId: number, quoteId: number) {

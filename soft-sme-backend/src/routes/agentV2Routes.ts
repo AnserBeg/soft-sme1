@@ -179,18 +179,28 @@ const buildToolRegistry = (
       sessionId,
       requireId(args?.purchase_id ?? args?.id, 'purchase_id'),
       args?.to,
-      args?.message
+      args?.message,
+      userId
     ),
   createQuote: async (args: any) => tools.createQuote(sessionId, args),
   updateQuote: async (args: any) =>
     tools.updateQuote(sessionId, requireId(args?.quote_id ?? args?.id, 'quote_id'), args?.patch ?? args),
   emailQuote: async (args: any) =>
-    tools.emailQuote(sessionId, requireId(args?.quote_id ?? args?.id, 'quote_id'), args?.to),
+    tools.emailQuote(sessionId, requireId(args?.quote_id ?? args?.id, 'quote_id'), args?.to, userId),
   convertQuoteToSO: async (args: any) =>
     tools.convertQuoteToSO(sessionId, requireId(args?.quote_id ?? args?.id, 'quote_id')),
   createTask: async (args: any) => tools.createAgentTask(sessionId, companyId, userId, args),
   updateTask: async (args: any) => tools.updateAgentTask(sessionId, companyId, userId, args),
   postTaskMessage: async (args: any) => tools.postAgentTaskMessage(sessionId, companyId, userId, args),
+  getEmailSettings: async () => tools.getEmailSettings(sessionId, userId),
+  saveEmailSettings: async (args: any) => tools.saveEmailSettings(sessionId, userId, args),
+  testEmailConnection: async () => tools.testEmailConnection(sessionId, userId),
+  listEmailTemplates: async () => tools.listEmailTemplates(sessionId, userId),
+  getEmailTemplate: async (args: any) =>
+    tools.getEmailTemplate(sessionId, userId, requireId(args?.template_id ?? args?.id, 'template_id')),
+  saveEmailTemplate: async (args: any) => tools.saveEmailTemplate(sessionId, userId, args),
+  deleteEmailTemplate: async (args: any) =>
+    tools.deleteEmailTemplate(sessionId, userId, requireId(args?.template_id ?? args?.id, 'template_id')),
   updatePickupDetails: async (args: any) =>
     tools.updatePickupDetails(
       sessionId,

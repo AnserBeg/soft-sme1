@@ -706,6 +706,41 @@ export class AgentOrchestratorV2 {
     const closeKeywords = ['close', 'complete', 'finish', 'wrap up', 'wrap-up', 'finalize', 'shut', 'cancel', 'done'];
     const emailKeywords = ['email', 'send', 'mail', 'forward', 'deliver'];
 
+    const mentionsEmailSettings =
+      normalized.includes('email settings') ||
+      normalized.includes('email setup') ||
+      normalized.includes('configure email') ||
+      normalized.includes('email configuration');
+
+    if (mentionsEmailSettings) {
+      if (normalized.includes('test') || normalized.includes('verify') || normalized.includes('check connection')) {
+        return { tool: 'testEmailConnection', args: {} };
+      }
+
+      if (includesAny(updateKeywords) || includesAny(createKeywords) || normalized.includes('save') || normalized.includes('set up') || normalized.includes('configure')) {
+        return { tool: 'saveEmailSettings', args: {} };
+      }
+
+      return { tool: 'getEmailSettings', args: {} };
+    }
+
+    const mentionsEmailTemplates = normalized.includes('email template');
+    if (mentionsEmailTemplates) {
+      if (normalized.includes('delete') || normalized.includes('remove')) {
+        return { tool: 'deleteEmailTemplate', args: {} };
+      }
+
+      if (includesAny(updateKeywords) || includesAny(createKeywords) || normalized.includes('save') || normalized.includes('write')) {
+        return { tool: 'saveEmailTemplate', args: {} };
+      }
+
+      if (normalized.includes('view') || normalized.includes('show') || normalized.includes('get')) {
+        return { tool: 'listEmailTemplates', args: {} };
+      }
+
+      return { tool: 'listEmailTemplates', args: {} };
+    }
+
     if (mentionsSalesOrder) {
       if (includesAny(createKeywords)) {
         return { tool: 'createSalesOrder', args: {} };
@@ -805,6 +840,13 @@ export class AgentOrchestratorV2 {
       { name: 'updateTask', description: 'Update the status or due date of an existing task.' },
       { name: 'postTaskMessage', description: 'Post an update in the related task conversation.' },
       { name: 'retrieveDocs', description: 'Search internal documentation for workflows and UI guidance.' },
+      { name: 'getEmailSettings', description: 'Retrieve the current email settings for the authenticated user.' },
+      { name: 'saveEmailSettings', description: 'Update the authenticated user\'s outbound email settings.' },
+      { name: 'testEmailConnection', description: 'Test the configured outbound email connection for the user.' },
+      { name: 'listEmailTemplates', description: 'List saved email templates for the current user.' },
+      { name: 'getEmailTemplate', description: 'Fetch a specific email template by identifier.' },
+      { name: 'saveEmailTemplate', description: 'Create or update a reusable email template.' },
+      { name: 'deleteEmailTemplate', description: 'Delete an existing email template.' },
     ];
 
     const skillEntries = this.skillCatalog
@@ -867,6 +909,20 @@ export class AgentOrchestratorV2 {
         return 'Updated pickup details successfully.';
       case 'getPickupDetails':
         return 'Retrieved pickup details successfully.';
+      case 'getEmailSettings':
+        return 'Retrieved email settings successfully.';
+      case 'saveEmailSettings':
+        return 'Saved the email settings successfully.';
+      case 'testEmailConnection':
+        return 'Tested the email connection successfully.';
+      case 'listEmailTemplates':
+        return 'Retrieved the list of email templates successfully.';
+      case 'getEmailTemplate':
+        return 'Retrieved the email template successfully.';
+      case 'saveEmailTemplate':
+        return 'Saved the email template successfully.';
+      case 'deleteEmailTemplate':
+        return 'Deleted the email template successfully.';
       case 'initiateVendorCall':
         if (output?.session?.purchase_number) {
           return `Started a vendor call for purchase order ${output.session.purchase_number}.`;
@@ -898,6 +954,20 @@ export class AgentOrchestratorV2 {
         return 'create a sales order';
       case 'updateSalesOrder':
         return 'update the sales order';
+      case 'getEmailSettings':
+        return 'retrieve email settings';
+      case 'saveEmailSettings':
+        return 'update email settings';
+      case 'testEmailConnection':
+        return 'test the email connection';
+      case 'listEmailTemplates':
+        return 'list email templates';
+      case 'getEmailTemplate':
+        return 'get the email template';
+      case 'saveEmailTemplate':
+        return 'save the email template';
+      case 'deleteEmailTemplate':
+        return 'delete the email template';
       case 'createQuote':
         return 'create a quote';
       case 'updateQuote':
