@@ -118,6 +118,12 @@ When you rely on an API key (for example, using a Gemini key provided via
 that header and skip the normal JWT session validation for trusted
 service-to-service calls.
 
+> **Render / managed Postgres note:** If your database requires SSL (Render
+> does by default), set `DB_SSL=true` or specify an explicit
+> `DB_SSLMODE=require`. When a `DATABASE_URL` from Render is present, the
+> AI agent automatically appends `sslmode=require` so live data queries
+> work without additional configuration.
+
 ### 3. Run Setup Script
 
 **Windows:**
