@@ -1,16 +1,46 @@
 Aiven Application — RAG‑Ready Documentation (No External Links)
 
-1) Overview
+0) How to Use This Guide
+Use the table of contents below to jump to the module you need. Each functional section contains (a) summary, (b) key validations, and (c) troubleshooting scenarios. Section 15 aggregates FAQ‑style “why isn’t this working?” answers that cross‑reference the deep dives. Use Section 1 to confirm system prerequisites before diagnosing workflow issues.
+
+Table of Contents
+1. System Setup & Prerequisites
+2. Overview
+3. Core Concepts & Data
+4. Navigation (Major Routes)
+5. Roles & Access Control
+6. Inventory & Supply
+7. Vendor Mapping Workflows
+8. Purchasing (POs)
+9. Sales Orders & Quotes
+10. Parts to Order
+11. Time Tracking & Attendance
+12. Admin & Config
+13. Offline & Reliability
+14. Back‑End API Surface (Representative)
+15. Troubleshooting & FAQ
+16. Business Rules & Invariants
+17. Typical Workflows
+18. RAG Ingestion Notes
+
+1) System Setup & Prerequisites
+• Connectivity: the application expects stable connectivity to the PostgreSQL database and optional QuickBooks Online (QBO). If QBO is enabled, ensure account mappings (Section 12) are configured before attempting exports.
+• Global Settings: populate labour rate, overhead rate, daily breaks, and business profile. These values drive automatic SUPPLY lines, cost calculations, and document headers.
+• User & Role Preparation: create employee records with the correct role assignments (Section 5). Time tracking and worker sales orders require active user accounts.
+• Inventory Foundation: load baseline inventory (Section 6) before creating sales orders to avoid availability rejections. Supply items should also be seeded so labour conversions can create matching lines.
+• Attendance Clock‑ins: for time tracking to function, employees must have open shifts and no existing active entries (Section 11). Without attendance setup, labour timesheets cannot be recorded.
+
+2) Overview
 Aiven is an AI‑assisted ERP for SMBs. It combines inventory, purchasing, sales orders, quotes, time tracking, and admin/config features. Front‑end: React 18 + TypeScript + Material‑UI, packaged for web and optionally Electron desktop. Back‑end: Node.js (Express) with PostgreSQL. Auth via JWT. Optional integrations: QuickBooks Online (QBO) for accounting and AI features (text/voice query). Offline queue/sync lets users keep working during brief outages.
 
-2) Core Concepts & Data
+3) Core Concepts & Data
 • Inventory items (“parts”) have: part_number, description, unit, quantity_on_hand, last_unit_cost, reorder_point, part_type (“stock” or “supply”), category, timestamps.
 • Vendors supply parts; vendor mappings store vendor_part_number (per vendor per part), a preferred flag, usage_count, last_used_at.
 • Sales orders (header + line items) record demand; quotes are pre‑orders convertible to sales orders.
 • Purchase orders (header + line items) record supply from vendors.
 • Customers, employees/users, time entries, margin schedule, overhead distribution, email settings/templates are additional entities.
 
-3) Navigation (Major Routes)
+4) Navigation (Major Routes)
 • Dashboard: landing overview after login.
 • Inventory: manage stock parts.
 • Supply: manage supply‑type parts.
@@ -23,37 +53,126 @@ Aiven is an AI‑assisted ERP for SMBs. It combines inventory, purchasing, sales
 • Employees: manage user accounts and roles (admin only).
 • Settings & Ops: Business Profile, QBO Account Mapping, Margin Schedule, Overhead Management, Parts to Order, Backup Management, Mobile User Access, User Email Settings, Email Templates.
 
-4) Roles & Access Control
+5) Roles & Access Control
 • Admin: full access to all pages.
 • Sales & Purchase: sales orders, purchase orders, parts‑to‑order, related flows (typically inventory read; finance exports).
 • Quotes: quotes module only.
 • Time Tracking: attendance/time pages and “worker” sales orders. Dashboard redirects them to Attendance.
 The layout filters menu items by role; protected routes prevent unauthorized access.
 
-5) Inventory & Supply
+6) Inventory & Supply
+Summary
 • Inventory list shows key fields with inline edit (role‑based). Create/update/delete parts via a unified dialog.
 • Supply page mirrors inventory but filters part_type = "supply" (quantity may be NA in some setups).
-• CSV bulk import: upload a CSV to create/update parts with validation and duplicate merging. Template download provided. Result summarizes created/updated counts, errors, warnings.
-• Cleanup/normalize: preview and apply part number normalization (uppercase, trim, remove illegal chars, standardize fractions) and merge duplicates; unit mismatches flagged.
-• Vendor mappings per part: add/edit/delete vendor‑specific part numbers; mark preferred; usage counts help auto‑selection on POs.
-• Search & Part Finder: fast filtering with tokenization; optional AI text/voice query to extract keywords (materials, sizes) and apply as filters.
 
-6) Purchasing (POs)
+Key Validations & Behaviors
+• Part Numbers: normalized to uppercase; trims whitespace; rejects illegal characters (letters, numbers, dash, slash, dot). Fractional sizes are standardized (e.g., 1-1/2). Duplicate detection runs on the normalized value before saving.
+• Required Fields: part_number, description, unit, and part_type are mandatory. Supply items may allow null quantity if configuration treats supplies as non-counted.
+• Quantity Rules: stock parts cannot be saved with negative quantity; supply quantity is informational and may be zero or null. Unit changes are blocked if outstanding transactions exist.
+• Cost & Reorder: last_unit_cost must be ≥ 0. Reorder point defaults to 0 and must be ≥ 0.
+• Role Restrictions: only Admin and Sales & Purchase can create or edit inventory. Time Tracking role has read-only inventory access.
+• UI Helpers: client automatically uppercases part numbers and shows inline warnings when duplicates or illegal characters are detected before submission.
+
+CSV Upload & Cleanup
+• Template: requires columns part_number, description, unit, part_type, quantity_on_hand, last_unit_cost, reorder_point, category, vendor_name (optional), vendor_part_number (optional). Additional columns are ignored.
+• File Limits: maximum 5 MB, up to 5,000 rows. Upload fails if exceeded.
+• Validation: each row is normalized; errors include missing required fields, non-numeric quantity/cost, negative cost/quantity, or duplicate part numbers. Warnings include unit mismatches and detected duplicates that can be merged.
+• Auto Vendor Mapping: when vendor_name and vendor_part_number are present, vendor mappings are created or updated, defaulting preferred vendor when only one mapping exists. Missing vendors trigger creation prompts or warnings.
+• Cleanup Preview: highlights normalization changes and duplicate merges. Applying cleanup updates part numbers in place, recalculates duplicate references, and logs which sales/purchase lines will be updated.
+
+Troubleshooting
+• “Cannot add part” → confirm normalized part number is unique; ensure required fields are filled and user has edit role. Check CSV uploads for hidden whitespace or illegal characters. Review Section 15.A for detailed flow.
+• “CSV upload failed” → inspect error summary for row numbers; ensure file under size limit and contains template headers. Confirm supply rows specify part_type = supply.
+• “Vendor mapping missing after upload” → verify vendor_name and vendor_part_number columns are populated and vendor exists or was created.
+
+7) Vendor Mapping Workflows
+Summary
+Vendor mappings tie internal part numbers to vendor-specific codes and track usage to auto-select preferred vendors.
+
+Key Details
+• Storage: mapping table records part_id, vendor_id, vendor_part_number, preferred flag, usage_count, last_used_at.
+• Creation: manual addition from inventory detail, automatic creation during CSV upload, and when closing POs with unmatched vendor codes.
+• Preferred Vendor: only one mapping per part can be preferred; saving another preferred mapping unsets the previous.
+• Usage Tracking: when a PO closes, usage_count increments for each mapping used. Most-used mapping becomes fallback if no preferred flag is set.
+• Deletion Guard: cannot delete the last mapping for a part if it is marked preferred; clear preferred flag first.
+
+Troubleshooting
+• “Vendor not selectable on PO” → ensure a mapping exists and is either preferred or has recent usage. Check vendor active status. See Section 8.
+• “Preferred vendor keeps changing” → investigate PO closures altering usage counts; ensure preferred flag set explicitly.
+
+8) Purchasing (POs)
+Summary
 • PO list: search, sort, create new, navigate to detail, delete drafts, export actions (CSV/PDF), and QBO export for closed POs.
 • PO detail: select vendor, add line items (part, qty, unit cost). Duplicate bill/invoice number check to avoid double entries.
-• Vendor part number swapping: when a vendor is selected, line item part numbers auto‑swap to that vendor’s code if mapped (preferred > most‑used > fallback to internal).
-• Save vs Close: save keeps PO open; closing implies receiving/fulfillment rules are met (and may adjust inventory). Unsaved‑changes guard prevents accidental loss.
 
-7) Sales Orders & Quotes
+Key Validations & Behaviors
+• Line Items: require part selection (must exist in inventory), quantity > 0, and unit cost ≥ 0. Supply parts allowed; quantity tracked for receiving.
+• Vendor Part Swap: when selecting vendor, line items auto-swap to that vendor’s code based on mappings (preferred > most-used > fallback to internal). Manual override allowed but resets on vendor change.
+• Duplicate Bill Guard: closing PO requires unique vendor bill/invoice number per vendor. A duplicate prevents closure and prompts correction.
+• Inventory Impact: closing PO increases quantity_on_hand for each stock part and updates last_unit_cost. Supply items mark received without affecting on-hand counts.
+• Vendor Mapping Auto-Update: closing PO with a vendor code not already mapped prompts creation or confirms addition to mappings.
+• Reopen Rules: reopening a closed PO checks inventory availability. If reverting receipt would drop a part below zero, reopen is blocked with details of the offending part.
+• Unsaved Changes: UI warns when navigating away; API rejects stale updates with version mismatch error.
+
+Troubleshooting
+• “Cannot close PO” → verify all line items received, bill number unique, and inventory adjustments will remain non-negative. Check Section 15.C.
+• “Reopen button disabled” → ensure inventory quantities can absorb reversal; review shortage report surfaced in error response.
+• “Vendor part number missing” → confirm mapping exists (Section 7) or accept auto-creation prompt when closing.
+
+9) Sales Orders & Quotes
+Summary
 • SO list: filter by status (open/closed), search by number/customer; actions include create, close/reopen (with validation), export CSV, export to QBO (closed orders).
 • SO detail: full editor with rules—no duplicate part lines; special codes LABOUR/OVERHEAD/SUPPLY; availability checks raise negative‑stock banners with “transfer to Parts‑to‑Order.” Closing requires no outstanding shortfalls and valid quantities.
 • Worker SO: simplified UI for technicians—bigger inputs, fewer columns (hide prices), integrated Part Finder; merges duplicate parts on save.
 • Quotes: list + editor; PDF/email; convert to SO. VIN and other domain validations enforced as applicable.
 
-8) Parts to Order
+Key Validations & Behaviors
+• Line Entry: part required, quantity > 0 for stock items, unit price derived from margin schedule if blank. Duplicate part numbers merged automatically (worker SO) or rejected (full editor).
+• Special Lines: LABOUR and OVERHEAD lines do not affect inventory but feed supply conversion. Saving labour totals triggers creation of a SUPPLY line representing consumables; this requires SUPPLY item configured.
+• Availability Check: server validates quantity_on_hand. If negative, response includes shortage detail and prompts to add to Parts to Order.
+• Close Rules: SO cannot close if any line has outstanding shortage or zero quantity; also blocks if linked PO is pending receipt.
+• Reopen Rules: reopening closed SO removes fulfillment markers but checks that reverting will not overdraw inventory (mirrors PO reopen logic).
+• QBO Export: requires closed status, mapped QBO accounts, and unique external ID. Prevents exporting supply-only orders and duplicates via exported_at flag.
+• Quote Conversion: converting quote to SO verifies customer exists and line items remain valid; stale quotes require refresh.
+
+Troubleshooting
+• “Cannot save sales order” → check for duplicate lines, missing SUPPLY mapping, or negative availability. Section 15.D covers diagnostics.
+• “Close button disabled” → review shortages banner; ensure all linked POs are closed and inventory received.
+• “QBO export failed” → confirm mappings set (Section 12), order closed, and not previously exported. Error payload lists missing accounts.
+
+10) Parts to Order
+Summary
 Aggregates shortages across open sales orders. Shows part number, description, shortfall quantity, and (optionally) preferred vendor. Used by purchasing to create POs. Items drop off as POs are created/received and inventory updates.
 
-9) Admin & Config
+Key Mechanics
+• Data Source: nightly job and on-demand triggers recompute shortages by scanning open SO lines where allocated quantity exceeds inventory.
+• Refresh Triggers: run whenever SO saved, closed, reopened, or deleted; when PO closes; when inventory quantity changes manually.
+• Aggregation: consolidates shortages per part, summing across orders; only positive shortages appear. Zero or negative balances are filtered out.
+• Vendor Suggestion: picks preferred vendor if available, otherwise highest usage_count.
+• Front-End Caching: UI maintains client cache but refreshes after key actions. Manual refresh button available.
+
+Troubleshooting
+• “Part missing from list” → ensure shortage still positive; verify SO closed or resolved shortage. If inventory adjusted manually, wait for recompute or trigger manual refresh.
+• “Duplicate parts showing” → indicates stale cache; refresh or ensure no overlapping open SOs with identical lines.
+
+11) Time Tracking & Attendance
+Summary
+Time Tracking module handles daily attendance, clock-ins, breaks, and manual adjustments tied to sales orders.
+
+Key Validations & Behaviors
+• Clock-In Requirements: employee must exist, have Time Tracking role, and no active clock-in. Attempting to clock in while already active returns an error naming the active entry.
+• Attendance Prerequisites: requires active shift/day record. If the employee has no attendance record for the day, the system auto-creates one; failures usually stem from missing employee configuration.
+• Clock-Out Rules: end time must be after start; break deductions follow configured daily breaks. System enforces single active clock-in.
+• Manual Entries: admins can insert past entries but must ensure they do not overlap existing entries; server rejects overlapping intervals.
+• Sales Order Linking: labour entries may link to sales orders; deleting or closing linked SO updates aggregated labour cost and auto-generated SUPPLY line.
+• Reports: attendance summary uses payroll period boundaries; missing clock-outs flagged for admin review.
+
+Troubleshooting
+• “Cannot clock in” → check for existing active entry, ensure employee role assigned, and attendance day created. Section 15.E details steps.
+• “Manual entry rejected” → verify time range does not overlap existing entries and that start < end.
+• “Linked labour cost missing on SO” → confirm attendance entry linked to SO and labour rate configured.
+
+12) Admin & Config
 • Business Profile: company name, address, logo, tax IDs used in documents.
 • QBO Account Mapping: connect to QuickBooks, fetch accounts, map required categories (inventory asset, AP/AR, GST/VAT, income, COGS for materials/labour/overhead). Mappings are used on QBO export.
 • Margin Schedule: cost bands → margin/markup rules to suggest selling prices.
@@ -63,12 +182,12 @@ Aggregates shortages across open sales orders. Shows part number, description, s
 • Email Settings: per‑user SMTP (provider presets or custom host/port, secure flag). “Test connection” to validate creds. Leave password blank on update to retain existing.
 • Email Templates: CRUD of reusable templates (quote, sales order, PO, custom). Mark defaults; optional placeholders if supported by server.
 
-10) Offline & Reliability
+13) Offline & Reliability
 • Offline indicator shows when server is unreachable and number of queued operations.
 • Pending actions are queued locally; a background poll attempts sync when connectivity returns. Manual debug trigger available for forced sync.
 • Shared calculation utilities ensure totals (subtotals, taxes) match across UI, PDFs, and exports.
 
-11) Back‑End API Surface (Representative)
+14) Back‑End API Surface (Representative)
 • Inventory: GET/POST/PUT/DELETE /api/inventory; CSV: POST /api/inventory/upload-csv, GET /api/inventory/csv-template; Vendor mappings: /api/inventory/:partNumber/vendors (GET/POST/PUT/DELETE) and usage increment endpoint.
 • Vendors & Customers: standard CRUD.
 • Sales Orders: GET /api/sales-orders?status=open|closed|all; GET/POST/PUT /api/sales-orders/:id; PDF; POST /api/sales-orders/:id/export-to-qbo.
@@ -80,14 +199,49 @@ Aggregates shortages across open sales orders. Shows part number, description, s
 • Voice/Text Search: endpoints that accept audio/text to produce structured search tokens used by Part Finder (requires AI key).
 • Optional voice call to vendor: stubbed endpoint pending full LiveKit/Telnyx integration.
 
-12) Business Rules & Invariants
+15) Troubleshooting & FAQ
+A. Cannot Add or Update a Part
+   1. Confirm user role allows edits (Admin or Sales & Purchase).
+   2. Check normalization warning—part numbers are uppercased and stripped of spaces; duplicates on normalized value block save.
+   3. Verify required fields (part_number, description, unit, part_type) and non-negative quantity/cost. Supplies may omit quantity but still need part_type = supply.
+   4. If uploading CSV, inspect error report for row numbers, illegal characters, or size limits. Clean fractions to match standard format (e.g., 1/2 not 0.5 if expecting fraction string).
+
+B. Vendor Mapping Missing or Incorrect
+   1. Ensure mapping exists in inventory detail. Closing a PO with vendor code prompts creation—accept the prompt to auto-add.
+   2. Preferred mapping may shift if another mapping gains higher usage_count after PO closure; reassert preferred flag if needed.
+   3. When importing CSV, include vendor_name and vendor_part_number columns; otherwise only inventory records are created.
+
+C. Unable to Close or Reopen Purchase Order
+   1. Check for duplicate vendor bill/invoice numbers—must be unique per vendor.
+   2. Ensure all line items have received quantities matching ordered amounts. Partial receipt keeps PO open.
+   3. Closing adjusts inventory; if any resulting quantity would be negative (due to other allocations), closure is blocked with item list.
+   4. Reopening reverses inventory additions. If reversal pushes quantity below zero, the server blocks reopen and returns offending part numbers; adjust inventory or fulfill shortages first.
+
+D. Sales Order Save/Close Fails
+   1. Duplicate line items or missing SUPPLY item for labour conversion cause validation errors—remove duplicates and confirm supply catalog entry exists.
+   2. Negative availability triggers shortage banner; use “Transfer to Parts to Order” to request purchasing support.
+   3. Closing requires zero shortages and all linked POs closed. Review linked PO statuses.
+   4. QBO export errors cite missing mappings or prior exports; update QBO mapping (Section 12) and ensure exported_at is null before retrying.
+
+E. Time Tracking Errors
+   1. “Already clocked in” indicates existing active entry—clock out before new entry.
+   2. “Employee not found/role missing” → confirm employee record exists with Time Tracking role.
+   3. Overlapping manual entry times are rejected; adjust start/end to avoid overlap.
+   4. If labour costs missing on sales order, ensure attendance entry is linked and labour rate configured in settings.
+
+F. Parts to Order Issues
+   1. Missing part: shortage resolved or sales order closed. Reopen SO or adjust quantity to regenerate shortage.
+   2. Stale data: use refresh button after closing PO or adjusting inventory.
+   3. Duplicate entries: indicates open SO duplicates; merge or edit SO lines.
+
+16) Business Rules & Invariants
 • Inventory part_type limited to “stock” or “supply”; unique part_number normalization encouraged.
 • Sales Orders: single line per unique part; cannot close with negative availability; special lines (LABOUR/OVERHEAD/SUPPLY) have custom handling (e.g., auto‑supply from labour rate).
 • Purchase Orders: warn or block duplicate vendor bill numbers; vendor PN swap logic on vendor change; close only when receiving/fulfillment complete.
 • Vendor usage: increment mapping usage on PO finalization to drive “most‑used” selection.
 • Consistent total calculations across UI/PDF/export; robust server‑side validation with informative errors.
 
-13) Typical Workflows
+17) Typical Workflows
 A) Quote → Sales Order → Purchase Order → Fulfillment → QBO Export
 1. Create quote; email PDF to customer; convert accepted quote to SO.
 2. Edit SO; resolve negative availability by transferring shortfalls to Parts‑to‑Order.
@@ -106,8 +260,9 @@ C) Email & Templates
 2. Create default templates for quotes, SOs, POs.
 3. Email PDFs directly from editor pages using templates.
 
-14) RAG Ingestion Notes
-• Chunk by headings 1–14; each section is semantically cohesive.
+18) RAG Ingestion Notes
+• Chunk by headings 0–18; each section is semantically cohesive and already structured for retrieval.
+• Group troubleshooting subsections (15.A–15.F) into separate embeddings to allow precise answer retrieval.
 • Keep code names stable (route names, special part codes) to improve retrieval precision.
 • Avoid embedding transient data (secrets, hostnames) in chunks.
 • Use this doc as the primary knowledge source; exclude deprecated or experimental modules not surfaced in the UI.
