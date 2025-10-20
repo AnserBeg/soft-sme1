@@ -166,6 +166,7 @@ const buildToolRegistry = (
   userId: number
 ): AgentToolRegistry => ({
   retrieveDocs: async ({ query }: any) => tools.retrieveDocs(query),
+  inventoryLookup: async (args: any) => tools.inventoryLookup(sessionId, args),
   createSalesOrder: async (args: any) => tools.createSalesOrder(sessionId, args),
   updateSalesOrder: async (args: any) =>
     tools.updateSalesOrder(sessionId, requireId(args?.sales_order_id ?? args?.id, 'sales_order_id'), args?.patch ?? args),
