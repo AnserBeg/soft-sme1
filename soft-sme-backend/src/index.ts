@@ -38,6 +38,7 @@ import vendorRoutes from './routes/vendorRoutes';
 import inventoryRoutes from './routes/inventoryRoutes';
 import categoryRoutes from './routes/categoryRoutes';
 import quoteRoutes from './routes/quoteRoutes';
+import quoteTemplateRoutes from './routes/quoteTemplateRoutes';
 import salesOrderRoutes from './routes/salesOrderRoutes';
 import purchaseOrderRoutes from './routes/purchaseOrderRoutes';
 import purchaseOrderOcrRoutes from './routes/purchaseOrderOcrRoutes';
@@ -214,6 +215,9 @@ console.log('Registered category routes');
 
 app.use('/api/quotes', authMiddleware, quoteRoutes);
 console.log('Registered quote routes');
+
+app.use('/api/quote-templates', authMiddleware, quoteTemplateRoutes);
+console.log('Registered quote template routes');
 
 app.use('/api/sales-orders', authMiddleware, salesOrderRoutes);
 console.log('Registered sales order routes');
