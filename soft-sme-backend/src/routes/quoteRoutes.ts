@@ -112,14 +112,21 @@ router.put('/:id', async (req: Request, res: Response) => {
     await client.query('BEGIN');
 
     // Check if quote exists
-    const quoteCheck = await client.query('SELECT quote_id FROM quotes WHERE quote_id = $1', [id]);
+    const quoteCheck = await client.query('SELECT quote_id, status FROM quotes WHERE quote_id = $1', [id]);
     if (quoteCheck.rows.length === 0) {
+      await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Quote not found' });
     }
+
+    const existingQuote = quoteCheck.rows[0];
+
+    const sanitizedStatus = typeof status === 'string' && status.trim() ? status.trim() : '';
+    const statusToUse = sanitizedStatus || existingQuote.status || 'Open';
 
     // Verify that the customer exists
     const customerCheck = await client.query('SELECT customer_id FROM customermaster WHERE customer_id = $1', [customer_id]);
     if (customerCheck.rows.length === 0) {
+      await client.query('ROLLBACK');
       return res.status(400).json({ error: `Customer with ID ${customer_id} not found` });
     }
 
@@ -146,7 +153,7 @@ router.put('/:id', async (req: Request, res: Response) => {
         product_name,
         product_description,
         estimated_cost,
-        status,
+        statusToUse,
         terms || null,
         customer_po_number || null,
         vin_number || null,
@@ -201,10 +208,22 @@ router.post('/:id/convert-to-sales-order', async (req: Request, res: Response) =
     `, [id]);
 
     if (quoteResult.rows.length === 0) {
+      await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Quote not found' });
     }
 
     const quote = quoteResult.rows[0];
+
+    const currentStatus = (quote.status ?? '').toString().trim().toLowerCase();
+    if (currentStatus === 'approved') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Quote has already been converted to a sales order.' });
+    }
+
+    if (currentStatus === 'rejected') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Rejected quotes cannot be converted to sales orders.' });
+    }
 
     const conversionDate = new Date();
     const conversionYear = conversionDate.getFullYear();
@@ -244,18 +263,74 @@ router.post('/:id/convert-to-sales-order', async (req: Request, res: Response) =
 
     const salesOrderId = salesOrderResult.rows[0].sales_order_id;
 
-    // After successful insert, delete the quote from quotes table
-    await client.query('DELETE FROM quotes WHERE quote_id = $1', [id]);
+    const updatedQuoteResult = await client.query(
+      `UPDATE quotes
+        SET status = $1,
+            updated_at = NOW()
+       WHERE quote_id = $2
+       RETURNING *`,
+      ['Approved', id]
+    );
+
+    const updatedQuote = updatedQuoteResult.rows[0];
 
     await client.query('COMMIT');
     
     res.status(200).json({ 
       message: 'Quote converted to sales order successfully',
-      salesOrder: salesOrderResult.rows[0]
+      salesOrder: salesOrderResult.rows[0],
+      quote: updatedQuote
     });
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('quoteRoutes: Error converting quote to sales order:', error);
+    res.status(500).json({ error: 'Internal server error', details: (error as any).message });
+  } finally {
+    client.release();
+  }
+});
+
+router.post('/:id/reject', async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const quoteResult = await client.query('SELECT * FROM quotes WHERE quote_id = $1', [id]);
+    if (quoteResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Quote not found' });
+    }
+
+    const quote = quoteResult.rows[0];
+    const currentStatus = (quote.status ?? '').toString().trim().toLowerCase();
+
+    if (currentStatus === 'approved') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Approved quotes cannot be rejected.' });
+    }
+
+    if (currentStatus === 'rejected') {
+      await client.query('ROLLBACK');
+      return res.status(200).json({ message: 'Quote is already rejected.', quote });
+    }
+
+    const updateResult = await client.query(
+      `UPDATE quotes
+        SET status = $1,
+            updated_at = NOW()
+       WHERE quote_id = $2
+       RETURNING *`,
+      ['Rejected', id]
+    );
+
+    await client.query('COMMIT');
+
+    res.status(200).json({ message: 'Quote marked as rejected.', quote: updateResult.rows[0] });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('quoteRoutes: Error rejecting quote:', error);
     res.status(500).json({ error: 'Internal server error', details: (error as any).message });
   } finally {
     client.release();
