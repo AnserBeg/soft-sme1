@@ -1525,7 +1525,7 @@ router.put('/:id', async (req, res) => {
           if (quantityToAddToInventory > 0) {
             console.log(`Adding new part to inventory: '${normalizedPartNumber}' (quantity: ${quantityToAddToInventory}, unit_cost: ${numericUnitCost})`);
             await client.query(
-              `INSERT INTO "inventory" (part_number, quantity_on_hand, last_unit_cost, part_description, unit, part_type)`
+              `INSERT INTO "inventory" (part_number, quantity_on_hand, last_unit_cost, part_description, unit, part_type)
                VALUES ($1, $2, $3, $4, $5, 'stock')`,
               [normalizedPartNumber, quantityToAddToInventory, numericUnitCost, item.part_description, item.unit]
             );
