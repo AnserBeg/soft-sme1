@@ -703,6 +703,7 @@ router.get('/:id/allocation-suggestions', async (req: Request, res: Response) =>
     const aggregatedItems = new Map();
     for (const poItem of poLineItems) {
       const partNumber = poItem.part_number.toString().trim().toUpperCase();
+      const partType = partTypeMap.get(partNumber);
       if (aggregatedItems.has(partNumber)) {
         // Add quantities for duplicate parts
         const existing = aggregatedItems.get(partNumber);
@@ -955,6 +956,28 @@ router.post('/:id/close-with-allocations', async (req: Request, res: Response) =
     );
     
     const poLineItems = poLineItemsResult.rows;
+    const normalizedPartNumbers = Array.from(
+      new Set(
+        poLineItems
+          .map((item: any) => item?.part_number ? String(item.part_number).trim().toUpperCase() : '')
+          .filter((pn: string) => pn.length > 0)
+      )
+    );
+
+    const partTypeMap = new Map<string, string>();
+    if (normalizedPartNumbers.length > 0) {
+      const placeholders = normalizedPartNumbers.map((_, idx) => `$${idx + 1}`).join(',');
+      const typeResult = await client.query(
+        `SELECT part_number, part_type FROM inventory WHERE UPPER(part_number) IN (${placeholders})`,
+        normalizedPartNumbers
+      );
+      for (const row of typeResult.rows) {
+        if (row?.part_number) {
+          partTypeMap.set(String(row.part_number).toUpperCase(), (row.part_type || '').toLowerCase());
+        }
+      }
+    }
+
     
     // Get stored allocations for this purchase order
     const allocationsResult = await client.query(
@@ -965,6 +988,32 @@ router.post('/:id/close-with-allocations', async (req: Request, res: Response) =
     const allocations = allocationsResult.rows;
     console.log(`📋 Found ${allocations.length} stored allocations for purchase order ${id}`);
     
+    const serviceValidationTolerance = 0.0001;
+    for (const poItem of poLineItems) {
+      const normalizedPart = poItem.part_number ? String(poItem.part_number).trim().toUpperCase() : '';
+      if (!normalizedPart) continue;
+      const partType = partTypeMap.get(normalizedPart);
+      if (partType === 'service') {
+        const orderedQuantity = parseFloat(poItem.quantity) || 0;
+        if (orderedQuantity <= 0) continue;
+        const partAllocations = allocations.filter((a: any) => (a.part_number || '').toString().toUpperCase() === normalizedPart);
+        const totalAllocated = partAllocations.reduce((sum: number, a: any) => sum + (parseFloat(a.allocate_qty) || 0), 0);
+        const surplus = surplusPerPart[normalizedPart] || 0;
+        if (totalAllocated + serviceValidationTolerance < orderedQuantity || surplus > serviceValidationTolerance) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({
+            error: 'SERVICE_ALLOCATION_REQUIRED',
+            message: `Service item ${normalizedPart} must be fully allocated to a sales order before closing this purchase order.`,
+            details: {
+              ordered_quantity: orderedQuantity,
+              allocated_quantity: totalAllocated,
+              surplus
+            }
+          });
+        }
+      }
+    }
+
     // Validate allocations
     for (const poItem of poLineItems) {
       const partNumber = poItem.part_number.toString().trim().toUpperCase();
@@ -1132,22 +1181,32 @@ router.post('/:id/close-with-allocations', async (req: Request, res: Response) =
     // Process each part from the purchase order
     for (const poItem of poLineItems) {
       const partNumber = poItem.part_number.toString().trim().toUpperCase();
+      const partType = partTypeMap.get(partNumber);
       const quantityOrdered = parseFloat(poItem.quantity);
       const totalAllocated = totalAllocatedPerPart.get(partNumber) || 0;
       const surplus = surplusPerPart[partNumber] || 0;
       
       console.log(`📊 Part ${partNumber}: Ordered=${quantityOrdered}, Allocated=${totalAllocated}, Surplus=${surplus}`);
-      
+
+      if (partType === 'service') {
+        if (surplus > 0) {
+          console.warn(`Service part ${partNumber} reported a surplus of ${surplus}, skipping inventory update.`);
+        } else {
+          console.log(`Service part ${partNumber} fully allocated; skipping inventory update.`);
+        }
+        continue;
+      }
+
       // Only add surplus to inventory (allocated parts go directly to sales orders, not to inventory)
       if (surplus > 0) {
         const unitCost = parseFloat(poItem.unit_cost);
-        
+
         console.log(`📈 Increasing inventory for part ${partNumber} by ${surplus} (surplus from PO)`);
         await client.query(
-          `INSERT INTO inventory (part_number, part_description, unit, last_unit_cost, quantity_on_hand) 
-           VALUES ($1, $2, $3, $4, $5) 
-           ON CONFLICT (part_number) 
-           DO UPDATE SET 
+          `INSERT INTO inventory (part_number, part_description, unit, last_unit_cost, quantity_on_hand)
+           VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT (part_number)
+           DO UPDATE SET
              quantity_on_hand = COALESCE(CAST(inventory.quantity_on_hand AS NUMERIC), 0) + CAST($5 AS NUMERIC),
              last_unit_cost = $4,
              part_description = $2,
@@ -1157,8 +1216,7 @@ router.post('/:id/close-with-allocations', async (req: Request, res: Response) =
       } else {
         console.log(`ℹ️ No surplus for part ${partNumber} - no inventory increase needed`);
       }
-    }
-    
+
     // Update aggregated parts to order table
     await updateAggregatedPartsToOrder(poLineItems, client);
     

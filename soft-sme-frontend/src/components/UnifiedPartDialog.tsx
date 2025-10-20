@@ -42,7 +42,7 @@ interface UnifiedPartDialogProps {
 }
 
 const UNIT_OPTIONS = ['Each', 'cm', 'ft', 'kg', 'pcs', 'L'];
-const PART_TYPE_OPTIONS = ['stock', 'supply'];
+const PART_TYPE_OPTIONS = ['stock', 'supply', 'service'];
 
 interface Category {
   category_id: number;
@@ -112,9 +112,9 @@ const UnifiedPartDialog: React.FC<UnifiedPartDialogProps> = ({
     }
     
     // If part type is changed to supply, set quantity_on_hand to "NA"
-    if (field === 'part_type' && value === 'supply') {
-      setFormData(prev => ({ 
-        ...prev, 
+    if (field === 'part_type' && (value === 'supply' || value === 'service')) {
+      setFormData(prev => ({
+        ...prev,
         [field]: value,
         quantity_on_hand: 'NA'
       }));
@@ -190,8 +190,8 @@ const UnifiedPartDialog: React.FC<UnifiedPartDialogProps> = ({
       newErrors.part_type = 'Part Type is required';
     }
 
-    if (!['stock', 'supply'].includes(formData.part_type)) {
-      newErrors.part_type = 'Part Type must be either "stock" or "supply"';
+    if (!['stock', 'supply', 'service'].includes(formData.part_type)) {
+      newErrors.part_type = 'Part Type must be either "stock", "supply", or "service"';
     }
 
     if (!formData.category || formData.category.trim() === '') {
@@ -199,8 +199,8 @@ const UnifiedPartDialog: React.FC<UnifiedPartDialogProps> = ({
     }
 
     // Validate numeric fields
-    if (formData.part_type === 'supply') {
-      // For supply items, quantity_on_hand should be "NA" - no validation needed
+    if (formData.part_type === 'supply' || formData.part_type === 'service') {
+      // For supply and service items, quantity_on_hand should be "NA" - no validation needed
     } else {
       const quantity = parseFloat(String(formData.quantity_on_hand));
       if (formData.quantity_on_hand !== '' && (isNaN(quantity) || quantity < 0)) {
