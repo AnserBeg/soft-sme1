@@ -107,7 +107,7 @@ type MutableSearchObject = Partial<SearchObject> & {
 export const parseQuery = (query: string): { search: SearchObject } => {
   const search: MutableSearchObject = {};
   const textTerms: string[] = [];
-  const headerPairs: Array<[string, string]> = [];
+  const headerMap: Record<string, string | boolean> = {};
 
   const tokens = Array.from(query.matchAll(/(\w+:"[^"]+"|\w+:[^\s]+|"[^"]+"|\S+)/g)).map((match) => match[0]);
 
