@@ -4,6 +4,11 @@ import { EmailService } from '../emailService';
 import { PDFService } from '../pdfService';
 import { AgentTaskEvent, AgentTaskFacade } from './AgentTaskFacade';
 import type { EntityType } from './geminiRouter';
+import type {
+  ToolResultEnvelope,
+  ToolAttemptMetadata,
+  ToolDisambiguationCandidate,
+} from './answerComposer';
 import { VoiceService } from '../voice/VoiceService';
 import { TaskInput, TaskStatus } from '../TaskService';
 import { QuoteService } from '../QuoteService';
@@ -245,6 +250,87 @@ export class AgentToolsV2 {
     return details ? `${number} (${details})` : String(number);
   }
 
+  private defaultAttempts(): ToolAttemptMetadata {
+    return { exact: false, fuzzy: false, schema_refreshed: false };
+  }
+
+  private buildLookupQueryMetadata(
+    entityType: EntityType | null,
+    entityName: string,
+    orderNumber: string,
+    partIdentifier: string,
+    filters: Array<Record<string, unknown>>
+  ): Record<string, unknown> {
+    const metadata: Record<string, unknown> = {
+      entity_type: entityType,
+      entity_name: entityName || null,
+      order_number: orderNumber || null,
+      filters,
+    };
+
+    if (partIdentifier) {
+      metadata.part_identifier = partIdentifier;
+    }
+
+    return metadata;
+  }
+
+  private buildErrorEnvelope(
+    query: Record<string, unknown>,
+    code: string,
+    message: string,
+    attempts?: ToolAttemptMetadata
+  ): ToolResultEnvelope {
+    return {
+      type: 'error',
+      source: 'database',
+      query,
+      attempts: attempts ?? this.defaultAttempts(),
+      error: { code, message },
+    };
+  }
+
+  private buildEmptyEnvelope(
+    query: Record<string, unknown>,
+    attempts: ToolAttemptMetadata
+  ): ToolResultEnvelope {
+    return {
+      type: 'empty',
+      source: 'database',
+      query,
+      attempts,
+    };
+  }
+
+  private buildSuccessEnvelope(
+    query: Record<string, unknown>,
+    rows: any[],
+    attempts: ToolAttemptMetadata
+  ): ToolResultEnvelope {
+    return {
+      type: 'success',
+      source: 'database',
+      query,
+      rows,
+      total_rows: rows.length,
+      attempts,
+    };
+  }
+
+  private buildDisambiguationEnvelope(
+    query: Record<string, unknown>,
+    candidates: ToolDisambiguationCandidate[],
+    attempts: ToolAttemptMetadata
+  ): ToolResultEnvelope {
+    return {
+      type: 'disambiguation',
+      source: 'database',
+      query,
+      candidates,
+      attempts,
+    };
+  }
+
   // Utility to audit tool execution
   private async audit(sessionId: number, tool: string, input: any, output: any, success = true) {
     await this.pool.query(
@@ -263,7 +349,7 @@ export class AgentToolsV2 {
     return res.rows;
   }
 
-  async inventoryLookup(sessionId: number, args: any) {
+  async inventoryLookup(sessionId: number, args: any): Promise<ToolResultEnvelope> {
     const entityType = this.normalizeLookupType(args?.entity_type);
     const entityName = this.normalizeLookupValue(args?.entity_name);
     const orderNumber = this.normalizeLookupValue(args?.order_number);
@@ -278,33 +364,35 @@ export class AgentToolsV2 {
       filters,
     };
 
+    const queryMetadata = this.buildLookupQueryMetadata(entityType, entityName, orderNumber, partIdentifier, filters);
+
     try {
-      let result;
+      let result: ToolResultEnvelope;
       switch (entityType) {
         case 'vendor':
-          result = await this.lookupVendors(entityName);
+          result = await this.lookupVendors(entityName, queryMetadata);
           break;
         case 'customer':
-          result = await this.lookupCustomers(entityName);
+          result = await this.lookupCustomers(entityName, queryMetadata);
           break;
         case 'part':
-          result = await this.lookupParts(partIdentifier || entityName);
+          result = await this.lookupParts(partIdentifier || entityName, queryMetadata);
           break;
         case 'purchase_order':
-          result = await this.lookupPurchaseOrders(orderNumber, entityName);
+          result = await this.lookupPurchaseOrders(orderNumber, entityName, queryMetadata);
           break;
         case 'sales_order':
-          result = await this.lookupSalesOrders(orderNumber, entityName);
+          result = await this.lookupSalesOrders(orderNumber, entityName, queryMetadata);
           break;
         case 'quote':
-          result = await this.lookupQuotes(orderNumber, entityName);
+          result = await this.lookupQuotes(orderNumber, entityName, queryMetadata);
           break;
         default:
-          result = {
-            message:
-              'Please specify what you want to look up (vendor, customer, part, purchase order, sales order, or quote).',
-            matches: [],
-          };
+          result = this.buildErrorEnvelope(
+            queryMetadata,
+            'INVALID_REQUEST',
+            'Please specify what you want to look up (vendor, customer, part, purchase order, sales order, or quote).'
+          );
       }
 
       await this.audit(sessionId, 'inventoryLookup', payload, result, true);
@@ -316,72 +404,99 @@ export class AgentToolsV2 {
     }
   }
 
-  private async lookupVendors(name: string) {
+  private async lookupVendors(name: string, query: Record<string, unknown>): Promise<ToolResultEnvelope> {
+    const attempts = this.defaultAttempts();
+
     if (!name) {
-      return { message: 'Please provide a vendor name to search for.', matches: [] };
+      return this.buildErrorEnvelope(query, 'MISSING_INPUT', 'Please provide a vendor name to search for.', attempts);
     }
 
+    attempts.exact = true;
     const exact = await this.pool.query(
       'SELECT vendor_id, vendor_name, contact_person, telephone_number, email FROM vendormaster WHERE LOWER(vendor_name) = LOWER($1)',
       [name]
     );
 
-    const rows = exact.rows.length
-      ? exact.rows
-      : (
-          await this.pool.query(
-            'SELECT vendor_id, vendor_name, contact_person, telephone_number, email FROM vendormaster WHERE vendor_name ILIKE $1 ORDER BY vendor_name ASC LIMIT 5',
-            [this.buildLikeTerm(name)]
-          )
-        ).rows;
+    let rows = exact.rows;
+    if (!rows.length) {
+      attempts.fuzzy = true;
+      rows = (
+        await this.pool.query(
+          'SELECT vendor_id, vendor_name, contact_person, telephone_number, email FROM vendormaster WHERE vendor_name ILIKE $1 ORDER BY vendor_name ASC LIMIT 5',
+          [this.buildLikeTerm(name)]
+        )
+      ).rows;
+    }
 
     if (!rows.length) {
-      return { message: `I couldn't find any vendors matching "${name}".`, matches: [] };
+      return this.buildEmptyEnvelope(query, attempts);
     }
 
-    const summaries = rows.map((row) => this.formatVendorSummary(row));
-    return {
-      message: this.describeLookup('vendor', summaries),
-      matches: rows,
-    };
+    if (rows.length === 1) {
+      return this.buildSuccessEnvelope(query, rows, attempts);
+    }
+
+    const candidates: ToolDisambiguationCandidate[] = rows.map((row) => ({
+      id: row.vendor_id,
+      display_name: row.vendor_name,
+      contact_person: row.contact_person,
+      telephone_number: row.telephone_number,
+      email: row.email,
+    }));
+    return this.buildDisambiguationEnvelope(query, candidates, attempts);
   }
 
-  private async lookupCustomers(name: string) {
+  private async lookupCustomers(name: string, query: Record<string, unknown>): Promise<ToolResultEnvelope> {
+    const attempts = this.defaultAttempts();
+
     if (!name) {
-      return { message: 'Please provide a customer name to search for.', matches: [] };
+      return this.buildErrorEnvelope(query, 'MISSING_INPUT', 'Please provide a customer name to search for.', attempts);
     }
 
+    attempts.exact = true;
     const exact = await this.pool.query(
       'SELECT customer_id, customer_name, contact_person, telephone_number, email FROM customermaster WHERE LOWER(customer_name) = LOWER($1)',
       [name]
     );
 
-    const rows = exact.rows.length
-      ? exact.rows
-      : (
-          await this.pool.query(
-            'SELECT customer_id, customer_name, contact_person, telephone_number, email FROM customermaster WHERE customer_name ILIKE $1 ORDER BY customer_name ASC LIMIT 5',
-            [this.buildLikeTerm(name)]
-          )
-        ).rows;
+    let rows = exact.rows;
+    if (!rows.length) {
+      attempts.fuzzy = true;
+      rows = (
+        await this.pool.query(
+          'SELECT customer_id, customer_name, contact_person, telephone_number, email FROM customermaster WHERE customer_name ILIKE $1 ORDER BY customer_name ASC LIMIT 5',
+          [this.buildLikeTerm(name)]
+        )
+      ).rows;
+    }
 
     if (!rows.length) {
-      return { message: `I couldn't find any customers matching "${name}".`, matches: [] };
+      return this.buildEmptyEnvelope(query, attempts);
     }
 
-    const summaries = rows.map((row) => this.formatCustomerSummary(row));
-    return {
-      message: this.describeLookup('customer', summaries),
-      matches: rows,
-    };
+    if (rows.length === 1) {
+      return this.buildSuccessEnvelope(query, rows, attempts);
+    }
+
+    const candidates: ToolDisambiguationCandidate[] = rows.map((row) => ({
+      id: row.customer_id,
+      display_name: row.customer_name,
+      contact_person: row.contact_person,
+      telephone_number: row.telephone_number,
+      email: row.email,
+    }));
+    return this.buildDisambiguationEnvelope(query, candidates, attempts);
   }
 
-  private async lookupParts(identifier: string) {
+  private async lookupParts(identifier: string, query: Record<string, unknown>): Promise<ToolResultEnvelope> {
     const search = identifier || '';
+    const attempts = this.defaultAttempts();
+
     if (!search) {
-      return { message: 'Please provide a part number or name to search for.', matches: [] };
+      return this.buildErrorEnvelope(query, 'MISSING_INPUT', 'Please provide a part number or name to search for.', attempts);
     }
 
+    attempts.fuzzy = true;
     const rows = (
       await this.pool.query(
         'SELECT part_id, part_number, part_description, unit, quantity_on_hand, last_unit_cost FROM inventory WHERE part_number ILIKE $1 OR part_description ILIKE $1 ORDER BY part_number ASC LIMIT 5',
@@ -390,17 +505,29 @@ export class AgentToolsV2 {
     ).rows;
 
     if (!rows.length) {
-      return { message: `I couldn't find any parts matching "${search}".`, matches: [] };
+      return this.buildEmptyEnvelope(query, attempts);
     }
 
-    const summaries = rows.map((row) => this.formatPartSummary(row));
-    return {
-      message: this.describeLookup('part', summaries),
-      matches: rows,
-    };
+    if (rows.length === 1) {
+      return this.buildSuccessEnvelope(query, rows, attempts);
+    }
+
+    const candidates: ToolDisambiguationCandidate[] = rows.map((row) => ({
+      id: row.part_id,
+      display_name: row.part_number || row.part_description,
+      part_number: row.part_number,
+      part_description: row.part_description,
+      unit: row.unit,
+    }));
+    return this.buildDisambiguationEnvelope(query, candidates, attempts);
   }
 
-  private async lookupPurchaseOrders(orderNumber: string, vendorName: string) {
+  private async lookupPurchaseOrders(
+    orderNumber: string,
+    vendorName: string,
+    queryMetadata: Record<string, unknown>
+  ): Promise<ToolResultEnvelope> {
+    const attempts = this.defaultAttempts();
     const conditions: string[] = [];
     const params: any[] = [];
 
@@ -415,8 +542,15 @@ export class AgentToolsV2 {
     }
 
     if (!conditions.length) {
-      return { message: 'Provide a purchase order number or vendor name to search.', matches: [] };
+      return this.buildErrorEnvelope(
+        queryMetadata,
+        'MISSING_INPUT',
+        'Provide a purchase order number or vendor name to search.',
+        attempts
+      );
     }
+
+    attempts.fuzzy = true;
 
     const query = `
       SELECT ph.purchase_id, ph.purchase_number, ph.status, ph.purchase_date, vm.vendor_name
@@ -430,17 +564,30 @@ export class AgentToolsV2 {
     const rows = (await this.pool.query(query, params)).rows;
 
     if (!rows.length) {
-      return { message: 'No purchase orders matched the search.', matches: [] };
+      return this.buildEmptyEnvelope(queryMetadata, attempts);
     }
 
-    const summaries = rows.map((row) => this.formatPurchaseOrderSummary(row));
-    return {
-      message: this.describeLookup('purchase order', summaries),
-      matches: rows,
-    };
+    if (rows.length === 1) {
+      return this.buildSuccessEnvelope(queryMetadata, rows, attempts);
+    }
+
+    const candidates: ToolDisambiguationCandidate[] = rows.map((row) => ({
+      id: row.purchase_id,
+      display_name: row.purchase_number,
+      vendor_name: row.vendor_name,
+      status: row.status,
+      purchase_date: row.purchase_date,
+    }));
+
+    return this.buildDisambiguationEnvelope(queryMetadata, candidates, attempts);
   }
 
-  private async lookupSalesOrders(orderNumber: string, customerName: string) {
+  private async lookupSalesOrders(
+    orderNumber: string,
+    customerName: string,
+    queryMetadata: Record<string, unknown>
+  ): Promise<ToolResultEnvelope> {
+    const attempts = this.defaultAttempts();
     const conditions: string[] = [];
     const params: any[] = [];
 
@@ -455,8 +602,15 @@ export class AgentToolsV2 {
     }
 
     if (!conditions.length) {
-      return { message: 'Provide a sales order number or customer name to search.', matches: [] };
+      return this.buildErrorEnvelope(
+        queryMetadata,
+        'MISSING_INPUT',
+        'Provide a sales order number or customer name to search.',
+        attempts
+      );
     }
+
+    attempts.fuzzy = true;
 
     const query = `
       SELECT soh.sales_order_id, soh.sales_order_number, soh.status, cm.customer_name, soh.product_name
@@ -470,17 +624,30 @@ export class AgentToolsV2 {
     const rows = (await this.pool.query(query, params)).rows;
 
     if (!rows.length) {
-      return { message: 'No sales orders matched the search.', matches: [] };
+      return this.buildEmptyEnvelope(queryMetadata, attempts);
     }
 
-    const summaries = rows.map((row) => this.formatSalesOrderSummary(row));
-    return {
-      message: this.describeLookup('sales order', summaries),
-      matches: rows,
-    };
+    if (rows.length === 1) {
+      return this.buildSuccessEnvelope(queryMetadata, rows, attempts);
+    }
+
+    const candidates: ToolDisambiguationCandidate[] = rows.map((row) => ({
+      id: row.sales_order_id,
+      display_name: row.sales_order_number,
+      customer_name: row.customer_name,
+      status: row.status,
+      product_name: row.product_name,
+    }));
+
+    return this.buildDisambiguationEnvelope(queryMetadata, candidates, attempts);
   }
 
-  private async lookupQuotes(orderNumber: string, customerName: string) {
+  private async lookupQuotes(
+    orderNumber: string,
+    customerName: string,
+    queryMetadata: Record<string, unknown>
+  ): Promise<ToolResultEnvelope> {
+    const attempts = this.defaultAttempts();
     const conditions: string[] = [];
     const params: any[] = [];
 
@@ -495,8 +662,15 @@ export class AgentToolsV2 {
     }
 
     if (!conditions.length) {
-      return { message: 'Provide a quote number or customer name to search.', matches: [] };
+      return this.buildErrorEnvelope(
+        queryMetadata,
+        'MISSING_INPUT',
+        'Provide a quote number or customer name to search.',
+        attempts
+      );
     }
+
+    attempts.fuzzy = true;
 
     const query = `
       SELECT q.quote_id, q.quote_number, q.status, cm.customer_name, q.product_name
@@ -510,14 +684,22 @@ export class AgentToolsV2 {
     const rows = (await this.pool.query(query, params)).rows;
 
     if (!rows.length) {
-      return { message: 'No quotes matched the search.', matches: [] };
+      return this.buildEmptyEnvelope(queryMetadata, attempts);
     }
 
-    const summaries = rows.map((row) => this.formatQuoteSummary(row));
-    return {
-      message: this.describeLookup('quote', summaries),
-      matches: rows,
-    };
+    if (rows.length === 1) {
+      return this.buildSuccessEnvelope(queryMetadata, rows, attempts);
+    }
+
+    const candidates: ToolDisambiguationCandidate[] = rows.map((row) => ({
+      id: row.quote_id,
+      display_name: row.quote_number,
+      customer_name: row.customer_name,
+      status: row.status,
+      product_name: row.product_name,
+    }));
+
+    return this.buildDisambiguationEnvelope(queryMetadata, candidates, attempts);
   }
 
   // Tasks
