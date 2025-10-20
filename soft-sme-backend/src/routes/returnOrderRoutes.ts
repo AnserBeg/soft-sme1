@@ -3,6 +3,7 @@ import { pool } from '../db';
 import { InventoryService } from '../services/InventoryService';
 import { PoolClient } from 'pg';
 import PDFDocument from 'pdfkit';
+import { getLogoImageSource } from '../utils/pdfLogoHelper';
 
 const router = express.Router();
 const inventoryService = new InventoryService(pool);
@@ -247,66 +248,285 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
     }
 
     const purchaseRes = await client.query(
-      `SELECT ph.purchase_number, ph.purchase_id, vm.vendor_name, vm.street_address, vm.city,
-              vm.province, vm.country, vm.postal_code
+      `SELECT ph.purchase_number,
+              ph.purchase_id,
+              ph.status AS purchase_status,
+              vm.vendor_name,
+              vm.street_address,
+              vm.city,
+              vm.province,
+              vm.country,
+              vm.postal_code,
+              vm.telephone_number,
+              vm.email
        FROM purchasehistory ph
        LEFT JOIN vendormaster vm ON vm.vendor_id = ph.vendor_id
        WHERE ph.purchase_id = $1`,
       [returnOrder.purchase_id]
     );
-    const purchaseInfo = purchaseRes.rows[0];
+    const purchaseInfo = purchaseRes.rows[0] || {};
 
+    const businessProfileResult = await client.query(
+      'SELECT * FROM business_profile ORDER BY id DESC LIMIT 1'
+    );
+    const businessProfile = businessProfileResult.rows[0];
+
+    const filename = encodeURIComponent(`${returnOrder.return_number}.pdf`);
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="${returnOrder.return_number}.pdf"`);
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
 
-    const doc = new PDFDocument({ margin: 40 });
+    const doc = new PDFDocument({ margin: 50 });
     doc.pipe(res);
 
-    doc.fontSize(20).text('Return Order', { align: 'center' });
-    doc.moveDown();
-    doc.fontSize(12);
-    doc.text(`Return Number: ${returnOrder.return_number}`);
-    doc.text(`Status: ${returnOrder.status}`);
-    doc.text(`Requested At: ${returnOrder.requested_at ? new Date(returnOrder.requested_at).toLocaleString() : 'N/A'}`);
-    if (returnOrder.returned_at) {
-      doc.text(`Returned At: ${new Date(returnOrder.returned_at).toLocaleString()}`);
-    }
-    doc.moveDown();
-    if (purchaseInfo) {
-      doc.text(`Purchase Order: ${purchaseInfo.purchase_number} (ID ${purchaseInfo.purchase_id})`);
-      if (purchaseInfo.vendor_name) {
-        doc.text(`Vendor: ${purchaseInfo.vendor_name}`);
-      }
-      const addressParts = [purchaseInfo.street_address, purchaseInfo.city, purchaseInfo.province, purchaseInfo.country, purchaseInfo.postal_code]
-        .filter(Boolean)
-        .join(', ');
-      if (addressParts) {
-        doc.text(`Vendor Address: ${addressParts}`);
+    const logoSource = await getLogoImageSource(businessProfile?.logo_url);
+    const headerY = 50;
+    const logoHeight = 80;
+    const logoWidth = 160;
+    const pageWidth = 600;
+    const logoX = 50;
+    const companyTitleX = logoX + logoWidth + 20;
+    const companyTitleY = headerY + (logoHeight - 16) / 2;
+
+    if (logoSource) {
+      try {
+        doc.image(logoSource, logoX, headerY, { fit: [logoWidth, logoHeight] });
+      } catch (error) {
+        console.error('Failed to render logo in return order PDF:', error);
       }
     }
+
+    if (businessProfile?.business_name) {
+      doc
+        .font('Helvetica-Bold')
+        .fontSize(16)
+        .fillColor('#000000')
+        .text((businessProfile.business_name || '').toUpperCase(), companyTitleX, companyTitleY, {
+          align: 'left',
+          width: pageWidth - companyTitleX - 50,
+        });
+    }
+
+    let y = headerY + logoHeight + 4;
+    doc.moveTo(50, y).lineTo(550, y).strokeColor('#444444').lineWidth(1).stroke();
+    y += 18;
+
+    doc.font('Helvetica-Bold').fontSize(12).fillColor('#000000').text('Company Information', 50, y);
+    doc.font('Helvetica-Bold').fontSize(12).fillColor('#000000').text('Vendor', 320, y);
+    y += 16;
+
+    doc.font('Helvetica').fontSize(11).fillColor('#000000');
+    const companyAddress = [
+      businessProfile?.street_address,
+      businessProfile?.city,
+      businessProfile?.province,
+      businessProfile?.country,
+      businessProfile?.postal_code,
+    ]
+      .filter(Boolean)
+      .join(', ');
+    if (businessProfile) {
+      doc.text(businessProfile.business_name || '', 50, y);
+      doc.text(businessProfile.street_address || '', 50, y + 14);
+      doc.text(companyAddress, 50, y + 28);
+      doc.text(businessProfile.email || '', 50, y + 42);
+      doc.text(businessProfile.telephone_number || '', 50, y + 56);
+    }
+
+    doc.text(purchaseInfo.vendor_name || '', 320, y);
+    doc.text(purchaseInfo.street_address || '', 320, y + 14);
+    const vendorAddress = [
+      purchaseInfo.city,
+      purchaseInfo.province,
+      purchaseInfo.country,
+      purchaseInfo.postal_code,
+    ]
+      .filter(Boolean)
+      .join(', ');
+    doc.text(vendorAddress, 320, y + 28);
+    doc.text(purchaseInfo.email || '', 320, y + 42);
+    doc.text(purchaseInfo.telephone_number || '', 320, y + 56);
+
+    y += 72;
+    doc.moveTo(50, y).lineTo(550, y).strokeColor('#444444').lineWidth(1).stroke();
+    y += 18;
+
+    doc.font('Helvetica-Bold').fontSize(14).fillColor('#000000').text('RETURN ORDER', 50, y);
+    y += 22;
+
+    const formatDateTime = (value?: string | null) =>
+      value ? new Date(value).toLocaleString() : '—';
+
+    const infoRows: Array<[string, string]> = [
+      ['Return Order #:', returnOrder.return_number || '—'],
+      ['Status:', returnOrder.status || '—'],
+      ['Purchase Order #:', purchaseInfo.purchase_number || '—'],
+      ['Purchase Status:', purchaseInfo.purchase_status || '—'],
+      ['Requested By:', returnOrder.requested_by || '—'],
+      ['Requested On:', formatDateTime(returnOrder.requested_at as string)],
+      ['Returned On:', formatDateTime(returnOrder.returned_at as string | null)],
+      ['Total Quantity:', `${Number(returnOrder.total_quantity || 0)}`],
+    ];
+
+    const leftColumnX = 50;
+    const rightColumnX = 320;
+    const rowHeight = 16;
+    infoRows.forEach((row, index) => {
+      const targetX = index < 4 ? leftColumnX : rightColumnX;
+      const yOffset = index < 4 ? index * rowHeight : (index - 4) * rowHeight;
+      doc.font('Helvetica-Bold').fontSize(11).text(row[0], targetX, y + yOffset);
+      doc.font('Helvetica').fontSize(11).text(row[1], targetX + 130, y + yOffset);
+    });
+
+    y += rowHeight * 4 + 12;
+
+    const totalValue = returnOrder.line_items.reduce((sum, line) => {
+      const qty = Number(line.quantity) || 0;
+      const unitCost = Number(line.unit_cost) || 0;
+      return sum + qty * unitCost;
+    }, 0);
+
+    doc.font('Helvetica-Bold').fontSize(11).text('Estimated Return Value:', leftColumnX, y);
+    doc
+      .font('Helvetica')
+      .fontSize(11)
+      .text(totalValue ? `$${totalValue.toFixed(2)}` : '—', leftColumnX + 160, y);
+
+    y += 24;
+
     if (returnOrder.notes) {
-      doc.moveDown();
-      doc.text(`Notes: ${returnOrder.notes}`);
+      doc.font('Helvetica-Bold').fontSize(11).text('Notes:', 50, y);
+      const notesResult = doc
+        .font('Helvetica')
+        .fontSize(11)
+        .text(returnOrder.notes, 50, y + 14, { width: 480 });
+      y = notesResult.y + 16;
     }
 
-    doc.moveDown();
-    doc.text('Line Items:', { underline: true });
-    doc.moveDown(0.5);
+    doc.moveTo(50, y).lineTo(550, y).strokeColor('#444444').lineWidth(1).stroke();
+    y += 14;
 
-    doc.font('Helvetica-Bold').text('Part Number', { continued: true, width: 150 });
-    doc.text('Description', { continued: true, width: 200 });
-    doc.text('Quantity', { continued: true, width: 80 });
-    doc.text('Unit Cost', { continued: true, width: 80 });
-    doc.text('Reason');
-    doc.font('Helvetica');
+    doc.font('Helvetica-Bold').fontSize(11).text('Line Items', 50, y);
+    y += 18;
 
-    for (const line of returnOrder.line_items) {
-      doc.text(String(line.part_number || ''), { continued: true, width: 150 });
-      doc.text(String(line.part_description || ''), { continued: true, width: 200 });
-      doc.text(Number(line.quantity).toFixed(2), { continued: true, width: 80 });
-      const unitCost = line.unit_cost != null ? Number(line.unit_cost).toFixed(2) : '';
-      doc.text(unitCost, { continued: true, width: 80 });
-      doc.text(line.reason || '');
+    const tableHeaders = [
+      'SN',
+      'Part Number',
+      'Description',
+      'Qty',
+      'Unit',
+      'Unit Cost',
+      'Reason',
+      'Line Value',
+    ];
+    const columnWidths = [30, 90, 140, 40, 40, 70, 120, 70];
+    let currentX = 50;
+
+    doc.font('Helvetica-Bold').fontSize(10);
+    tableHeaders.forEach((header, index) => {
+      doc.text(header, currentX, y, { width: columnWidths[index], align: 'left' });
+      currentX += columnWidths[index];
+    });
+
+    y += 16;
+    doc.moveTo(50, y - 2).lineTo(550, y - 2).strokeColor('#888888').stroke();
+
+    doc.font('Helvetica').fontSize(10);
+    let sn = 1;
+    returnOrder.line_items.forEach((line) => {
+      currentX = 50;
+      let rowY = y;
+
+      const quantities = [
+        doc.heightOfString(sn.toString(), { width: columnWidths[0] }),
+        doc.heightOfString(String(line.part_number || ''), { width: columnWidths[1] }),
+        doc.heightOfString(String(line.part_description || ''), { width: columnWidths[2] }),
+        doc.heightOfString(Number(line.quantity || 0).toString(), { width: columnWidths[3] }),
+        doc.heightOfString(String(line.unit || ''), { width: columnWidths[4] }),
+        doc.heightOfString(
+          line.unit_cost != null ? Number(line.unit_cost).toFixed(2) : '',
+          { width: columnWidths[5] }
+        ),
+        doc.heightOfString(line.reason || '', { width: columnWidths[6] }),
+        doc.heightOfString(
+          line.unit_cost != null
+            ? (Number(line.quantity || 0) * Number(line.unit_cost || 0)).toFixed(2)
+            : '',
+          { width: columnWidths[7] }
+        ),
+      ];
+      const rowHeight = Math.max(...quantities, 12);
+
+      doc.text(sn.toString(), currentX, rowY, { width: columnWidths[0], align: 'left' });
+      currentX += columnWidths[0];
+
+      doc.text(String(line.part_number || ''), currentX, rowY, { width: columnWidths[1], align: 'left' });
+      currentX += columnWidths[1];
+
+      doc.text(String(line.part_description || ''), currentX, rowY, {
+        width: columnWidths[2],
+        align: 'left',
+      });
+      currentX += columnWidths[2];
+
+      doc.text(Number(line.quantity || 0).toString(), currentX, rowY, {
+        width: columnWidths[3],
+        align: 'left',
+      });
+      currentX += columnWidths[3];
+
+      doc.text(String(line.unit || ''), currentX, rowY, { width: columnWidths[4], align: 'left' });
+      currentX += columnWidths[4];
+
+      doc.text(
+        line.unit_cost != null ? Number(line.unit_cost).toFixed(2) : '',
+        currentX,
+        rowY,
+        { width: columnWidths[5], align: 'right' }
+      );
+      currentX += columnWidths[5];
+
+      doc.text(line.reason || '', currentX, rowY, { width: columnWidths[6], align: 'left' });
+      currentX += columnWidths[6];
+
+      doc.text(
+        line.unit_cost != null
+          ? (Number(line.quantity || 0) * Number(line.unit_cost || 0)).toFixed(2)
+          : '',
+        currentX,
+        rowY,
+        { width: columnWidths[7], align: 'right' }
+      );
+
+      y += rowHeight + 4;
+      doc.moveTo(50, y - 2).lineTo(550, y - 2).strokeColor('#eeeeee').stroke();
+
+      if (y > doc.page.height - 100) {
+        doc.addPage();
+        y = 50;
+        currentX = 50;
+        doc.font('Helvetica-Bold').fontSize(10);
+        tableHeaders.forEach((header, index) => {
+          doc.text(header, currentX, y, { width: columnWidths[index], align: 'left' });
+          currentX += columnWidths[index];
+        });
+        y += 16;
+        doc.moveTo(50, y - 2).lineTo(550, y - 2).strokeColor('#888888').stroke();
+        doc.font('Helvetica').fontSize(10);
+      }
+
+      sn += 1;
+    });
+
+    const totalValueText = totalValue ? `$${totalValue.toFixed(2)}` : '—';
+    if (returnOrder.line_items.length > 0) {
+      y += 20;
+      doc.font('Helvetica-Bold').fontSize(11).text('Total Estimated Return Value:', 340, y, {
+        align: 'left',
+      });
+      doc.font('Helvetica-Bold').fontSize(11).text(totalValueText, 500, y, {
+        align: 'right',
+        width: 50,
+      });
     }
 
     doc.end();
