@@ -4,6 +4,7 @@ import {
   Button,
   Chip,
   Container,
+  InputAdornment,
   Paper,
   Stack,
   Tab,
@@ -172,16 +173,7 @@ const ReturnOrdersPage: React.FC = () => {
               Track requested and completed vendor returns linked to purchase orders.
             </Typography>
           </Box>
-          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ xs: 'stretch', sm: 'center' }}>
-            <TextField
-              size="small"
-              placeholder="Search return #, purchase #, vendor"
-              value={searchTerm}
-              onChange={(event) => setSearchTerm(event.target.value)}
-              InputProps={{
-                startAdornment: <SearchIcon color="action" sx={{ mr: 1 }} />,
-              }}
-            />
+          <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems={{ xs: 'stretch', md: 'center' }}>
             <Button
               variant="outlined"
               startIcon={<RefreshIcon />}
@@ -200,34 +192,77 @@ const ReturnOrdersPage: React.FC = () => {
           </Stack>
         </Box>
 
-        <Paper elevation={0} sx={{ p: 2 }}>
-          <Tabs
-            value={statusFilter}
-            onChange={(_, value) => setStatusFilter(value)}
-            variant="scrollable"
-            scrollButtons="auto"
-          >
-            {statusTabs.map((tab) => (
-              <Tab key={tab.value} label={tab.label} value={tab.value} />
-            ))}
-          </Tabs>
-        </Paper>
+        <Paper elevation={0} sx={{ width: '100%', overflow: 'hidden' }}>
+          <Box sx={{ p: 2 }}>
+            <Stack spacing={3}>
+              <Stack direction={{ xs: 'column', lg: 'row' }} spacing={3} alignItems={{ xs: 'stretch', lg: 'center' }}>
+                <TextField
+                  placeholder="Search return #, purchase #, vendor"
+                  value={searchTerm}
+                  onChange={(event) => setSearchTerm(event.target.value)}
+                  fullWidth
+                  InputProps={{
+                    startAdornment: (
+                      <InputAdornment position="start">
+                        <SearchIcon sx={{ fontSize: 32 }} />
+                      </InputAdornment>
+                    ),
+                    sx: { fontSize: 22, height: 56 },
+                  }}
+                  sx={{
+                    maxWidth: 420,
+                    '& .MuiInputBase-input': { fontSize: 22, py: 2 },
+                    '& .MuiInputLabel-root': { fontSize: 20 },
+                  }}
+                />
 
-        <Paper elevation={0} sx={{ height: 600 }}>
-          <DataGrid
-            rows={filteredOrders}
-            columns={columns}
-            loading={loading}
-            getRowId={(row) => row.return_id}
-            disableRowSelectionOnClick
-            onRowClick={(params) => navigate(`/return-orders/${params.row.return_id}`)}
-            sx={{
-              border: 'none',
-              '& .MuiDataGrid-cell': {
-                cursor: 'pointer',
-              },
-            }}
-          />
+                <Tabs
+                  value={statusFilter}
+                  onChange={(_, value) => setStatusFilter(value)}
+                  variant="scrollable"
+                  scrollButtons="auto"
+                  sx={{ flexGrow: 1, minHeight: 56 }}
+                >
+                  {statusTabs.map((tab) => (
+                    <Tab
+                      key={tab.value}
+                      label={tab.label}
+                      value={tab.value}
+                      sx={{ fontSize: 18, minHeight: 48 }}
+                    />
+                  ))}
+                </Tabs>
+              </Stack>
+
+              <DataGrid
+                rows={filteredOrders}
+                columns={columns}
+                loading={loading}
+                getRowId={(row) => row.return_id}
+                disableRowSelectionOnClick
+                onRowClick={(params) => navigate(`/return-orders/${params.row.return_id}`)}
+                sx={{
+                  border: 'none',
+                  height: 520,
+                  '& .MuiDataGrid-cell, & .MuiDataGrid-columnHeader, & .MuiDataGrid-columnHeaderTitle': {
+                    fontSize: '1.1rem',
+                  },
+                  '& .MuiDataGrid-cell': {
+                    borderBottom: '1px solid rgba(224,224,224,1)',
+                    cursor: 'pointer',
+                  },
+                  '& .MuiDataGrid-columnHeaders': {
+                    backgroundColor: 'background.paper',
+                    borderBottom: '2px solid rgba(224,224,224,1)',
+                  },
+                  '& .MuiDataGrid-row': { minHeight: '52px !important', maxHeight: '52px !important' },
+                  '& .MuiDataGrid-columnHeadersInner': { minHeight: '60px !important', maxHeight: '60px !important' },
+                  '& .MuiDataGrid-row:hover': { backgroundColor: 'action.hover' },
+                  cursor: 'pointer',
+                }}
+              />
+            </Stack>
+          </Box>
         </Paper>
       </Stack>
     </Container>
