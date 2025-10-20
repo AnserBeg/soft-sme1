@@ -17,6 +17,7 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import SearchIcon from '@mui/icons-material/Search';
 import dayjs from 'dayjs';
 import { useNavigate } from 'react-router-dom';
+import { toast } from 'react-toastify';
 import {
   ReturnOrderSummary,
   ReturnOrderStatus,
@@ -147,9 +148,12 @@ const ReturnOrdersPage: React.FC = () => {
             variant="outlined"
             color="primary"
             startIcon={<DownloadIcon fontSize="small" />}
-            onClick={(event) => {
+            onClick={async (event) => {
               event.stopPropagation();
-              downloadReturnOrderPdf(Number(params.row.return_id));
+              const ok = await downloadReturnOrderPdf(Number(params.row.return_id));
+              if (!ok) {
+                toast.error('Failed to download return order PDF. Please try again.');
+              }
             }}
           >
             PDF
