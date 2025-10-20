@@ -13,8 +13,6 @@ import {
   Tooltip,
   Snackbar,
   Alert,
-  Tabs,
-  Tab,
   Chip,
 } from '@mui/material';
 import {
@@ -263,32 +261,59 @@ const QuotePage: React.FC = () => {
         elevation={0}
       >
         <Box sx={{ p: 2 }}>
-          <Tabs
-            value={statusFilter}
-            onChange={(_, value) => setStatusFilter(value as QuoteStatus)}
-            variant="scrollable"
-            allowScrollButtonsMobile
-            sx={{ mb: 2, '& .MuiTab-root': { fontSize: 16, textTransform: 'none', minHeight: 48 } }}
+          <Stack
+            direction={{ xs: 'column', md: 'row' }}
+            spacing={2.5}
+            alignItems={{ xs: 'stretch', md: 'center' }}
+            justifyContent="space-between"
+            sx={{ mb: 3 }}
           >
-            <Tab value="Open" label={`Open (${statusCounts.Open})`} />
-            <Tab value="Approved" label={`Approved (${statusCounts.Approved})`} />
-            <Tab value="Rejected" label={`Rejected (${statusCounts.Rejected})`} />
-          </Tabs>
-          <TextField
-            fullWidth
-            label="Search"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            InputProps={{
-              startAdornment: (
-                <InputAdornment position="start">
-                  <SearchIcon sx={{ fontSize: 22 }} />
-                </InputAdornment>
-              ),
-            }}
-            sx={{ mb: 2, '& .MuiInputBase-input': { fontSize: 22, py: 2 }, '& .MuiInputLabel-root': { fontSize: 20 } }}
-            size="small"
-          />
+            <TextField
+              label="Search"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              InputProps={{
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <SearchIcon sx={{ fontSize: 32 }} />
+                  </InputAdornment>
+                ),
+                sx: { fontSize: 22, height: 56 },
+              }}
+              sx={{
+                width: { xs: '100%', md: 360 },
+                '& .MuiInputBase-input': { fontSize: 22, py: 2 },
+                '& .MuiInputLabel-root': { fontSize: 20 },
+              }}
+              size="medium"
+              variant="outlined"
+            />
+            <Stack
+              direction="row"
+              spacing={1.5}
+              flexWrap="wrap"
+              justifyContent={{ xs: 'flex-start', md: 'flex-end' }}
+            >
+              <Chip
+                label={`Open (${statusCounts.Open})`}
+                onClick={() => setStatusFilter('Open')}
+                color={statusFilter === 'Open' ? 'primary' : 'default'}
+                sx={{ fontSize: 18, px: 3, py: 1.5, minWidth: 110, height: 44 }}
+              />
+              <Chip
+                label={`Approved (${statusCounts.Approved})`}
+                onClick={() => setStatusFilter('Approved')}
+                color={statusFilter === 'Approved' ? 'primary' : 'default'}
+                sx={{ fontSize: 18, px: 3, py: 1.5, minWidth: 110, height: 44 }}
+              />
+              <Chip
+                label={`Rejected (${statusCounts.Rejected})`}
+                onClick={() => setStatusFilter('Rejected')}
+                color={statusFilter === 'Rejected' ? 'primary' : 'default'}
+                sx={{ fontSize: 18, px: 3, py: 1.5, minWidth: 110, height: 44 }}
+              />
+            </Stack>
+          </Stack>
 
           <DataGrid
             rows={rows}
@@ -310,6 +335,7 @@ const QuotePage: React.FC = () => {
               '& .MuiDataGrid-columnHeadersInner': { minHeight: '60px !important', maxHeight: '60px !important' },
               '& .MuiDataGrid-row:hover': { backgroundColor: 'action.hover' },
               '& .MuiDataGrid-columnSeparator': { display: 'none' },
+              cursor: 'pointer',
             }}
           />
         </Box>
