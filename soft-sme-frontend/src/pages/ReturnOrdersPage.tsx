@@ -180,7 +180,7 @@ const ReturnOrdersPage: React.FC = () => {
               handleDelete(params.row);
             }}
           >
-            <DeleteIcon fontSize="small" />
+            <DeleteIcon />
           </IconButton>
         </Stack>
       ),
