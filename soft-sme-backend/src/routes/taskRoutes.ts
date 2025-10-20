@@ -125,11 +125,12 @@ router.get('/', async (req: Request, res: Response) => {
 router.get('/summary', async (req: Request, res: Response) => {
   try {
     const companyId = getCompanyId(req);
+    const userId = getUserId(req);
     if (!companyId) {
       return res.status(400).json({ message: 'Invalid company context' });
     }
 
-    const summary = await taskService.getSummary(companyId);
+    const summary = await taskService.getSummary(companyId, userId);
     res.json(summary);
   } catch (error) {
     handleTaskError(res, error, 'Failed to load task summary');

@@ -17,6 +17,7 @@ import TaskList from '../components/tasks/TaskList';
 import TaskDetailDialog from '../components/tasks/TaskDetailDialog';
 import TaskFormDialog, { TaskFormValues } from '../components/tasks/TaskFormDialog';
 import TaskSummaryWidget from '../components/tasks/TaskSummaryWidget';
+import TaskCalendar from '../components/tasks/TaskCalendar';
 import {
   addTaskNote,
   createTask,
@@ -266,6 +267,8 @@ const TasksDashboardPage: React.FC = () => {
           loading={loading && tasks.length === 0}
           onRefresh={handleRefresh}
         />
+
+        <TaskCalendar tasks={tasks} loading={loading && tasks.length === 0} onSelectTask={handleSelectTask} />
 
         <Paper
           sx={{

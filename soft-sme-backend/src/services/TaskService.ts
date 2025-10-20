@@ -49,6 +49,11 @@ export interface TaskSummary {
   overdue: number;
   dueToday: number;
   dueSoon: number;
+  myOpen: number;
+  myDueToday: number;
+  myOverdue: number;
+  assignedByMeOverdue: number;
+  allOverdue: number;
 }
 
 export interface TaskWithRelations {
@@ -567,35 +572,95 @@ export class TaskService {
     }));
   }
 
-  async getSummary(companyId: number): Promise<TaskSummary> {
+  async getSummary(companyId: number, userId: number | null): Promise<TaskSummary> {
     const result = await this.pool.query(
       `
+        WITH tasks_with_assignments AS (
+          SELECT
+            t.id,
+            t.status,
+            t.due_date,
+            ta.user_id AS assignee_id,
+            ta.assigned_by
+          FROM tasks t
+          LEFT JOIN task_assignments ta ON ta.task_id = t.id
+          WHERE t.company_id = $1
+        )
         SELECT
-          COUNT(*) FILTER (WHERE status != 'archived') AS total,
-          COUNT(*) FILTER (WHERE status IN ('pending', 'in_progress')) AS open,
-          COUNT(*) FILTER (WHERE status = 'completed') AS completed,
-          COUNT(*) FILTER (WHERE status != 'archived' AND status != 'completed' AND due_date < NOW()) AS overdue,
-          COUNT(*) FILTER (WHERE status != 'archived' AND due_date::date = CURRENT_DATE) AS due_today,
-          COUNT(*) FILTER (
-            WHERE status != 'archived'
-              AND status != 'completed'
-              AND due_date >= CURRENT_DATE
-              AND due_date < CURRENT_DATE + INTERVAL '7 days'
-          ) AS due_soon
-        FROM tasks
-        WHERE company_id = $1
+          COUNT(DISTINCT CASE WHEN status != 'archived' THEN id END) AS total,
+          COUNT(DISTINCT CASE WHEN status IN ('pending', 'in_progress') THEN id END) AS open,
+          COUNT(DISTINCT CASE WHEN status = 'completed' THEN id END) AS completed,
+          COUNT(DISTINCT CASE WHEN status NOT IN ('archived', 'completed') AND due_date < NOW() THEN id END) AS overdue,
+          COUNT(DISTINCT CASE WHEN status != 'archived' AND due_date::date = CURRENT_DATE THEN id END) AS due_today,
+          COUNT(
+            DISTINCT CASE
+              WHEN status NOT IN ('archived', 'completed')
+                AND due_date >= CURRENT_DATE
+                AND due_date < CURRENT_DATE + INTERVAL '7 days'
+              THEN id
+            END
+          ) AS due_soon,
+          COUNT(
+            DISTINCT CASE
+              WHEN $2::int IS NOT NULL
+                AND status IN ('pending', 'in_progress')
+                AND assignee_id = $2::int
+              THEN id
+            END
+          ) AS my_open,
+          COUNT(
+            DISTINCT CASE
+              WHEN $2::int IS NOT NULL
+                AND status NOT IN ('archived', 'completed')
+                AND due_date::date = CURRENT_DATE
+                AND assignee_id = $2::int
+              THEN id
+            END
+          ) AS my_due_today,
+          COUNT(
+            DISTINCT CASE
+              WHEN $2::int IS NOT NULL
+                AND status NOT IN ('archived', 'completed')
+                AND due_date < NOW()
+                AND assignee_id = $2::int
+              THEN id
+            END
+          ) AS my_overdue,
+          COUNT(
+            DISTINCT CASE
+              WHEN $2::int IS NOT NULL
+                AND status NOT IN ('archived', 'completed')
+                AND due_date < NOW()
+                AND assigned_by = $2::int
+              THEN id
+            END
+          ) AS assigned_by_me_overdue,
+          COUNT(
+            DISTINCT CASE
+              WHEN status NOT IN ('archived', 'completed')
+                AND due_date < NOW()
+              THEN id
+            END
+          ) AS all_overdue
+        FROM tasks_with_assignments
       `,
-      [companyId]
+      [companyId, userId]
     );
 
     const row = result.rows[0] || {};
+    const allOverdue = Number(row.all_overdue || row.overdue || 0);
     return {
       total: Number(row.total || 0),
       open: Number(row.open || 0),
       completed: Number(row.completed || 0),
-      overdue: Number(row.overdue || 0),
+      overdue: Number(row.overdue || allOverdue || 0),
       dueToday: Number(row.due_today || 0),
       dueSoon: Number(row.due_soon || 0),
+      myOpen: Number(row.my_open || 0),
+      myDueToday: Number(row.my_due_today || 0),
+      myOverdue: Number(row.my_overdue || 0),
+      assignedByMeOverdue: Number(row.assigned_by_me_overdue || 0),
+      allOverdue,
     };
   }
 
