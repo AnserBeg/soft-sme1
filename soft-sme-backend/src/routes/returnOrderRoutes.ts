@@ -356,42 +356,66 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
     const formatDateTime = (value?: string | null) =>
       value ? new Date(value).toLocaleString() : '—';
 
-    const infoRows: Array<[string, string]> = [
-      ['Return Order #:', returnOrder.return_number || '—'],
-      ['Status:', returnOrder.status || '—'],
-      ['Purchase Order #:', purchaseInfo.purchase_number || '—'],
-      ['Purchase Status:', purchaseInfo.purchase_status || '—'],
-      ['Requested By:', returnOrder.requested_by || '—'],
-      ['Requested On:', formatDateTime(returnOrder.requested_at as string)],
-      ['Returned On:', formatDateTime(returnOrder.returned_at as string | null)],
-      ['Total Quantity:', `${Number(returnOrder.total_quantity || 0)}`],
-    ];
+    const totals = returnOrder.line_items.reduce(
+      (acc, line) => {
+        const qty = Number(line.quantity) || 0;
+        const unitCost = Number(line.unit_cost) || 0;
+        acc.quantity += qty;
+        acc.value += qty * unitCost;
+        return acc;
+      },
+      { quantity: 0, value: 0 }
+    );
 
-    const leftColumnX = 50;
-    const rightColumnX = 320;
-    const rowHeight = 16;
-    infoRows.forEach((row, index) => {
-      const targetX = index < 4 ? leftColumnX : rightColumnX;
-      const yOffset = index < 4 ? index * rowHeight : (index - 4) * rowHeight;
-      doc.font('Helvetica-Bold').fontSize(11).text(row[0], targetX, y + yOffset);
-      doc.font('Helvetica').fontSize(11).text(row[1], targetX + 130, y + yOffset);
-    });
+    const resolvedQuantity = Number(returnOrder.total_quantity);
+    const totalQuantity = Number.isFinite(resolvedQuantity) ? resolvedQuantity : totals.quantity;
+    const totalValue = totals.value;
+    const totalValueText = totalValue ? `$${totalValue.toFixed(2)}` : '—';
 
-    y += rowHeight * 4 + 12;
+    const leftLabelX = 50;
+    const leftValueX = 170;
+    const rightLabelX = 320;
+    const rightValueX = 450;
+    const lineSpacing = 16;
 
-    const totalValue = returnOrder.line_items.reduce((sum, line) => {
-      const qty = Number(line.quantity) || 0;
-      const unitCost = Number(line.unit_cost) || 0;
-      return sum + qty * unitCost;
-    }, 0);
+    doc.font('Helvetica-Bold').fontSize(11).text('Return Order #:', leftLabelX, y);
+    doc.font('Helvetica').fontSize(11).text(returnOrder.return_number || '—', leftValueX, y);
+    doc.font('Helvetica-Bold').fontSize(11).text('Purchase Order #:', rightLabelX, y);
+    doc.font('Helvetica').fontSize(11).text(purchaseInfo.purchase_number || '—', rightValueX, y);
+    y += lineSpacing;
 
-    doc.font('Helvetica-Bold').fontSize(11).text('Estimated Return Value:', leftColumnX, y);
-    doc
-      .font('Helvetica')
-      .fontSize(11)
-      .text(totalValue ? `$${totalValue.toFixed(2)}` : '—', leftColumnX + 160, y);
+    doc.font('Helvetica-Bold').fontSize(11).text('Status:', leftLabelX, y);
+    doc.font('Helvetica').fontSize(11).text(returnOrder.status || '—', leftValueX, y);
+    doc.font('Helvetica-Bold').fontSize(11).text('Purchase Status:', rightLabelX, y);
+    doc.font('Helvetica').fontSize(11).text(purchaseInfo.purchase_status || '—', rightValueX, y);
+    y += lineSpacing;
 
-    y += 24;
+    doc.font('Helvetica-Bold').fontSize(11).text('Requested By:', leftLabelX, y);
+    doc.font('Helvetica').fontSize(11).text(returnOrder.requested_by || '—', leftValueX, y);
+    doc.font('Helvetica-Bold').fontSize(11).text('Requested On:', rightLabelX, y);
+    doc.font('Helvetica').fontSize(11).text(
+      formatDateTime(returnOrder.requested_at as string),
+      rightValueX,
+      y,
+      { width: 130 }
+    );
+    y += lineSpacing;
+
+    doc.font('Helvetica-Bold').fontSize(11).text('Returned On:', leftLabelX, y);
+    doc.font('Helvetica').fontSize(11).text(
+      formatDateTime(returnOrder.returned_at as string | null),
+      leftValueX,
+      y,
+      { width: 130 }
+    );
+    doc.font('Helvetica-Bold').fontSize(11).text('Total Quantity:', rightLabelX, y);
+    doc.font('Helvetica').fontSize(11).text(`${totalQuantity || 0}`, rightValueX, y);
+    y += lineSpacing;
+
+    doc.font('Helvetica-Bold').fontSize(11).text('Estimated Return Value:', leftLabelX, y);
+    doc.font('Helvetica').fontSize(11).text(totalValueText, leftValueX, y);
+
+    y += lineSpacing + 8;
 
     if (returnOrder.notes) {
       doc.font('Helvetica-Bold').fontSize(11).text('Notes:', 50, y);
@@ -517,7 +541,6 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
       sn += 1;
     });
 
-    const totalValueText = totalValue ? `$${totalValue.toFixed(2)}` : '—';
     if (returnOrder.line_items.length > 0) {
       y += 20;
       doc.font('Helvetica-Bold').fontSize(11).text('Total Estimated Return Value:', 340, y, {
