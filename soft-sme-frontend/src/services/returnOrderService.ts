@@ -85,6 +85,10 @@ export const updateReturnOrder = async (
   await api.put(`/api/return-orders/${id}`, payload);
 };
 
+export const deleteReturnOrder = async (id: number): Promise<void> => {
+  await api.delete(`/api/return-orders/${id}`);
+};
+
 export const fetchReturnOrdersForPurchase = async (
   purchaseId: number
 ): Promise<ReturnOrderSummary[]> => {

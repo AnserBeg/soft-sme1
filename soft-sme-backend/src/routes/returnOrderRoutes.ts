@@ -796,4 +796,72 @@ router.put('/:id', async (req: Request, res: Response) => {
   }
 });
 
+router.delete('/:id', async (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) {
+    return res.status(400).json({ error: 'Invalid return order id' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const existing = await fetchReturnOrderById(client, id);
+    if (!existing) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Return order not found' });
+    }
+
+    const status = normalizeStatus(existing.status);
+    if (status === 'Returned' && Array.isArray(existing.line_items)) {
+      const userId = req.user?.id ? Number((req.user as any).id) : undefined;
+      const reason = `Return Order ${existing.return_number} deletion`;
+      for (const line of existing.line_items) {
+        const quantity = Number(line.quantity);
+        if (!Number.isFinite(quantity) || quantity <= 0) {
+          continue;
+        }
+
+        if (line.part_id) {
+          await inventoryService.adjustInventoryByPartId(
+            Number(line.part_id),
+            quantity,
+            reason,
+            undefined,
+            userId,
+            client
+          );
+        } else if (line.part_number) {
+          await inventoryService.adjustInventory(
+            String(line.part_number),
+            quantity,
+            reason,
+            undefined,
+            userId,
+            client
+          );
+        } else if (line.purchase_part_number) {
+          await inventoryService.adjustInventory(
+            String(line.purchase_part_number),
+            quantity,
+            reason,
+            undefined,
+            userId,
+            client
+          );
+        }
+      }
+    }
+
+    await client.query('DELETE FROM return_orders WHERE return_id = $1', [id]);
+    await client.query('COMMIT');
+    res.json({ success: true });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Failed to delete return order', error);
+    res.status(500).json({ error: 'Failed to delete return order' });
+  } finally {
+    client.release();
+  }
+});
+
 export default router;
