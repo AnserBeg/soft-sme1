@@ -60,7 +60,8 @@ interface ReturnFormLine {
 }
 
 function useQuery() {
-  return new URLSearchParams(useLocation().search);
+  const location = useLocation();
+  return useMemo(() => new URLSearchParams(location.search), [location.search]);
 }
 
 const ReturnOrderDetailPage: React.FC = () => {
@@ -522,11 +523,11 @@ const ReturnOrderDetailPage: React.FC = () => {
                                       return prevLine;
                                     }
                                     const numeric = parseFloat(value);
-                                    const shouldSelect = !Number.isNaN(numeric) && numeric > 0;
+                                    const hasValidQuantity = !Number.isNaN(numeric) && numeric > 0;
                                     return {
                                       ...prevLine,
                                       inputQuantity: value,
-                                      selected: shouldSelect ? true : value === '' ? false : prevLine.selected,
+                                      selected: hasValidQuantity ? true : prevLine.selected,
                                     };
                                   })
                                 );
