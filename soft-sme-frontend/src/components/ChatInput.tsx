@@ -6,12 +6,14 @@ interface ChatInputProps {
   onSendMessage: (message: string) => void;
   disabled?: boolean;
   placeholder?: string;
+  withTopBorder?: boolean;
 }
 
-const ChatInput: React.FC<ChatInputProps> = ({ 
-  onSendMessage, 
-  disabled = false, 
-  placeholder = "Type your message..." 
+const ChatInput: React.FC<ChatInputProps> = ({
+  onSendMessage,
+  disabled = false,
+  placeholder = "Type your message...",
+  withTopBorder = true,
 }) => {
   const [message, setMessage] = useState('');
 
@@ -35,7 +37,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
       sx={{
         px: { xs: 2, sm: 3 },
         py: 2.5,
-        borderTop: '1px solid',
+        borderTop: withTopBorder ? '1px solid' : 'none',
         borderColor: 'divider',
         bgcolor: 'transparent',
         backdropFilter: 'blur(6px)',
