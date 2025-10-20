@@ -1278,7 +1278,70 @@ router.put('/:id', async (req, res) => {
     // If PO is being closed, update inventory and trigger allocation
     if (status === 'Closed' && oldStatus !== 'Closed') {
       console.log(`PO ${id} transitioning to Closed. Starting inventory and allocation process...`);
-      
+
+      // Determine part types for all line items up front so we can enforce service rules
+      const normalizedPartNumbers = Array.from(
+        new Set(
+          lineItems
+            .map((item: any) =>
+              item?.part_number ? String(item.part_number).trim().toUpperCase() : ''
+            )
+            .filter((pn: string) => pn.length > 0)
+        )
+      );
+
+      const partTypeMap = new Map<string, string>();
+      if (normalizedPartNumbers.length > 0) {
+        const placeholders = normalizedPartNumbers.map((_, idx) => `$${idx + 1}`).join(',');
+        const partTypeResult = await client.query(
+          `SELECT part_number, part_type FROM inventory WHERE UPPER(part_number) IN (${placeholders})`,
+          normalizedPartNumbers
+        );
+        for (const row of partTypeResult.rows) {
+          if (row?.part_number) {
+            partTypeMap.set(String(row.part_number).toUpperCase(), (row.part_type || '').toLowerCase());
+          }
+        }
+      }
+
+      // Aggregate any manual allocations stored for this purchase order
+      const allocationTotalsResult = await client.query(
+        `SELECT UPPER(part_number) AS normalized_part_number,
+                COALESCE(SUM(allocate_qty::NUMERIC), 0) AS total_allocated
+         FROM purchase_order_allocations
+         WHERE purchase_id = $1
+         GROUP BY UPPER(part_number)`,
+        [id]
+      );
+      const allocationTotals = new Map<string, number>();
+      for (const row of allocationTotalsResult.rows) {
+        allocationTotals.set(row.normalized_part_number, parseFloat(row.total_allocated) || 0);
+      }
+
+      for (const item of lineItems) {
+        const normalizedPart = item?.part_number ? String(item.part_number).trim().toUpperCase() : '';
+        if (!normalizedPart) continue;
+        const partType = partTypeMap.get(normalizedPart);
+        if (partType === 'service') {
+          const orderedQuantity = parseFloat(item.quantity) || 0;
+          if (orderedQuantity <= 0) continue;
+          const allocatedQuantity = allocationTotals.get(normalizedPart) || 0;
+          const tolerance = 0.0001;
+          if (allocatedQuantity + tolerance < orderedQuantity) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({
+              error: 'SERVICE_ALLOCATION_REQUIRED',
+              message: `Service item ${normalizedPart} must be fully allocated to a sales order before closing this purchase order.`,
+              details: {
+                part_number: normalizedPart,
+                ordered_quantity: orderedQuantity,
+                allocated_quantity: allocatedQuantity
+              }
+            });
+          }
+        }
+      }
+
       // Step 1: Prepare a map to track total allocated quantities for each part
       const allocatedQuantities: { [key: string]: number } = {};
 
@@ -1431,6 +1494,7 @@ router.put('/:id', async (req, res) => {
         if (!part_number) continue;
 
         const normalizedPartNumber = part_number.toString().trim().toUpperCase();
+        const inferredPartType = partTypeMap.get(normalizedPartNumber);
         const numericQuantity = parseFloat(quantity) || 0;
         const numericUnitCost = parseFloat(unit_cost) || 0;
 
@@ -1453,11 +1517,15 @@ router.put('/:id', async (req, res) => {
         );
 
         if (existingPartResult.rows.length === 0) {
+          if (inferredPartType === 'service') {
+            console.log(`Service part '${normalizedPartNumber}' is fully allocated. Skipping inventory insert.`);
+            continue;
+          }
           // New part - insert as stock by default, only if there's a quantity to add
           if (quantityToAddToInventory > 0) {
             console.log(`Adding new part to inventory: '${normalizedPartNumber}' (quantity: ${quantityToAddToInventory}, unit_cost: ${numericUnitCost})`);
             await client.query(
-              `INSERT INTO "inventory" (part_number, quantity_on_hand, last_unit_cost, part_description, unit, part_type)
+              `INSERT INTO "inventory" (part_number, quantity_on_hand, last_unit_cost, part_description, unit, part_type)`
                VALUES ($1, $2, $3, $4, $5, 'stock')`,
               [normalizedPartNumber, quantityToAddToInventory, numericUnitCost, item.part_description, item.unit]
             );
@@ -1465,7 +1533,7 @@ router.put('/:id', async (req, res) => {
             console.log(`Skipping new part insert for '${normalizedPartNumber}' as the entire quantity was allocated.`);
           }
         } else {
-          const partType = existingPartResult.rows[0].part_type;
+          const partType = (existingPartResult.rows[0].part_type || '').toLowerCase();
           const existingPartNumber: string = existingPartResult.rows[0].part_number;
           const existingPartId: number = existingPartResult.rows[0].part_id;
           if (partType === 'stock') {
@@ -1488,9 +1556,16 @@ router.put('/:id', async (req, res) => {
                 [numericUnitCost, existingPartId]
               );
             }
+          } else if (partType === 'supply' || partType === 'service') {
+            const typeLabel = partType === 'service' ? 'service' : 'supply';
+            // For supply and service items, only update last_unit_cost, not quantity_on_hand
+            console.log(`Updating last_unit_cost for ${typeLabel} part: '${normalizedPartNumber}' (unit_cost: ${numericUnitCost})`);
+            await client.query(
+              `UPDATE "inventory" SET last_unit_cost = $1, updated_at = NOW() WHERE part_id = $2`,
+              [numericUnitCost, existingPartResult.rows[0].part_id]
+            );
           } else {
-            // For supply items, only update last_unit_cost, not quantity_on_hand
-            console.log(`Updating last_unit_cost for supply part: '${normalizedPartNumber}' (unit_cost: ${numericUnitCost})`);
+            console.log(`Unknown part type '${partType}' for part '${normalizedPartNumber}'. Updating last_unit_cost only.`);
             await client.query(
               `UPDATE "inventory" SET last_unit_cost = $1, updated_at = NOW() WHERE part_id = $2`,
               [numericUnitCost, existingPartResult.rows[0].part_id]

@@ -32,7 +32,7 @@ router.get('/', async (req: Request, res: Response) => {
     let params: any[] = [];
 
     // Add part_type filter if provided
-    if (partType && (partType === 'stock' || partType === 'supply')) {
+    if (partType && (partType === 'stock' || partType === 'supply' || partType === 'service')) {
       query += ' WHERE part_type = $1';
       params.push(partType);
     }
@@ -219,9 +219,9 @@ router.post('/', async (req: Request, res: Response) => {
   }
 
   // Validate part_type
-  if (!['stock', 'supply'].includes(part_type)) {
+  if (!['stock', 'supply', 'service'].includes(part_type)) {
     console.log('inventoryRoutes: Invalid or missing part_type');
-    return res.status(400).json({ error: 'Part type must be either "stock" or "supply"' });
+    return res.status(400).json({ error: 'Part type must be either "stock", "supply", or "service"' });
   }
 
   // Validate: no spaces in part_number
@@ -500,8 +500,8 @@ router.post('/upload-csv', upload.single('csvFile'), async (req: Request, res: R
           const vendorName = data.vendor_name ? data.vendor_name.toString().trim() : null;
 
           // Validate part type
-          if (partType && !['stock', 'supply'].includes(partType)) {
-            errors.push(`Row ${rowNumber}: Invalid part_type "${partType}". Must be "stock" or "supply"`);
+          if (partType && !['stock', 'supply', 'service'].includes(partType)) {
+            errors.push(`Row ${rowNumber}: Invalid part_type "${partType}". Must be "stock", "supply", or "service"`);
             return;
           }
 
@@ -768,7 +768,7 @@ router.get('/export/pdf', async (req: Request, res: Response) => {
     let params: any[] = [];
 
     // Add part_type filter if provided
-    if (partType && (partType === 'stock' || partType === 'supply')) {
+    if (partType && (partType === 'stock' || partType === 'supply' || partType === 'service')) {
       query += ' WHERE part_type = $1';
       params.push(partType);
     }
@@ -779,7 +779,13 @@ router.get('/export/pdf', async (req: Request, res: Response) => {
     const inventory = result.rows;
 
     const doc = new PDFDocument({ margin: 50 });
-    const typeLabel = partType === 'stock' ? 'Stock' : partType === 'supply' ? 'Supply' : 'Inventory';
+    const typeLabel = partType === 'stock'
+      ? 'Stock'
+      : partType === 'supply'
+        ? 'Supply'
+        : partType === 'service'
+          ? 'Service'
+          : 'Inventory';
     const filename = `${typeLabel.toLowerCase()}_${new Date().toISOString().split('T')[0]}.pdf`;
     res.setHeader('Content-disposition', `attachment; filename="${filename}"`);
     res.setHeader('Content-type', 'application/pdf');
@@ -959,10 +965,10 @@ router.post('/cleanup-enforce', async (req: Request, res: Response) => {
     await client.query('BEGIN');
 
     // Load items
-    const baseQuery = partType && (partType === 'stock' || partType === 'supply')
+    const baseQuery = partType && (partType === 'stock' || partType === 'supply' || partType === 'service')
       ? 'SELECT * FROM inventory WHERE part_type = $1'
       : 'SELECT * FROM inventory';
-    const params = partType && (partType === 'stock' || partType === 'supply') ? [partType] : [];
+    const params = partType && (partType === 'stock' || partType === 'supply' || partType === 'service') ? [partType] : [];
     const itemsResult = await client.query(baseQuery, params);
     const items = itemsResult.rows;
 
@@ -1118,10 +1124,10 @@ router.post('/cleanup-auto', async (req: Request, res: Response) => {
     await client.query('BEGIN');
 
     // Load items
-    const baseQuery = partType && (partType === 'stock' || partType === 'supply')
+    const baseQuery = partType && (partType === 'stock' || partType === 'supply' || partType === 'service')
       ? 'SELECT * FROM inventory WHERE part_type = $1'
       : 'SELECT * FROM inventory';
-    const params = partType && (partType === 'stock' || partType === 'supply') ? [partType] : [];
+    const params = partType && (partType === 'stock' || partType === 'supply' || partType === 'service') ? [partType] : [];
     const itemsResult = await client.query(baseQuery, params);
     const items = itemsResult.rows;
 
@@ -1265,10 +1271,10 @@ router.post('/fix-double-parentheses', async (req: Request, res: Response) => {
     await client.query('BEGIN');
 
     // Load items
-    const baseQuery = partType && (partType === 'stock' || partType === 'supply')
+    const baseQuery = partType && (partType === 'stock' || partType === 'supply' || partType === 'service')
       ? 'SELECT * FROM inventory WHERE part_type = $1'
       : 'SELECT * FROM inventory';
-    const params = partType && (partType === 'stock' || partType === 'supply') ? [partType] : [];
+    const params = partType && (partType === 'stock' || partType === 'supply' || partType === 'service') ? [partType] : [];
     const itemsResult = await client.query(baseQuery, params);
     const items = itemsResult.rows;
 

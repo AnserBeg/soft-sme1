@@ -1,6 +1,6 @@
 import api from '../api/axios';
 
-export const getInventory = async (partType?: 'stock' | 'supply') => {
+export const getInventory = async (partType?: 'stock' | 'supply' | 'service') => {
   const params = partType ? { partType } : {};
   const response = await api.get('/api/inventory', { params });
   return response.data;
@@ -14,6 +14,10 @@ export const getSupplyInventory = async () => {
   return getInventory('supply');
 };
 
+export const getServiceInventory = async () => {
+  return getInventory('service');
+};
+
 export const getInventoryForPart = async (partNumber: string) => {
   const response = await api.get(`/api/inventory/${encodeURIComponent(partNumber)}`);
   return response.data;
@@ -24,13 +28,13 @@ export const cleanupInventorySpaces = async () => {
   return response.data;
 }; 
 
-export const previewCleanupEnforce = async (partType?: 'stock' | 'supply') => {
+export const previewCleanupEnforce = async (partType?: 'stock' | 'supply' | 'service') => {
   const response = await api.post('/api/inventory/cleanup-enforce', { partType, apply: false });
   return response.data;
 };
 
 export const applyCleanupEnforce = async (
-  partType: 'stock' | 'supply' | undefined,
+  partType: 'stock' | 'supply' | 'service' | undefined,
   merges: Array<{ keepPartNumber: string; mergePartNumbers: string[] }>
 ) => {
   const response = await api.post('/api/inventory/cleanup-enforce', { partType, apply: true, merges });
