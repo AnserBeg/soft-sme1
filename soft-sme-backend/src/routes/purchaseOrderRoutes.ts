@@ -7,6 +7,7 @@ import path from 'path';
 import axios from 'axios'; // Added for QBO API integration
 import { PurchaseOrderCalculationService } from '../services/PurchaseOrderCalculationService';
 import { PurchaseOrderService } from '../services/PurchaseOrderService';
+import { InventoryService } from '../services/InventoryService';
 
 // Utility function to create vendor mappings for parts in a purchase order
 async function createVendorMappingsForPO(client: any, lineItems: any[], vendorId: number) {
@@ -67,6 +68,7 @@ async function createVendorMappingsForPO(client: any, lineItems: any[], vendorId
 const router = express.Router();
 const calculationService = new PurchaseOrderCalculationService(pool);
 const purchaseOrderService = new PurchaseOrderService(pool);
+const inventoryService = new InventoryService(pool);
 
 // Get all open purchase orders
 router.get('/open', async (req: Request, res: Response) => {
@@ -988,7 +990,7 @@ router.put('/:id', async (req, res) => {
   console.log(`purchaseOrderRoutes: PUT /:id - Request to update PO ID: ${id}`);
   console.log('Received data:', JSON.stringify(updatedData, null, 2));
 
-  const { lineItems, ...purchaseOrderData } = updatedData;
+  const { lineItems: incomingLineItems, ...purchaseOrderData } = updatedData;
 
   const client = await pool.connect();
   try {
@@ -1005,14 +1007,31 @@ router.put('/:id', async (req, res) => {
       gst_rate
     } = purchaseOrderData;
 
+    // Normalize incoming line items for consistent processing
+    let lineItems = Array.isArray(incomingLineItems) ? incomingLineItems : [];
+    lineItems = lineItems.map((item: any) => {
+      const rawLineAmount = item.line_amount ?? item.line_total;
+      const parsedQuantity = parseFloat(item.quantity);
+      const parsedUnitCost = parseFloat(item.unit_cost);
+      const parsedLineAmount = rawLineAmount != null ? parseFloat(rawLineAmount) : NaN;
+      return {
+        ...item,
+        line_item_id: item.line_item_id != null ? Number(item.line_item_id) : undefined,
+        part_number: item.part_number ? item.part_number.toString().trim() : '',
+        part_description: item.part_description ? item.part_description.toString().trim() : '',
+        unit: item.unit ? item.unit.toString().trim() : '',
+        quantity: Number.isFinite(parsedQuantity) ? parsedQuantity : 0,
+        unit_cost: Number.isFinite(parsedUnitCost) ? parsedUnitCost : 0,
+        line_amount: Number.isFinite(parsedLineAmount)
+          ? parsedLineAmount
+          : (Number.isFinite(parsedQuantity) && Number.isFinite(parsedUnitCost)
+            ? parsedQuantity * parsedUnitCost
+            : 0),
+      };
+    });
+
     // Trim string fields
     const trimmedBillNumber = bill_number ? bill_number.trim() : '';
-    const trimmedLineItems = lineItems.map((item: any) => ({
-      ...item,
-      part_number: item.part_number ? item.part_number.trim() : '',
-      part_description: item.part_description ? item.part_description.trim() : '',
-      unit: item.unit ? item.unit.trim() : ''
-    }));
 
     // Check for duplicate bill number if bill number is provided (excluding current purchase order)
     if (bill_number && bill_number.trim()) {
@@ -1033,6 +1052,132 @@ router.put('/:id', async (req, res) => {
     // Fetch old status to check for transitions
     const oldStatusResult = await client.query('SELECT status FROM "purchasehistory" WHERE purchase_id = $1', [id]);
     const oldStatus = oldStatusResult.rows[0]?.status;
+
+    const existingLineItemsRes = await client.query(
+      'SELECT line_item_id, part_number, quantity, part_id FROM "purchaselineitems" WHERE purchase_id = $1',
+      [id]
+    );
+
+    const existingLineItemsMap = new Map<number, { partNumber: string; quantity: number; partId: number | null }>();
+    for (const row of existingLineItemsRes.rows) {
+      const lineItemId = Number(row.line_item_id);
+      if (!Number.isFinite(lineItemId)) continue;
+      const quantity = Number.parseFloat(row.quantity) || 0;
+      const partNumber = row.part_number ? row.part_number.toString().trim() : '';
+      const partId = row.part_id != null ? Number(row.part_id) : null;
+      existingLineItemsMap.set(lineItemId, { partNumber, quantity, partId });
+    }
+
+    const shouldCheckReturns = oldStatus === 'Closed';
+    const isClosedEdit = oldStatus === 'Closed' && status === 'Closed';
+
+    const normalizePartKey = (value: string) =>
+      value ? value.replace(/[-"\s]/g, '').toUpperCase() : '';
+
+    type InventoryAdjustment = { delta: number; partNumber: string; partId: number | null };
+    const inventoryAdjustments = new Map<string, InventoryAdjustment>();
+    const addInventoryAdjustment = (partNumber: string, delta: number, partId: number | null) => {
+      const trimmed = partNumber ? partNumber.toString().trim() : '';
+      if (!trimmed || !Number.isFinite(delta) || delta === 0) return;
+      const key = normalizePartKey(trimmed);
+      if (!key) return;
+      const existingAdjustment = inventoryAdjustments.get(key);
+      if (existingAdjustment) {
+        existingAdjustment.delta += delta;
+        if (!existingAdjustment.partId && partId) {
+          existingAdjustment.partId = partId;
+        }
+      } else {
+        inventoryAdjustments.set(key, { delta, partNumber: trimmed, partId });
+      }
+    };
+
+    const updatedLineItemsById = new Map<number, any>();
+    for (const item of lineItems) {
+      if (typeof item.line_item_id === 'number') {
+        updatedLineItemsById.set(item.line_item_id, item);
+      }
+    }
+
+    let returnQuantities = new Map<number, number>();
+    if (shouldCheckReturns) {
+      const returnTotalsRes = await client.query(
+        `SELECT rol.purchase_line_item_id, COALESCE(SUM(rol.quantity), 0) AS total
+         FROM return_order_line_items rol
+         JOIN return_orders ro ON ro.return_id = rol.return_id
+         WHERE ro.purchase_id = $1
+         GROUP BY rol.purchase_line_item_id`,
+        [id]
+      );
+
+      returnQuantities = new Map<number, number>();
+      for (const row of returnTotalsRes.rows) {
+        if (row.purchase_line_item_id == null) continue;
+        returnQuantities.set(Number(row.purchase_line_item_id), Number(row.total));
+      }
+
+      for (const [lineItemId, existing] of existingLineItemsMap.entries()) {
+        const returnedQty = returnQuantities.get(lineItemId) || 0;
+        const updatedItem = updatedLineItemsById.get(lineItemId);
+
+        if (!updatedItem) {
+          if (returnedQty > 0) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({
+              error: `Cannot remove line item ${existing.partNumber || lineItemId} because ${returnedQty} units are already associated with return orders.`
+            });
+          }
+          if (isClosedEdit && existing.quantity !== 0) {
+            addInventoryAdjustment(existing.partNumber, -existing.quantity, existing.partId);
+          }
+          continue;
+        }
+
+        const newQuantity = Number.isFinite(updatedItem.quantity) ? Number(updatedItem.quantity) : 0;
+        if (returnedQty > newQuantity + 1e-6) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({
+            error: `Cannot reduce quantity for ${existing.partNumber || lineItemId} below ${returnedQty}. The quantity is already tied to return orders.`
+          });
+        }
+
+        const existingKey = normalizePartKey(existing.partNumber);
+        const newKey = normalizePartKey(updatedItem.part_number || existing.partNumber);
+
+        if (returnedQty > 0 && existingKey !== newKey) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({
+            error: `Cannot change the part for line item ${existing.partNumber || lineItemId} because return orders already reference it.`
+          });
+        }
+
+        if (isClosedEdit) {
+          if (existingKey === newKey) {
+            const delta = newQuantity - existing.quantity;
+            if (Math.abs(delta) > 1e-6) {
+              addInventoryAdjustment(updatedItem.part_number || existing.partNumber, delta, updatedItem.part_id ?? existing.partId ?? null);
+            }
+          } else {
+            if (existing.quantity !== 0) {
+              addInventoryAdjustment(existing.partNumber, -existing.quantity, existing.partId);
+            }
+            if (newQuantity !== 0) {
+              addInventoryAdjustment(updatedItem.part_number, newQuantity, updatedItem.part_id ?? null);
+            }
+          }
+        }
+      }
+
+      if (isClosedEdit) {
+        for (const item of lineItems) {
+          if (typeof item.line_item_id === 'number') continue;
+          const qty = Number.isFinite(item.quantity) ? Number(item.quantity) : 0;
+          if (qty !== 0) {
+            addInventoryAdjustment(item.part_number, qty, item.part_id ?? null);
+          }
+        }
+      }
+    }
 
     const effectiveGstRateUpdate = typeof gst_rate === 'number' && !isNaN(gst_rate) ? gst_rate : 5.0;
 
@@ -1067,16 +1212,14 @@ router.put('/:id', async (req, res) => {
 
     // Delete removed line items, then update or insert provided ones
     // 1) Find existing line_item_ids for this purchase
-    const existingLineItemsRes = await client.query(
-      'SELECT line_item_id FROM "purchaselineitems" WHERE purchase_id = $1',
-      [id]
-    );
-    const existingIds: number[] = existingLineItemsRes.rows.map((r: any) => r.line_item_id);
+    const existingIds: number[] = existingLineItemsRes.rows
+      .map((r: any) => Number(r.line_item_id))
+      .filter((value: number) => Number.isFinite(value));
 
     // 2) Determine which existing items were kept (present in payload with line_item_id)
-    const providedExistingIds: number[] = (lineItems || [])
-      .map((item: any) => item.line_item_id)
-      .filter((v: any) => typeof v === 'number');
+    const providedExistingIds: number[] = lineItems
+      .map((item: any) => (typeof item.line_item_id === 'number' ? item.line_item_id : undefined))
+      .filter((v: any): v is number => typeof v === 'number');
 
     // 3) Compute deletions = existing - providedExisting
     const toDelete: number[] = existingIds.filter((eid: number) => !providedExistingIds.includes(eid));
@@ -1092,18 +1235,14 @@ router.put('/:id', async (req, res) => {
 
     // 4) Update or insert remaining/provided line items
     for (const item of lineItems) {
-      // Find the corresponding trimmed line item
-      const trimmedItem = trimmedLineItems.find((ti: any) => ti.part_number === item.part_number);
-      
-      if (item.line_item_id) {
-        // Resolve part_id for canonical link
-        const normalized = String(trimmedItem.part_number || '').trim().toUpperCase();
-        const invQ = await client.query(
-          `SELECT part_id FROM inventory WHERE REPLACE(REPLACE(REPLACE(UPPER(part_number), '-', ''), ' ', ''), '"', '') = REPLACE(REPLACE(REPLACE(UPPER($1), '-', ''), ' ', ''), '"', '')`,
-          [normalized]
-        );
-        const resolvedPartId = invQ.rows[0]?.part_id || null;
+      const normalizedPart = String(item.part_number || '').trim().toUpperCase();
+      const invQ = await client.query(
+        `SELECT part_id FROM inventory WHERE REPLACE(REPLACE(REPLACE(UPPER(part_number), '-', ''), ' ', ''), '"', '') = REPLACE(REPLACE(REPLACE(UPPER($1), '-', ''), ' ', ''), '"', '')`,
+        [normalizedPart]
+      );
+      const resolvedPartId = invQ.rows[0]?.part_id || null;
 
+      if (item.line_item_id) {
         // Update existing line item
         await client.query(`
           UPDATE "purchaselineitems" SET
@@ -1116,20 +1255,13 @@ router.put('/:id', async (req, res) => {
             part_id = $7,
             updated_at = NOW()
           WHERE line_item_id = $8;
-        `, [trimmedItem.part_number, trimmedItem.part_description, item.quantity, item.unit_cost, item.line_amount, trimmedItem.unit, resolvedPartId, item.line_item_id]);
+        `, [item.part_number, item.part_description, item.quantity, item.unit_cost, item.line_amount, item.unit, resolvedPartId, item.line_item_id]);
       } else {
         // Insert new line item, storing part_id
-        const normalized = String(trimmedItem.part_number || '').trim().toUpperCase();
-        const invQ = await client.query(
-          `SELECT part_id FROM inventory WHERE REPLACE(REPLACE(REPLACE(UPPER(part_number), '-', ''), ' ', ''), '"', '') = REPLACE(REPLACE(REPLACE(UPPER($1), '-', ''), ' ', ''), '"', '')`,
-          [normalized]
-        );
-        const resolvedPartId = invQ.rows[0]?.part_id || null;
-
         await client.query(`
           INSERT INTO "purchaselineitems" (purchase_id, part_number, part_description, quantity, unit_cost, line_total, unit, part_id)
           VALUES ($1, $2, $3, $4, $5, $6, $7, $8);
-        `, [id, trimmedItem.part_number, trimmedItem.part_description, item.quantity, item.unit_cost, item.line_amount, trimmedItem.unit, resolvedPartId]);
+        `, [id, item.part_number, item.part_description, item.quantity, item.unit_cost, item.line_amount, item.unit, resolvedPartId]);
       }
     }
 
@@ -1715,6 +1847,59 @@ router.put('/:id', async (req, res) => {
       }
       
       console.log(`✅ Inventory validation passed for closing PO ${id}`);
+    }
+
+    if (isClosedEdit && inventoryAdjustments.size > 0) {
+      console.log(`Applying inventory adjustments for closed PO edit ${id}`, Array.from(inventoryAdjustments.values()));
+      for (const adjustment of inventoryAdjustments.values()) {
+        const delta = adjustment.delta;
+        if (!Number.isFinite(delta) || Math.abs(delta) < 1e-6) {
+          continue;
+        }
+
+        const partLookup = await client.query(
+          `SELECT part_id, part_number, part_type
+           FROM inventory
+           WHERE REPLACE(REPLACE(REPLACE(UPPER(part_number), '-', ''), ' ', ''), '"', '') = REPLACE(REPLACE(REPLACE(UPPER($1), '-', ''), ' ', ''), '"', '')
+           LIMIT 1`,
+          [adjustment.partNumber]
+        );
+
+        if (partLookup.rows.length === 0) {
+          console.warn(`Skipping inventory adjustment for part ${adjustment.partNumber} - not found in inventory.`);
+          continue;
+        }
+
+        const partRow = partLookup.rows[0];
+        if (partRow.part_type !== 'stock') {
+          console.log(`Skipping inventory adjustment for non-stock part ${partRow.part_number}.`);
+          continue;
+        }
+
+        try {
+          await inventoryService.adjustInventoryByPartId(
+            Number(partRow.part_id),
+            delta,
+            `Closed PO edit ${id}`,
+            undefined,
+            req.user && (req.user as any).id ? Number((req.user as any).id) : undefined,
+            client
+          );
+        } catch (inventoryError) {
+          await client.query('ROLLBACK');
+          const message = inventoryError instanceof Error ? inventoryError.message : 'Inventory adjustment failed';
+          if (inventoryError instanceof Error && inventoryError.message.toLowerCase().includes('insufficient')) {
+            return res.status(400).json({
+              error: `Insufficient quantity on hand to make this change for part ${partRow.part_number}.`,
+              details: message
+            });
+          }
+          return res.status(400).json({
+            error: `Unable to adjust inventory for part ${partRow.part_number}.`,
+            details: message
+          });
+        }
+      }
     }
 
     await client.query('COMMIT');
