@@ -40,6 +40,11 @@ export interface TaskSummary {
   overdue: number;
   dueToday: number;
   dueSoon: number;
+  myOpen: number;
+  myDueToday: number;
+  myOverdue: number;
+  assignedByMeOverdue: number;
+  allOverdue: number;
 }
 
 export interface TaskFilters {

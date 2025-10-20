@@ -1,11 +1,11 @@
 import React from 'react';
 import { Box, Button, Card, CardContent, CircularProgress, Stack, Typography } from '@mui/material';
 import RefreshIcon from '@mui/icons-material/Refresh';
-import AssignmentTurnedInIcon from '@mui/icons-material/AssignmentTurnedIn';
-import PendingActionsIcon from '@mui/icons-material/PendingActions';
-import EventBusyIcon from '@mui/icons-material/EventBusy';
-import EventAvailableIcon from '@mui/icons-material/EventAvailable';
-import PlaylistAddCheckIcon from '@mui/icons-material/PlaylistAddCheck';
+import AssignmentIndIcon from '@mui/icons-material/AssignmentInd';
+import CalendarTodayIcon from '@mui/icons-material/CalendarToday';
+import WarningAmberIcon from '@mui/icons-material/WarningAmber';
+import AssignmentLateIcon from '@mui/icons-material/AssignmentLate';
+import ReportProblemIcon from '@mui/icons-material/ReportProblem';
 import { alpha } from '@mui/material/styles';
 import { TaskSummary } from '../../types/task';
 
@@ -16,36 +16,44 @@ interface TaskSummaryWidgetProps {
   onViewTasks?: () => void;
 }
 
-const METRIC_CONFIG = [
+const METRIC_CONFIG: {
+  key: keyof Pick<
+    TaskSummary,
+    'myOpen' | 'myDueToday' | 'myOverdue' | 'assignedByMeOverdue' | 'allOverdue'
+  >;
+  label: string;
+  icon: React.ReactNode;
+  palette: 'primary' | 'secondary' | 'info' | 'success' | 'warning' | 'error';
+}[] = [
   {
-    key: 'open' as const,
-    label: 'Open tasks',
-    icon: <PendingActionsIcon fontSize="large" />,
-    palette: 'info' as const,
+    key: 'myOpen',
+    label: 'My open tasks',
+    icon: <AssignmentIndIcon fontSize="large" />,
+    palette: 'info',
   },
   {
-    key: 'completed' as const,
-    label: 'Completed',
-    icon: <AssignmentTurnedInIcon fontSize="large" />,
-    palette: 'success' as const,
+    key: 'myDueToday',
+    label: 'My tasks due today',
+    icon: <CalendarTodayIcon fontSize="large" />,
+    palette: 'warning',
   },
   {
-    key: 'overdue' as const,
-    label: 'Overdue',
-    icon: <EventBusyIcon fontSize="large" />,
-    palette: 'error' as const,
+    key: 'myOverdue',
+    label: 'My overdue tasks',
+    icon: <WarningAmberIcon fontSize="large" />,
+    palette: 'error',
   },
   {
-    key: 'dueToday' as const,
-    label: 'Due today',
-    icon: <EventAvailableIcon fontSize="large" />,
-    palette: 'warning' as const,
+    key: 'assignedByMeOverdue',
+    label: 'Overdue tasks I assigned',
+    icon: <AssignmentLateIcon fontSize="large" />,
+    palette: 'secondary',
   },
   {
-    key: 'dueSoon' as const,
-    label: 'Due in 7 days',
-    icon: <PlaylistAddCheckIcon fontSize="large" />,
-    palette: 'secondary' as const,
+    key: 'allOverdue',
+    label: 'All overdue tasks',
+    icon: <ReportProblemIcon fontSize="large" />,
+    palette: 'error',
   },
 ];
 
