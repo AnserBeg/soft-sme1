@@ -18,6 +18,7 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import EmailIcon from '@mui/icons-material/Email';
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
+import EditIcon from '@mui/icons-material/Edit';
 import { createFilterOptions } from '@mui/material/Autocomplete';
 import { InputAdornment } from '@mui/material';
 import { getLabourLineItems, LabourLineItem } from '../services/timeTrackingService';
@@ -153,6 +154,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
   const debouncedLineItems = useDebounce(liveLineItems, 300);
   const [lineItems, setLineItems] = useState<PurchaseOrderLineItem[]>([]);
   const [status, setStatus] = useState<'Open' | 'Closed'>('Open');
+  const [isEditingClosed, setIsEditingClosed] = useState(false);
   const [globalGstRate, setGlobalGstRate] = useState(DEFAULT_GST_RATE); // Default GST rate
   const [aggregateQuantities, setAggregateQuantities] = useState<{[key: string]: number}>({});
 
@@ -400,6 +402,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
       const newStatus = fetchedOrder.status === 'Closed' ? 'Closed' : 'Open';
       console.log('Setting purchase order status:', newStatus, 'from fetched status:', fetchedOrder.status);
       setStatus(newStatus);
+      setIsEditingClosed(false);
       setGlobalGstRate(fetchedOrder.global_gst_rate || DEFAULT_GST_RATE);
 
       console.log('State after setting:', {
@@ -1135,6 +1138,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
         navigate(`/open-purchase-orders/${newPurchaseId}`);
       } else {
         // Update existing purchase order
+        const wasEditingClosed = status === 'Closed' && isEditingClosed;
         const updatedPurchaseOrder = {
           ...purchaseOrder,
           vendor_id: vendor?.id,
@@ -1186,52 +1190,77 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
         console.log('Sending to backend (handleSave):', updatedPurchaseOrder);
         const response = await api.put(`/api/purchase-orders/${id}`, updatedPurchaseOrder);
         setSuccess('Purchase Order updated successfully!');
+        if (wasEditingClosed) {
+          await fetchData();
+          setIsEditingClosed(false);
+        }
         // Allow immediate navigation after save with a small delay to ensure state updates
         setTimeout(() => {
           (window as any).__unsavedGuardAllowNext = true;
         }, 100);
-        setInitialSignature(JSON.stringify({ 
-          vendor, 
-          billNumber, 
-          date, 
-          lineItems,
-          pickup_time: purchaseOrder?.pickup_time,
-          pickup_location: purchaseOrder?.pickup_location,
-          pickup_contact_person: purchaseOrder?.pickup_contact_person,
-          pickup_phone: purchaseOrder?.pickup_phone,
-          pickup_instructions: purchaseOrder?.pickup_instructions,
-          pickup_notes: purchaseOrder?.pickup_notes,
-          // Order placement tracking fields
-          order_placed: purchaseOrder?.order_placed,
-          order_placed_at: purchaseOrder?.order_placed_at,
-          order_placed_by: purchaseOrder?.order_placed_by,
-          order_placed_method: purchaseOrder?.order_placed_method,
-          vendor_confirmation_status: purchaseOrder?.vendor_confirmation_status,
-          vendor_confirmation_notes: purchaseOrder?.vendor_confirmation_notes,
-          vendor_confirmation_date: purchaseOrder?.vendor_confirmation_date,
-          pricing_updated: purchaseOrder?.pricing_updated,
-          pricing_updated_at: purchaseOrder?.pricing_updated_at,
-          pricing_updated_by: purchaseOrder?.pricing_updated_by,
-          pricing_updated_method: purchaseOrder?.pricing_updated_method,
-          quantity_adjusted: purchaseOrder?.quantity_adjusted,
-          quantity_adjusted_at: purchaseOrder?.quantity_adjusted_at,
-          quantity_adjusted_by: purchaseOrder?.quantity_adjusted_by,
-          quantity_adjusted_method: purchaseOrder?.quantity_adjusted_method,
-          original_quantities: purchaseOrder?.original_quantities,
-          adjusted_quantities: purchaseOrder?.adjusted_quantities,
-          vendor_pricing_notes: purchaseOrder?.vendor_pricing_notes
-        }));
+        if (!wasEditingClosed) {
+          setInitialSignature(JSON.stringify({
+            vendor,
+            billNumber,
+            date,
+            lineItems,
+            pickup_time: purchaseOrder?.pickup_time,
+            pickup_location: purchaseOrder?.pickup_location,
+            pickup_contact_person: purchaseOrder?.pickup_contact_person,
+            pickup_phone: purchaseOrder?.pickup_phone,
+            pickup_instructions: purchaseOrder?.pickup_instructions,
+            pickup_notes: purchaseOrder?.pickup_notes,
+            // Order placement tracking fields
+            order_placed: purchaseOrder?.order_placed,
+            order_placed_at: purchaseOrder?.order_placed_at,
+            order_placed_by: purchaseOrder?.order_placed_by,
+            order_placed_method: purchaseOrder?.order_placed_method,
+            vendor_confirmation_status: purchaseOrder?.vendor_confirmation_status,
+            vendor_confirmation_notes: purchaseOrder?.vendor_confirmation_notes,
+            vendor_confirmation_date: purchaseOrder?.vendor_confirmation_date,
+            pricing_updated: purchaseOrder?.pricing_updated,
+            pricing_updated_at: purchaseOrder?.pricing_updated_at,
+            pricing_updated_by: purchaseOrder?.pricing_updated_by,
+            pricing_updated_method: purchaseOrder?.pricing_updated_method,
+            quantity_adjusted: purchaseOrder?.quantity_adjusted,
+            quantity_adjusted_at: purchaseOrder?.quantity_adjusted_at,
+            quantity_adjusted_by: purchaseOrder?.quantity_adjusted_by,
+            quantity_adjusted_method: purchaseOrder?.quantity_adjusted_method,
+            original_quantities: purchaseOrder?.original_quantities,
+            adjusted_quantities: purchaseOrder?.adjusted_quantities,
+            vendor_pricing_notes: purchaseOrder?.vendor_pricing_notes
+          }));
+        }
       }
     } catch (error) {
       console.error('Error saving Purchase Order:', error);
       if (error instanceof AxiosError && error.response?.data?.error) {
-        toast.error(`Error saving Purchase Order: ${error.response.data.error}`);
+        const backendError = error.response.data;
+        const detailMessage = backendError.details ? ` (${backendError.details})` : '';
+        toast.error(`Error saving Purchase Order: ${backendError.error}${detailMessage}`);
       } else {
         toast.error('Error saving Purchase Order. Please try again.');
       }
     } finally {
       setIsSaving(false);
       (window as any).__poCreateInFlight = false;
+    }
+  };
+
+  const handleCancelClosedEdit = async () => {
+    if (status !== 'Closed') {
+      return;
+    }
+    if (isDirty) {
+      const confirmDiscard = window.confirm('Discard your edits to this closed purchase order?');
+      if (!confirmDiscard) {
+        return;
+      }
+    }
+    try {
+      await fetchData();
+    } finally {
+      setIsEditingClosed(false);
     }
   };
 
@@ -2073,21 +2102,32 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
 
         <Box mt={4} display="flex" justifyContent={{ xs:'center', sm:'flex-end' }} gap={2}>
           <Button variant="contained" color="primary" startIcon={<DownloadIcon />} onClick={handleSaveAndDownloadPdf}>Download PDF</Button>
-          
-          {/* QuickBooks Export Button - Admin users get full functionality */} 
+
+          {/* QuickBooks Export Button - Admin users get full functionality */}
           {!purchaseOrder?.exported_to_qbo && user?.access_role === 'Admin' && (
-            <Button 
-              variant="contained" 
-              color="success" 
-              startIcon={<CloudUploadIcon />} 
+            <Button
+              variant="contained"
+              color="success"
+              startIcon={<CloudUploadIcon />}
               onClick={handleExportToQBO}
               disabled={exportLoading}
             >
               {exportLoading ? 'Exporting...' : 'Export to QuickBooks'}
             </Button>
-          )} 
-          
-          {/* Reopen PO button - for admin and purchase/sales users */} 
+          )}
+
+          {(user?.access_role === 'Admin' || user?.access_role === 'Sales and Purchase') && (
+            <Button
+              variant="contained"
+              color="secondary"
+              startIcon={<EditIcon />}
+              onClick={() => setIsEditingClosed(true)}
+            >
+              Edit
+            </Button>
+          )}
+
+          {/* Reopen PO button - for admin and purchase/sales users */}
           {(user?.access_role === 'Admin' || user?.access_role === 'Sales and Purchase') && (
             <Button variant="contained" color="primary" onClick={handleReopenPO}>Reopen PO</Button>
           )}
@@ -2278,7 +2318,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
   }
 
   // Show read-only view for closed purchase orders (all users)
-  if (!isCreationMode && status === 'Closed') {
+  if (!isCreationMode && status === 'Closed' && !isEditingClosed) {
     return renderReadOnly();
   }
 
@@ -2338,16 +2378,34 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
           </Box>
           <Stack direction="row" spacing={1}>
             <Button variant="contained" color="primary" onClick={handleSave} startIcon={<SaveIcon />}>
-              {isCreationMode ? 'Create Purchase Order' : 'Save Changes'}
+              {isCreationMode
+                ? 'Create Purchase Order'
+                : status === 'Closed' && isEditingClosed
+                  ? 'Save Closed PO Edits'
+                  : 'Save Changes'}
             </Button>
+            {!isCreationMode && status === 'Closed' && isEditingClosed && (
+              <Button variant="outlined" color="secondary" onClick={handleCancelClosedEdit} startIcon={<ArrowBackIcon />}>
+                Cancel Edit
+              </Button>
+            )}
             {!isCreationMode && (
               <>
-                <Button variant="contained" color="primary" onClick={handleClosePurchaseOrder} startIcon={<DoneAllIcon />}>Close PO</Button>
+                {status !== 'Closed' && (
+                  <Button variant="contained" color="primary" onClick={handleClosePurchaseOrder} startIcon={<DoneAllIcon />}>
+                    Close PO
+                  </Button>
+                )}
                 <Button variant="contained" color="primary" onClick={handleSaveAndDownloadPdf} startIcon={<DownloadIcon />}>Download PDF</Button>
                 <Button variant="contained" onClick={handleEmailClick} startIcon={<EmailIcon />} sx={{ backgroundColor: '#ff9800', '&:hover': { backgroundColor: '#f57c00' } }}>Email Vendor</Button>
               </>
             )}
           </Stack>
+          {status === 'Closed' && isEditingClosed && (
+            <Alert severity="info" sx={{ mt: 2 }}>
+              Editing a closed purchase order will immediately adjust on-hand inventory when you save. Quantity reductions are blocked if there is insufficient stock available.
+            </Alert>
+          )}
         </Box>
 
         {!isCreationMode && purchaseOrder && (
@@ -2631,15 +2689,15 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
                   value={globalGstRate}
                   onChange={e => setGlobalGstRate(Number(e.target.value))}
                   fullWidth
-                  inputProps={{ 
-                    min: 0, 
-                    max: 100, 
+                  inputProps={{
+                    min: 0,
+                    max: 100,
                     step: '0.01',
-                    readOnly: status === 'Closed',
+                    readOnly: status === 'Closed' && !isEditingClosed,
                     onWheel: (e) => e.currentTarget.blur()
                   }}
                   helperText="Change GST rate if needed (default 5%). This will affect GST and total calculations."
-                  disabled={status === 'Closed'}
+                  disabled={status === 'Closed' && !isEditingClosed}
                 />
               </Grid>
             </Grid>
