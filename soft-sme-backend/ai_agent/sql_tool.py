@@ -267,15 +267,25 @@ Return only the SQL query, nothing else.
                 raise ValueError(f"Table '{table}' is not in the allowed list")
 
         # Validate qualified column references
+        aliases = self._extract_aliases(sql_text)
         qualified = re.findall(r"([a-zA-Z0-9_]+)\.([a-zA-Z0-9_]+)", sql_text)
         for table, column in qualified:
             normalized_table = table.lower()
             normalized_column = column.lower()
-            table_schema = schema_tables.get(normalized_table)
+            resolved_table = aliases.get(normalized_table, normalized_table)
+            table_schema = schema_tables.get(resolved_table)
             if table_schema is None:
                 continue
             allowed_columns = {col["name"].lower() for col in table_schema.columns}
             if normalized_column not in allowed_columns:
+                if resolved_table != normalized_table:
+                    raise ValueError(
+                        "Column '{}' is not available on alias '{}' (maps to '{}')".format(
+                            column,
+                            table,
+                            resolved_table,
+                        )
+                    )
                 raise ValueError(
                     f"Column '{column}' is not allowed on table '{table}'"
                 )
@@ -651,6 +661,12 @@ Return only the SQL query, nothing else.
             )
         )
 
+    def _should_refresh_on_validation_error(self, error: Exception) -> bool:
+        message = str(error).lower()
+        if "column" not in message:
+            return False
+        return any(token in message for token in ("not allowed", "not available", "unknown"))
+
     def _log_async(self, coro: Optional[Any]) -> None:
         if not coro:
             return
@@ -684,7 +700,7 @@ Return only the SQL query, nothing else.
         user_question: Optional[str] = None
         retry_count = 0
         refresh_reason: Optional[str] = None
-        alias_rewrites: List[AliasRewrite] = []
+        validation_retry_performed = False
         used_fuzzy = False
         fuzzy_candidates: Optional[List[Dict[str, Any]]] = None
         fuzzy_field: Optional[str] = None
@@ -710,6 +726,7 @@ Return only the SQL query, nothing else.
                 return f"Failed to generate SQL: {exc}"
 
         while True:
+            alias_rewrites: List[AliasRewrite] = []
             try:
                 used_fuzzy = False
                 fuzzy_candidates = None
@@ -885,6 +902,29 @@ Return only the SQL query, nothing else.
                 return f"Unable to rewrite SQL aliases safely: {exc}"
             except ValueError as exc:
                 logger.warning("SQL validation error: %s", exc)
+                if (
+                    not validation_retry_performed
+                    and self._should_refresh_on_validation_error(exc)
+                ):
+                    validation_retry_performed = True
+                    retry_count += 1
+                    refresh_reason = "schema_validation_mismatch"
+                    cache = self._schema_introspector.refresh()
+                    if user_question:
+                        sql_text, schema_metadata = self._generate_sql(user_question)
+                    else:
+                        schema_metadata = {
+                            "schema_version": cache.schema_version,
+                            "schema_hash": cache.schema_hash,
+                        }
+                    self._emit_event(
+                        "sql_refresh_on_error",
+                        status="refresh",
+                        schema_version=schema_metadata.get("schema_version"),
+                        schema_hash=schema_metadata.get("schema_hash"),
+                        reason=refresh_reason,
+                    )
+                    continue
                 return f"Error: {exc}"
             except PsycopgError as exc:  # pragma: no cover - runtime DB errors
                 logger.error("SQL execution error: %s", exc)
