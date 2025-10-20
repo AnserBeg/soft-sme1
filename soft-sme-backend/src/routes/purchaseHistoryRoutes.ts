@@ -259,76 +259,14 @@ router.put('/:id', async (req: Request, res: Response) => {
         console.log(`purchaseHistoryRoutes: Inventory update for part '${visualPartNumber}' completed.`);
       }
     } else if (status === 'Open' && oldStatus === 'Closed') {
-      // === REOPEN PO LOGIC ===
-      for (const item of lineItems) {
-        const quantity = parseInt(item.quantity, 10);
-        // Convert part_number to uppercase for consistency
-        const visualPartNumber = item.part_number.toString().trim().toUpperCase();
-        
-        let existingPartResult;
-        if (item.part_id) {
-          existingPartResult = await client.query(
-            `SELECT part_id, part_number, part_type, quantity_on_hand FROM inventory WHERE part_id = $1`,
-            [item.part_id]
-          );
-        } else {
-          existingPartResult = await client.query(
-            `SELECT part_id, part_number, part_type, quantity_on_hand FROM inventory 
-             WHERE REPLACE(REPLACE(UPPER(part_number), '-', ''), ' ', '') = REPLACE(REPLACE(UPPER($1), '-', ''), ' ', '')`,
-            [visualPartNumber]
-          );
-        }
-        
-        if (existingPartResult.rows.length > 0 && existingPartResult.rows[0].part_type === 'stock') {
-          // Only check for negative inventory for stock items
-          const currentQuantity = existingPartResult.rows[0]?.quantity_on_hand || 0;
-          if (currentQuantity < quantity) {
-            await client.query('ROLLBACK');
-            console.error('Negative inventory error for part:', item);
-            return res.status(400).json({
-              error: 'Inventory cannot be negative',
-              message: `Cannot reopen PO. Reopening would result in negative inventory for part: ${visualPartNumber || '[unknown part]'}`,
-              part_number: visualPartNumber || null
-            });
-          }
-        }
-      }
-      // If all checks pass, proceed with updates (only for stock items)
-      for (const item of lineItems) {
-        const quantity = parseInt(item.quantity, 10);
-        // Convert part_number to uppercase for consistency
-        const visualPartNumber = item.part_number.toString().trim().toUpperCase();
-        
-        let existingPartResult;
-        if (item.part_id) {
-          existingPartResult = await client.query(
-            `SELECT part_id, part_type FROM inventory 
-             WHERE REPLACE(REPLACE(UPPER(part_number), '-', ''), ' ', '') = REPLACE(REPLACE(UPPER($1), '-', ''), ' ', '')`,
-            [visualPartNumber]
-          );
-        } else {
-          existingPartResult = await client.query(
-            `SELECT part_id, part_type FROM inventory 
-             WHERE REPLACE(REPLACE(UPPER(part_number), '-', ''), ' ', '') = REPLACE(REPLACE(UPPER($1), '-', ''), ' ', '')`,
-            [visualPartNumber]
-          );
-        }
-        
-        if (existingPartResult.rows.length > 0 && existingPartResult.rows[0].part_type === 'stock') {
-          const existingPartId: number = existingPartResult.rows[0].part_id;
-          console.log(`purchaseHistoryRoutes: Reverting inventory for stock part: '${visualPartNumber}' (quantity: ${quantity})`);
-          await client.query(
-            `UPDATE inventory 
-             SET quantity_on_hand = COALESCE(NULLIF(quantity_on_hand, '')::NUMERIC, 0) - $1::NUMERIC
-             WHERE part_id = $2`,
-            [quantity, existingPartId]
-          );
-        } else {
-          console.log(`purchaseHistoryRoutes: Skipping inventory revert for supply part: '${visualPartNumber}'`);
-        }
-      }
+      await client.query('ROLLBACK');
+      console.warn(`Reopen attempt blocked for purchase order ${id}.`);
+      return res.status(400).json({
+        error: 'Reopen not allowed',
+        message: 'Closed purchase orders cannot be reopened. Create a new purchase order if additional items are required.'
+      });
     }
-    
+
     // Finally, update the PO status and other fields
     const { bill_number } = req.body;
     const finalUpdateResult = await client.query(

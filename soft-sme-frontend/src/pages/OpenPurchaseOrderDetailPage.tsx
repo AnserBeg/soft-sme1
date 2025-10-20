@@ -1293,88 +1293,6 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
     }
   };
 
-  const handleReopenPO = async () => {
-    if (!purchaseOrder?.purchase_id) {
-      toast.error('Purchase order not loaded. Cannot reopen.');
-      return;
-    }
-
-    if (window.confirm('Are you sure you want to reopen this purchase order?')) {
-      try {
-        const updatedPurchaseOrder = {
-          ...purchaseOrder,
-          vendor_id: vendor?.id,
-          purchase_date: date?.toISOString(),
-          bill_number: billNumber.trim(),
-          lineItems: lineItems.map(item => ({
-            ...item,
-            part_number: item.part_number.trim(),
-            part_description: item.part_description.trim(),
-            unit: item.unit.trim(),
-            quantity: parseFloat(String(item.quantity)),
-            unit_cost: parseFloat(String(item.unit_cost)),
-            line_amount: parseFloat(String(item.line_amount))
-          })),
-          status: 'Open',
-          subtotal: subTotal,
-          total_gst_amount: totalGSTAmount,
-          total_amount: totalAmount,
-          global_gst_rate: globalGstRate,
-          gst_rate: globalGstRate,
-          // Include pickup fields
-          pickup_time: purchaseOrder?.pickup_time || null,
-          pickup_location: purchaseOrder?.pickup_location || null,
-          pickup_contact_person: purchaseOrder?.pickup_contact_person || null,
-          pickup_phone: purchaseOrder?.pickup_phone || null,
-          pickup_instructions: purchaseOrder?.pickup_instructions || null,
-          pickup_notes: purchaseOrder?.pickup_notes || null,
-          // Include order placement tracking fields
-          order_placed: purchaseOrder?.order_placed || false,
-          order_placed_at: purchaseOrder?.order_placed_at || null,
-          order_placed_by: purchaseOrder?.order_placed_by || null,
-          order_placed_method: purchaseOrder?.order_placed_method || null,
-          vendor_confirmation_status: purchaseOrder?.vendor_confirmation_status || 'pending',
-          vendor_confirmation_notes: purchaseOrder?.vendor_confirmation_notes || null,
-          vendor_confirmation_date: purchaseOrder?.vendor_confirmation_date || null,
-          pricing_updated: purchaseOrder?.pricing_updated || false,
-          pricing_updated_at: purchaseOrder?.pricing_updated_at || null,
-          pricing_updated_by: purchaseOrder?.pricing_updated_by || null,
-          pricing_updated_method: purchaseOrder?.pricing_updated_method || null,
-          quantity_adjusted: purchaseOrder?.quantity_adjusted || false,
-          quantity_adjusted_at: purchaseOrder?.quantity_adjusted_at || null,
-          quantity_adjusted_by: purchaseOrder?.quantity_adjusted_by || null,
-          quantity_adjusted_method: purchaseOrder?.quantity_adjusted_method || null,
-          original_quantities: purchaseOrder?.original_quantities || null,
-          adjusted_quantities: purchaseOrder?.adjusted_quantities || null,
-          vendor_pricing_notes: purchaseOrder?.vendor_pricing_notes || null
-        };
-
-        await api.put(`/api/purchase-orders/${purchaseOrder.purchase_id}`, updatedPurchaseOrder);
-        
-        toast.success('Purchase Order reopened successfully!');
-        // Update local state to reflect the open status
-        setPurchaseOrder(prev => prev ? { ...prev, status: 'Open' } : prev);
-        setStatus('Open');
-        navigate(`/open-purchase-orders/${purchaseOrder.purchase_id}`);
-      } catch (error) {
-        console.error('Error reopening purchase order:', error);
-        if (error instanceof AxiosError && error.response?.data?.error) {
-          // Handle backend validation errors
-          const errorMessage = error.response.data.error;
-          if (errorMessage.toLowerCase().includes('negative quantity') || 
-              errorMessage.toLowerCase().includes('insufficient inventory') ||
-              errorMessage.toLowerCase().includes('inventory constraint')) {
-            toast.error(`Cannot reopen: ${errorMessage}`);
-          } else {
-            toast.error(`Error reopening PO: ${errorMessage}`);
-          }
-        } else {
-          toast.error('Failed to reopen purchase order. Please try again.');
-        }
-      }
-    }
-  };
-
   const handleClosePurchaseOrder = async () => {
     if (!purchaseOrder?.purchase_id) return;
 
@@ -2127,10 +2045,6 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
             </Button>
           )}
 
-          {/* Reopen PO button - for admin and purchase/sales users */}
-          {(user?.access_role === 'Admin' || user?.access_role === 'Sales and Purchase') && (
-            <Button variant="contained" color="primary" onClick={handleReopenPO}>Reopen PO</Button>
-          )}
           {/* View Allocations (read-only) */}
           <Button variant="outlined" color="primary" onClick={openAllocationsModal}>View Allocations</Button>
         </Box>

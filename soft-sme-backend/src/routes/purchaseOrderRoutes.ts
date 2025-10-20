@@ -1509,85 +1509,14 @@ router.put('/:id', async (req, res) => {
         // Don't fail the entire operation, but log the error
       }
     }
-    
-    // If PO is being reopened, check inventory constraints first
+    // Closed purchase orders are now editable; disallow reopening entirely
     if (status === 'Open' && oldStatus === 'Closed') {
-      console.log(`PO ${id} transitioning to Open. Checking inventory constraints...`);
-      
-      // Collect any violations to report and block reopen if found
-      const reopenViolations: Array<{ part_number: string; current_quantity: number; po_quantity: number; resulting_quantity: number }> = [];
-      for (const item of lineItems) {
-        if (item.part_number) {
-          const normalizedPartNumber = item.part_number.toString().trim().toUpperCase();
-          const poQuantity = parseFloat(item.quantity) || 0;
-          
-          // Check current inventory for this part
-          const existingPartResult = await client.query(
-            `SELECT part_number, part_type, quantity_on_hand FROM "inventory" 
-             WHERE REPLACE(REPLACE(UPPER(part_number), '-', ''), ' ', '') = REPLACE(REPLACE(UPPER($1), '-', ''), ' ', '')`,
-            [normalizedPartNumber]
-          );
-          
-          if (existingPartResult.rows.length > 0) {
-            const part = existingPartResult.rows[0];
-            if (part.part_type === 'stock') {
-              const currentQuantity = parseFloat(part.quantity_on_hand) || 0;
-              const resultingQuantity = currentQuantity - poQuantity;
-              if (resultingQuantity < 0) {
-                reopenViolations.push({
-                  part_number: normalizedPartNumber,
-                  current_quantity: currentQuantity,
-                  po_quantity: poQuantity,
-                  resulting_quantity: resultingQuantity
-                });
-              }
-            }
-          }
-        }
-      }
-      
-      if (reopenViolations.length > 0) {
-        console.error(`❌ Reopen validation failed for PO ${id}:`, reopenViolations);
-        await client.query('ROLLBACK');
-        return res.status(400).json({
-          error: 'Insufficient inventory',
-          message: 'Cannot reopen purchase order because one or more stock items would go negative.',
-          details: reopenViolations
-        });
-      }
-
-      console.log(`✅ Inventory validation passed for reopening PO ${id}`);
-    }
-
-    // If PO is being reopened, revert inventory quantity (only for stock items)
-    if (status === 'Open' && oldStatus === 'Closed') {
-       console.log(`PO ${id} transitioning to Open. Reverting inventory quantities...`);
-       for (const item of lineItems) {
-         if (item.part_number) {
-           // Convert part_number to uppercase for consistency
-           const normalizedPartNumber = item.part_number.toString().trim().toUpperCase();
-           // Convert quantity to number
-           const numericQuantity = parseFloat(item.quantity) || 0;
-           
-           // Check if this part is a stock item before subtracting
-     const existingPartResult = await client.query(
-        `SELECT part_id, part_number, part_type FROM "inventory" 
-        WHERE REPLACE(REPLACE(UPPER(part_number), '-', ''), ' ', '') = REPLACE(REPLACE(UPPER($1), '-', ''), ' ', '')`,
-       [normalizedPartNumber]
-     );
-           
-                if (existingPartResult.rows.length > 0 && existingPartResult.rows[0].part_type === 'stock') {
-       const existingPartId: number = existingPartResult.rows[0].part_id;
-            console.log(`Reverting inventory for stock part: '${normalizedPartNumber}' (quantity: ${numericQuantity})`);
-            await client.query(
-               `UPDATE "inventory" SET quantity_on_hand = CAST((COALESCE(NULLIF(quantity_on_hand, 'NA')::NUMERIC, 0) - $1::NUMERIC) AS VARCHAR(20)) WHERE part_id = $2`,
-        [numericQuantity, existingPartId]
-            );
-           } else {
-             console.log(`Skipping inventory revert for supply part: '${normalizedPartNumber}'`);
-           }
-         }
-       }
+      console.warn(`Reopen attempt blocked for purchase order ${id}.`);
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        error: 'Reopen not allowed',
+        message: 'Closed purchase orders cannot be reopened. Create a new purchase order if additional items are required.'
+      });
     }
 
     // If PO is being closed, trigger automatic allocation process
