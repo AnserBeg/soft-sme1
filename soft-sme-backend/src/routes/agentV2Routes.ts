@@ -380,6 +380,11 @@ const buildToolRegistry = (
     tools.updateQuote(sessionId, requireId(args?.quote_id ?? args?.id, 'quote_id'), args?.patch ?? args),
   emailQuote: async (args: any) =>
     tools.emailQuote(sessionId, requireId(args?.quote_id ?? args?.id, 'quote_id'), args?.to, userId),
+  email_search: async (args: any) => tools.emailSearch(sessionId, userId, args),
+  email_read: async (args: any) => tools.emailRead(sessionId, userId, args),
+  email_compose_draft: async (args: any) => tools.emailComposeDraft(sessionId, userId, args),
+  email_send: async (args: any) => tools.emailSend(sessionId, userId, args),
+  email_reply: async (args: any) => tools.emailReply(sessionId, userId, args),
   convertQuoteToSO: async (args: any) =>
     tools.convertQuoteToSO(sessionId, requireId(args?.quote_id ?? args?.id, 'quote_id')),
   createTask: async (args: any) => tools.createAgentTask(sessionId, companyId, userId, args),

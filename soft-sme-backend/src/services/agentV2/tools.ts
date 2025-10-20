@@ -14,6 +14,8 @@ import { TaskInput, TaskStatus } from '../TaskService';
 import { QuoteService } from '../QuoteService';
 import { PurchaseOrderService } from '../PurchaseOrderService';
 import DocumentEmailService from '../DocumentEmailService';
+import { AgentEmailService } from '../agentEmail/service';
+import type { ComposeEmailAttachmentPayload } from '../agentEmail/types';
 
 export class AgentToolsV2 {
   private soService: SalesOrderService;
@@ -24,6 +26,7 @@ export class AgentToolsV2 {
   private quoteService: QuoteService;
   private purchaseOrderService: PurchaseOrderService;
   private documentEmailService: DocumentEmailService;
+  private agentEmailService?: AgentEmailService;
   constructor(private pool: Pool) {
     this.soService = new SalesOrderService(pool);
     this.emailService = new EmailService(pool);
@@ -33,6 +36,13 @@ export class AgentToolsV2 {
     this.quoteService = new QuoteService(pool);
     this.purchaseOrderService = new PurchaseOrderService(pool);
     this.documentEmailService = new DocumentEmailService(pool, this.emailService, this.pdfService);
+  }
+
+  private getAgentEmailService(): AgentEmailService {
+    if (!this.agentEmailService) {
+      this.agentEmailService = new AgentEmailService(this.pool);
+    }
+    return this.agentEmailService;
   }
 
   private requireEmailUser(userId: number | null | undefined): number {
@@ -93,6 +103,17 @@ export class AgentToolsV2 {
       .filter((id) => Number.isFinite(id)) as number[];
 
     return Array.from(new Set(normalized));
+  }
+
+  private normalizeRecipients(value: any): string[] {
+    if (value == null) {
+      return [];
+    }
+
+    const source = Array.isArray(value) ? value : [value];
+    return source
+      .map((entry) => (typeof entry === 'string' ? entry.trim() : ''))
+      .filter((entry) => entry.length > 0);
   }
 
   private normalizeTaskStatus(value: any): TaskStatus | undefined {
@@ -1077,6 +1098,229 @@ export class AgentToolsV2 {
         sessionId,
         'emailQuote',
         { quoteId, to },
+        { error: error?.message ?? String(error) },
+        false
+      );
+      throw error;
+    }
+  }
+
+  async emailSearch(sessionId: number, userId: number | null | undefined, payload: any) {
+    const resolvedUserId = this.requireEmailUser(userId);
+    const query = typeof payload?.query === 'string' ? payload.query.trim() : '';
+    if (!query) {
+      throw new Error('query is required for email_search');
+    }
+
+    const maxRaw = payload?.max;
+    const max = Number.isFinite(Number(maxRaw)) ? Math.max(1, Math.min(50, Number(maxRaw))) : undefined;
+
+    try {
+      const service = this.getAgentEmailService();
+      const results = await service.emailSearch(resolvedUserId, query, max);
+      const output = { provider: 'titan', results };
+      await this.audit(sessionId, 'email_search', { query, max }, output, true);
+      return output;
+    } catch (error: any) {
+      await this.audit(
+        sessionId,
+        'email_search',
+        { query, max },
+        { error: error?.message ?? String(error) },
+        false
+      );
+      throw error;
+    }
+  }
+
+  async emailRead(sessionId: number, userId: number | null | undefined, payload: any) {
+    const resolvedUserId = this.requireEmailUser(userId);
+    const idSource = payload?.id ?? payload?.email_id ?? payload;
+    const id = typeof idSource === 'string' ? idSource.trim() : String(idSource);
+    if (!id || id === 'undefined' || id === 'null') {
+      throw new Error('id is required for email_read');
+    }
+
+    try {
+      const service = this.getAgentEmailService();
+      const message = await service.emailRead(resolvedUserId, id);
+      const output = { provider: 'titan', message };
+      await this.audit(sessionId, 'email_read', { id }, output, true);
+      return output;
+    } catch (error: any) {
+      await this.audit(
+        sessionId,
+        'email_read',
+        { id },
+        { error: error?.message ?? String(error) },
+        false
+      );
+      throw error;
+    }
+  }
+
+  async emailComposeDraft(sessionId: number, userId: number | null | undefined, payload: any) {
+    const resolvedUserId = this.requireEmailUser(userId);
+    const to = this.normalizeRecipients(payload?.to);
+    if (!to.length) {
+      throw new Error('At least one recipient is required to compose a Titan email draft.');
+    }
+    const subject = typeof payload?.subject === 'string' ? payload.subject.trim() : '';
+    if (!subject) {
+      throw new Error('subject is required to compose a Titan email draft.');
+    }
+
+    const cc = this.normalizeRecipients(payload?.cc);
+    const bcc = this.normalizeRecipients(payload?.bcc);
+    const textBody = typeof payload?.text === 'string' ? payload.text : typeof payload?.textBody === 'string' ? payload.textBody : undefined;
+    const htmlBody = typeof payload?.html === 'string' ? payload.html : typeof payload?.htmlBody === 'string' ? payload.htmlBody : undefined;
+
+    const attachments: ComposeEmailAttachmentPayload[] | undefined = Array.isArray(payload?.attachments)
+      ? payload.attachments
+          .map((item: any): ComposeEmailAttachmentPayload | null => {
+            const filename = typeof item?.filename === 'string' ? item.filename.trim() : '';
+            const content = typeof item?.content === 'string' ? item.content : null;
+            if (!filename || !content) {
+              return null;
+            }
+            return {
+              filename,
+              content,
+              encoding: typeof item?.encoding === 'string' ? (item.encoding as BufferEncoding) : undefined,
+              contentType: typeof item?.contentType === 'string' ? item.contentType : undefined,
+              cid: typeof item?.cid === 'string' ? item.cid : undefined,
+              inline: this.toBoolean(item?.inline),
+            };
+          })
+          .filter((item: ComposeEmailAttachmentPayload | null): item is ComposeEmailAttachmentPayload => Boolean(item))
+      : undefined;
+
+    const composePayload = {
+      to,
+      cc: cc.length ? cc : undefined,
+      bcc: bcc.length ? bcc : undefined,
+      subject,
+      textBody,
+      htmlBody,
+      attachments,
+    };
+
+    try {
+      const service = this.getAgentEmailService();
+      const result = await service.emailComposeDraft(resolvedUserId, composePayload);
+      const output = { provider: 'titan', ...result };
+      await this.audit(sessionId, 'email_compose_draft', composePayload, output, true);
+      return output;
+    } catch (error: any) {
+      await this.audit(
+        sessionId,
+        'email_compose_draft',
+        composePayload,
+        { error: error?.message ?? String(error) },
+        false
+      );
+      throw error;
+    }
+  }
+
+  async emailSend(sessionId: number, userId: number | null | undefined, payload: any) {
+    const resolvedUserId = this.requireEmailUser(userId);
+    const confirmTokenSource = payload?.confirm_token ?? payload?.confirmToken ?? payload?.token;
+    const confirmToken = typeof confirmTokenSource === 'string' ? confirmTokenSource.trim() : '';
+    if (!confirmToken) {
+      throw new Error('confirm_token is required to send Titan email.');
+    }
+
+    const draftIdSource = payload?.draft_id ?? payload?.draftId ?? payload?.id;
+    const draftId = typeof draftIdSource === 'string' ? draftIdSource.trim() : draftIdSource ? String(draftIdSource) : undefined;
+
+    const directPayload = payload?.payload;
+    const normalizedPayload = directPayload
+      ? {
+          to: this.normalizeRecipients(directPayload?.to),
+          cc: this.normalizeRecipients(directPayload?.cc),
+          bcc: this.normalizeRecipients(directPayload?.bcc),
+          subject: typeof directPayload?.subject === 'string' ? directPayload.subject : '',
+          textBody:
+            typeof directPayload?.text === 'string'
+              ? directPayload.text
+              : typeof directPayload?.textBody === 'string'
+                ? directPayload.textBody
+                : undefined,
+          htmlBody:
+            typeof directPayload?.html === 'string'
+              ? directPayload.html
+              : typeof directPayload?.htmlBody === 'string'
+                ? directPayload.htmlBody
+                : undefined,
+          attachments: Array.isArray(directPayload?.attachments) ? directPayload.attachments : undefined,
+        }
+      : undefined;
+
+    try {
+      const service = this.getAgentEmailService();
+      const result = await service.emailSend(resolvedUserId, {
+        draftId,
+        payload: normalizedPayload,
+        confirmToken,
+      });
+      const output = { provider: 'titan', result };
+      await this.audit(
+        sessionId,
+        'email_send',
+        { draftId, hasPayload: Boolean(normalizedPayload) },
+        output,
+        true
+      );
+      return output;
+    } catch (error: any) {
+      await this.audit(
+        sessionId,
+        'email_send',
+        { draftId, hasPayload: Boolean(normalizedPayload) },
+        { error: error?.message ?? String(error) },
+        false
+      );
+      throw error;
+    }
+  }
+
+  async emailReply(sessionId: number, userId: number | null | undefined, payload: any) {
+    const resolvedUserId = this.requireEmailUser(userId);
+    const messageId = typeof payload?.message_id === 'string' ? payload.message_id.trim() : payload?.messageId;
+    const threadId = typeof payload?.thread_id === 'string' ? payload.thread_id.trim() : payload?.threadId;
+    if (!messageId && !threadId) {
+      throw new Error('message_id or thread_id is required for email_reply');
+    }
+
+    const replyAll = this.toBoolean(payload?.reply_all ?? payload?.replyAll);
+    const bodyText = typeof payload?.body_text === 'string' ? payload.body_text : payload?.bodyText;
+    const bodyHtml = typeof payload?.body_html === 'string' ? payload.body_html : payload?.bodyHtml;
+
+    try {
+      const service = this.getAgentEmailService();
+      const result = await service.emailReply(resolvedUserId, {
+        messageId: messageId ? String(messageId) : undefined,
+        threadId: threadId ? String(threadId) : undefined,
+        replyAll,
+        bodyText: typeof bodyText === 'string' ? bodyText : undefined,
+        bodyHtml: typeof bodyHtml === 'string' ? bodyHtml : undefined,
+        attachments: Array.isArray(payload?.attachments) ? payload.attachments : undefined,
+      });
+      const output = { provider: 'titan', result };
+      await this.audit(
+        sessionId,
+        'email_reply',
+        { messageId, threadId, replyAll },
+        output,
+        true
+      );
+      return output;
+    } catch (error: any) {
+      await this.audit(
+        sessionId,
+        'email_reply',
+        { messageId, threadId, replyAll },
         { error: error?.message ?? String(error) },
         false
       );

@@ -39,6 +39,9 @@ interface VoiceCallArtifact {
 
 interface AgentEventBase {
   timestamp?: string;
+  content?: string;
+  uiHints?: Record<string, unknown>;
+  severity?: 'info' | 'warning' | 'error';
 }
 
 export type AgentEvent =
@@ -695,6 +698,37 @@ export class AgentOrchestratorV2 {
       ];
     }
 
+    const titanTools = new Set(['email_search', 'email_read', 'email_compose_draft', 'email_send', 'email_reply']);
+    if (result && typeof result === 'object' && result.provider === 'titan' && titanTools.has(tool)) {
+      const uiHints: Record<string, unknown> = {
+        provider: 'titan',
+        webLinks: [
+          {
+            label: 'Open in Titan webmail',
+            href: 'https://app.titan.email/',
+          },
+        ],
+      };
+      if (Array.isArray(result.results)) {
+        uiHints.results = result.results;
+      }
+      if (result.preview) {
+        uiHints.preview = result.preview;
+      }
+      if (result.result) {
+        uiHints.delivery = result.result;
+      }
+
+      return [
+        {
+          type: 'text',
+          content: this.describeActionOutcome(tool, true, result),
+          timestamp,
+          uiHints,
+        },
+      ];
+    }
+
     const artifact = result && typeof result === 'object' ? this.buildVoiceArtifact(result.session) : null;
 
     return [
@@ -1137,6 +1171,11 @@ export class AgentOrchestratorV2 {
       { name: 'createQuote', description: 'Create a new quote for a customer.' },
       { name: 'updateQuote', description: 'Modify quote details, pricing, or line items.' },
       { name: 'emailQuote', description: 'Email a quote PDF to a customer contact.' },
+      { name: 'email_search', description: 'Search the connected Titan mailbox using IMAP filters.' },
+      { name: 'email_read', description: 'Retrieve a Titan email message with headers, bodies, and attachments.' },
+      { name: 'email_compose_draft', description: 'Compose a Titan email draft and receive a confirmation token before sending.' },
+      { name: 'email_send', description: 'Send a Titan email after confirmation, supporting drafts and attachments.' },
+      { name: 'email_reply', description: 'Reply to a Titan email thread with optional reply-all and attachments.' },
       { name: 'convertQuoteToSO', description: 'Convert an existing quote into a sales order.' },
       { name: 'updatePickupDetails', description: 'Update pickup instructions such as time, location, or contact details.' },
       { name: 'getPickupDetails', description: 'Retrieve the current pickup instructions for a purchase order.' },
@@ -1212,6 +1251,16 @@ export class AgentOrchestratorV2 {
         return 'Updated the quote successfully.';
       case 'emailQuote':
         return 'Sent the quote email successfully.';
+      case 'email_search':
+        return 'Retrieved Titan email search results successfully.';
+      case 'email_read':
+        return 'Retrieved the Titan email message successfully.';
+      case 'email_compose_draft':
+        return 'Prepared a Titan email draft. Awaiting confirmation before send.';
+      case 'email_send':
+        return 'Sent the Titan email successfully.';
+      case 'email_reply':
+        return 'Sent the Titan email reply successfully.';
       case 'convertQuoteToSO':
         return 'Converted the quote into a sales order successfully.';
       case 'updatePickupDetails':
@@ -1283,6 +1332,16 @@ export class AgentOrchestratorV2 {
         return 'update the quote';
       case 'emailQuote':
         return 'email the quote';
+      case 'email_search':
+        return 'search Titan email';
+      case 'email_read':
+        return 'read the Titan email message';
+      case 'email_compose_draft':
+        return 'compose a Titan email draft';
+      case 'email_send':
+        return 'send the Titan email';
+      case 'email_reply':
+        return 'reply to the Titan email thread';
       case 'convertQuoteToSO':
         return 'convert the quote into a sales order';
       case 'updatePickupDetails':
