@@ -108,7 +108,7 @@ type MutableSearchObject = SearchObject & {
 export const parseQuery = (query: string): { search: SearchObject } => {
   const search: MutableSearchObject = {};
   const textTerms: string[] = [];
-  const headerPairs: Array<[string, string]> = [];
+  const headerMap: Record<string, string | boolean> = {};
 
   const tokens = Array.from(query.matchAll(/(\w+:"[^"]+"|\w+:[^\s]+|"[^"]+"|\S+)/g)).map((match) => match[0]);
 
@@ -181,8 +181,8 @@ export const parseQuery = (query: string): { search: SearchObject } => {
     search.text = textQuery.join(' ');
   }
 
-  if (headerPairs.length > 0) {
-    search.header = headerPairs;
+  if (Object.keys(headerMap).length > 0) {
+    search.header = headerMap;
   }
 
   return { search };
