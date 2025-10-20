@@ -100,9 +100,8 @@ const parseDateToken = (value: string): Date | undefined => {
   return date;
 };
 
-type MutableSearchObject = SearchObject & {
+type MutableSearchObject = Partial<SearchObject> & {
   text?: string;
-  header?: Array<[string, string]>;
 };
 
 export const parseQuery = (query: string): { search: SearchObject } => {
@@ -181,11 +180,11 @@ export const parseQuery = (query: string): { search: SearchObject } => {
     search.text = textQuery.join(' ');
   }
 
-  if (Object.keys(headerMap).length > 0) {
-    search.header = headerMap;
+  if (headerPairs.length > 0) {
+    search.header = headerPairs as SearchObject['header'];
   }
 
-  return { search };
+  return { search: search as SearchObject };
 };
 
 const normalizeDateString = (date: Date | string | number | undefined): string => {
@@ -360,7 +359,10 @@ export class TitanProvider implements EmailProvider {
 
   private async fetchByMessageId(messageId: string): Promise<EmailMessageDetail> {
     return this.withMailbox(async (client) => {
-      const matches = await client.search({ header: [['Message-ID', messageId]] }, { uid: true });
+      const matches = await client.search(
+        { header: [['Message-ID', messageId]] as SearchObject['header'] },
+        { uid: true }
+      );
       const uidList = Array.isArray(matches) ? matches : [];
       if (uidList.length === 0) {
         throw new Error('Original message not found in Titan mailbox for reply.');
