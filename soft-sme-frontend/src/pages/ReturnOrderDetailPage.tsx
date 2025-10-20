@@ -4,11 +4,18 @@ import {
   Autocomplete,
   Box,
   Button,
+  Checkbox,
   Chip,
   Container,
   Grid,
   Paper,
   Stack,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
   TextField,
   Typography,
 } from '@mui/material';
@@ -49,6 +56,7 @@ interface ReturnFormLine {
   already_requested: number;
   inputQuantity: string;
   reason: string;
+  selected: boolean;
 }
 
 function useQuery() {
@@ -121,10 +129,11 @@ const ReturnOrderDetailPage: React.FC = () => {
             part_description: line.part_description,
             unit: line.unit,
             quantityPurchased: line.quantity,
-            returnable_quantity: line.returnable_quantity + (match ? Number(match.quantity) : 0),
+            returnable_quantity: line.returnable_quantity,
             already_requested: line.already_requested,
             inputQuantity: match ? String(match.quantity) : '',
             reason: match?.reason ?? '',
+            selected: Boolean(match),
           } as ReturnFormLine;
         });
         setFormLines(mapped ?? []);
@@ -198,10 +207,16 @@ const ReturnOrderDetailPage: React.FC = () => {
 
   const totalSelectedQuantity = useMemo(() => {
     return formLines.reduce((sum, line) => {
+      if (!line.selected) {
+        return sum;
+      }
       const qty = parseFloat(line.inputQuantity || '0');
       return sum + (Number.isFinite(qty) ? qty : 0);
     }, 0);
   }, [formLines]);
+
+  const hasReturnableLines = useMemo(() => formLines.some((line) => line.returnable_quantity > 0), [formLines]);
+  const hasSelectedLines = useMemo(() => formLines.some((line) => line.selected), [formLines]);
 
   const handleSave = async () => {
     setError(null);
@@ -211,6 +226,7 @@ const ReturnOrderDetailPage: React.FC = () => {
     }
 
     const preparedLines = formLines
+      .filter((line) => line.selected)
       .map((line) => ({
         purchase_line_item_id: line.purchase_line_item_id,
         quantity: parseFloat(line.inputQuantity || '0'),
@@ -221,7 +237,7 @@ const ReturnOrderDetailPage: React.FC = () => {
       .filter((line) => Number.isFinite(line.quantity) && line.quantity > 0);
 
     if (preparedLines.length === 0) {
-      setError('Enter a quantity for at least one part to return.');
+      setError('Select at least one part and enter a quantity to return.');
       return;
     }
 
@@ -404,84 +420,153 @@ const ReturnOrderDetailPage: React.FC = () => {
                 Total Selected Quantity: {totalSelectedQuantity.toFixed(2)}
               </Typography>
             </Stack>
+            {formLines.length > 0 && (
+              <Typography variant="body2" color="text.secondary">
+                Check the boxes to add parts to this return, then adjust the quantity being sent back.
+              </Typography>
+            )}
             {formLines.length === 0 ? (
               <Typography variant="body2" color="text.secondary">
                 Select a purchase order to view parts eligible for return.
               </Typography>
             ) : (
-              <Box sx={{ overflowX: 'auto' }}>
-                <Grid container spacing={2} sx={{ minWidth: 800 }}>
-                  <Grid item xs={2}><Typography variant="subtitle2">Part Number</Typography></Grid>
-                  <Grid item xs={3}><Typography variant="subtitle2">Description</Typography></Grid>
-                  <Grid item xs={1.5}><Typography variant="subtitle2">Purchased</Typography></Grid>
-                  <Grid item xs={1.5}><Typography variant="subtitle2">Available</Typography></Grid>
-                  <Grid item xs={1.5}><Typography variant="subtitle2">Qty to Return</Typography></Grid>
-                  <Grid item xs={2.5}><Typography variant="subtitle2">Reason</Typography></Grid>
-                </Grid>
-                {formLines.map((line) => (
-                  <Grid container spacing={2} sx={{ minWidth: 800, mt: 1 }} key={line.purchase_line_item_id}>
-                    <Grid item xs={2}>
-                      <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                        {line.part_number}
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        {line.unit ? `Unit: ${line.unit}` : ''}
-                      </Typography>
-                    </Grid>
-                    <Grid item xs={3}>
-                      <Typography variant="body2">{line.part_description || '-'}</Typography>
-                    </Grid>
-                    <Grid item xs={1.5}>
-                      <Typography variant="body2">{line.quantityPurchased.toFixed(2)}</Typography>
-                    </Grid>
-                    <Grid item xs={1.5}>
-                      <Typography variant="body2">{line.returnable_quantity.toFixed(2)}</Typography>
-                      {line.already_requested > 0 && (
-                        <Typography variant="caption" color="text.secondary">
-                          Already requested: {line.already_requested.toFixed(2)}
-                        </Typography>
-                      )}
-                    </Grid>
-                    <Grid item xs={1.5}>
-                      <TextField
-                        type="number"
-                        size="small"
-                        value={line.inputQuantity}
-                        onChange={(event) => {
-                          const value = event.target.value;
-                          setFormLines((prev) =>
-                            prev.map((prevLine) =>
-                              prevLine.purchase_line_item_id === line.purchase_line_item_id
-                                ? { ...prevLine, inputQuantity: value }
-                                : prevLine
-                            )
-                          );
-                        }}
-                        inputProps={{ min: 0, step: 0.01, max: line.returnable_quantity }}
-                        fullWidth
-                      />
-                    </Grid>
-                    <Grid item xs={2.5}>
-                      <TextField
-                        size="small"
-                        value={line.reason}
-                        onChange={(event) => {
-                          const value = event.target.value;
-                          setFormLines((prev) =>
-                            prev.map((prevLine) =>
-                              prevLine.purchase_line_item_id === line.purchase_line_item_id
-                                ? { ...prevLine, reason: value }
-                                : prevLine
-                            )
-                          );
-                        }}
-                        placeholder="Optional"
-                        fullWidth
-                      />
-                    </Grid>
-                  </Grid>
-                ))}
-              </Box>
+              <>
+                {!hasReturnableLines && (
+                  <Alert severity="info">
+                    All parts on this purchase order have already been requested for return.
+                  </Alert>
+                )}
+                <TableContainer sx={{ maxHeight: 420 }}>
+                  <Table size="small" stickyHeader>
+                  <TableHead>
+                    <TableRow>
+                      <TableCell padding="checkbox">Select</TableCell>
+                      <TableCell>Part Number</TableCell>
+                      <TableCell>Description</TableCell>
+                      <TableCell align="right">Purchased</TableCell>
+                      <TableCell align="right">Available</TableCell>
+                      <TableCell align="right">Qty to Return</TableCell>
+                      <TableCell>Reason</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {formLines.map((line) => {
+                      const disableSelection = line.returnable_quantity <= 0 && !line.selected;
+                      return (
+                        <TableRow
+                          key={line.purchase_line_item_id}
+                          hover
+                          selected={line.selected}
+                          sx={{ '&.Mui-selected': { backgroundColor: (theme) => theme.palette.action.hover } }}
+                        >
+                          <TableCell padding="checkbox">
+                            <Checkbox
+                              checked={line.selected}
+                              onChange={(event) => {
+                                const checked = event.target.checked;
+                                setFormLines((prev) =>
+                                  prev.map((prevLine) => {
+                                    if (prevLine.purchase_line_item_id !== line.purchase_line_item_id) {
+                                      return prevLine;
+                                    }
+                                    const defaultQuantity = prevLine.returnable_quantity > 0 ? String(prevLine.returnable_quantity) : '';
+                                    return {
+                                      ...prevLine,
+                                      selected: checked,
+                                      inputQuantity: checked
+                                        ? prevLine.inputQuantity || defaultQuantity
+                                        : '',
+                                      reason: checked ? prevLine.reason : '',
+                                    };
+                                  })
+                                );
+                              }}
+                              disabled={disableSelection}
+                              inputProps={{ 'aria-label': `Select ${line.part_number}` }}
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <Typography variant="body2" fontWeight={600}>
+                              {line.part_number}
+                            </Typography>
+                            {line.unit && (
+                              <Typography variant="caption" color="text.secondary" display="block">
+                                Unit: {line.unit}
+                              </Typography>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            <Typography variant="body2">{line.part_description || '-'}</Typography>
+                          </TableCell>
+                          <TableCell align="right">
+                            <Typography variant="body2">{line.quantityPurchased.toFixed(2)}</Typography>
+                          </TableCell>
+                          <TableCell align="right">
+                            <Typography variant="body2">{line.returnable_quantity.toFixed(2)}</Typography>
+                            {line.already_requested > 0 && (
+                              <Typography variant="caption" color="text.secondary" display="block">
+                                Already requested: {line.already_requested.toFixed(2)}
+                              </Typography>
+                            )}
+                          </TableCell>
+                          <TableCell align="right" sx={{ minWidth: 140 }}>
+                            <TextField
+                              type="number"
+                              size="small"
+                              value={line.inputQuantity}
+                              onChange={(event) => {
+                                const value = event.target.value;
+                                setFormLines((prev) =>
+                                  prev.map((prevLine) => {
+                                    if (prevLine.purchase_line_item_id !== line.purchase_line_item_id) {
+                                      return prevLine;
+                                    }
+                                    const numeric = parseFloat(value);
+                                    const shouldSelect = !Number.isNaN(numeric) && numeric > 0;
+                                    return {
+                                      ...prevLine,
+                                      inputQuantity: value,
+                                      selected: shouldSelect ? true : value === '' ? false : prevLine.selected,
+                                    };
+                                  })
+                                );
+                              }}
+                              inputProps={{ min: 0, step: 0.01, max: line.returnable_quantity }}
+                              fullWidth
+                              disabled={!line.selected}
+                            />
+                          </TableCell>
+                          <TableCell sx={{ minWidth: 200 }}>
+                            <TextField
+                              size="small"
+                              value={line.reason}
+                              onChange={(event) => {
+                                const value = event.target.value;
+                                setFormLines((prev) =>
+                                  prev.map((prevLine) =>
+                                    prevLine.purchase_line_item_id === line.purchase_line_item_id
+                                      ? { ...prevLine, reason: value }
+                                      : prevLine
+                                  )
+                                );
+                              }}
+                              placeholder="Optional"
+                              fullWidth
+                              disabled={!line.selected}
+                              multiline
+                              minRows={1}
+                            />
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                  </Table>
+                </TableContainer>
+              </>
+            )}
+            {formLines.length > 0 && !hasSelectedLines && hasReturnableLines && (
+              <Alert severity="info">Select at least one part to include it in the return order.</Alert>
             )}
           </Stack>
         </Paper>
