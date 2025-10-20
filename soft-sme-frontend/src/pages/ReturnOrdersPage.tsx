@@ -4,6 +4,7 @@ import {
   Button,
   Chip,
   Container,
+  IconButton,
   InputAdornment,
   Paper,
   Stack,
@@ -166,22 +167,21 @@ const ReturnOrdersPage: React.FC = () => {
       headerName: 'Actions',
       sortable: false,
       filterable: false,
-      width: 120,
+      width: 80,
       renderCell: (params: GridRenderCellParams<ReturnOrderSummary>) => (
-        <Stack direction="row" spacing={1}>
-          <Button
+        <Stack direction="row" spacing={0.5}>
+          <IconButton
             size="small"
-            variant="outlined"
             color="error"
-            startIcon={<DeleteIcon fontSize="small" />}
+            aria-label="Delete return order"
             disabled={deletingId === params.row.return_id}
             onClick={(event) => {
               event.stopPropagation();
               handleDelete(params.row);
             }}
           >
-            Delete
-          </Button>
+            <DeleteIcon fontSize="small" />
+          </IconButton>
         </Stack>
       ),
     },
