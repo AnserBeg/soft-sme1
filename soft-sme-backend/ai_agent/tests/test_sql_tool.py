@@ -1,4 +1,5 @@
 import json
+import os
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -6,7 +7,7 @@ from unittest.mock import patch
 import psycopg2
 
 from ai_agent.schema_introspector import TableSchema
-from ai_agent.sql_tool import InventorySQLTool
+from ai_agent.sql_tool import FuzzyAttempt, InventorySQLTool
 
 
 class _StubCursor:
@@ -14,7 +15,9 @@ class _StubCursor:
         self._script = script
         self._rows = []
         self.last_sql = None
+        self.last_params = None
         self.calls = 0
+        self._fetch_index = 0
 
     def __enter__(self):
         return self
@@ -25,13 +28,22 @@ class _StubCursor:
     def execute(self, sql, params=None):
         self.calls += 1
         self.last_sql = sql
+        self.last_params = params
         result = self._script(sql, params, self.calls)
         if isinstance(result, Exception):
             raise result
         self._rows = result
+        self._fetch_index = 0
 
     def fetchall(self):
         return list(self._rows)
+
+    def fetchone(self):
+        if self._fetch_index >= len(self._rows):
+            return None
+        row = self._rows[self._fetch_index]
+        self._fetch_index += 1
+        return row
 
 
 class _StubConnection:
@@ -119,6 +131,8 @@ class InventorySQLToolTests(unittest.TestCase):
 
     def test_exact_match_vendor_returns_row(self):
         def script(sql, _params, _call):
+            if _call > 1:
+                raise AssertionError("Fuzzy fallback should not run on exact match")
             return [
                 {"vendor_id": 10, "vendor_name": "Parts for Truck Inc"},
             ]
@@ -128,32 +142,171 @@ class InventorySQLToolTests(unittest.TestCase):
         self.assertIn("Parts for Truck Inc", result)
         self.assertIn("Found 1 results", result)
 
-    def test_near_match_triggers_disambiguation(self):
-        def script(sql, _params, call):
-            if call == 1:
+    def test_exact_miss_ilike_returns_single_row(self):
+        dataset = [
+            {"vendor_id": 1, "vendor_name": "Parts for Truck Inc."},
+        ]
+
+        def script(sql, params, call):
+            normalized = " ".join(str(sql).split())
+            if "FROM pg_extension" in normalized:
                 return []
-            raise AssertionError("Fallback should not execute real query when patched")
+            if "ILIKE" in normalized:
+                limit = params[-1]
+                tokens = [token.strip("%") for token in params[:-1]]
+                matches = [
+                    row
+                    for row in dataset
+                    if all(token.lower() in row["vendor_name"].lower() for token in tokens)
+                ]
+                return matches[:limit]
+            if "vendor_name" in normalized and "=" in normalized:
+                return []
+            return []
+
+        with patch.dict(os.environ, {"AI_FUZZY_USE_TRGM": "false"}, clear=False):
+            tool, _ = self._make_tool(script)
+
+        with patch.object(tool, "_emit_event", return_value=None):
+            result = tool._run(
+                "SELECT vendor_id, vendor_name FROM vendormaster WHERE vendor_name = 'Parts for Truck Inc'"
+            )
+
+        self.assertIn("Parts for Truck Inc.", result)
+        self.assertIn("Found 1 results", result)
+
+    def test_exact_miss_ilike_disambiguation_payload(self):
+        dataset = [
+            {"vendor_id": 1, "vendor_name": "Parts for Truck Inc."},
+            {"vendor_id": 2, "vendor_name": "Parts 4 Trucks Incorporated"},
+            {"vendor_id": 3, "vendor_name": "Truck Parts Co"},
+        ]
+
+        def script(sql, params, call):
+            normalized = " ".join(str(sql).split())
+            if "FROM pg_extension" in normalized:
+                return []
+            if "ILIKE" in normalized:
+                limit = params[-1]
+                tokens = [token.strip("%") for token in params[:-1]]
+                matches = [
+                    row
+                    for row in dataset
+                    if all(token.lower() in row["vendor_name"].lower() for token in tokens)
+                ]
+                matches.sort(key=lambda row: len(row["vendor_name"]))
+                return matches[:limit]
+            if "vendor_name" in normalized and "=" in normalized:
+                return []
+            return []
+
+        with patch.dict(
+            os.environ,
+            {"AI_FUZZY_USE_TRGM": "false", "AI_FUZZY_LIMIT": "2"},
+            clear=False,
+        ):
+            tool, _ = self._make_tool(script)
+
+        with patch.object(tool, "_emit_event", return_value=None):
+            raw = tool._run(
+                "SELECT vendor_id, vendor_name FROM vendormaster WHERE vendor_name = 'Parts for Truck'"
+            )
+
+        self.assertTrue(raw.startswith("{"), raw)
+        payload = json.loads(raw)
+        self.assertEqual(payload["type"], "disambiguation")
+        self.assertEqual(len(payload["candidates"]), 2)
+        expected_ids = [
+            row["vendor_id"]
+            for row in sorted(dataset, key=lambda item: len(item["vendor_name"]))[:2]
+        ]
+        actual_ids = [
+            candidate["primary_keys"]["vendor_id"] for candidate in payload["candidates"]
+        ]
+        self.assertEqual(actual_ids, expected_ids)
+
+    def test_fuzzy_disabled_returns_empty_message(self):
+        def script(sql, _params, _call):
+            return []
+
+        with patch.dict(os.environ, {"AI_FUZZY_ENABLED": "false"}, clear=False):
+            tool, _ = self._make_tool(script)
+
+        with patch.object(tool, "_emit_event", return_value=None):
+            result = tool._run(
+                "SELECT vendor_id, vendor_name FROM vendormaster WHERE vendor_name = 'Parts for Truck Inc'"
+            )
+
+        self.assertEqual(result, "No data found for this query.")
+
+    def test_numeric_id_miss_does_not_fuzzy(self):
+        def script(sql, _params, call):
+            if call > 1:
+                raise AssertionError("Numeric filters should not trigger fuzzy search")
+            return []
 
         tool, _ = self._make_tool(script)
 
-        with patch.object(tool, "_emit_event", return_value=None), patch.object(
-            tool,
-            "_maybe_apply_fuzzy_fallback",
-            return_value=(
-                "vendor_name",
-                [
-                    {"vendor_id": 1, "vendor_name": "Parts for Truck Inc"},
-                    {"vendor_id": 2, "vendor_name": "Parts 4 Trucks"},
-                ],
-                "vendormaster",
-            ),
-        ):
+        with patch.object(tool, "_emit_event", return_value=None):
             result = tool._run(
-                "SELECT vendor_id, vendor_name FROM vendormaster WHERE vendor_name = 'Parts for Trucks'"
+                "SELECT vendor_id FROM vendormaster WHERE vendor_id = 42"
             )
 
-        self.assertIn("multiple possible matches", result)
-        self.assertIn("Parts 4 Trucks", result)
+        self.assertEqual(result, "No data found for this query.")
+
+    def test_pg_trgm_similarity_path(self):
+        dataset = [
+            {"vendor_id": 1, "vendor_name": "Parts for Truck Inc."},
+            {"vendor_id": 2, "vendor_name": "Truck Parts Company"},
+        ]
+
+        def trigram_similarity(a, b):
+            from collections import Counter
+
+            def _trigrams(text):
+                padded = f"  {text.lower()} "
+                return [padded[i : i + 3] for i in range(len(padded) - 2)]
+
+            left = Counter(_trigrams(a))
+            right = Counter(_trigrams(b))
+            common = sum((left & right).values())
+            total = sum(left.values()) + sum(right.values())
+            if total == 0:
+                return 0.0
+            return (2.0 * common) / total
+
+        def script(sql, params, call):
+            normalized = " ".join(str(sql).split())
+            if "FROM pg_extension" in normalized:
+                return [{"exists": 1}]
+            if "set_limit" in normalized:
+                return [(params[0],)]
+            if "similarity(" in normalized:
+                search = params[0]
+                threshold = params[3]
+                limit = params[-1]
+                matches = []
+                for row in dataset:
+                    score = trigram_similarity(row["vendor_name"], search)
+                    if score >= threshold:
+                        result = dict(row)
+                        result["similarity_score"] = score
+                        matches.append(result)
+                matches.sort(key=lambda item: item["similarity_score"], reverse=True)
+                return matches[:limit]
+            return []
+
+        with patch.dict(os.environ, {"AI_FUZZY_TRGM_THRESHOLD": "0.6"}, clear=False):
+            tool, _ = self._make_tool(script)
+
+        with patch.object(tool, "_emit_event", return_value=None):
+            result = tool._run(
+                "SELECT vendor_id, vendor_name FROM vendormaster WHERE vendor_name = 'Parts for Truck Inc'"
+            )
+
+        self.assertTrue(result.startswith("Found"), result)
+        self.assertIn("Parts for Truck Inc.", result)
+        self.assertNotIn("Truck Parts Company", result)
 
     def test_refresh_on_error_retries_once(self):
         attempts = {"count": 0}
@@ -195,7 +348,7 @@ class InventorySQLToolTests(unittest.TestCase):
         with patch.object(tool, "_emit_event", return_value=None), patch.object(
             tool,
             "_maybe_apply_fuzzy_fallback",
-            return_value=(None, None, None),
+            return_value=FuzzyAttempt(used=False),
         ):
             result = tool._run("SELECT address FROM vendormaster WHERE address ILIKE '%Main%'")
 

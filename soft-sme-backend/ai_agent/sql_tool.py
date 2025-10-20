@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -15,8 +16,8 @@ from langchain.prompts import PromptTemplate
 from langchain.tools import BaseTool
 from langchain_openai import ChatOpenAI
 from pydantic import PrivateAttr
-from psycopg2 import sql as psycopg_sql
 from psycopg2 import Error as PsycopgError
+from psycopg2 import sql as psycopg_sql
 from psycopg2.extras import RealDictCursor
 
 from .analytics_sink import AnalyticsSink
@@ -51,12 +52,15 @@ class InventorySQLTool(BaseTool):
         r"^\s*(SELECT|WITH|UPDATE|DELETE|INSERT|ALTER|DROP|CREATE|TRUNCATE)\b",
         re.IGNORECASE,
     )
+    _FUZZY_STOPWORDS: ClassVar[set[str]] = {"for", "and", "the", "of"}
     _analytics_sink: Optional[AnalyticsSink] = PrivateAttr(default=None)
     _llm: Optional[ChatOpenAI] = PrivateAttr(default=None)
     _initialized: bool = PrivateAttr(default=False)
     _schema_introspector: SchemaIntrospector = PrivateAttr()
     _safe_tables: set[str] = PrivateAttr(default_factory=set)
+    _fuzzy_config: FuzzyConfig = PrivateAttr()
     _fuzzy_fields: set[str] = PrivateAttr(default_factory=set)
+    _trgm_available: Optional[bool] = PrivateAttr(default=None)
     _alias_map: Dict[str, List[str]] = PrivateAttr(default_factory=dict)
 
     def __init__(
@@ -69,7 +73,9 @@ class InventorySQLTool(BaseTool):
         self._llm = None
         self._schema_introspector = get_schema_introspector()
         self._safe_tables = set(self._schema_introspector.allowed_tables)
-        self._fuzzy_fields = self._load_fuzzy_fields()
+        self._fuzzy_config = self._load_fuzzy_config()
+        self._fuzzy_fields = set(self._fuzzy_config.fields)
+        self._trgm_available = None
         self._alias_map = self._load_alias_map()
 
         self._initialize()
@@ -101,6 +107,61 @@ class InventorySQLTool(BaseTool):
         raw = os.getenv("AI_FUZZY_FIELDS", "vendor_name,customer_name,part_name")
         fields = [item.strip().lower() for item in raw.split(",") if item.strip()]
         return set(fields)
+
+    @staticmethod
+    def _get_bool_env(name: str, default: bool) -> bool:
+        raw = os.getenv(name)
+        if raw is None:
+            return default
+        return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+    @staticmethod
+    def _get_int_env(name: str, default: int, minimum: Optional[int] = None) -> int:
+        raw = os.getenv(name)
+        if raw is None:
+            return default
+        try:
+            value = int(raw)
+        except ValueError:
+            logger.warning("Invalid integer for %s: %s. Using default %s.", name, raw, default)
+            return default
+        if minimum is not None and value < minimum:
+            logger.warning("Value for %s below minimum %s. Using minimum.", name, minimum)
+            return minimum
+        return value
+
+    @staticmethod
+    def _get_float_env(name: str, default: float, minimum: Optional[float] = None) -> float:
+        raw = os.getenv(name)
+        if raw is None:
+            return default
+        try:
+            value = float(raw)
+        except ValueError:
+            logger.warning("Invalid float for %s: %s. Using default %s.", name, raw, default)
+            return default
+        if minimum is not None and value < minimum:
+            logger.warning("Value for %s below minimum %s. Using minimum.", name, minimum)
+            return minimum
+        return value
+
+    def _load_fuzzy_config(self) -> FuzzyConfig:
+        fields = self._load_fuzzy_fields()
+        enabled = self._get_bool_env("AI_FUZZY_ENABLED", True)
+        limit = self._get_int_env("AI_FUZZY_LIMIT", 5, minimum=1)
+        min_length = self._get_int_env("AI_FUZZY_MINLEN", 3, minimum=1)
+        use_trgm = self._get_bool_env("AI_FUZZY_USE_TRGM", True)
+        trgm_threshold = self._get_float_env("AI_FUZZY_TRGM_THRESHOLD", 0.25, minimum=0.0)
+        tokenize = self._get_bool_env("AI_FUZZY_TOKENIZE", True)
+        return FuzzyConfig(
+            enabled=enabled,
+            fields=fields,
+            limit=limit,
+            min_length=min_length,
+            use_trgm=use_trgm,
+            trgm_threshold=trgm_threshold,
+            tokenize=tokenize,
+        )
 
     @staticmethod
     def _load_alias_map() -> Dict[str, List[str]]:
@@ -289,6 +350,114 @@ Return only the SQL query, nothing else.
                 return True
         return False
 
+    @staticmethod
+    def _resolve_column_name(
+        table_schema: TableSchema, column_name: str
+    ) -> Optional[str]:
+        target = column_name.lower()
+        for column in table_schema.columns:
+            if column["name"].lower() == target:
+                return column["name"]
+        return None
+
+    @staticmethod
+    def _is_textual_column(column: Dict[str, Any]) -> bool:
+        data_type = str(column.get("type", "")).lower()
+        return any(token in data_type for token in ("char", "text", "citext"))
+
+    @staticmethod
+    def _quote_identifier(identifier: str) -> str:
+        if not re.match(r"^[A-Za-z0-9_]+$", identifier):
+            raise ValueError(f"Unsafe identifier: {identifier}")
+        return f'"{identifier}"'
+
+    @staticmethod
+    def _tokenize_search_value(value: str) -> List[str]:
+        tokens = re.split(r"[^A-Za-z0-9]+", value)
+        filtered: List[str] = []
+        for token in tokens:
+            if not token:
+                continue
+            if not any(ch.isalpha() for ch in token):
+                continue
+            filtered.append(token)
+        return filtered
+
+    @staticmethod
+    def _hash_sql(sql_text: str) -> str:
+        return hashlib.sha256(sql_text.encode("utf-8")).hexdigest()
+
+    def _ensure_trgm_available(self, cursor) -> bool:
+        if self._trgm_available is not None:
+            return self._trgm_available
+        if not self._fuzzy_config.use_trgm:
+            self._trgm_available = False
+            return False
+        try:
+            cursor.execute(
+                "SELECT 1 FROM pg_extension WHERE extname = %s", ("pg_trgm",)
+            )
+            row = None
+            try:
+                row = cursor.fetchone()
+            except AttributeError:
+                fetched = cursor.fetchall()
+                row = fetched[0] if fetched else None
+            self._trgm_available = bool(row)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("pg_trgm extension detection failed: %s", exc)
+            self._trgm_available = False
+        return bool(self._trgm_available)
+
+    def _extract_aliases(self, sql_text: str) -> Dict[str, str]:
+        alias_pattern = re.compile(
+            r"\b(FROM|JOIN)\s+([a-zA-Z0-9_]+)(?:\s+(?:AS\s+)?([a-zA-Z0-9_]+))?",
+            re.IGNORECASE,
+        )
+        aliases: Dict[str, str] = {}
+        for match in alias_pattern.finditer(sql_text):
+            table = match.group(2)
+            alias = match.group(3) or table
+            aliases[alias.lower()] = table
+            aliases[table.lower()] = table
+        return aliases
+
+    def _extract_field_conditions(
+        self, sql_text: str, aliases: Dict[str, str]
+    ) -> List[FieldCondition]:
+        pattern = re.compile(
+            r"(?P<field>(?:[a-zA-Z0-9_]+\.)?[a-zA-Z0-9_]+)\s*=\s*(?P<value>'[^']*'|\"[^\"]*\"|%s|:\w+|%\([^\)]+\)s|\$\d+)",
+            re.IGNORECASE,
+        )
+        conditions: List[FieldCondition] = []
+        for match in pattern.finditer(sql_text):
+            field = match.group("field").strip()
+            value_token = match.group("value").strip()
+            table: Optional[str] = None
+            alias: Optional[str] = None
+            column = field
+            if "." in field:
+                alias, column = [part.strip() for part in field.split(".", 1)]
+            alias_key = alias.lower() if alias else None
+            if alias_key and alias_key in aliases:
+                table = aliases[alias_key]
+            value: Optional[str] = None
+            if value_token.startswith("'") and value_token.endswith("'"):
+                value = value_token[1:-1].replace("''", "'")
+            elif value_token.startswith('"') and value_token.endswith('"'):
+                value = value_token[1:-1]
+            elif value_token.lower() == "null":
+                value = None
+            conditions.append(
+                FieldCondition(
+                    table=table,
+                    column=column,
+                    value=value,
+                    alias=alias_key,
+                )
+            )
+        return conditions
+
     # ------------------------------------------------------------------
     # Execution helpers
     # ------------------------------------------------------------------
@@ -306,60 +475,165 @@ Return only the SQL query, nothing else.
         sql_text: str,
         cursor,
         schema_tables: Dict[str, TableSchema],
-    ) -> Tuple[Optional[str], Optional[List[Dict[str, Any]]], Optional[str]]:
-        table = self._determine_primary_table(sql_text)
-        if not table:
-            return None, None, None
+    ) -> FuzzyAttempt:
+        config = self._fuzzy_config
+        if not config.enabled:
+            return FuzzyAttempt(used=False, reason_no_fuzzy="disabled")
 
-        table_schema = schema_tables.get(table.lower())
-        if not table_schema:
-            return None, None, None
+        normalized = sql_text.strip()
+        if not normalized.upper().startswith("SELECT") and not normalized.upper().startswith("WITH"):
+            return FuzzyAttempt(used=False, reason_no_fuzzy="not_select")
 
-        for field in self._fuzzy_fields:
-            pattern = re.compile(
-                rf"\b{field}\b\s*=\s*(['\"])(?P<value>[^'\"]+)\1",
-                re.IGNORECASE,
-            )
-            match = pattern.search(sql_text)
-            if not match:
+        aliases = self._extract_aliases(sql_text)
+        conditions = self._extract_field_conditions(sql_text, aliases)
+        if not conditions:
+            return FuzzyAttempt(used=False, reason_no_fuzzy="no_equality_predicates")
+
+        base_table = self._determine_primary_table(sql_text)
+        chosen_condition: Optional[FieldCondition] = None
+        chosen_table_schema: Optional[TableSchema] = None
+        selected_column_lower: Optional[str] = None
+        for condition in conditions:
+            column_lower = condition.column.lower()
+            if column_lower not in config.fields:
                 continue
-            value = match.group("value").strip()
-            if not value or value.isdigit():
+            if condition.value is None:
                 continue
-            matching_column = next(
-                (col["name"] for col in table_schema.columns if col["name"].lower() == field),
+            value = condition.value.strip()
+            if len(value) < config.min_length:
+                continue
+            if not re.search(r"[A-Za-z]", value):
+                continue
+            table_name = condition.table or base_table
+            if not table_name:
+                continue
+            if table_name.lower() not in self._safe_tables:
+                continue
+            table_schema = schema_tables.get(table_name.lower())
+            if not table_schema:
+                continue
+            column_schema = next(
+                (
+                    column
+                    for column in table_schema.columns
+                    if column["name"].lower() == column_lower
+                ),
                 None,
             )
-            if not matching_column:
+            if not column_schema or not self._is_textual_column(column_schema):
                 continue
+            condition.table = table_schema.name
+            condition.column = column_schema["name"]
+            condition.value = value
+            chosen_condition = condition
+            chosen_table_schema = table_schema
+            selected_column_lower = column_schema["name"].lower()
+            break
 
-            like_value = "%" + "%".join(value.split()) + "%"
-            pk_columns = list(table_schema.primary_key)
-            select_columns: List[str] = []
-            for column_name in [*pk_columns, matching_column]:
-                if column_name not in select_columns:
-                    select_columns.append(column_name)
+        if not chosen_condition or not chosen_table_schema:
+            return FuzzyAttempt(used=False, reason_no_fuzzy="no_fuzzy_field")
 
-            identifier_table = psycopg_sql.Identifier(table)
-            identifier_field = psycopg_sql.Identifier(matching_column)
-            order_identifier = psycopg_sql.Identifier(pk_columns[0] if pk_columns else matching_column)
-            select_list = psycopg_sql.SQL(", ").join(
-                psycopg_sql.Identifier(col) for col in select_columns
-            )
-            fuzzy_query = psycopg_sql.SQL("SELECT {columns} FROM {table} WHERE {field} ILIKE %s ORDER BY {order} LIMIT 5").format(
-                columns=select_list,
-                table=identifier_table,
-                field=identifier_field,
-                order=order_identifier,
-            )
+        additional_filters: List[FieldCondition] = []
+        for condition in conditions:
+            if condition.value is None:
+                continue
+            if selected_column_lower and condition.column.lower() == selected_column_lower:
+                continue
+            if (
+                condition.table
+                and condition.table.lower() == chosen_table_schema.name.lower()
+            ):
+                resolved = self._resolve_column_name(chosen_table_schema, condition.column)
+                if not resolved:
+                    continue
+                condition.column = resolved
+                condition.table = chosen_table_schema.name
+                condition.value = condition.value.strip()
+                additional_filters.append(condition)
 
-            cursor.execute(fuzzy_query, (like_value,))
-            candidate_rows = [dict(row) for row in cursor.fetchall()]
-            if not candidate_rows:
-                return matching_column, [], table
-            return matching_column, candidate_rows, table
+        strategy = "ilike"
+        fuzzy_query = ""
+        params: List[Any] = []
+        threshold: Optional[float] = None
+        table_ident = self._quote_identifier(chosen_table_schema.name)
+        field_ident = self._quote_identifier(chosen_condition.column)
+        search_value = chosen_condition.value
 
-        return None, None, table
+        use_trgm = False
+        if config.use_trgm and self._ensure_trgm_available(cursor):
+            try:
+                cursor.execute("SELECT set_limit(%s)", (config.trgm_threshold,))
+                try:
+                    cursor.fetchone()
+                except AttributeError:
+                    pass
+                use_trgm = True
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning("Failed to configure trigram similarity: %s", exc)
+                use_trgm = False
+
+        candidates: List[Dict[str, Any]] = []
+        try:
+            if use_trgm:
+                strategy = "trgm"
+                threshold = config.trgm_threshold
+                fuzzy_query = (
+                    f"SELECT *, similarity({field_ident}, %s) AS similarity_score "
+                    f"FROM {table_ident} "
+                    f"WHERE {field_ident} % %s "
+                    f"AND similarity({field_ident}, %s) >= %s"
+                )
+                params = [search_value, search_value, search_value, threshold]
+            else:
+                tokens = self._tokenize_search_value(search_value) if config.tokenize else []
+                tokens = [
+                    token
+                    for token in tokens
+                    if token.lower() not in self._FUZZY_STOPWORDS
+                ]
+                if not tokens:
+                    tokens = [search_value]
+                clauses = [f"{field_ident} ILIKE %s" for _ in tokens]
+                params = [f"%{token}%" for token in tokens]
+                fuzzy_query = (
+                    f"SELECT * FROM {table_ident} "
+                    f"WHERE {' AND '.join(clauses)}"
+                )
+
+            for filter_condition in additional_filters:
+                filter_field = self._quote_identifier(filter_condition.column)
+                fuzzy_query += f" AND {filter_field} = %s"
+                params.append(filter_condition.value)
+
+            if use_trgm:
+                fuzzy_query += " ORDER BY similarity_score DESC LIMIT %s"
+            else:
+                fuzzy_query += f" ORDER BY LENGTH({field_ident}) ASC LIMIT %s"
+            params.append(config.limit)
+
+            cursor.execute(fuzzy_query, tuple(params))
+            rows = cursor.fetchall()
+            candidates = [dict(row) for row in rows]
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.error("Fuzzy query execution failed: %s", exc)
+            return FuzzyAttempt(used=False, reason_no_fuzzy="fuzzy_execution_failed")
+
+        for row in candidates:
+            row.pop("similarity_score", None)
+
+        query_hash = self._hash_sql(fuzzy_query)
+
+        return FuzzyAttempt(
+            used=True,
+            field=chosen_condition.column,
+            table=chosen_table_schema.name,
+            strategy=strategy,
+            candidates=candidates,
+            search_value=search_value,
+            fuzzy_query_hash=query_hash,
+            limit=config.limit,
+            threshold=threshold,
+        )
 
     def _determine_primary_table(self, sql_text: str) -> Optional[str]:
         match = re.search(r"\bFROM\s+([a-zA-Z0-9_]+)", sql_text, re.IGNORECASE)
@@ -414,6 +688,13 @@ Return only the SQL query, nothing else.
         used_fuzzy = False
         fuzzy_candidates: Optional[List[Dict[str, Any]]] = None
         fuzzy_field: Optional[str] = None
+        fuzzy_strategy: Optional[str] = None
+        fuzzy_reason: Optional[str] = None
+        fuzzy_search_value: Optional[str] = None
+        fuzzy_query_hash: Optional[str] = None
+        fuzzy_limit: Optional[int] = None
+        fuzzy_threshold: Optional[float] = None
+        base_query_hash: Optional[str] = None
         schema_metadata: Dict[str, str] = {}
 
         normalized_query = query.strip()
@@ -430,6 +711,16 @@ Return only the SQL query, nothing else.
 
         while True:
             try:
+                used_fuzzy = False
+                fuzzy_candidates = None
+                fuzzy_field = None
+                fuzzy_strategy = None
+                fuzzy_reason = None
+                fuzzy_search_value = None
+                fuzzy_query_hash = None
+                fuzzy_limit = None
+                fuzzy_threshold = None
+                base_query_hash = None
                 schema_tables = self._schema_introspector.get_tables()
                 rewritten_sql, new_rewrites = self._rewrite_aliases(sql_text, schema_tables)
                 alias_rewrites.extend(new_rewrites)
@@ -443,56 +734,118 @@ Return only the SQL query, nothing else.
                     cursor.execute(rewritten_sql)
                     results = [dict(row) for row in cursor.fetchall()]
                     rows_returned = len(results)
+                    base_query_hash = self._hash_sql(rewritten_sql)
 
                     if rows_returned == 0:
-                        field, candidates, table_name = self._maybe_apply_fuzzy_fallback(
+                        fuzzy_outcome = self._maybe_apply_fuzzy_fallback(
                             rewritten_sql,
                             cursor,
                             schema_tables,
                         )
-                        if field is not None:
+                        fuzzy_reason = fuzzy_outcome.reason_no_fuzzy
+                        fuzzy_candidates = fuzzy_outcome.candidates
+                        if fuzzy_outcome.used:
                             used_fuzzy = True
-                            fuzzy_field = field
-                            fuzzy_candidates = candidates
-                            if not candidates:
+                            fuzzy_field = fuzzy_outcome.field
+                            fuzzy_strategy = fuzzy_outcome.strategy
+                            fuzzy_search_value = fuzzy_outcome.search_value
+                            fuzzy_query_hash = fuzzy_outcome.fuzzy_query_hash
+                            fuzzy_limit = fuzzy_outcome.limit
+                            fuzzy_threshold = fuzzy_outcome.threshold
+                            candidate_count = len(fuzzy_candidates or [])
+                            if candidate_count == 0:
                                 self._emit_event(
                                     "sql_empty_result_after_fuzzy",
                                     status="empty",
                                     schema_version=schema_metadata.get("schema_version"),
                                     schema_hash=schema_metadata.get("schema_hash"),
-                                    field=field,
+                                    field=fuzzy_field,
+                                    strategy=fuzzy_strategy,
+                                    search_value=fuzzy_search_value,
+                                )
+                                self._emit_event(
+                                    "sql_tool_completed",
+                                    status="empty",
+                                    schema_version=schema_metadata.get("schema_version"),
+                                    schema_hash=schema_metadata.get("schema_hash"),
+                                    refresh_reason=refresh_reason,
+                                    retry_count=retry_count,
+                                    used_fuzzy=True,
+                                    fuzzy_field=fuzzy_field,
+                                    fuzzy_strategy=fuzzy_strategy,
+                                    search_value=fuzzy_search_value,
+                                    candidates_returned=0,
+                                    reason_no_fuzzy=fuzzy_reason,
+                                    base_query_hash=base_query_hash,
+                                    fuzzy_query_hash=fuzzy_query_hash,
+                                    fuzzy_limit=fuzzy_limit,
+                                    fuzzy_threshold=fuzzy_threshold,
+                                    alias_rewrites=[
+                                        rewrite.__dict__ for rewrite in alias_rewrites
+                                    ]
+                                    or None,
+                                    rows_returned=0,
                                 )
                                 return "No results found, even after a fuzzy lookup."
-                            if len(candidates) == 1:
+                            if candidate_count == 1:
                                 rows_returned = 1
-                                results = candidates
+                                results = fuzzy_candidates or []
                             else:
-                                table_schema = schema_tables.get((table_name or "").lower())
+                                table_name = (fuzzy_outcome.table or "").lower()
+                                table_schema = schema_tables.get(table_name)
                                 primary_keys = table_schema.primary_key if table_schema else []
-                                top_candidates = [
-                                    {
-                                        key: row.get(key)
-                                        for key in sorted(row.keys())
-                                        if key in set(primary_keys) | {field}
-                                    }
-                                    for row in candidates
-                                ]
-                                candidate_lines = [
-                                    ", ".join(f"{key}={value}" for key, value in item.items() if value is not None)
-                                    for item in top_candidates
-                                ]
+                                candidate_entries: List[Dict[str, Any]] = []
+                                for row in (fuzzy_candidates or [])[: self._fuzzy_config.limit]:
+                                    candidate_entries.append(
+                                        {
+                                            "display_value": row.get(fuzzy_field) if fuzzy_field else None,
+                                            "primary_keys": {
+                                                pk: row.get(pk) for pk in primary_keys
+                                            },
+                                            "row": row,
+                                        }
+                                    )
+                                disambiguation_payload = {
+                                    "type": "disambiguation",
+                                    "table": fuzzy_outcome.table,
+                                    "field": fuzzy_field,
+                                    "limit": fuzzy_limit,
+                                    "candidates": candidate_entries,
+                                }
                                 self._emit_event(
                                     "sql_fuzzy_fallback",
                                     status="disambiguate",
                                     schema_version=schema_metadata.get("schema_version"),
                                     schema_hash=schema_metadata.get("schema_hash"),
-                                    field=field,
-                                    candidate_count=len(candidates),
+                                    field=fuzzy_field,
+                                    candidate_count=candidate_count,
+                                    strategy=fuzzy_strategy,
+                                    search_value=fuzzy_search_value,
                                 )
-                                return (
-                                    "I found multiple possible matches. Please confirm which one you meant:\n"
-                                    + "\n".join(f"- {line}" for line in candidate_lines)
+                                self._emit_event(
+                                    "sql_tool_completed",
+                                    status="disambiguate",
+                                    schema_version=schema_metadata.get("schema_version"),
+                                    schema_hash=schema_metadata.get("schema_hash"),
+                                    refresh_reason=refresh_reason,
+                                    retry_count=retry_count,
+                                    used_fuzzy=True,
+                                    fuzzy_field=fuzzy_field,
+                                    fuzzy_strategy=fuzzy_strategy,
+                                    search_value=fuzzy_search_value,
+                                    candidates_returned=candidate_count,
+                                    reason_no_fuzzy=fuzzy_reason,
+                                    base_query_hash=base_query_hash,
+                                    fuzzy_query_hash=fuzzy_query_hash,
+                                    fuzzy_limit=fuzzy_limit,
+                                    fuzzy_threshold=fuzzy_threshold,
+                                    alias_rewrites=[
+                                        rewrite.__dict__ for rewrite in alias_rewrites
+                                    ]
+                                    or None,
+                                    rows_returned=0,
                                 )
+                                return json.dumps(disambiguation_payload, default=str)
 
                     response = self._format_results(results, rows_returned)
                     self._emit_event(
@@ -504,6 +857,14 @@ Return only the SQL query, nothing else.
                         retry_count=retry_count,
                         used_fuzzy=used_fuzzy,
                         fuzzy_field=fuzzy_field,
+                        fuzzy_strategy=fuzzy_strategy,
+                        search_value=fuzzy_search_value,
+                        candidates_returned=len(fuzzy_candidates or []),
+                        reason_no_fuzzy=fuzzy_reason,
+                        base_query_hash=base_query_hash,
+                        fuzzy_query_hash=fuzzy_query_hash,
+                        fuzzy_limit=fuzzy_limit,
+                        fuzzy_threshold=fuzzy_threshold,
                         alias_rewrites=[rewrite.__dict__ for rewrite in alias_rewrites] or None,
                         rows_returned=rows_returned,
                     )
@@ -514,6 +875,8 @@ Return only the SQL query, nothing else.
                             schema_version=schema_metadata.get("schema_version"),
                             schema_hash=schema_metadata.get("schema_hash"),
                             field=fuzzy_field,
+                            strategy=fuzzy_strategy,
+                            search_value=fuzzy_search_value,
                             candidate_count=len(fuzzy_candidates),
                         )
                     return response
@@ -614,3 +977,34 @@ Return only the SQL query, nothing else.
             )
             rows = cursor.fetchall()
         return [dict(row) for row in rows]
+@dataclass
+class FuzzyConfig:
+    enabled: bool
+    fields: set[str]
+    limit: int
+    min_length: int
+    use_trgm: bool
+    trgm_threshold: float
+    tokenize: bool
+
+
+@dataclass
+class FieldCondition:
+    table: Optional[str]
+    column: str
+    value: Optional[str]
+    alias: Optional[str]
+
+
+@dataclass
+class FuzzyAttempt:
+    used: bool
+    field: Optional[str] = None
+    table: Optional[str] = None
+    strategy: Optional[str] = None
+    candidates: Optional[List[Dict[str, Any]]] = None
+    reason_no_fuzzy: Optional[str] = None
+    search_value: Optional[str] = None
+    fuzzy_query_hash: Optional[str] = None
+    limit: Optional[int] = None
+    threshold: Optional[float] = None
