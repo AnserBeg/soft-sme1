@@ -16,6 +16,9 @@ export interface PurchaseOrder {
   exported_to_qbo?: boolean;
   qbo_exported_at?: string | null;
   qbo_export_status?: string | null;
+  return_requested_count?: number;
+  return_returned_count?: number;
+  has_returns?: boolean;
 }
 
 // Define the interface for the filter parameters
