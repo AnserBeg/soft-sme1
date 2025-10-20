@@ -66,21 +66,29 @@ const normalizeAddresses = (value?: string | string[]): string[] => {
     .filter((entry) => entry.length > 0);
 };
 
-const appendSearchValue = (current: string | undefined, value: string): string => {
-  const normalized = value.trim();
-  if (!normalized) {
-    return current ?? '';
-  }
+const toSearchList = (current: string | string[] | undefined): string[] => {
   if (!current) {
-    return normalized;
+    return [];
   }
-  const entries = current
-    .split(',')
+
+  const source = Array.isArray(current) ? current : current.split(',');
+
+  return source
     .map((entry) => entry.trim())
     .filter((entry) => entry.length > 0);
+};
+
+const appendSearchValue = (current: string | string[] | undefined, value: string): string => {
+  const normalized = value.trim();
+  if (!normalized) {
+    return Array.isArray(current) ? current.join(', ') : current ?? '';
+  }
+
+  const entries = toSearchList(current);
   if (!entries.includes(normalized)) {
     entries.push(normalized);
   }
+
   return entries.join(', ');
 };
 
@@ -94,7 +102,7 @@ const parseDateToken = (value: string): Date | undefined => {
 
 type MutableSearchObject = SearchObject & {
   text?: string;
-  header?: Record<string, string | boolean>;
+  header?: Array<[string, string]>;
 };
 
 export const parseQuery = (query: string): { search: SearchObject } => {
@@ -151,7 +159,10 @@ export const parseQuery = (query: string): { search: SearchObject } => {
       }
       case 'has':
         if (value.toLowerCase() === 'attachment') {
-          headerMap['Content-Type'] = 'multipart';
+          const marker: [string, string] = ['Content-Type', 'multipart'];
+          if (!headerPairs.some(([key, headerValue]) => key === marker[0] && headerValue === marker[1])) {
+            headerPairs.push(marker);
+          }
         }
         break;
       case 'unread':
