@@ -4,21 +4,18 @@ import {
   Box,
   Typography,
   IconButton,
-  Divider,
   CircularProgress,
-  Avatar,
   Tooltip,
-  Paper,
   Chip,
   Stack,
   Menu,
   MenuItem,
   ListItemText,
   Badge,
+  Paper,
 } from '@mui/material';
 import {
   Close as CloseIcon,
-  SmartToy as SmartToyIcon,
   KeyboardDoubleArrowDown as KeyboardDoubleArrowDownIcon,
   AddRounded as AddRoundedIcon,
   HistoryRounded as HistoryRoundedIcon,
@@ -127,12 +124,12 @@ export const ChatBoard: React.FC<ChatBoardProps> = ({ variant = 'drawer', onClos
 
   const headerStyles: SxProps<Theme> = {
     px: { xs: 2.5, sm: 3 },
-    py: 2.25,
+    py: 1.75,
     display: 'flex',
-    alignItems: { xs: 'flex-start', sm: 'center' },
-    flexDirection: { xs: 'column', sm: 'row' },
-    gap: { xs: 2, sm: 3 },
-    justifyContent: 'space-between',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 1.25,
+    flexWrap: 'wrap',
     borderBottom: '1px solid',
     borderColor: 'divider',
     backgroundColor: (theme) => (isEmbedded ? theme.palette.background.paper : theme.palette.background.default),
@@ -149,49 +146,24 @@ export const ChatBoard: React.FC<ChatBoardProps> = ({ variant = 'drawer', onClos
     backgroundColor: (theme) => theme.palette.background.default,
   };
 
+  const conversationBarStyles: SxProps<Theme> = {
+    px: { xs: 2.5, sm: 3 },
+    py: 1.75,
+    display: 'flex',
+    flexDirection: { xs: 'column', sm: 'row' },
+    alignItems: { xs: 'flex-start', sm: 'center' },
+    gap: { xs: 1.25, sm: 1.5 },
+    justifyContent: 'space-between',
+    borderTop: '1px solid',
+    borderColor: 'divider',
+    backgroundColor: (theme) => theme.palette.background.paper,
+  };
+
   const WrapperComponent: React.ElementType = isEmbedded ? Paper : Box;
 
   return (
     <WrapperComponent sx={{ ...containerStyles, ...sx }}>
       <Box sx={headerStyles}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2.5 }}>
-          <Avatar
-            sx={{
-              bgcolor: 'primary.main',
-              color: 'common.white',
-              width: 48,
-              height: 48,
-              boxShadow: '0 10px 24px rgba(33, 150, 243, 0.28)',
-            }}
-          >
-            <SmartToyIcon fontSize="small" />
-          </Avatar>
-          <Box>
-            <Typography variant="h6" sx={{ fontWeight: 700 }}>
-              Workspace Copilot
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              Ask about anything in your workspace for instant help.
-            </Typography>
-            <Stack spacing={1.25} sx={{ mt: 1.5 }}>
-              <Stack direction="row" alignItems="center" spacing={1}>
-                <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, letterSpacing: 0.4 }}>
-                  Current chat
-                </Typography>
-                <Chip
-                  label={activeSession?.title || 'New conversation'}
-                  color="primary"
-                  size="small"
-                  sx={{ maxWidth: 240, '& .MuiChip-label': { overflow: 'hidden', textOverflow: 'ellipsis' } }}
-                />
-                {isFetchingSessions && <CircularProgress size={14} />}
-              </Stack>
-              <Typography variant="caption" color="text.secondary">
-                Use the history button to revisit earlier conversations.
-              </Typography>
-            </Stack>
-          </Box>
-        </Box>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25 }}>
           <Tooltip title="Jump to latest">
             <IconButton
@@ -398,13 +370,32 @@ export const ChatBoard: React.FC<ChatBoardProps> = ({ variant = 'drawer', onClos
         )}
       </Box>
 
-      <Divider />
-
-      <ChatInput
-        onSendMessage={sendMessage}
-        disabled={isLoading}
-        placeholder="Ask me anything about your business..."
-      />
+      <Box component="footer" sx={{ mt: 'auto' }}>
+        <Box sx={conversationBarStyles}>
+          <Stack
+            direction={{ xs: 'column', sm: 'row' }}
+            alignItems={{ xs: 'flex-start', sm: 'center' }}
+            spacing={1}
+          >
+            <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, letterSpacing: 0.4 }}>
+              Current chat
+            </Typography>
+            <Chip
+              label={activeSession?.title || 'New conversation'}
+              color="primary"
+              size="small"
+              sx={{ maxWidth: 240, '& .MuiChip-label': { overflow: 'hidden', textOverflow: 'ellipsis' } }}
+            />
+            {isFetchingSessions && <CircularProgress size={14} />}
+          </Stack>
+        </Box>
+        <ChatInput
+          onSendMessage={sendMessage}
+          disabled={isLoading}
+          placeholder="Ask me anything about your business..."
+          withTopBorder={false}
+        />
+      </Box>
     </WrapperComponent>
   );
 };
