@@ -99,7 +99,22 @@ export const fetchReturnableLineItems = async (
   const response = await api.get(`/api/return-orders/purchase/${purchaseId}/line-items`, {
     params: excludeReturnId ? { excludeReturnId } : undefined,
   });
-  return response.data.items;
+
+  const data = response.data;
+
+  if (Array.isArray(data)) {
+    return data;
+  }
+
+  if (Array.isArray(data?.items)) {
+    return data.items;
+  }
+
+  if (Array.isArray(data?.available_items)) {
+    return data.available_items;
+  }
+
+  return [];
 };
 
 export const downloadReturnOrderPdf = (id: number) => {
