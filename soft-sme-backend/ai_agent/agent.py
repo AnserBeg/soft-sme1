@@ -229,7 +229,7 @@ class AivenAgent:
                 'password': os.getenv('DB_PASSWORD', '123'),
                 'port': int(os.getenv('DB_PORT', '5432'))
             }
-            self.sql_tool = InventorySQLTool(db_config)
+            self.sql_tool = InventorySQLTool(db_config, analytics_sink=self.analytics_sink)
 
             # Initialize action tool client
             self.action_tool = AgentActionTool(self.analytics_sink)

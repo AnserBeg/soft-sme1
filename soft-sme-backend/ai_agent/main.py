@@ -16,10 +16,10 @@ import time
 import uuid
 import pathlib
 import shutil
-from datetime import datetime
+from datetime import datetime, timezone
 from dataclasses import asdict
 from typing import Dict, Any, List, Optional
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -36,12 +36,14 @@ try:  # pragma: no cover - support both package and script execution
     from .conversation_manager import ConversationManager, DB_UNAVAILABLE_MESSAGE
     from .db import database_url_present, get_conn, reset_connection
     from .rag_tool import set_shared_embedding_model
+    from .schema_introspector import get_schema_introspector
 except ImportError:  # pragma: no cover - fallback when executed as script
     from agent import AivenAgent
     from cache_setup import StoragePaths, configure_cache_paths
     from conversation_manager import ConversationManager, DB_UNAVAILABLE_MESSAGE
     from db import database_url_present, get_conn, reset_connection
     from rag_tool import set_shared_embedding_model
+    from schema_introspector import get_schema_introspector
 
 # Load environment variables
 load_dotenv()
@@ -324,6 +326,47 @@ class StatsResponse(BaseModel):
     vector_db_chunks: int
     tools_used: Dict[str, int]
     average_response_time: float
+
+
+class SchemaRefreshRequest(BaseModel):
+    reason: Optional[str] = Field(default=None, max_length=120)
+
+
+class SchemaRefreshResponse(BaseModel):
+    schema_version: str
+    schema_hash: str
+    refreshed_at: str
+
+@app.post("/schema/refresh", response_model=SchemaRefreshResponse)
+async def refresh_schema_endpoint(
+    request: Request,
+    payload: SchemaRefreshRequest,
+) -> SchemaRefreshResponse:
+    secret = os.getenv("AI_SCHEMA_REFRESH_SECRET")
+    normalized_secret = secret.strip() if secret else None
+    provided_secret = request.headers.get("x-refresh-secret")
+    provided_normalized = provided_secret.strip() if provided_secret else None
+
+    if normalized_secret:
+        if not provided_normalized:
+            raise HTTPException(status_code=403, detail="Missing schema refresh secret")
+        if provided_normalized != normalized_secret:
+            raise HTTPException(status_code=403, detail="Invalid schema refresh secret")
+
+    reason = payload.reason or "manual"
+    try:
+        cache = get_schema_introspector().refresh()
+        logger.info("Schema cache refreshed via API (reason=%s)", reason)
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.exception("Schema refresh failed: %s", exc)
+        raise HTTPException(status_code=500, detail="Schema refresh failed") from exc
+
+    return SchemaRefreshResponse(
+        schema_version=cache.schema_version,
+        schema_hash=cache.schema_hash,
+        refreshed_at=datetime.utcnow().replace(tzinfo=timezone.utc).isoformat(),
+    )
+
 
 @app.on_event("startup")
 async def startup_event():
