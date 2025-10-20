@@ -7,8 +7,6 @@ import {
   InputAdornment,
   Paper,
   Stack,
-  Tab,
-  Tabs,
   TextField,
   Typography,
 } from '@mui/material';
@@ -26,10 +24,10 @@ import {
   fetchReturnOrders,
 } from '../services/returnOrderService';
 
-const statusTabs: Array<{ label: string; value: ReturnOrderStatus | 'all' }> = [
+const statusChips: Array<{ label: string; value: ReturnOrderStatus | 'all' }> = [
+  { label: 'All', value: 'all' },
   { label: 'Return Requested', value: 'Requested' },
   { label: 'Returned', value: 'Returned' },
-  { label: 'All', value: 'all' },
 ];
 
 const ReturnOrdersPage: React.FC = () => {
@@ -163,108 +161,89 @@ const ReturnOrdersPage: React.FC = () => {
 
   return (
     <Container maxWidth="xl" sx={{ mt: 4 }}>
-      <Stack spacing={3}>
-        <Box display="flex" alignItems="center" justifyContent="space-between">
-          <Box>
-            <Typography variant="h4" component="h1" gutterBottom>
-              Return Orders
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              Track requested and completed vendor returns linked to purchase orders.
-            </Typography>
-          </Box>
-          <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems={{ xs: 'stretch', md: 'center' }}>
-            <Button
-              variant="outlined"
-              startIcon={<RefreshIcon />}
-              onClick={loadOrders}
-              disabled={loading}
-            >
-              Refresh
-            </Button>
-            <Button
-              variant="contained"
-              startIcon={<AddIcon />}
-              onClick={() => navigate('/return-orders/new')}
-            >
-              New Return Order
-            </Button>
-          </Stack>
-        </Box>
-
-        <Paper elevation={0} sx={{ width: '100%', overflow: 'hidden' }}>
+      <Box sx={{ mb: 4 }}>
+        <Typography variant="h4" component="h1" gutterBottom>
+          Return Orders
+        </Typography>
+        <Stack direction="row" spacing={2} sx={{ mb: 2, justifyContent: 'flex-end' }}>
+          <Button
+            variant="contained"
+            startIcon={<AddIcon />}
+            onClick={() => navigate('/return-orders/new')}
+          >
+            New Return Order
+          </Button>
+          <Button
+            variant="outlined"
+            startIcon={<RefreshIcon />}
+            onClick={loadOrders}
+            disabled={loading}
+          >
+            Refresh
+          </Button>
+        </Stack>
+        <Paper sx={{ width: '100%', overflow: 'hidden', mb: 3 }}>
           <Box sx={{ p: 2 }}>
-            <Stack spacing={3}>
-              <Stack direction={{ xs: 'column', lg: 'row' }} spacing={3} alignItems={{ xs: 'stretch', lg: 'center' }}>
-                <TextField
-                  placeholder="Search return #, purchase #, vendor"
-                  value={searchTerm}
-                  onChange={(event) => setSearchTerm(event.target.value)}
-                  fullWidth
-                  InputProps={{
-                    startAdornment: (
-                      <InputAdornment position="start">
-                        <SearchIcon sx={{ fontSize: 32 }} />
-                      </InputAdornment>
-                    ),
-                    sx: { fontSize: 22, height: 56 },
-                  }}
-                  sx={{
-                    maxWidth: 420,
-                    '& .MuiInputBase-input': { fontSize: 22, py: 2 },
-                    '& .MuiInputLabel-root': { fontSize: 20 },
-                  }}
-                />
-
-                <Tabs
-                  value={statusFilter}
-                  onChange={(_, value) => setStatusFilter(value)}
-                  variant="scrollable"
-                  scrollButtons="auto"
-                  sx={{ flexGrow: 1, minHeight: 56 }}
-                >
-                  {statusTabs.map((tab) => (
-                    <Tab
-                      key={tab.value}
-                      label={tab.label}
-                      value={tab.value}
-                      sx={{ fontSize: 18, minHeight: 48 }}
-                    />
-                  ))}
-                </Tabs>
-              </Stack>
-
-              <DataGrid
-                rows={filteredOrders}
-                columns={columns}
-                loading={loading}
-                getRowId={(row) => row.return_id}
-                disableRowSelectionOnClick
-                onRowClick={(params) => navigate(`/return-orders/${params.row.return_id}`)}
-                sx={{
-                  border: 'none',
-                  height: 520,
-                  '& .MuiDataGrid-cell, & .MuiDataGrid-columnHeader, & .MuiDataGrid-columnHeaderTitle': {
-                    fontSize: '1.1rem',
-                  },
-                  '& .MuiDataGrid-cell': {
-                    borderBottom: '1px solid rgba(224,224,224,1)',
-                    cursor: 'pointer',
-                  },
-                  '& .MuiDataGrid-columnHeaders': {
-                    backgroundColor: 'background.paper',
-                    borderBottom: '2px solid rgba(224,224,224,1)',
-                  },
-                  '& .MuiDataGrid-row': { minHeight: '52px !important', maxHeight: '52px !important' },
-                  '& .MuiDataGrid-columnHeadersInner': { minHeight: '60px !important', maxHeight: '60px !important' },
-                  '& .MuiDataGrid-row:hover': { backgroundColor: 'action.hover' },
-                  cursor: 'pointer',
+            <Stack direction="row" spacing={3} sx={{ mb: 3 }}>
+              <TextField
+                label="Search"
+                variant="outlined"
+                value={searchTerm}
+                onChange={(event) => setSearchTerm(event.target.value)}
+                InputProps={{
+                  startAdornment: (
+                    <InputAdornment position="start">
+                      <SearchIcon sx={{ fontSize: 32 }} />
+                    </InputAdornment>
+                  ),
+                  sx: { fontSize: 22, height: 56 },
                 }}
+                sx={{
+                  minWidth: 340,
+                  maxWidth: 400,
+                  '& .MuiInputBase-input': { fontSize: 22, py: 2 },
+                  '& .MuiInputLabel-root': { fontSize: 20 },
+                }}
+                size="medium"
               />
+              {statusChips.map((chip) => (
+                <Chip
+                  key={chip.value}
+                  label={chip.label}
+                  onClick={() => setStatusFilter(chip.value)}
+                  color={statusFilter === chip.value ? 'primary' : 'default'}
+                  sx={{ fontSize: 18, px: 3, py: 1.5, minWidth: 80, height: 44 }}
+                />
+              ))}
             </Stack>
+            <DataGrid
+              rows={filteredOrders}
+              columns={columns}
+              loading={loading}
+              getRowId={(row) => row.return_id}
+              disableRowSelectionOnClick
+              onRowClick={(params) => navigate(`/return-orders/${params.row.return_id}`)}
+              sx={{
+                '& .MuiDataGrid-cell, & .MuiDataGrid-columnHeader, & .MuiDataGrid-columnHeaderTitle': {
+                  fontSize: '1.1rem',
+                },
+                '& .MuiDataGrid-cell': {
+                  borderBottom: '1px solid rgba(224,224,224,1)',
+                  cursor: 'pointer',
+                },
+                '& .MuiDataGrid-columnHeaders': {
+                  backgroundColor: 'background.paper',
+                  borderBottom: '2px solid rgba(224,224,224,1)',
+                },
+                '& .MuiDataGrid-row': { minHeight: '52px !important', maxHeight: '52px !important' },
+                '& .MuiDataGrid-columnHeadersInner': { minHeight: '60px !important', maxHeight: '60px !important' },
+                '& .MuiDataGrid-row:hover': { backgroundColor: 'action.hover' },
+                cursor: 'pointer',
+              }}
+            />
           </Box>
         </Paper>
-      </Stack>
+      </Box>
     </Container>
   );
 };
