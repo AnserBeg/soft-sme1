@@ -1,11 +1,10 @@
 import express, { Request, Response } from 'express';
 import { pool } from '../db';
 import PDFDocument from 'pdfkit';
-import fs from 'fs';
-import path from 'path';
 import { SalesOrderService } from '../services/SalesOrderService';
 import { InventoryService } from '../services/InventoryService';
 import axios from 'axios';
+import { getLogoImageSource } from '../utils/pdfLogoHelper';
 
 // Helper function to check if customer exists in QuickBooks
 async function checkQBOCustomerExists(customerName: string, accessToken: string, realmId: string): Promise<boolean> {
@@ -606,11 +605,10 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
     let pageWidth = 600;
     let logoX = 50;
     let companyTitleX = logoX + logoWidth + 20;
-    // Logo (left) - always use bundled default logo
-    const defaultLogoPath = path.join(__dirname, '../../assets/default-logo.png');
-    if (fs.existsSync(defaultLogoPath)) {
+    const logoSource = await getLogoImageSource(businessProfile?.logo_url);
+    if (logoSource) {
       try {
-        doc.image(defaultLogoPath, logoX, headerY, { fit: [logoWidth, logoHeight] });
+        doc.image(logoSource, logoX, headerY, { fit: [logoWidth, logoHeight] });
       } catch (error) {
         console.error('Error adding logo to PDF:', error);
       }

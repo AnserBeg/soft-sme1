@@ -2,9 +2,8 @@ import express, { Request, Response } from 'express';
 import { pool } from '../db';
 import PDFDocument from 'pdfkit';
 import { getNextPurchaseOrderNumberForYear } from '../utils/sequence';
-import fs from 'fs';
-import path from 'path';
 import axios from 'axios'; // Added for QBO API integration
+import { getLogoImageSource } from '../utils/pdfLogoHelper';
 import { PurchaseOrderCalculationService } from '../services/PurchaseOrderCalculationService';
 import { PurchaseOrderService } from '../services/PurchaseOrderService';
 import { InventoryService } from '../services/InventoryService';
@@ -1956,15 +1955,14 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
     let pageWidth = 600;
     let logoX = 50;
     let companyTitleX = logoX + logoWidth + 20;
-    // Logo (left) - always use bundled default logo
-    const defaultLogoPath = path.join(__dirname, '../../assets/default-logo.png');
-    if (fs.existsSync(defaultLogoPath)) {
-        try {
-        doc.image(defaultLogoPath, logoX, headerY, { fit: [logoWidth, logoHeight] });
-        } catch (error) {
-          console.error('Error adding logo to PDF:', error);
-        }
+    const logoSource = await getLogoImageSource(businessProfile?.logo_url);
+    if (logoSource) {
+      try {
+        doc.image(logoSource, logoX, headerY, { fit: [logoWidth, logoHeight] });
+      } catch (error) {
+        console.error('Error adding logo to PDF:', error);
       }
+    }
     // Company name (right of logo, vertically centered with logo)
     const fontSize = 16;
     // Company name slightly above vertical center of logo
