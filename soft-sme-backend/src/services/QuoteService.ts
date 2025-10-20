@@ -64,7 +64,7 @@ export class QuoteService {
 
       const status = typeof input.status === 'string' && input.status.trim()
         ? input.status.trim()
-        : 'Draft';
+        : 'Open';
 
       const terms = input.terms ? String(input.terms) : null;
       const customerPoNumber = input.customer_po_number ? String(input.customer_po_number) : null;

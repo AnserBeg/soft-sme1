@@ -13,6 +13,9 @@ import {
   Tooltip,
   Snackbar,
   Alert,
+  Tabs,
+  Tab,
+  Chip,
 } from '@mui/material';
 import {
   DataGrid,
@@ -28,6 +31,7 @@ import { useNavigate } from 'react-router-dom';
 import Papa from 'papaparse';
 import { format } from 'date-fns';
 import api from '../api/axios';
+import { normalizeQuoteStatus, QuoteStatus } from '../utils/quoteStatus';
 
 interface Quote {
   quote_id: number;
@@ -39,7 +43,7 @@ interface Quote {
   product_name: string;
   product_description: string;
   estimated_cost: number;
-  status: string;
+  status: QuoteStatus;
   terms?: string;
   customer_po_number?: string;
   vin_number?: string;
@@ -60,6 +64,7 @@ const QuotePage: React.FC = () => {
   const [quotes, setQuotes] = useState<Quote[]>([]);
   // ui
   const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState<QuoteStatus>('Open');
   const [paginationModel, setPaginationModel] = useState<GridPaginationModel>({ page: 0, pageSize: 10 });
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -71,7 +76,11 @@ const QuotePage: React.FC = () => {
   const fetchQuotes = async () => {
     try {
       const res = await api.get('/api/quotes');
-      setQuotes(res.data || []);
+      const normalizedQuotes: Quote[] = (res.data || []).map((quote: any) => ({
+        ...quote,
+        status: normalizeQuoteStatus(quote.status),
+      }));
+      setQuotes(normalizedQuotes);
     } catch (e) {
       console.error('Error fetching quotes:', e);
       setError('Failed to fetch quotes');
@@ -113,18 +122,46 @@ const QuotePage: React.FC = () => {
     document.body.removeChild(link);
   };
 
-  const filteredQuotes = useMemo(
+  const lowerSearch = searchTerm.toLowerCase();
+
+  const statusCounts = useMemo(
     () =>
-      quotes.filter(
-        (q) =>
-          q.quote_number?.toLowerCase?.().includes(searchTerm.toLowerCase()) ||
-          q.customer_name?.toLowerCase?.().includes(searchTerm.toLowerCase()) ||
-          q.product_name?.toLowerCase?.().includes(searchTerm.toLowerCase()) ||
-          q.vehicle_make?.toLowerCase?.().includes(searchTerm.toLowerCase()) ||
-          q.vehicle_model?.toLowerCase?.().includes(searchTerm.toLowerCase())
+      quotes.reduce(
+        (acc, quote) => {
+          acc[quote.status] = (acc[quote.status] ?? 0) + 1;
+          return acc;
+        },
+        { Open: 0, Approved: 0, Rejected: 0 } as Record<QuoteStatus, number>
       ),
-    [quotes, searchTerm]
+    [quotes]
   );
+
+  const filteredQuotes = useMemo(() => {
+    const byStatus = quotes.filter((q) => q.status === statusFilter);
+    if (!lowerSearch) {
+      return byStatus;
+    }
+
+    return byStatus.filter(
+      (q) =>
+        q.quote_number?.toLowerCase?.().includes(lowerSearch) ||
+        q.customer_name?.toLowerCase?.().includes(lowerSearch) ||
+        q.product_name?.toLowerCase?.().includes(lowerSearch) ||
+        q.vehicle_make?.toLowerCase?.().includes(lowerSearch) ||
+        q.vehicle_model?.toLowerCase?.().includes(lowerSearch)
+    );
+  }, [quotes, statusFilter, lowerSearch]);
+
+  const getStatusChipStyles = (status: QuoteStatus) => {
+    switch (status) {
+      case 'Approved':
+        return { backgroundColor: 'rgba(76, 175, 80, 0.12)', color: '#2e7d32' };
+      case 'Rejected':
+        return { backgroundColor: 'rgba(244, 67, 54, 0.12)', color: '#c62828' };
+      default:
+        return { backgroundColor: 'rgba(33, 150, 243, 0.12)', color: '#1565c0' };
+    }
+  };
 
   const rows = filteredQuotes.map((q) => ({ ...q, id: q.quote_id }));
 
@@ -157,6 +194,18 @@ const QuotePage: React.FC = () => {
       flex: 0.95,
       minWidth: 130,
       valueFormatter: (p) => (p.value ? format(new Date(p.value as string), 'yyyy-MM-dd') : ''),
+    },
+    {
+      field: 'status',
+      headerName: 'Status',
+      flex: 0.8,
+      minWidth: 130,
+      sortable: false,
+      renderCell: (params) => {
+        const status = params.value as QuoteStatus;
+        const styles = getStatusChipStyles(status);
+        return <Chip label={status} size="small" sx={{ fontWeight: 600, ...styles }} />;
+      },
     },
     {
       field: 'actions',
@@ -214,6 +263,17 @@ const QuotePage: React.FC = () => {
         elevation={0}
       >
         <Box sx={{ p: 2 }}>
+          <Tabs
+            value={statusFilter}
+            onChange={(_, value) => setStatusFilter(value as QuoteStatus)}
+            variant="scrollable"
+            allowScrollButtonsMobile
+            sx={{ mb: 2, '& .MuiTab-root': { fontSize: 16, textTransform: 'none', minHeight: 48 } }}
+          >
+            <Tab value="Open" label={`Open (${statusCounts.Open})`} />
+            <Tab value="Approved" label={`Approved (${statusCounts.Approved})`} />
+            <Tab value="Rejected" label={`Rejected (${statusCounts.Rejected})`} />
+          </Tabs>
           <TextField
             fullWidth
             label="Search"

@@ -13,6 +13,7 @@ import {
   Alert,
   InputAdornment,
   Stack,
+  Chip,
 } from '@mui/material';
 import { DatePicker, LocalizationProvider } from '@mui/x-date-pickers';
 import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
@@ -22,6 +23,7 @@ import DownloadIcon from '@mui/icons-material/Download';
 import DoneAllIcon from '@mui/icons-material/DoneAll';
 import EmailIcon from '@mui/icons-material/Email';
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
+import BlockIcon from '@mui/icons-material/Block';
 import { useNavigate, useParams } from 'react-router-dom';
 import api from '../api/axios';
 import { AxiosError } from 'axios';
@@ -29,6 +31,7 @@ import EmailModal from '../components/EmailModal';
 import UnifiedCustomerDialog, { CustomerFormValues } from '../components/UnifiedCustomerDialog';
 import UnifiedProductDialog, { ProductFormValues } from '../components/UnifiedProductDialog';
 import UnsavedChangesGuard from '../components/UnsavedChangesGuard';
+import { normalizeQuoteStatus, QuoteStatus } from '../utils/quoteStatus';
 
 interface CustomerOption {
   label: string;
@@ -55,7 +58,7 @@ interface Quote {
   product_name: string;
   product_description: string;
   estimated_cost: number;
-  status: string;
+  status: QuoteStatus;
   terms?: string;
   customer_po_number?: string;
   vin_number?: string;
@@ -88,6 +91,17 @@ const normalizeString = (value: string): string =>
     .replace(/\s+/g, ' ')
     .trim()
     .toUpperCase();
+
+const getStatusChipStyles = (status: QuoteStatus) => {
+  switch (status) {
+    case 'Approved':
+      return { backgroundColor: 'rgba(76, 175, 80, 0.12)', color: '#2e7d32' };
+    case 'Rejected':
+      return { backgroundColor: 'rgba(244, 67, 54, 0.12)', color: '#c62828' };
+    default:
+      return { backgroundColor: 'rgba(33, 150, 243, 0.12)', color: '#1565c0' };
+  }
+};
 
 const rankAndFilterCustomers = (options: CustomerOption[], query: string): CustomerOption[] => {
   const q = normalizeString(query);
@@ -215,7 +229,10 @@ const QuoteEditorPage: React.FC = () => {
     (async () => {
       try {
         const res = await api.get(`/api/quotes/${id}`);
-        const q: Quote = res.data;
+        const q: Quote = {
+          ...res.data,
+          status: normalizeQuoteStatus(res.data?.status),
+        };
         setQuote(q);
 
         // prefill
@@ -329,11 +346,33 @@ const QuoteEditorPage: React.FC = () => {
         vin_number: vinNumber,
         vehicle_make: vehicleMake.trim(),
         vehicle_model: vehicleModel.trim(),
+        status: quote?.status ?? 'Open',
       };
 
       if (isEditMode && quote) {
-        await api.put(`/api/quotes/${quote.quote_id}`, payload);
+        const response = await api.put(`/api/quotes/${quote.quote_id}`, payload);
         setSuccess('Quote updated successfully');
+        const updatedData = response?.data;
+        if (updatedData) {
+          setQuote((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  ...updatedData,
+                  status: normalizeQuoteStatus(updatedData.status ?? prev.status),
+                }
+              : prev
+          );
+        } else {
+          setQuote((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  ...payload,
+                }
+              : prev
+          );
+        }
         // Reset initial signature after successful save - use a more stable approach
         const newSignature = JSON.stringify(getNormalizedSignature());
         setInitialSignature(newSignature);
@@ -434,7 +473,22 @@ const QuoteEditorPage: React.FC = () => {
     try {
       const response = await api.post(`/api/quotes/${quote.quote_id}/convert-to-sales-order`);
       setSuccess('Quote converted to sales order successfully!');
-      
+
+      const updatedQuoteData = response?.data?.quote;
+      if (updatedQuoteData) {
+        setQuote((prev) =>
+          prev
+            ? {
+                ...prev,
+                ...updatedQuoteData,
+                status: normalizeQuoteStatus(updatedQuoteData.status ?? 'Approved'),
+              }
+            : prev
+        );
+      } else {
+        setQuote((prev) => (prev ? { ...prev, status: 'Approved' } : prev));
+      }
+
       // Navigate to the specific sales order detail page
       const salesOrderId = response.data.salesOrder?.sales_order_id;
       if (salesOrderId) {
@@ -512,6 +566,51 @@ const QuoteEditorPage: React.FC = () => {
   };
 
   const headerTitle = isEditMode && quote ? `Edit Quote: ${quote.quote_number}` : isEditMode ? 'Edit Quote' : 'New Quote';
+  const currentStatus = quote ? quote.status : 'Open';
+  const isApproved = currentStatus === 'Approved';
+  const isRejected = currentStatus === 'Rejected';
+
+  const handleRejectQuote = async () => {
+    if (!quote?.quote_id) {
+      setError('Please save the quote before rejecting.');
+      return;
+    }
+
+    if (!window.confirm('Are you sure you want to mark this quote as rejected?')) {
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const response = await api.post(`/api/quotes/${quote.quote_id}/reject`);
+      const updatedQuoteData = response?.data?.quote ?? response?.data;
+      if (updatedQuoteData) {
+        setQuote((prev) =>
+          prev
+            ? {
+                ...prev,
+                ...updatedQuoteData,
+                status: normalizeQuoteStatus(updatedQuoteData.status ?? 'Rejected'),
+              }
+            : prev
+        );
+      } else {
+        setQuote((prev) => (prev ? { ...prev, status: 'Rejected' } : prev));
+      }
+      setSuccess('Quote marked as rejected.');
+    } catch (e) {
+      const axiosError = e as AxiosError;
+      const msg =
+        axiosError.response?.data &&
+        typeof axiosError.response.data === 'object' &&
+        'message' in (axiosError.response.data as any)
+          ? ((axiosError.response.data as any).message as string)
+          : 'Failed to reject quote';
+      setError(msg);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <LocalizationProvider dateAdapter={AdapterDayjs}>
@@ -527,18 +626,38 @@ const QuoteEditorPage: React.FC = () => {
             alignItems: 'center',
           }}
         >
-          <Typography variant="h5" sx={{ fontWeight: 700 }}>
-            {headerTitle}
-          </Typography>
+          <Stack direction="row" spacing={1.5} alignItems="center">
+            <Typography variant="h5" sx={{ fontWeight: 700 }}>
+              {headerTitle}
+            </Typography>
+            {isEditMode && quote && (
+              <Chip label={currentStatus} sx={{ fontWeight: 600, ...getStatusChipStyles(currentStatus) }} />
+            )}
+          </Stack>
           <Stack direction="row" spacing={1.25}>
-            
+
             <Button variant="contained" color="primary" startIcon={<SaveIcon />} onClick={handleSaveQuote} disabled={loading}>
               {isEditMode ? 'SAVE CHANGES' : 'CREATE QUOTE'}
             </Button>
             {isEditMode && quote && (
               <>
-                <Button variant="contained" color="primary" startIcon={<DoneAllIcon />} onClick={handleConvertToSalesOrder} disabled={loading}>
+                <Button
+                  variant="contained"
+                  color="primary"
+                  startIcon={<DoneAllIcon />}
+                  onClick={handleConvertToSalesOrder}
+                  disabled={loading || isApproved || isRejected}
+                >
                   CONVERT TO SO
+                </Button>
+                <Button
+                  variant="contained"
+                  color="error"
+                  startIcon={<BlockIcon />}
+                  onClick={handleRejectQuote}
+                  disabled={loading || isApproved || isRejected}
+                >
+                  MARK REJECTED
                 </Button>
                 <Button variant="contained" color="primary" startIcon={<DownloadIcon />} onClick={handleDownloadPdf}>
                   DOWNLOAD PDF
