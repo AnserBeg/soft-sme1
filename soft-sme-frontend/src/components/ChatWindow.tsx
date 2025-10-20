@@ -1,10 +1,9 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import {
   Drawer,
   Box,
   Typography,
   IconButton,
-  Button,
   Divider,
   CircularProgress,
   Avatar,
@@ -12,11 +11,17 @@ import {
   Paper,
   Chip,
   Stack,
+  Menu,
+  MenuItem,
+  ListItemText,
+  Badge,
 } from '@mui/material';
 import {
   Close as CloseIcon,
   SmartToy as SmartToyIcon,
   KeyboardDoubleArrowDown as KeyboardDoubleArrowDownIcon,
+  AddRounded as AddRoundedIcon,
+  HistoryRounded as HistoryRoundedIcon,
 } from '@mui/icons-material';
 import ChatMessage from './ChatMessage';
 import ChatInput from './ChatInput';
@@ -57,7 +62,10 @@ export const ChatBoard: React.FC<ChatBoardProps> = ({ variant = 'drawer', onClos
   const streamingEnabled = isPlannerStreamingEnabled();
 
   const activeSession = sessions.find((item) => item.id === sessionId) ?? null;
-  const recentSessions = sessions.filter((item) => item.id !== sessionId).slice(0, 3);
+  const previousSessions = sessions.filter((item) => item.id !== sessionId);
+  const historyCount = previousSessions.length;
+
+  const [historyAnchorEl, setHistoryAnchorEl] = useState<null | HTMLElement>(null);
 
   const streamState = usePlannerStream({
     sessionId: plannerStream?.sessionId,
@@ -86,39 +94,18 @@ export const ChatBoard: React.FC<ChatBoardProps> = ({ variant = 'drawer', onClos
     }
   };
 
-  const renderSessionButton = (session: typeof sessions[number]) => (
-    <Button
-      key={session.id}
-      variant="outlined"
-      size="small"
-      onClick={() => {
-        void selectSession(session.id);
-      }}
-      sx={{
-        textTransform: 'none',
-        borderRadius: 2,
-        borderColor: 'divider',
-        px: 1.5,
-        py: 1,
-        maxWidth: 220,
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'flex-start',
-        gap: 0.5,
-      }}
-    >
-      <Typography variant="body2" sx={{ fontWeight: 600, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-        {session.title}
-      </Typography>
-      <Typography
-        variant="caption"
-        color="text.secondary"
-        sx={{ maxWidth: '100%', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
-      >
-        {session.preview || 'No replies yet'}
-      </Typography>
-    </Button>
-  );
+  const handleHistoryClick = (event: React.MouseEvent<HTMLElement>) => {
+    setHistoryAnchorEl(event.currentTarget);
+  };
+
+  const handleHistoryClose = () => {
+    setHistoryAnchorEl(null);
+  };
+
+  const handleSessionSelect = (id: string) => {
+    handleHistoryClose();
+    void selectSession(id);
+  };
 
   const handleScrollToLatest = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -199,23 +186,9 @@ export const ChatBoard: React.FC<ChatBoardProps> = ({ variant = 'drawer', onClos
                 />
                 {isFetchingSessions && <CircularProgress size={14} />}
               </Stack>
-              <Stack spacing={1}>
-                <Stack direction="row" alignItems="center" spacing={1}>
-                  <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, letterSpacing: 0.4 }}>
-                    Recent chats
-                  </Typography>
-                  {recentSessions.length === 0 && (
-                    <Typography variant="caption" color="text.disabled">
-                      You have no previous chats yet.
-                    </Typography>
-                  )}
-                </Stack>
-                {recentSessions.length > 0 && (
-                  <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-                    {recentSessions.map((session) => renderSessionButton(session))}
-                  </Stack>
-                )}
-              </Stack>
+              <Typography variant="caption" color="text.secondary">
+                Use the history button to revisit earlier conversations.
+              </Typography>
             </Stack>
           </Box>
         </Box>
@@ -234,21 +207,42 @@ export const ChatBoard: React.FC<ChatBoardProps> = ({ variant = 'drawer', onClos
               <KeyboardDoubleArrowDownIcon fontSize="small" />
             </IconButton>
           </Tooltip>
+          <Tooltip title="View chat history">
+            <span>
+              <IconButton
+                onClick={handleHistoryClick}
+                size="small"
+                disabled={historyCount === 0 && !isFetchingSessions}
+                sx={{
+                  bgcolor: 'background.paper',
+                  border: '1px solid',
+                  borderColor: 'divider',
+                  '&:hover': { bgcolor: 'grey.50' },
+                }}
+              >
+                <Badge
+                  color="primary"
+                  overlap="circular"
+                  badgeContent={historyCount > 0 ? historyCount : undefined}
+                >
+                  <HistoryRoundedIcon fontSize="small" />
+                </Badge>
+              </IconButton>
+            </span>
+          </Tooltip>
           <Tooltip title="Start a new chat thread">
-            <Button
-              variant="outlined"
-              size="small"
+            <IconButton
               onClick={handleStartNewChat}
+              size="small"
               sx={{
-                textTransform: 'none',
-                fontWeight: 600,
-                px: 1.75,
-                borderRadius: 999,
+                bgcolor: 'background.paper',
+                border: '1px solid',
                 borderColor: 'divider',
+                '&:hover': { bgcolor: 'grey.50' },
               }}
             >
-              New chat
-            </Button>
+              <AddRoundedIcon fontSize="small" />
+            </IconButton>
           </Tooltip>
           {onClose && (
             <Tooltip title="Close">
@@ -268,6 +262,60 @@ export const ChatBoard: React.FC<ChatBoardProps> = ({ variant = 'drawer', onClos
           )}
         </Box>
       </Box>
+
+      <Menu
+        anchorEl={historyAnchorEl}
+        open={Boolean(historyAnchorEl)}
+        onClose={handleHistoryClose}
+        PaperProps={{
+          elevation: 4,
+          sx: {
+            minWidth: 280,
+            maxWidth: 360,
+            borderRadius: 3,
+            border: '1px solid',
+            borderColor: 'divider',
+            p: 0.5,
+          },
+        }}
+      >
+        {previousSessions.length === 0 ? (
+          <Box sx={{ px: 2, py: 1.5 }}>
+            <Typography variant="body2" color="text.secondary">
+              You have no previous chats yet.
+            </Typography>
+          </Box>
+        ) : (
+          previousSessions.map((session) => (
+            <MenuItem
+              key={session.id}
+              onClick={() => handleSessionSelect(session.id)}
+              sx={{
+                borderRadius: 2,
+                alignItems: 'flex-start',
+                gap: 1,
+              }}
+            >
+              <ListItemText
+                primary={
+                  <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                    {session.title}
+                  </Typography>
+                }
+                secondary={
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ display: 'block' }}
+                  >
+                    {session.preview || 'No replies yet'}
+                  </Typography>
+                }
+              />
+            </MenuItem>
+          ))
+        )}
+      </Menu>
 
       <Box sx={messagesWrapperStyles}>
         {showPlannerPanel && (
