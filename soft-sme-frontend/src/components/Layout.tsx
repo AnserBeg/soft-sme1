@@ -19,6 +19,7 @@ import {
   Dashboard as DashboardIcon,
   Business as BusinessIcon,
   Assignment as AssignmentIcon,
+  AssignmentReturn as AssignmentReturnIcon,
   AssignmentTurnedIn as AssignmentTurnedInIcon,
   ListAlt as ListAltIcon,
   AttachMoney as AttachMoneyIcon,
@@ -111,6 +112,7 @@ const Layout: React.FC = () => {
 
       { type: 'header', text: 'Purchasing' },
       { text: 'Purchase Orders', icon: <AssignmentIcon />, path: '/open-purchase-orders' },
+      { text: 'Return Orders', icon: <AssignmentReturnIcon />, path: '/return-orders' },
       { text: 'Parts to Order', icon: <InventoryIcon />, path: '/parts-to-order' },
       { text: 'Vendors', icon: <StoreIcon />, path: '/vendors' },
 
@@ -170,6 +172,7 @@ const Layout: React.FC = () => {
         { type: 'header', text: 'Sales & Purchase' },
         { text: 'Sales Orders', icon: <ReceiptIcon />, path: '/open-sales-orders' },
         { text: 'Purchase Orders', icon: <AssignmentIcon />, path: '/open-purchase-orders' },
+        { text: 'Return Orders', icon: <AssignmentReturnIcon />, path: '/return-orders' },
         { text: 'Parts to Order', icon: <InventoryIcon />, path: '/parts-to-order' },
         { type: 'header', text: 'Inventory' },
         { text: 'Stock', icon: <InventoryIcon />, path: '/inventory' },

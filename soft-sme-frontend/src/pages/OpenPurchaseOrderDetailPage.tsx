@@ -107,6 +107,18 @@ interface PurchaseOrderData {
   vendor_pricing_notes?: string;
   exported_to_qbo?: boolean;
   qbo_export_status?: string;
+  return_orders?: Array<{
+    return_id: number;
+    return_number: string;
+    status: string;
+    requested_at?: string;
+    returned_at?: string;
+    total_quantity?: number;
+  }>;
+  return_summary?: {
+    requested_count?: number;
+    returned_count?: number;
+  };
 }
 
 interface VendorOption {
@@ -2012,7 +2024,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
     let sub = all.reduce((s, i) => s + (Number(i.line_amount) || 0), 0);
     let gst = sub * (purchaseOrder.global_gst_rate || 5) / 100, tot = sub + gst;
     if (isNaN(sub)) sub = 0; if (isNaN(gst)) gst = 0; if (isNaN(tot)) tot = 0;
-    
+
     return (
       <Box p={{ xs:2, md:4 }} maxWidth={1000} mx="auto">
         <Typography variant="h4" gutterBottom>
@@ -2032,6 +2044,10 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
             </Grid>
           </CardContent>
         </Card>
+
+        {purchaseOrder.return_orders && (
+          <Box mb={3}>{renderReturnOrdersCard()}</Box>
+        )}
 
         <Typography variant="h5" gutterBottom>Items</Typography>
         <Card variant="outlined">
@@ -2154,6 +2170,95 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
     );
   };
 
+  const renderReturnOrdersCard = () => {
+    if (!purchaseOrder) return null;
+    const returns = purchaseOrder.return_orders ?? [];
+    const summary = purchaseOrder.return_summary ?? {};
+    return (
+      <Paper sx={{ p: 3 }} elevation={1}>
+        <Stack direction={{ xs: 'column', md: 'row' }} alignItems={{ xs: 'flex-start', md: 'center' }} justifyContent="space-between" spacing={2}>
+          <Box>
+            <Typography variant="h6">Return Orders</Typography>
+            <Typography variant="body2" color="text.secondary">
+              View vendor returns associated with this purchase order.
+            </Typography>
+          </Box>
+          <Stack direction="row" spacing={1}>
+            <Chip
+              label={`Requested: ${summary.requested_count ?? 0}`}
+              color="warning"
+              variant="outlined"
+              size="small"
+            />
+            <Chip
+              label={`Returned: ${summary.returned_count ?? 0}`}
+              color="success"
+              variant="outlined"
+              size="small"
+            />
+            <Button
+              variant="outlined"
+              onClick={() => navigate(`/return-orders/new?purchaseId=${purchaseOrder.purchase_id}`)}
+            >
+              Create Return
+            </Button>
+          </Stack>
+        </Stack>
+
+        {returns.length === 0 ? (
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
+            No return orders have been logged for this purchase order.
+          </Typography>
+        ) : (
+          <TableContainer component={Box} sx={{ mt: 2 }}>
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell>Return #</TableCell>
+                  <TableCell>Status</TableCell>
+                  <TableCell>Requested</TableCell>
+                  <TableCell>Returned</TableCell>
+                  <TableCell align="right">Total Qty</TableCell>
+                  <TableCell align="right">Actions</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {returns.map((returnOrder) => (
+                  <TableRow key={returnOrder.return_id} hover>
+                    <TableCell>{returnOrder.return_number}</TableCell>
+                    <TableCell>
+                      <Chip
+                        label={returnOrder.status}
+                        size="small"
+                        color={returnOrder.status === 'Returned' ? 'success' : 'warning'}
+                        variant="outlined"
+                      />
+                    </TableCell>
+                    <TableCell>
+                      {returnOrder.requested_at ? new Date(returnOrder.requested_at).toLocaleString() : '—'}
+                    </TableCell>
+                    <TableCell>
+                      {returnOrder.returned_at ? new Date(returnOrder.returned_at).toLocaleString() : '—'}
+                    </TableCell>
+                    <TableCell align="right">{Number(returnOrder.total_quantity ?? 0).toFixed(2)}</TableCell>
+                    <TableCell align="right">
+                      <Button
+                        size="small"
+                        onClick={() => navigate(`/return-orders/${returnOrder.return_id}`)}
+                      >
+                        View
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        )}
+      </Paper>
+    );
+  };
+
   // Show loading state only if we're not in creation mode and purchaseOrder is null
   if (!isCreationMode && !purchaseOrder) {
     return (
@@ -2230,25 +2335,29 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
                   )}
                 </>
               )}
-            </Box>
-            <Stack direction="row" spacing={1}> 
-              <Button variant="contained" color="primary" onClick={handleSave} startIcon={<SaveIcon />}>
-                {isCreationMode ? 'Create Purchase Order' : 'Save Changes'}
-              </Button>
-              {!isCreationMode && (
-                <>
-                  <Button variant="contained" color="primary" onClick={handleClosePurchaseOrder} startIcon={<DoneAllIcon />}>Close PO</Button>
-                  <Button variant="contained" color="primary" onClick={handleSaveAndDownloadPdf} startIcon={<DownloadIcon />}>Download PDF</Button>
-                  <Button variant="contained" onClick={handleEmailClick} startIcon={<EmailIcon />} sx={{ backgroundColor: '#ff9800', '&:hover': { backgroundColor: '#f57c00' } }}>Email Vendor</Button>
-                </>
-              )}
-            </Stack>
           </Box>
+          <Stack direction="row" spacing={1}>
+            <Button variant="contained" color="primary" onClick={handleSave} startIcon={<SaveIcon />}>
+              {isCreationMode ? 'Create Purchase Order' : 'Save Changes'}
+            </Button>
+            {!isCreationMode && (
+              <>
+                <Button variant="contained" color="primary" onClick={handleClosePurchaseOrder} startIcon={<DoneAllIcon />}>Close PO</Button>
+                <Button variant="contained" color="primary" onClick={handleSaveAndDownloadPdf} startIcon={<DownloadIcon />}>Download PDF</Button>
+                <Button variant="contained" onClick={handleEmailClick} startIcon={<EmailIcon />} sx={{ backgroundColor: '#ff9800', '&:hover': { backgroundColor: '#f57c00' } }}>Email Vendor</Button>
+              </>
+            )}
+          </Stack>
+        </Box>
 
-          {/* Bill Number Alert Banner */} 
-          {showBillNumberAlert && (
-            <Alert 
-              severity="warning" 
+        {!isCreationMode && purchaseOrder && (
+          <Box sx={{ mb: 3 }}>{renderReturnOrdersCard()}</Box>
+        )}
+
+        {/* Bill Number Alert Banner */}
+        {showBillNumberAlert && (
+          <Alert
+            severity="warning"
               sx={{ mb: 3 }}
               onClose={() => setShowBillNumberAlert(false)}
             >

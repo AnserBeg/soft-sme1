@@ -49,6 +49,8 @@ import UserEmailSettingsPage from './pages/UserEmailSettingsPage';
 import EmailTemplatesPage from './pages/EmailTemplatesPage';
 import TaskDetailPage from './pages/TaskDetailPage';
 import TasksDashboardPage from './pages/TasksDashboardPage';
+import ReturnOrdersPage from './pages/ReturnOrdersPage';
+import ReturnOrderDetailPage from './pages/ReturnOrderDetailPage';
 import { useEffect, useState } from 'react';
 import { syncPending, getPendingCount } from './services/offlineSync';
 import { ToastContainer } from 'react-toastify';
@@ -85,6 +87,7 @@ const PrivateRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => 
       '/open-sales-orders',
       '/open-purchase-orders',
       '/purchase-order',
+      '/return-orders',
       '/parts-to-order',
       '/inventory',
       '/supply',
@@ -92,12 +95,13 @@ const PrivateRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => 
       '/tasks',
       '/messaging',
     ];
-    // Allow paths that start with /open-sales-orders/, /open-purchase-orders/, /purchase-order/ (for detail pages)
+    // Allow paths that start with /open-sales-orders/, /open-purchase-orders/, /purchase-order/, /return-orders/
     if (
       !allowed.includes(path) &&
       !path.startsWith('/open-sales-orders/') &&
       !path.startsWith('/open-purchase-orders/') &&
-      !path.startsWith('/purchase-order/')
+      !path.startsWith('/purchase-order/') &&
+      !path.startsWith('/return-orders/')
     ) {
       return <Navigate to="/" replace />;
     }
@@ -149,6 +153,9 @@ const AppRoutes: React.FC = () => {
         <Route path="purchase-order/:id" element={<OpenPurchaseOrderDetailPage />} />
         <Route path="open-purchase-orders" element={<OpenPurchaseOrdersPage />} />
         <Route path="open-purchase-orders/:id" element={<OpenPurchaseOrderDetailPage />} />
+        <Route path="return-orders" element={<ReturnOrdersPage />} />
+        <Route path="return-orders/new" element={<ReturnOrderDetailPage />} />
+        <Route path="return-orders/:id" element={<ReturnOrderDetailPage />} />
         
         {/* Vendor Management */}
         <Route path="vendors" element={<VendorListPage />} />
