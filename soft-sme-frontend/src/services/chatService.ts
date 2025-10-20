@@ -39,6 +39,15 @@ export interface PlannerStreamHandshake {
   plannerContext?: Record<string, any> | null;
 }
 
+export interface AgentChatSessionPreview {
+  id: number;
+  title: string;
+  preview: string | null;
+  lastMessageAt: string | null;
+  createdAt: string;
+  lastActivityAt?: string | null;
+}
+
 const isVoiceArtifactArray = (value: unknown): VoiceCallArtifact[] | undefined => {
   if (!Array.isArray(value)) {
     return undefined;
@@ -101,6 +110,23 @@ export const chatService = {
   async createSession(): Promise<number> {
     const response = await api.post('/api/agent/v2/session');
     return response.data.sessionId as number;
+  },
+
+  async listSessions(limit = 4, includeSessionId?: number): Promise<AgentChatSessionPreview[]> {
+    const params: Record<string, any> = { limit };
+    if (includeSessionId != null) {
+      params.include = includeSessionId;
+    }
+    const response = await api.get('/api/agent/v2/sessions', { params });
+    const sessions = Array.isArray(response.data?.sessions) ? response.data.sessions : [];
+    return sessions.map((session: any) => ({
+      id: Number(session.id),
+      title: String(session.title ?? `Chat ${session.id}`),
+      preview: typeof session.preview === 'string' ? session.preview : null,
+      lastMessageAt: session.lastMessageAt ?? session.last_message_at ?? null,
+      createdAt: session.createdAt ?? session.created_at ?? new Date().toISOString(),
+      lastActivityAt: session.lastActivityAt ?? session.last_activity_at ?? null,
+    }));
   },
 
   async fetchMessages(sessionId: number): Promise<AgentChatMessage[]> {
