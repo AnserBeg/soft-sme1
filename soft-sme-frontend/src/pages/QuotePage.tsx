@@ -122,18 +122,6 @@ const QuotePage: React.FC = () => {
 
   const lowerSearch = searchTerm.toLowerCase();
 
-  const statusCounts = useMemo(
-    () =>
-      quotes.reduce(
-        (acc, quote) => {
-          acc[quote.status] = (acc[quote.status] ?? 0) + 1;
-          return acc;
-        },
-        { Open: 0, Approved: 0, Rejected: 0 } as Record<QuoteStatus, number>
-      ),
-    [quotes]
-  );
-
   const filteredQuotes = useMemo(() => {
     const byStatus = quotes.filter((q) => q.status === statusFilter);
     if (!lowerSearch) {
@@ -241,33 +229,24 @@ const QuotePage: React.FC = () => {
   return (
     <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
       {/* Header */}
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-        <Typography variant="h4" component="h1" sx={{ fontWeight: 'bold', color: 'text.primary' }}>
+      <Box sx={{ mb: 4 }}>
+        <Typography variant="h4" component="h1" gutterBottom>
           Quotes
         </Typography>
-        <Stack direction="row" spacing={2}>
-          <Button variant="contained" color="primary" startIcon={<AddIcon />} onClick={() => navigate('/quotes/new')}>
-            NEW QUOTE
+        <Stack direction="row" spacing={2} sx={{ mb: 2, justifyContent: 'flex-end' }}>
+          <Button variant="contained" startIcon={<AddIcon />} onClick={() => navigate('/quotes/new')}>
+            New Quote
           </Button>
-          <Button variant="outlined" color="primary" startIcon={<DownloadIcon />} onClick={handleExportCSV}>
-            EXPORT CSV
+          <Button variant="outlined" startIcon={<DownloadIcon />} onClick={handleExportCSV}>
+            Export CSV
           </Button>
         </Stack>
       </Box>
 
       {/* Table */}
-      <Paper
-        sx={{ width: '100%', overflow: 'hidden', mb: 3, border: '1px solid', borderColor: 'divider', borderRadius: 1 }}
-        elevation={0}
-      >
+      <Paper sx={{ width: '100%', overflow: 'hidden', mb: 3 }}>
         <Box sx={{ p: 2 }}>
-          <Stack
-            direction={{ xs: 'column', md: 'row' }}
-            spacing={2.5}
-            alignItems={{ xs: 'stretch', md: 'center' }}
-            justifyContent="space-between"
-            sx={{ mb: 3 }}
-          >
+          <Stack direction="row" spacing={3} sx={{ mb: 3 }}>
             <TextField
               label="Search"
               value={searchTerm}
@@ -280,39 +259,28 @@ const QuotePage: React.FC = () => {
                 ),
                 sx: { fontSize: 22, height: 56 },
               }}
-              sx={{
-                width: { xs: '100%', md: 360 },
-                '& .MuiInputBase-input': { fontSize: 22, py: 2 },
-                '& .MuiInputLabel-root': { fontSize: 20 },
-              }}
+              sx={{ minWidth: 340, maxWidth: 400, '& .MuiInputBase-input': { fontSize: 22, py: 2 }, '& .MuiInputLabel-root': { fontSize: 20 } }}
               size="medium"
               variant="outlined"
             />
-            <Stack
-              direction="row"
-              spacing={1.5}
-              flexWrap="wrap"
-              justifyContent={{ xs: 'flex-start', md: 'flex-end' }}
-            >
-              <Chip
-                label={`Open (${statusCounts.Open})`}
-                onClick={() => setStatusFilter('Open')}
-                color={statusFilter === 'Open' ? 'primary' : 'default'}
-                sx={{ fontSize: 18, px: 3, py: 1.5, minWidth: 110, height: 44 }}
-              />
-              <Chip
-                label={`Approved (${statusCounts.Approved})`}
-                onClick={() => setStatusFilter('Approved')}
-                color={statusFilter === 'Approved' ? 'primary' : 'default'}
-                sx={{ fontSize: 18, px: 3, py: 1.5, minWidth: 110, height: 44 }}
-              />
-              <Chip
-                label={`Rejected (${statusCounts.Rejected})`}
-                onClick={() => setStatusFilter('Rejected')}
-                color={statusFilter === 'Rejected' ? 'primary' : 'default'}
-                sx={{ fontSize: 18, px: 3, py: 1.5, minWidth: 110, height: 44 }}
-              />
-            </Stack>
+            <Chip
+              label="Open"
+              onClick={() => setStatusFilter('Open')}
+              color={statusFilter === 'Open' ? 'primary' : 'default'}
+              sx={{ fontSize: 18, px: 3, py: 1.5, minWidth: 80, height: 44 }}
+            />
+            <Chip
+              label="Approved"
+              onClick={() => setStatusFilter('Approved')}
+              color={statusFilter === 'Approved' ? 'primary' : 'default'}
+              sx={{ fontSize: 18, px: 3, py: 1.5, minWidth: 80, height: 44 }}
+            />
+            <Chip
+              label="Rejected"
+              onClick={() => setStatusFilter('Rejected')}
+              color={statusFilter === 'Rejected' ? 'primary' : 'default'}
+              sx={{ fontSize: 18, px: 3, py: 1.5, minWidth: 80, height: 44 }}
+            />
           </Stack>
 
           <DataGrid
@@ -324,7 +292,6 @@ const QuotePage: React.FC = () => {
             getRowId={(row) => row.id}
             onRowClick={handleRowClick}
             disableRowSelectionOnClick
-            disableColumnMenu
             hideFooterSelectedRowCount
             initialState={{ sorting: { sortModel: [{ field: 'quote_number', sort: 'desc' }] } }}
             sx={{
@@ -334,7 +301,6 @@ const QuotePage: React.FC = () => {
               '& .MuiDataGrid-row': { minHeight: '52px !important', maxHeight: '52px !important' },
               '& .MuiDataGrid-columnHeadersInner': { minHeight: '60px !important', maxHeight: '60px !important' },
               '& .MuiDataGrid-row:hover': { backgroundColor: 'action.hover' },
-              '& .MuiDataGrid-columnSeparator': { display: 'none' },
               cursor: 'pointer',
             }}
           />
