@@ -3,6 +3,12 @@ import { randomUUID } from 'crypto';
 import aiAssistantService from '../aiAssistantService';
 import { AIService } from '../aiService';
 import { AgentAnalyticsLogger } from './analyticsLogger';
+import {
+  composeFinalMessage,
+  ToolResultEnvelope,
+  AgentCapabilitiesConfig,
+  ComposeFinalMessageOutput,
+} from './answerComposer';
 import type { SkillWorkflowSummary } from './skillLibrary';
 import { GeminiIntentRouter, StructuredIntent } from './geminiRouter';
 
@@ -36,7 +42,14 @@ interface AgentEventBase {
 }
 
 export type AgentEvent =
-  | ({ type: 'text'; content: string; callArtifacts?: VoiceCallArtifact[] } & AgentEventBase)
+  |
+      ({
+        type: 'text';
+        content: string;
+        callArtifacts?: VoiceCallArtifact[];
+        uiHints?: Record<string, unknown>;
+        severity?: 'info' | 'warning' | 'error';
+      } & AgentEventBase)
   | ({ type: 'docs'; info: string; chunks: any[] } & AgentEventBase)
   | ({ type: 'task_created' | 'task_updated' | 'task_message'; summary: string; task: any; link: string } & AgentEventBase);
 
@@ -109,6 +122,9 @@ export class AgentOrchestratorV2 {
   private readonly geminiRouter: GeminiIntentRouter | null;
   private readonly useLLMRouter: boolean;
   private readonly routerConfidenceThreshold: number;
+  private readonly composerCapabilities: AgentCapabilitiesConfig;
+  private readonly disambiguationLimit: number;
+  private readonly tablePreviewLimit: number;
 
   constructor(private pool: Pool, private tools: AgentToolRegistry, private skillCatalog: SkillWorkflowSummary[] = []) {
     this.toolCatalog = this.buildToolCatalog();
@@ -133,6 +149,10 @@ export class AgentOrchestratorV2 {
       this.geminiRouter = null;
       this.useLLMRouter = false;
     }
+
+    this.composerCapabilities = this.buildComposerCapabilitiesFromEnv();
+    this.disambiguationLimit = this.parseIntegerEnv(process.env.AI_RESPONSE_DISAMBIG_LIMIT, 5);
+    this.tablePreviewLimit = this.parseIntegerEnv(process.env.AI_RESPONSE_TABLE_PREVIEW_LIMIT, 5);
   }
 
   getToolCatalog(): ToolCatalogEntry[] {
@@ -199,7 +219,7 @@ export class AgentOrchestratorV2 {
       try {
         const result = await this.tools[intent.tool](intent.args);
         await this.analytics.finishToolTrace(trace, { status: 'success', output: result });
-        events.push(...this.normalizeToolResult(intent.tool, result));
+        events.push(...this.normalizeToolResult(intent.tool, result, { userText: message, sessionId }));
       } catch (error: any) {
         await this.analytics.finishToolTrace(trace, { status: 'failure', error });
         events.push({
@@ -361,7 +381,10 @@ export class AgentOrchestratorV2 {
     try {
       const result = await handler(instruction.args);
       await this.analytics.finishToolTrace(trace, { status: 'success', output: result });
-      const normalizedEvents = this.normalizeToolResult(toolName, result);
+      const normalizedEvents = this.normalizeToolResult(toolName, result, {
+        userText: instruction.message ?? '',
+        sessionId,
+      });
       events.push(...normalizedEvents);
       replyMessage = this.describeActionOutcome(toolName, true, result);
 
@@ -414,6 +437,39 @@ export class AgentOrchestratorV2 {
 
   private buildConversationId(sessionId: number): string {
     return `agent-v2-session-${sessionId}`;
+  }
+
+  private parseBooleanEnv(value: string | undefined, fallback = false): boolean {
+    if (typeof value !== 'string') {
+      return fallback;
+    }
+    const normalized = value.trim().toLowerCase();
+    if (!normalized) {
+      return fallback;
+    }
+    if (['true', '1', 'yes', 'y', 'on'].includes(normalized)) {
+      return true;
+    }
+    if (['false', '0', 'no', 'n', 'off'].includes(normalized)) {
+      return false;
+    }
+    return fallback;
+  }
+
+  private parseIntegerEnv(value: string | undefined, fallback: number, minimum = 1): number {
+    const parsed = typeof value === 'string' ? Number.parseInt(value, 10) : Number.NaN;
+    if (!Number.isFinite(parsed)) {
+      return fallback;
+    }
+    return Math.max(minimum, parsed);
+  }
+
+  private buildComposerCapabilitiesFromEnv(): AgentCapabilitiesConfig {
+    return {
+      canCreateVendor: this.parseBooleanEnv(process.env.AGENT_CAN_CREATE_VENDOR),
+      canCreateCustomer: this.parseBooleanEnv(process.env.AGENT_CAN_CREATE_CUSTOMER),
+      canCreatePart: this.parseBooleanEnv(process.env.AGENT_CAN_CREATE_PART),
+    };
   }
 
   private parseAgentInstruction(message: string): AgentInstruction | null {
@@ -585,7 +641,11 @@ export class AgentOrchestratorV2 {
     return value.toLowerCase().replace(/[^a-z0-9]+/g, '');
   }
 
-  private normalizeToolResult(tool: string, result: any): AgentEvent[] {
+  private normalizeToolResult(
+    tool: string,
+    result: any,
+    context: { userText?: string; sessionId?: number } = {}
+  ): AgentEvent[] {
     const timestamp = new Date().toISOString();
 
     if (tool === 'retrieveDocs') {
@@ -595,6 +655,28 @@ export class AgentOrchestratorV2 {
           info: 'Relevant docs',
           chunks: Array.isArray(result) ? result : [],
           timestamp,
+        },
+      ];
+    }
+
+    if (this.isToolResultEnvelope(result)) {
+      const limitedEnvelope = this.applyEnvelopeLimits(result);
+      const composed = composeFinalMessage({
+        userText: context.userText ?? '',
+        tool,
+        resultEnvelope: limitedEnvelope,
+        capabilities: this.composerCapabilities,
+      });
+
+      this.logResponseTelemetry(context.sessionId, tool, limitedEnvelope, composed);
+
+      return [
+        {
+          type: 'text',
+          content: composed.text,
+          timestamp,
+          ...(composed.uiHints ? { uiHints: composed.uiHints } : {}),
+          ...(composed.severity ? { severity: composed.severity } : {}),
         },
       ];
     }
@@ -623,6 +705,59 @@ export class AgentOrchestratorV2 {
         ...(artifact ? { callArtifacts: [artifact] } : {}),
       },
     ];
+  }
+
+  private isToolResultEnvelope(result: any): result is ToolResultEnvelope {
+    if (!result || typeof result !== 'object') {
+      return false;
+    }
+    const type = (result as ToolResultEnvelope).type;
+    const source = (result as ToolResultEnvelope).source;
+    return (
+      typeof type === 'string' &&
+      typeof source === 'string' &&
+      ['success', 'disambiguation', 'empty', 'error'].includes(type as string)
+    );
+  }
+
+  private applyEnvelopeLimits(envelope: ToolResultEnvelope): ToolResultEnvelope {
+    const limited: ToolResultEnvelope = {
+      ...envelope,
+      attempts: envelope.attempts ? { ...envelope.attempts } : envelope.attempts,
+    };
+
+    if (Array.isArray(envelope.rows)) {
+      limited.rows = envelope.rows.slice(0, this.tablePreviewLimit);
+      limited.total_rows = envelope.total_rows ?? envelope.rows.length;
+    }
+
+    if (Array.isArray(envelope.candidates)) {
+      limited.candidates = envelope.candidates.slice(0, this.disambiguationLimit);
+    }
+
+    return limited;
+  }
+
+  private logResponseTelemetry(
+    sessionId: number | undefined,
+    tool: string,
+    envelope: ToolResultEnvelope,
+    composed: ComposeFinalMessageOutput
+  ): void {
+    const providedNextSteps = Array.isArray((composed.uiHints as any)?.nextSteps)
+      ? ((composed.uiHints as any).nextSteps as unknown[]).length > 0
+      : false;
+
+    void this.analytics.logResponseSummary(sessionId, tool, {
+      response_mode: envelope.type,
+      attempts: envelope.attempts ?? { exact: false, fuzzy: false, schema_refreshed: false },
+      candidates_count: envelope.candidates ? envelope.candidates.length : 0,
+      provided_next_steps: providedNextSteps,
+    });
+
+    if (envelope.type === 'empty' && envelope.attempts?.fuzzy) {
+      void this.analytics.incrementCounter(sessionId, 'empty_with_fuzzy_attempted');
+    }
   }
 
   private extractMessage(tool: string, result: any): string {

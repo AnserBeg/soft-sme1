@@ -1,5 +1,6 @@
 import { Pool } from 'pg';
 import { randomUUID } from 'crypto';
+import type { ToolAttemptMetadata } from './answerComposer';
 
 type EventStatus = 'success' | 'failure' | 'missed' | 'error' | string;
 
@@ -157,6 +158,36 @@ export class AgentAnalyticsLogger {
       eventType: 'fallback',
       status: stage,
       metadata,
+    });
+  }
+
+  async logResponseSummary(
+    sessionId: number | undefined,
+    tool: string | undefined,
+    summary: {
+      response_mode: string;
+      attempts: ToolAttemptMetadata;
+      candidates_count: number;
+      provided_next_steps: boolean;
+    }
+  ): Promise<void> {
+    await this.logEvent({
+      source: 'orchestrator',
+      sessionId,
+      tool,
+      eventType: 'response_summary',
+      status: 'success',
+      metadata: summary,
+    });
+  }
+
+  async incrementCounter(sessionId: number | undefined, name: string): Promise<void> {
+    await this.logEvent({
+      source: 'orchestrator',
+      sessionId,
+      eventType: 'metric',
+      status: 'increment',
+      metadata: { counter: name },
     });
   }
 
