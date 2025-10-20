@@ -66,13 +66,22 @@ const normalizeAddresses = (value?: string | string[]): string[] => {
     .filter((entry) => entry.length > 0);
 };
 
-const appendSearchValue = (current: string | string[] | undefined, value: string): string | string[] => {
-  if (!current) {
-    return value;
+const appendSearchValue = (current: string | undefined, value: string): string => {
+  const normalized = value.trim();
+  if (!normalized) {
+    return current ?? '';
   }
-  const list = Array.isArray(current) ? current : [current];
-  list.push(value);
-  return list;
+  if (!current) {
+    return normalized;
+  }
+  const entries = current
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+  if (!entries.includes(normalized)) {
+    entries.push(normalized);
+  }
+  return entries.join(', ');
 };
 
 const parseDateToken = (value: string): Date | undefined => {
@@ -83,10 +92,15 @@ const parseDateToken = (value: string): Date | undefined => {
   return date;
 };
 
+type MutableSearchObject = SearchObject & {
+  text?: string;
+  header?: Record<string, string | boolean>;
+};
+
 export const parseQuery = (query: string): { search: SearchObject } => {
-  const search: SearchObject = {};
+  const search: MutableSearchObject = {};
   const textTerms: string[] = [];
-  const headerPairs: Array<[string, string]> = [];
+  const headerMap: Record<string, string | boolean> = {};
 
   const tokens = Array.from(query.matchAll(/(\w+:"[^"]+"|\w+:[^\s]+|"[^"]+"|\S+)/g)).map((match) => match[0]);
 
@@ -137,7 +151,7 @@ export const parseQuery = (query: string): { search: SearchObject } => {
       }
       case 'has':
         if (value.toLowerCase() === 'attachment') {
-          headerPairs.push(['Content-Type', 'multipart']);
+          headerMap['Content-Type'] = 'multipart';
         }
         break;
       case 'unread':
@@ -156,8 +170,8 @@ export const parseQuery = (query: string): { search: SearchObject } => {
     search.text = textQuery.join(' ');
   }
 
-  if (headerPairs.length > 0) {
-    search.header = headerPairs;
+  if (Object.keys(headerMap).length > 0) {
+    search.header = headerMap;
   }
 
   return { search };
