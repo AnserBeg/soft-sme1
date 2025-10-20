@@ -12,7 +12,7 @@ import {
 } from '@mui/material';
 import { DataGrid, GridColDef, GridRenderCellParams } from '@mui/x-data-grid';
 import AddIcon from '@mui/icons-material/Add';
-import DownloadIcon from '@mui/icons-material/Download';
+import DeleteIcon from '@mui/icons-material/Delete';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import SearchIcon from '@mui/icons-material/Search';
 import dayjs from 'dayjs';
@@ -20,9 +20,10 @@ import { useNavigate } from 'react-router-dom';
 import {
   ReturnOrderSummary,
   ReturnOrderStatus,
-  downloadReturnOrderPdf,
+  deleteReturnOrder,
   fetchReturnOrders,
 } from '../services/returnOrderService';
+import { toast } from 'react-toastify';
 
 const statusChips: Array<{ label: string; value: ReturnOrderStatus | 'all' }> = [
   { label: 'All', value: 'all' },
@@ -35,6 +36,7 @@ const ReturnOrdersPage: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [orders, setOrders] = useState<ReturnOrderSummary[]>([]);
   const [loading, setLoading] = useState(false);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
   const navigate = useNavigate();
 
   const loadOrders = useCallback(async () => {
@@ -65,6 +67,31 @@ const ReturnOrdersPage: React.FC = () => {
       );
     });
   }, [orders, searchTerm]);
+
+  const handleDelete = useCallback(
+    async (order: ReturnOrderSummary) => {
+      const confirmed = window.confirm(
+        `Delete return order ${order.return_number}? This will restore any associated inventory adjustments.`
+      );
+      if (!confirmed) {
+        return;
+      }
+
+      setDeletingId(order.return_id);
+      try {
+        await deleteReturnOrder(order.return_id);
+        toast.success(`Return order ${order.return_number} deleted.`);
+        await loadOrders();
+      } catch (error: any) {
+        console.error('Failed to delete return order', error);
+        const message = error?.response?.data?.error || 'Failed to delete return order.';
+        toast.error(message);
+      } finally {
+        setDeletingId(null);
+      }
+    },
+    [loadOrders]
+  );
 
   const columns: GridColDef[] = [
     {
@@ -140,19 +167,20 @@ const ReturnOrdersPage: React.FC = () => {
       sortable: false,
       filterable: false,
       width: 120,
-      renderCell: (params) => (
+      renderCell: (params: GridRenderCellParams<ReturnOrderSummary>) => (
         <Stack direction="row" spacing={1}>
           <Button
             size="small"
             variant="outlined"
-            color="primary"
-            startIcon={<DownloadIcon fontSize="small" />}
+            color="error"
+            startIcon={<DeleteIcon fontSize="small" />}
+            disabled={deletingId === params.row.return_id}
             onClick={(event) => {
               event.stopPropagation();
-              downloadReturnOrderPdf(Number(params.row.return_id));
+              handleDelete(params.row);
             }}
           >
-            PDF
+            Delete
           </Button>
         </Stack>
       ),
