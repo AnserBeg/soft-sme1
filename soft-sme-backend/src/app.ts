@@ -14,6 +14,7 @@ import vendorRouter from './routes/vendorRoutes';
 import inventoryRouter from './routes/inventoryRoutes';
 import categoryRouter from './routes/categoryRoutes';
 import quoteRouter from './routes/quoteRoutes';
+import quoteTemplateRouter from './routes/quoteTemplateRoutes';
 import salesOrderRouter from './routes/salesOrderRoutes';
 import purchaseOrderRouter from './routes/purchaseOrderRoutes';
 import returnOrderRouter from './routes/returnOrderRoutes';
@@ -167,6 +168,9 @@ console.log('Registered category routes at /api/categories');
 
 app.use('/api/quotes', authMiddleware, quoteRouter);
 console.log('Registered quote routes');
+
+app.use('/api/quote-templates', authMiddleware, quoteTemplateRouter);
+console.log('Registered quote template routes');
 
 app.use('/api/sales-orders', authMiddleware, salesOrderRouter);
 console.log('Registered sales order routes');

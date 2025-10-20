@@ -102,7 +102,7 @@ export const ChatBoard: React.FC<ChatBoardProps> = ({ variant = 'drawer', onClos
     setHistoryAnchorEl(null);
   };
 
-  const handleSessionSelect = (id: string) => {
+  const handleSessionSelect = (id: number) => {
     handleHistoryClose();
     void selectSession(id);
   };

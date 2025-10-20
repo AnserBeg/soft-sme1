@@ -24,6 +24,7 @@ import DoneAllIcon from '@mui/icons-material/DoneAll';
 import EmailIcon from '@mui/icons-material/Email';
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
 import BlockIcon from '@mui/icons-material/Block';
+import TableChartIcon from '@mui/icons-material/TableChart';
 import { useNavigate, useParams } from 'react-router-dom';
 import api from '../api/axios';
 import { AxiosError } from 'axios';
@@ -32,6 +33,7 @@ import UnifiedCustomerDialog, { CustomerFormValues } from '../components/Unified
 import UnifiedProductDialog, { ProductFormValues } from '../components/UnifiedProductDialog';
 import UnsavedChangesGuard from '../components/UnsavedChangesGuard';
 import { normalizeQuoteStatus, QuoteStatus } from '../utils/quoteStatus';
+import QuoteTemplatesDialog, { QuoteDescriptionTemplate } from '../components/QuoteTemplatesDialog';
 
 interface CustomerOption {
   label: string;
@@ -155,6 +157,7 @@ const QuoteEditorPage: React.FC = () => {
   const [customerTypingTimer, setCustomerTypingTimer] = useState<number | null>(null);
   const [customerEnterPressed, setCustomerEnterPressed] = useState(false);
   const customerInputRef = useRef<HTMLInputElement | null>(null);
+  const productDescriptionRef = useRef<HTMLTextAreaElement | null>(null);
 
   // autocomplete state (product)
   const [productOpen, setProductOpen] = useState(false);
@@ -169,6 +172,7 @@ const QuoteEditorPage: React.FC = () => {
 
   // email modal
   const [isEmailModalOpen, setIsEmailModalOpen] = useState(false);
+  const [isTemplateDialogOpen, setIsTemplateDialogOpen] = useState(false);
 
   // Unsaved changes guard: normalized signature structure
   const [initialSignature, setInitialSignature] = useState<string>('');
@@ -188,7 +192,26 @@ const QuoteEditorPage: React.FC = () => {
     vehicleMake: (vehicleMake || '').trim(),
     vehicleModel: (vehicleModel || '').trim(),
   }), [selectedCustomer, quote, selectedProduct, quoteDate, validUntil, estimatedCost, productDescription, terms, customerPoNumber, vinNumber, vehicleMake, vehicleModel]);
-  
+
+  const handleTemplateInsert = useCallback((template: QuoteDescriptionTemplate) => {
+    setProductDescription(template.content);
+    setIsTemplateDialogOpen(false);
+    setSuccess(`Template "${template.name}" inserted into the description.`);
+
+    window.setTimeout(() => {
+      if (productDescriptionRef.current) {
+        const textarea = productDescriptionRef.current;
+        textarea.focus();
+        try {
+          const length = template.content.length;
+          textarea.setSelectionRange(length, length);
+        } catch {
+          // Ignore selection errors on unsupported browsers
+        }
+      }
+    }, 0);
+  }, [setProductDescription, setIsTemplateDialogOpen, setSuccess]);
+
   // Set initial signature only once after data is fully loaded
   useEffect(() => {
     if (isDataLoaded && initialSignature === '') {
@@ -939,15 +962,35 @@ const QuoteEditorPage: React.FC = () => {
 
               {/* Product Description */}
               <Grid item xs={12}>
+                <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
+                  <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+                    Product Description
+                  </Typography>
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    startIcon={<TableChartIcon fontSize="small" />}
+                    onClick={() => setIsTemplateDialogOpen(true)}
+                  >
+                    Templates
+                  </Button>
+                </Stack>
                 <TextField
-                  label="Product Description"
+                  placeholder="Add the quote details here..."
                   fullWidth
                   multiline
                   minRows={6}
                   value={productDescription}
                   onChange={(e) => setProductDescription(e.target.value)}
-                  sx={{ '& .MuiOutlinedInput-root': { borderRadius: 1 }, '& .MuiOutlinedInput-input': { fontSize: 15 } }}
-                  InputLabelProps={{ sx: labelSx, shrink: true }}
+                  inputRef={productDescriptionRef}
+                  sx={{
+                    '& .MuiOutlinedInput-root': { borderRadius: 1 },
+                    '& textarea': {
+                      fontSize: 15,
+                      fontFamily: 'Roboto Mono, Consolas, Menlo, monospace',
+                      whiteSpace: 'pre-wrap',
+                    },
+                  }}
                 />
               </Grid>
 
@@ -967,6 +1010,14 @@ const QuoteEditorPage: React.FC = () => {
             </Grid>
           </Paper>
         </Box>
+
+        <QuoteTemplatesDialog
+          open={isTemplateDialogOpen}
+          onClose={() => setIsTemplateDialogOpen(false)}
+          onTemplateSelected={handleTemplateInsert}
+          onSuccess={(message) => setSuccess(message)}
+          onError={(message) => setError(message)}
+        />
 
         {/* Email Modal */}
         <EmailModal
