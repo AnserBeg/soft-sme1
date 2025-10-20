@@ -1,4 +1,4 @@
-import { ImapFlow, type ImapFlowOptions } from 'imapflow';
+import { ImapFlow, type ImapFlowOptions, type SearchObject } from 'imapflow';
 import nodemailer from 'nodemailer';
 import sanitizeHtml from 'sanitize-html';
 import { simpleParser } from 'mailparser';
@@ -66,18 +66,38 @@ const normalizeAddresses = (value?: string | string[]): string[] => {
     .filter((entry) => entry.length > 0);
 };
 
-export const parseQuery = (query: string): { criteria: any[] } => {
-  const criteria: any[] = ['ALL'];
+const appendSearchValue = (current: string | string[] | undefined, value: string): string | string[] => {
+  if (!current) {
+    return value;
+  }
+  const list = Array.isArray(current) ? current : [current];
+  list.push(value);
+  return list;
+};
+
+const parseDateToken = (value: string): Date | undefined => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return undefined;
+  }
+  return date;
+};
+
+export const parseQuery = (query: string): { search: SearchObject } => {
+  const search: SearchObject = {};
+  const textTerms: string[] = [];
+  const headerPairs: Array<[string, string]> = [];
+
   const tokens = Array.from(query.matchAll(/(\w+:"[^"]+"|\w+:[^\s]+|"[^"]+"|\S+)/g)).map((match) => match[0]);
 
-  const remaining: string[] = [];
   for (const rawToken of tokens) {
     const token = rawToken.trim();
     const [key, ...rest] = token.split(':');
     if (rest.length === 0) {
-      remaining.push(token.replace(/"/g, ''));
+      textTerms.push(token.replace(/"/g, ''));
       continue;
     }
+
     const valueRaw = rest.join(':').replace(/^"|"$/g, '');
     const value = valueRaw.trim();
     if (!value) {
@@ -86,48 +106,61 @@ export const parseQuery = (query: string): { criteria: any[] } => {
 
     switch (key.toLowerCase()) {
       case 'from':
-        criteria.push(['FROM', value]);
+        search.from = appendSearchValue(search.from, value);
         break;
       case 'to':
-        criteria.push(['TO', value]);
+        search.to = appendSearchValue(search.to, value);
+        break;
+      case 'cc':
+        search.cc = appendSearchValue(search.cc, value);
+        break;
+      case 'bcc':
+        search.bcc = appendSearchValue(search.bcc, value);
         break;
       case 'subject':
-        criteria.push(['SUBJECT', value]);
+        search.subject = appendSearchValue(search.subject, value);
         break;
       case 'after':
       case 'since': {
-        const date = new Date(value);
-        if (!Number.isNaN(date.getTime())) {
-          criteria.push(['SINCE', date.toUTCString()]);
+        const date = parseDateToken(value);
+        if (date) {
+          search.since = date;
         }
         break;
       }
       case 'before': {
-        const date = new Date(value);
-        if (!Number.isNaN(date.getTime())) {
-          criteria.push(['BEFORE', date.toUTCString()]);
+        const date = parseDateToken(value);
+        if (date) {
+          search.before = date;
         }
         break;
       }
       case 'has':
         if (value.toLowerCase() === 'attachment') {
-          criteria.push(['HEADER', 'Content-Type', 'multipart']);
+          headerPairs.push(['Content-Type', 'multipart']);
+        }
+        break;
+      case 'unread':
+        if (value.toLowerCase() === 'true') {
+          search.seen = false;
         }
         break;
       default:
-        remaining.push(token.replace(/"/g, ''));
+        textTerms.push(token.replace(/"/g, ''));
         break;
     }
   }
 
-  if (remaining.length) {
-    const text = remaining.join(' ');
-    if (text.trim().length > 0) {
-      criteria.push(['TEXT', text.trim()]);
-    }
+  const textQuery = textTerms.map((term) => term.trim()).filter((term) => term.length > 0);
+  if (textQuery.length > 0) {
+    search.text = textQuery.join(' ');
   }
 
-  return { criteria };
+  if (headerPairs.length > 0) {
+    search.header = headerPairs;
+  }
+
+  return { search };
 };
 
 const normalizeDateString = (date: Date | string | number | undefined): string => {
@@ -217,11 +250,12 @@ export class TitanProvider implements EmailProvider {
 
   async emailSearch(query: string, max?: number): Promise<EmailSummary[]> {
     const normalizedQuery = typeof query === 'string' ? query.trim() : '';
-    const { criteria } = parseQuery(normalizedQuery);
+    const { search } = parseQuery(normalizedQuery);
+    const searchQuery: SearchObject = normalizedQuery.length > 0 ? search : {};
 
     return this.withMailbox(async (client) => {
-      const uids = await client.search(criteria, { uid: true });
-      const sorted = uids.sort((a, b) => b - a);
+      const uids = await client.search(searchQuery, { uid: true });
+      const sorted = Array.isArray(uids) ? [...uids].sort((a, b) => b - a) : [];
       const limited = typeof max === 'number' && max > 0 ? sorted.slice(0, max) : sorted;
 
       const summaries: EmailSummary[] = [];
@@ -301,12 +335,12 @@ export class TitanProvider implements EmailProvider {
 
   private async fetchByMessageId(messageId: string): Promise<EmailMessageDetail> {
     return this.withMailbox(async (client) => {
-      const searchCriteria: any[] = ['HEADER', 'Message-ID', messageId];
-      const matches = await client.search(searchCriteria, { uid: true });
-      if (!Array.isArray(matches) || matches.length === 0) {
+      const matches = await client.search({ header: [['Message-ID', messageId]] }, { uid: true });
+      const uidList = Array.isArray(matches) ? matches : [];
+      if (uidList.length === 0) {
         throw new Error('Original message not found in Titan mailbox for reply.');
       }
-      const uid = matches[matches.length - 1];
+      const uid = uidList[uidList.length - 1];
       return this.fetchByUid(uid);
     });
   }
