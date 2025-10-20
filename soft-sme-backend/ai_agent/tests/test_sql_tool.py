@@ -329,6 +329,62 @@ class InventorySQLToolTests(unittest.TestCase):
         self.assertEqual(attempts["count"], 2)
         self.assertEqual(stub_introspector.refresh_count, 1)
 
+    def test_validation_mismatch_refreshes_schema(self):
+        base_columns = [
+            {"name": "vendor_id", "type": "integer", "nullable": False},
+            {"name": "vendor_name", "type": "character varying(120)", "nullable": False},
+        ]
+        initial_schema = TableSchema(
+            name="vendormaster",
+            columns=base_columns,
+            primary_key=["vendor_id"],
+            foreign_keys=[],
+        )
+        updated_schema = TableSchema(
+            name="vendormaster",
+            columns=base_columns
+            + [{"name": "vendor_code", "type": "text", "nullable": True}],
+            primary_key=["vendor_id"],
+            foreign_keys=[],
+        )
+
+        class RefreshingIntrospector(_StubIntrospector):
+            def __init__(self):
+                super().__init__({"vendormaster": initial_schema})
+
+            def refresh(self):  # type: ignore[override]
+                self.refresh_count += 1
+                self._tables = {"vendormaster": updated_schema}
+                self.schema_version = "v2"
+                self.schema_hash = "hash2"
+                return SimpleNamespace(
+                    schema_version=self.schema_version,
+                    schema_hash=self.schema_hash,
+                    tables=self._tables,
+                    llm_snippet=self._snippet,
+                )
+
+        attempts = {"count": 0}
+
+        def script(sql, _params, call):
+            attempts["count"] = call
+            return [
+                {"vendor_id": 7, "vendor_name": "Fresh Vendor", "vendor_code": "FV-7"},
+            ]
+
+        introspector = RefreshingIntrospector()
+        tool, _ = self._make_tool(script, introspector=introspector)
+
+        with patch.object(tool, "_emit_event", return_value=None):
+            result = tool._run(
+                "SELECT vendormaster.vendor_id, vendormaster.vendor_code FROM vendormaster"
+            )
+
+        self.assertIn("Fresh Vendor", result)
+        self.assertIn("vendor_code", result)
+        self.assertEqual(introspector.refresh_count, 1)
+        self.assertEqual(attempts["count"], 1)
+
     def test_alias_rewrite_expands_address(self):
         captured_sql = {"value": None}
 
