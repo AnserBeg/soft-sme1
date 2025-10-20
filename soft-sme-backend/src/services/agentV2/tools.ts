@@ -177,11 +177,137 @@ export class AgentToolsV2 {
     return typeof value === 'string' ? value.trim() : '';
   }
 
+  private normalizeNumericId(value: any): number | null {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value;
+    }
+
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (!trimmed) {
+        return null;
+      }
+      const parsed = Number(trimmed);
+      if (Number.isFinite(parsed)) {
+        return parsed;
+      }
+    }
+
+    return null;
+  }
+
+  private extractNonEmptyString(value: any): string | null {
+    if (typeof value !== 'string') {
+      return null;
+    }
+
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+
   private buildLikeTerm(value: string): string {
     if (!value) {
       return '%';
     }
     return `%${value.replace(/\s+/g, '%')}%`;
+  }
+
+  private async resolveCustomerIdFromPayload(payload: any): Promise<number> {
+    const directCandidates: any[] = [];
+    const addCandidate = (candidate: any) => {
+      directCandidates.push(candidate);
+    };
+
+    addCandidate(payload?.customer_id);
+    addCandidate(payload?.customerId);
+
+    const customerObject = payload?.customer && typeof payload.customer === 'object' ? payload.customer : null;
+    if (customerObject) {
+      Object.entries(customerObject).forEach(([key, value]) => {
+        if (key.toLowerCase().includes('id')) {
+          addCandidate(value);
+        }
+      });
+
+      const nestedValue = (customerObject as any).value;
+      if (nestedValue && typeof nestedValue === 'object') {
+        Object.entries(nestedValue).forEach(([key, value]) => {
+          if (key.toLowerCase().includes('id')) {
+            addCandidate(value);
+          }
+        });
+      }
+    }
+
+    for (const candidate of directCandidates) {
+      const normalized = this.normalizeNumericId(candidate);
+      if (normalized !== null) {
+        return normalized;
+      }
+    }
+
+    const nameCandidates = new Set<string>();
+    const addName = (value: any) => {
+      const extracted = this.extractNonEmptyString(value);
+      if (extracted) {
+        nameCandidates.add(extracted);
+      }
+    };
+
+    addName(payload?.customer_name);
+    addName(payload?.customerName);
+    if (customerObject) {
+      addName((customerObject as any).name);
+      addName((customerObject as any).customer_name);
+      addName((customerObject as any).customerName);
+      addName((customerObject as any).display_name);
+
+      const nestedValue = (customerObject as any).value;
+      if (nestedValue && typeof nestedValue === 'object') {
+        addName((nestedValue as any).name);
+        addName((nestedValue as any).customer_name);
+        addName((nestedValue as any).customerName);
+        addName((nestedValue as any).display_name);
+      }
+    }
+
+    for (const name of nameCandidates) {
+      const exact = await this.pool.query(
+        'SELECT customer_id FROM customermaster WHERE LOWER(customer_name) = LOWER($1)',
+        [name]
+      );
+
+      if (exact.rowCount === 1) {
+        return Number(exact.rows[0].customer_id);
+      }
+
+      if ((exact.rowCount ?? 0) > 1) {
+        throw new Error(`Multiple customers found with the name "${name}". Please specify the customer ID.`);
+      }
+    }
+
+    for (const name of nameCandidates) {
+      const fuzzy = await this.pool.query(
+        'SELECT customer_id, customer_name FROM customermaster WHERE customer_name ILIKE $1 ORDER BY customer_name ASC LIMIT 2',
+        [this.buildLikeTerm(name)]
+      );
+
+      if (fuzzy.rowCount === 1) {
+        return Number(fuzzy.rows[0].customer_id);
+      }
+
+      if ((fuzzy.rowCount ?? 0) > 1) {
+        const preview = fuzzy.rows
+          .map((row: any) => row?.customer_name)
+          .filter((value: any) => typeof value === 'string' && value.trim().length > 0)
+          .slice(0, 3)
+          .join(', ');
+        const suffix = preview ? ` Matches: ${preview}.` : '';
+        throw new Error(`Multiple customers match "${name}". Please provide the customer ID.${suffix}`);
+      }
+    }
+
+    throw new Error('Unable to resolve a customer_id from the provided customer information. Please supply the numeric customer ID.');
   }
 
   private describeLookup(entityLabel: string, values: string[]): string {
@@ -1024,6 +1150,7 @@ export class AgentToolsV2 {
 
   // Quotes
   async createQuote(sessionId: number, payload: any) {
+    const customerId = await this.resolveCustomerIdFromPayload(payload);
     const baseQuoteDate = payload?.quote_date ? new Date(payload.quote_date) : new Date();
     const quoteDate = Number.isNaN(baseQuoteDate.getTime()) ? new Date() : baseQuoteDate;
     const validUntilCandidate = payload?.valid_until ? new Date(payload.valid_until) : null;
@@ -1033,6 +1160,7 @@ export class AgentToolsV2 {
 
     const quoteInput = {
       ...payload,
+      customer_id: customerId,
       quote_date: quoteDate,
       valid_until: resolvedValidUntil,
     };
