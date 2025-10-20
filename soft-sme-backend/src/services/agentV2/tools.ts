@@ -3,6 +3,7 @@ import { SalesOrderService } from '../SalesOrderService';
 import { EmailService } from '../emailService';
 import { PDFService } from '../pdfService';
 import { AgentTaskEvent, AgentTaskFacade } from './AgentTaskFacade';
+import type { EntityType } from './geminiRouter';
 import { VoiceService } from '../voice/VoiceService';
 import { TaskInput, TaskStatus } from '../TaskService';
 import { QuoteService } from '../QuoteService';
@@ -148,6 +149,102 @@ export class AgentToolsV2 {
     throw new Error(`Invalid task status: ${value}`);
   }
 
+  private normalizeLookupType(value: any): EntityType | null {
+    if (typeof value !== 'string') {
+      return null;
+    }
+
+    const normalized = value.trim().toLowerCase();
+    switch (normalized) {
+      case 'vendor':
+      case 'customer':
+      case 'part':
+      case 'purchase_order':
+      case 'sales_order':
+      case 'quote':
+        return normalized as EntityType;
+      default:
+        return null;
+    }
+  }
+
+  private normalizeLookupValue(value: any): string {
+    return typeof value === 'string' ? value.trim() : '';
+  }
+
+  private buildLikeTerm(value: string): string {
+    if (!value) {
+      return '%';
+    }
+    return `%${value.replace(/\s+/g, '%')}%`;
+  }
+
+  private describeLookup(entityLabel: string, values: string[]): string {
+    if (!values.length) {
+      return `No ${entityLabel} found.`;
+    }
+
+    if (values.length === 1) {
+      return `Found ${entityLabel} ${values[0]}.`;
+    }
+
+    const preview = values.slice(0, 3).join(', ');
+    const remaining = values.length > 3 ? `, plus ${values.length - 3} more` : '';
+    const plural = entityLabel.endsWith('s') ? entityLabel : `${entityLabel}s`;
+    return `Found ${values.length} ${plural}: ${preview}${remaining}.`;
+  }
+
+  private formatVendorSummary(row: any): string {
+    const name = row.vendor_name || row.name || 'Unknown vendor';
+    const details = [row.contact_person, row.telephone_number, row.email]
+      .map((item: any) => (typeof item === 'string' ? item.trim() : ''))
+      .filter((item: string) => item.length > 0)
+      .join(' · ');
+    return details ? `${name} (${details})` : name;
+  }
+
+  private formatCustomerSummary(row: any): string {
+    const name = row.customer_name || row.name || 'Unknown customer';
+    const details = [row.contact_person, row.telephone_number, row.email]
+      .map((item: any) => (typeof item === 'string' ? item.trim() : ''))
+      .filter((item: string) => item.length > 0)
+      .join(' · ');
+    return details ? `${name} (${details})` : name;
+  }
+
+  private formatPartSummary(row: any): string {
+    const partNumber = row.part_number || row.part_id || 'Unknown part';
+    const description = typeof row.part_description === 'string' ? row.part_description.trim() : '';
+    const quantity = row.quantity_on_hand != null ? Number(row.quantity_on_hand) : null;
+    const quantityText = Number.isFinite(quantity) ? `qty ${quantity}` : '';
+    const details = [description, quantityText].filter((item) => item && item.length > 0).join(' · ');
+    return details ? `${partNumber} (${details})` : String(partNumber);
+  }
+
+  private formatPurchaseOrderSummary(row: any): string {
+    const number = row.purchase_number || row.purchase_id || 'PO';
+    const vendor = typeof row.vendor_name === 'string' ? row.vendor_name.trim() : '';
+    const status = typeof row.status === 'string' ? row.status.trim() : '';
+    const details = [vendor, status].filter((item) => item.length > 0).join(' · ');
+    return details ? `${number} (${details})` : String(number);
+  }
+
+  private formatSalesOrderSummary(row: any): string {
+    const number = row.sales_order_number || row.sales_order_id || 'SO';
+    const customer = typeof row.customer_name === 'string' ? row.customer_name.trim() : '';
+    const status = typeof row.status === 'string' ? row.status.trim() : '';
+    const details = [customer, status].filter((item) => item.length > 0).join(' · ');
+    return details ? `${number} (${details})` : String(number);
+  }
+
+  private formatQuoteSummary(row: any): string {
+    const number = row.quote_number || row.quote_id || 'Quote';
+    const customer = typeof row.customer_name === 'string' ? row.customer_name.trim() : '';
+    const status = typeof row.status === 'string' ? row.status.trim() : '';
+    const details = [customer, status].filter((item) => item.length > 0).join(' · ');
+    return details ? `${number} (${details})` : String(number);
+  }
+
   // Utility to audit tool execution
   private async audit(sessionId: number, tool: string, input: any, output: any, success = true) {
     await this.pool.query(
@@ -164,6 +261,263 @@ export class AgentToolsV2 {
     const params = terms.map(t => `%${t}%`);
     const res = await this.pool.query(`SELECT path, section, chunk FROM agent_docs WHERE ${like} LIMIT ${k}`, params);
     return res.rows;
+  }
+
+  async inventoryLookup(sessionId: number, args: any) {
+    const entityType = this.normalizeLookupType(args?.entity_type);
+    const entityName = this.normalizeLookupValue(args?.entity_name);
+    const orderNumber = this.normalizeLookupValue(args?.order_number);
+    const partIdentifier = this.normalizeLookupValue(args?.part_identifier);
+    const filters = Array.isArray(args?.filters) ? args.filters : [];
+
+    const payload = {
+      entity_type: entityType,
+      entity_name: entityName,
+      order_number: orderNumber,
+      part_identifier: partIdentifier,
+      filters,
+    };
+
+    try {
+      let result;
+      switch (entityType) {
+        case 'vendor':
+          result = await this.lookupVendors(entityName);
+          break;
+        case 'customer':
+          result = await this.lookupCustomers(entityName);
+          break;
+        case 'part':
+          result = await this.lookupParts(partIdentifier || entityName);
+          break;
+        case 'purchase_order':
+          result = await this.lookupPurchaseOrders(orderNumber, entityName);
+          break;
+        case 'sales_order':
+          result = await this.lookupSalesOrders(orderNumber, entityName);
+          break;
+        case 'quote':
+          result = await this.lookupQuotes(orderNumber, entityName);
+          break;
+        default:
+          result = {
+            message:
+              'Please specify what you want to look up (vendor, customer, part, purchase order, sales order, or quote).',
+            matches: [],
+          };
+      }
+
+      await this.audit(sessionId, 'inventoryLookup', payload, result, true);
+      return result;
+    } catch (error: any) {
+      const message = error instanceof Error ? error.message : 'Inventory lookup failed';
+      await this.audit(sessionId, 'inventoryLookup', payload, { error: message }, false);
+      throw error;
+    }
+  }
+
+  private async lookupVendors(name: string) {
+    if (!name) {
+      return { message: 'Please provide a vendor name to search for.', matches: [] };
+    }
+
+    const exact = await this.pool.query(
+      'SELECT vendor_id, vendor_name, contact_person, telephone_number, email FROM vendormaster WHERE LOWER(vendor_name) = LOWER($1)',
+      [name]
+    );
+
+    const rows = exact.rows.length
+      ? exact.rows
+      : (
+          await this.pool.query(
+            'SELECT vendor_id, vendor_name, contact_person, telephone_number, email FROM vendormaster WHERE vendor_name ILIKE $1 ORDER BY vendor_name ASC LIMIT 5',
+            [this.buildLikeTerm(name)]
+          )
+        ).rows;
+
+    if (!rows.length) {
+      return { message: `I couldn't find any vendors matching "${name}".`, matches: [] };
+    }
+
+    const summaries = rows.map((row) => this.formatVendorSummary(row));
+    return {
+      message: this.describeLookup('vendor', summaries),
+      matches: rows,
+    };
+  }
+
+  private async lookupCustomers(name: string) {
+    if (!name) {
+      return { message: 'Please provide a customer name to search for.', matches: [] };
+    }
+
+    const exact = await this.pool.query(
+      'SELECT customer_id, customer_name, contact_person, telephone_number, email FROM customermaster WHERE LOWER(customer_name) = LOWER($1)',
+      [name]
+    );
+
+    const rows = exact.rows.length
+      ? exact.rows
+      : (
+          await this.pool.query(
+            'SELECT customer_id, customer_name, contact_person, telephone_number, email FROM customermaster WHERE customer_name ILIKE $1 ORDER BY customer_name ASC LIMIT 5',
+            [this.buildLikeTerm(name)]
+          )
+        ).rows;
+
+    if (!rows.length) {
+      return { message: `I couldn't find any customers matching "${name}".`, matches: [] };
+    }
+
+    const summaries = rows.map((row) => this.formatCustomerSummary(row));
+    return {
+      message: this.describeLookup('customer', summaries),
+      matches: rows,
+    };
+  }
+
+  private async lookupParts(identifier: string) {
+    const search = identifier || '';
+    if (!search) {
+      return { message: 'Please provide a part number or name to search for.', matches: [] };
+    }
+
+    const rows = (
+      await this.pool.query(
+        'SELECT part_id, part_number, part_description, unit, quantity_on_hand, last_unit_cost FROM inventory WHERE part_number ILIKE $1 OR part_description ILIKE $1 ORDER BY part_number ASC LIMIT 5',
+        [this.buildLikeTerm(search)]
+      )
+    ).rows;
+
+    if (!rows.length) {
+      return { message: `I couldn't find any parts matching "${search}".`, matches: [] };
+    }
+
+    const summaries = rows.map((row) => this.formatPartSummary(row));
+    return {
+      message: this.describeLookup('part', summaries),
+      matches: rows,
+    };
+  }
+
+  private async lookupPurchaseOrders(orderNumber: string, vendorName: string) {
+    const conditions: string[] = [];
+    const params: any[] = [];
+
+    if (orderNumber) {
+      conditions.push(`ph.purchase_number ILIKE $${conditions.length + 1}`);
+      params.push(this.buildLikeTerm(orderNumber));
+    }
+
+    if (vendorName) {
+      conditions.push(`vm.vendor_name ILIKE $${conditions.length + 1}`);
+      params.push(this.buildLikeTerm(vendorName));
+    }
+
+    if (!conditions.length) {
+      return { message: 'Provide a purchase order number or vendor name to search.', matches: [] };
+    }
+
+    const query = `
+      SELECT ph.purchase_id, ph.purchase_number, ph.status, ph.purchase_date, vm.vendor_name
+      FROM purchasehistory ph
+      LEFT JOIN vendormaster vm ON ph.vendor_id = vm.vendor_id
+      WHERE ${conditions.join(' OR ')}
+      ORDER BY ph.purchase_date DESC NULLS LAST, ph.purchase_number DESC
+      LIMIT 5
+    `;
+
+    const rows = (await this.pool.query(query, params)).rows;
+
+    if (!rows.length) {
+      return { message: 'No purchase orders matched the search.', matches: [] };
+    }
+
+    const summaries = rows.map((row) => this.formatPurchaseOrderSummary(row));
+    return {
+      message: this.describeLookup('purchase order', summaries),
+      matches: rows,
+    };
+  }
+
+  private async lookupSalesOrders(orderNumber: string, customerName: string) {
+    const conditions: string[] = [];
+    const params: any[] = [];
+
+    if (orderNumber) {
+      conditions.push(`soh.sales_order_number ILIKE $${conditions.length + 1}`);
+      params.push(this.buildLikeTerm(orderNumber));
+    }
+
+    if (customerName) {
+      conditions.push(`cm.customer_name ILIKE $${conditions.length + 1}`);
+      params.push(this.buildLikeTerm(customerName));
+    }
+
+    if (!conditions.length) {
+      return { message: 'Provide a sales order number or customer name to search.', matches: [] };
+    }
+
+    const query = `
+      SELECT soh.sales_order_id, soh.sales_order_number, soh.status, cm.customer_name, soh.product_name
+      FROM salesorderhistory soh
+      LEFT JOIN customermaster cm ON soh.customer_id = cm.customer_id
+      WHERE ${conditions.join(' OR ')}
+      ORDER BY soh.sales_order_id DESC
+      LIMIT 5
+    `;
+
+    const rows = (await this.pool.query(query, params)).rows;
+
+    if (!rows.length) {
+      return { message: 'No sales orders matched the search.', matches: [] };
+    }
+
+    const summaries = rows.map((row) => this.formatSalesOrderSummary(row));
+    return {
+      message: this.describeLookup('sales order', summaries),
+      matches: rows,
+    };
+  }
+
+  private async lookupQuotes(orderNumber: string, customerName: string) {
+    const conditions: string[] = [];
+    const params: any[] = [];
+
+    if (orderNumber) {
+      conditions.push(`q.quote_number ILIKE $${conditions.length + 1}`);
+      params.push(this.buildLikeTerm(orderNumber));
+    }
+
+    if (customerName) {
+      conditions.push(`cm.customer_name ILIKE $${conditions.length + 1}`);
+      params.push(this.buildLikeTerm(customerName));
+    }
+
+    if (!conditions.length) {
+      return { message: 'Provide a quote number or customer name to search.', matches: [] };
+    }
+
+    const query = `
+      SELECT q.quote_id, q.quote_number, q.status, cm.customer_name, q.product_name
+      FROM quotes q
+      LEFT JOIN customermaster cm ON q.customer_id = cm.customer_id
+      WHERE ${conditions.join(' OR ')}
+      ORDER BY q.quote_id DESC
+      LIMIT 5
+    `;
+
+    const rows = (await this.pool.query(query, params)).rows;
+
+    if (!rows.length) {
+      return { message: 'No quotes matched the search.', matches: [] };
+    }
+
+    const summaries = rows.map((row) => this.formatQuoteSummary(row));
+    return {
+      message: this.describeLookup('quote', summaries),
+      matches: rows,
+    };
   }
 
   // Tasks

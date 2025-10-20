@@ -4,6 +4,7 @@ import aiAssistantService from '../aiAssistantService';
 import { AIService } from '../aiService';
 import { AgentAnalyticsLogger } from './analyticsLogger';
 import type { SkillWorkflowSummary } from './skillLibrary';
+import { GeminiIntentRouter, StructuredIntent } from './geminiRouter';
 
 export interface AgentToolRegistry {
   [name: string]: (args: any) => Promise<any>;
@@ -105,10 +106,33 @@ export interface ToolCatalogEntry {
 export class AgentOrchestratorV2 {
   private readonly toolCatalog: ToolCatalogEntry[];
   private readonly analytics: AgentAnalyticsLogger;
+  private readonly geminiRouter: GeminiIntentRouter | null;
+  private readonly useLLMRouter: boolean;
+  private readonly routerConfidenceThreshold: number;
 
   constructor(private pool: Pool, private tools: AgentToolRegistry, private skillCatalog: SkillWorkflowSummary[] = []) {
     this.toolCatalog = this.buildToolCatalog();
     this.analytics = new AgentAnalyticsLogger(pool);
+    const threshold = Number(process.env.GEMINI_ROUTER_CONFIDENCE ?? 0.7);
+    this.routerConfidenceThreshold = Number.isFinite(threshold) ? threshold : 0.7;
+
+    const routerEnabled = process.env.USE_LLM_ROUTER === 'true';
+    const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+    if (routerEnabled && apiKey) {
+      this.geminiRouter = new GeminiIntentRouter({
+        apiKey,
+        model: process.env.GEMINI_ROUTER_MODEL || 'gemini-1.5-flash',
+        temperature: 0.1,
+        logger: (event, metadata) => this.logGeminiRouterEvent(event, metadata),
+      });
+      this.useLLMRouter = true;
+    } else {
+      if (routerEnabled && !apiKey) {
+        this.logGeminiRouterEvent('gemini_router_disabled', { reason: 'missing_api_key' });
+      }
+      this.geminiRouter = null;
+      this.useLLMRouter = false;
+    }
   }
 
   getToolCatalog(): ToolCatalogEntry[] {
@@ -166,7 +190,7 @@ export class AgentOrchestratorV2 {
     context: { companyId?: number | null; userId?: number | null }
   ): Promise<AgentResponse> {
     const events: AgentEvent[] = [];
-    const intent = this.classifyIntent(message);
+    const intent = await this.classifyIntent(message);
 
     const matchedIntent = intent?.tool ?? null;
 
@@ -282,7 +306,7 @@ export class AgentOrchestratorV2 {
     _context: { companyId?: number | null; userId?: number | null }
   ): Promise<AgentResponse> {
     const events: AgentEvent[] = [];
-    const instruction = this.parseAgentInstruction(message) ?? this.classifyIntent(message);
+    const instruction = this.parseAgentInstruction(message) ?? (await this.classifyIntent(message));
 
     if (!instruction) {
       await this.analytics.logEvent({
@@ -378,6 +402,14 @@ export class AgentOrchestratorV2 {
         docs: [],
       },
     };
+  }
+
+  private logGeminiRouterEvent(event: string, metadata?: Record<string, unknown>): void {
+    if (metadata) {
+      console.warn('agentV2: gemini_router', event, metadata);
+    } else {
+      console.warn('agentV2: gemini_router', event);
+    }
   }
 
   private buildConversationId(sessionId: number): string {
@@ -643,7 +675,146 @@ export class AgentOrchestratorV2 {
     return artifact;
   }
 
-  private classifyIntent(message: string): { tool: string; args: any } | null {
+  private async classifyIntent(message: string): Promise<AgentInstruction | null> {
+    if (!this.useLLMRouter || !this.geminiRouter) {
+      return this.classifyIntentWithKeywords(message);
+    }
+
+    const trimmed = typeof message === 'string' ? message.trim() : '';
+    if (!trimmed) {
+      return null;
+    }
+
+    let structured: StructuredIntent | null = null;
+    try {
+      structured = await this.geminiRouter.classify(trimmed);
+    } catch (error) {
+      this.logGeminiRouterEvent('gemini_router_failure', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    if (!structured) {
+      return this.classifyIntentWithKeywords(message);
+    }
+
+    if (structured.intent === 'doc_help') {
+      const topic = structured.slots.topic && structured.slots.topic.length > 0 ? structured.slots.topic : trimmed;
+      return { tool: 'retrieveDocs', args: { query: topic } };
+    }
+
+    if (structured.intent === 'smalltalk' || structured.intent === 'none') {
+      return null;
+    }
+
+    const mapped = this.mapStructuredIntent(trimmed, structured);
+    const meetsThreshold = structured.confidence >= this.routerConfidenceThreshold;
+
+    if (mapped && meetsThreshold) {
+      return mapped;
+    }
+
+    const fallback = this.classifyIntentWithKeywords(message);
+    if (fallback) {
+      return fallback;
+    }
+
+    if (mapped && structured.intent === 'inventory_lookup') {
+      return mapped;
+    }
+
+    return mapped ?? null;
+  }
+
+  private mapStructuredIntent(message: string, structured: StructuredIntent): AgentInstruction | null {
+    const slots = structured.slots || {};
+    const requiresConfirmation = structured.needs_confirmation;
+    if (
+      requiresConfirmation &&
+      (structured.intent === 'create_purchase_order' ||
+        structured.intent === 'create_sales_order' ||
+        structured.intent === 'create_quote' ||
+        structured.intent === 'update_pickup_details')
+    ) {
+      return null;
+    }
+
+    switch (structured.intent) {
+      case 'inventory_lookup': {
+        const args: Record<string, unknown> = {};
+        if (slots.entity_type) {
+          args.entity_type = slots.entity_type;
+        }
+        if (slots.entity_name) {
+          args.entity_name = slots.entity_name;
+        }
+        if (slots.order_number) {
+          args.order_number = slots.order_number;
+        }
+        if (slots.part_identifier) {
+          args.part_identifier = slots.part_identifier;
+        }
+        if (Array.isArray(slots.filters) && slots.filters.length) {
+          args.filters = slots.filters;
+        }
+
+        if (Object.keys(args).length === 0) {
+          args.entity_name = message;
+        }
+
+        return { tool: 'inventoryLookup', args };
+      }
+      case 'create_purchase_order': {
+        const vendorName = slots.vendor_name;
+        const lineItems = Array.isArray(slots.line_items) ? slots.line_items : [];
+        if (!vendorName || !lineItems.length) {
+          return null;
+        }
+        const args: Record<string, unknown> = {
+          vendor_name: vendorName,
+          line_items: lineItems,
+        };
+        if (slots.notes) {
+          args.notes = slots.notes;
+        }
+        return { tool: 'createPurchaseOrder', args };
+      }
+      case 'create_sales_order': {
+        const customerName = slots.customer_name;
+        const lineItems = Array.isArray(slots.line_items) ? slots.line_items : [];
+        if (!customerName || !lineItems.length) {
+          return null;
+        }
+        const args: Record<string, unknown> = {
+          customer_name: customerName,
+          line_items: lineItems,
+        };
+        if (slots.notes) {
+          args.notes = slots.notes;
+        }
+        return { tool: 'createSalesOrder', args };
+      }
+      case 'create_quote': {
+        const customerName = slots.customer_name;
+        const lineItems = Array.isArray(slots.line_items) ? slots.line_items : [];
+        if (!customerName || !lineItems.length) {
+          return null;
+        }
+        const args: Record<string, unknown> = {
+          customer_name: customerName,
+          line_items: lineItems,
+        };
+        if (slots.notes) {
+          args.notes = slots.notes;
+        }
+        return { tool: 'createQuote', args };
+      }
+      default:
+        return null;
+    }
+  }
+
+  private classifyIntentWithKeywords(message: string): { tool: string; args: any } | null {
     const normalized = message.toLowerCase();
 
     const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -821,6 +992,7 @@ export class AgentOrchestratorV2 {
 
   private buildToolCatalog(): ToolCatalogEntry[] {
     const catalog: ToolCatalogEntry[] = [
+      { name: 'inventoryLookup', description: 'Look up vendors, customers, parts, purchase orders, sales orders, or quotes.' },
       { name: 'createSalesOrder', description: 'Create a new sales order from customer information and line items.' },
       { name: 'updateSalesOrder', description: 'Update an existing sales order header, line items, or related details.' },
       { name: 'createPurchaseOrder', description: 'Create a purchase order for a vendor including pickup details and items.' },
@@ -882,6 +1054,8 @@ export class AgentOrchestratorV2 {
     }
 
     switch (tool) {
+      case 'inventoryLookup':
+        return output?.message ? String(output.message) : 'Lookup completed successfully.';
       case 'createPurchaseOrder':
         return output?.purchase_number ? `Created purchase order ${output.purchase_number}.` : 'Purchase order created successfully.';
       case 'updatePurchaseOrder':
