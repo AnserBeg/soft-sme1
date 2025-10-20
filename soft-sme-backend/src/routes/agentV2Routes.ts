@@ -1,4 +1,5 @@
 import express, { Request, Response } from 'express';
+import { PoolClient } from 'pg';
 import { pool } from '../db';
 import { authMiddleware } from '../middleware/authMiddleware';
 import { AgentOrchestratorV2, AgentToolRegistry } from '../services/agentV2/orchestrator';
@@ -6,11 +7,16 @@ import { AgentAnalyticsLogger } from '../services/agentV2/analyticsLogger';
 import { AgentToolsV2 } from '../services/agentV2/tools';
 import { AgentSkillLibraryService, SkillWorkflowSummary } from '../services/agentV2/skillLibrary';
 import aiAssistantService from '../services/aiAssistantService';
+import ConversationSummarizer from '../services/conversationSummarizer';
+import { ConversationMessage } from '../services/aiConversationManager';
 
 const router = express.Router();
 const analyticsLogger = new AgentAnalyticsLogger(pool);
 const skillLibrary = new AgentSkillLibraryService(pool);
 const schemaRefreshSecret = process.env.AI_SCHEMA_REFRESH_SECRET?.trim() || null;
+
+const MAX_CONTEXT_MESSAGES = 60;
+const CONTEXT_RECENT_PRESERVE = 20;
 
 const sanitizeHeaderValue = (value: string | string[] | undefined): string | undefined => {
   if (!value) {
@@ -50,6 +56,78 @@ const fallbackServiceEmail = process.env.AGENT_V2_DEFAULT_USER_EMAIL?.trim() || 
 const fallbackServiceUsername = process.env.AGENT_V2_DEFAULT_USERNAME?.trim() || 'ai_agent_service';
 
 let cachedServiceContext: ServiceContext | null = null;
+
+type StoredAgentMessage = {
+  id: number;
+  role: 'user' | 'assistant' | 'system';
+  type?: string;
+  content?: string;
+  summary?: string;
+  timestamp?: string;
+  createdAt?: string;
+};
+
+const parseStoredMessage = (row: any): StoredAgentMessage => {
+  let payload: any = null;
+  if (typeof row.content === 'string') {
+    try {
+      payload = JSON.parse(row.content);
+    } catch {
+      payload = { type: 'text', content: row.content };
+    }
+  } else if (row.content && typeof row.content === 'object') {
+    payload = row.content;
+  }
+
+  return {
+    id: Number(row.id),
+    role: (row.role as 'user' | 'assistant' | 'system') ?? 'assistant',
+    type: payload?.type ?? (row.role === 'user' ? 'user_text' : 'text'),
+    content: payload?.content ?? payload?.summary ?? undefined,
+    summary: payload?.summary ?? undefined,
+    timestamp: payload?.timestamp ?? undefined,
+    createdAt: row.created_at ? new Date(row.created_at).toISOString() : undefined,
+  };
+};
+
+const buildConversationMessages = (messages: StoredAgentMessage[]): ConversationMessage[] => {
+  return messages.map((message) => ({
+    id: String(message.id),
+    conversationId: `agent-session-${message.id}`,
+    role: message.role === 'user' ? 'user' : 'assistant',
+    content: message.content || message.summary || '',
+    metadata: {
+      type: message.type,
+    },
+    createdAt: message.createdAt ? new Date(message.createdAt) : new Date(),
+  }));
+};
+
+const summarizeConversationChunk = (messages: StoredAgentMessage[]): {
+  summary: string;
+  metadata: { highlights: string[]; resolution: string | null };
+} | null => {
+  if (!messages.length) {
+    return null;
+  }
+
+  const conversationMessages = buildConversationMessages(messages).filter((message) =>
+    message.content && message.content.trim().length > 0
+  );
+
+  if (!conversationMessages.length) {
+    return null;
+  }
+
+  const { summaryText, highlights, resolution } = ConversationSummarizer.summarizeMessages(
+    conversationMessages
+  );
+
+  return {
+    summary: summaryText,
+    metadata: { highlights, resolution },
+  };
+};
 
 const loadDefaultServiceContext = async (): Promise<ServiceContext> => {
   const envContext = parseEnvServiceContext();
@@ -126,12 +204,116 @@ const loadDefaultServiceContext = async (): Promise<ServiceContext> => {
   return context;
 };
 
+const updateSessionActivity = async (sessionId: number, client?: PoolClient): Promise<void> => {
+  const db = client ?? pool;
+  await db.query('UPDATE agent_sessions SET last_activity_at = NOW() WHERE id = $1', [sessionId]);
+};
+
+const enforceConversationLimits = async (sessionId: number): Promise<void> => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      `SELECT id, role, content, created_at
+         FROM agent_messages
+        WHERE session_id = $1
+        ORDER BY created_at ASC, id ASC`,
+      [sessionId]
+    );
+
+    if (!rows.length) {
+      await client.query('COMMIT');
+      return;
+    }
+
+    if (rows.length <= MAX_CONTEXT_MESSAGES) {
+      await client.query('COMMIT');
+      return;
+    }
+
+    const parsedMessages = rows.map(parseStoredMessage);
+    const cutoffIndex = Math.max(0, rows.length - CONTEXT_RECENT_PRESERVE);
+    const messagesToSummarize = parsedMessages.slice(0, cutoffIndex);
+
+    if (messagesToSummarize.length === 0) {
+      await client.query('COMMIT');
+      return;
+    }
+
+    const summary = summarizeConversationChunk(messagesToSummarize);
+    const idsToRemove = messagesToSummarize.map((message) => message.id);
+
+    await client.query('DELETE FROM agent_messages WHERE session_id = $1 AND id = ANY($2::int[])', [
+      sessionId,
+      idsToRemove,
+    ]);
+
+    if (summary) {
+      const payload = {
+        type: 'summary',
+        summary: summary.summary,
+        content: `Summary so far:\n${summary.summary}`,
+        highlights: summary.metadata.highlights,
+        resolution: summary.metadata.resolution,
+        timestamp: new Date().toISOString(),
+      };
+
+      await client.query('INSERT INTO agent_messages (session_id, role, content) VALUES ($1, $2, $3)', [
+        sessionId,
+        'assistant',
+        JSON.stringify(payload),
+      ]);
+    }
+
+    await updateSessionActivity(sessionId, client);
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('agentV2: failed to enforce context limits', error);
+  } finally {
+    client.release();
+  }
+};
+
 const parseNumeric = (value: unknown): number | null => {
   if (value === null || value === undefined) {
     return null;
   }
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+};
+
+const deriveMessagePreview = (raw: any): { text: string | null; timestamp: string | null } => {
+  if (!raw) {
+    return { text: null, timestamp: null };
+  }
+
+  let payload: any = null;
+  if (typeof raw === 'string') {
+    try {
+      payload = JSON.parse(raw);
+    } catch {
+      payload = { content: raw };
+    }
+  } else if (typeof raw === 'object') {
+    payload = raw;
+  }
+
+  const content = typeof payload?.content === 'string' ? payload.content : undefined;
+  const summary = typeof payload?.summary === 'string' ? payload.summary : undefined;
+  const highlights = Array.isArray(payload?.highlights) ? payload.highlights : [];
+  const timestamp = typeof payload?.timestamp === 'string' ? payload.timestamp : null;
+
+  if (payload?.type === 'summary') {
+    if (summary) {
+      return { text: summary, timestamp };
+    }
+    if (highlights.length > 0) {
+      return { text: `Summary: ${highlights.join('; ')}`, timestamp };
+    }
+  }
+
+  return { text: content ?? summary ?? null, timestamp };
 };
 
 const coerceId = (value: unknown): number | null => {
@@ -279,6 +461,70 @@ router.post('/session', authMiddleware, async (req: Request, res: Response) => {
   } catch (err) {
     console.error('agentV2: create session error', err);
     res.status(500).json({ error: 'Failed to create session' });
+  }
+});
+
+router.get('/sessions', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const authContext = (req as any).auth;
+    const isServiceRequest = authContext?.kind === 'service';
+    const limit = Math.max(1, Number.parseInt(String(req.query.limit ?? '4'), 10) || 4);
+    const includeSessionId = parseNumeric(req.query.include as string | undefined);
+
+    let userId = parseNumeric(req.user?.id);
+
+    if (isServiceRequest && !userId) {
+      const defaultContext = await loadDefaultServiceContext();
+      userId = defaultContext.userId ?? null;
+    }
+
+    const sessionsResult = await pool.query(
+      `SELECT
+         s.id,
+         s.created_at,
+         s.last_activity_at,
+         (SELECT content FROM agent_messages WHERE session_id = s.id AND role = 'user' ORDER BY created_at ASC, id ASC LIMIT 1) AS first_user_message,
+         (SELECT content FROM agent_messages WHERE session_id = s.id ORDER BY created_at DESC, id DESC LIMIT 1) AS last_message,
+         (SELECT created_at FROM agent_messages WHERE session_id = s.id ORDER BY created_at DESC, id DESC LIMIT 1) AS last_message_at
+       FROM agent_sessions s
+       WHERE ($1::int IS NULL OR s.user_id = $1::int OR s.id = $2::int)
+       ORDER BY s.last_activity_at DESC, s.id DESC
+       LIMIT $3`,
+      [userId, includeSessionId, limit + (includeSessionId ? 1 : 0)]
+    );
+
+    const uniqueSessions = new Map<number, any>();
+    for (const row of sessionsResult.rows) {
+      uniqueSessions.set(row.id, row);
+    }
+
+    const sessions = Array.from(uniqueSessions.values())
+      .sort((a, b) => {
+        const left = new Date(a.last_activity_at ?? a.created_at).getTime();
+        const right = new Date(b.last_activity_at ?? b.created_at).getTime();
+        return right - left;
+      })
+      .slice(0, limit)
+      .map((row) => {
+        const firstPreview = deriveMessagePreview(row.first_user_message);
+        const lastPreview = deriveMessagePreview(row.last_message);
+        const titleSource = firstPreview.text ?? `Chat ${row.id}`;
+        const normalizedTitle = titleSource.length > 80 ? `${titleSource.slice(0, 77)}…` : titleSource;
+
+        return {
+          id: row.id,
+          createdAt: row.created_at,
+          lastActivityAt: row.last_activity_at,
+          lastMessageAt: row.last_message_at ?? lastPreview.timestamp ?? row.last_activity_at,
+          title: normalizedTitle,
+          preview: lastPreview.text ?? null,
+        };
+      });
+
+    res.json({ sessions });
+  } catch (error) {
+    console.error('agentV2: list sessions error', error);
+    res.status(500).json({ error: 'Failed to list chat sessions' });
   }
 });
 
@@ -534,6 +780,7 @@ router.post('/chat', authMiddleware, async (req: Request, res: Response) => {
         'user',
         JSON.stringify(userPayload),
       ]);
+      await updateSessionActivity(Number(sessionId));
     }
 
     const tools = new AgentToolsV2(pool);
@@ -569,6 +816,9 @@ router.post('/chat', authMiddleware, async (req: Request, res: Response) => {
       ]);
     }
 
+    await updateSessionActivity(Number(sessionId));
+    void enforceConversationLimits(Number(sessionId));
+
     console.log('agentV2: chat response', {
       sessionId,
       userId,
@@ -598,18 +848,14 @@ router.get('/session/:sessionId/messages', authMiddleware, async (req: Request, 
     );
 
     const messages = result.rows.map((row) => {
-      let payload: any = null;
-      if (typeof row.content === 'string') {
-        try {
-          payload = JSON.parse(row.content);
-        } catch {
-          payload = { type: 'text', content: row.content };
-        }
-      }
+      const parsed = parseStoredMessage(row);
       return {
-        id: row.id,
+        id: parsed.id,
         role: row.role,
-        ...payload,
+        type: parsed.type,
+        content: parsed.content,
+        summary: parsed.summary,
+        timestamp: parsed.timestamp,
         createdAt: row.created_at,
       };
     });

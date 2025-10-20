@@ -10,6 +10,8 @@ import {
   Avatar,
   Tooltip,
   Paper,
+  Chip,
+  Stack,
 } from '@mui/material';
 import {
   Close as CloseIcon,
@@ -41,14 +43,21 @@ export const ChatBoard: React.FC<ChatBoardProps> = ({ variant = 'drawer', onClos
     messages,
     isLoading,
     sendMessage,
-    clearMessages,
     acknowledgeMessages,
     plannerStream,
+    sessions,
+    isFetchingSessions,
+    selectSession,
+    startNewChat,
+    sessionId,
   } = useChat();
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const isEmbedded = variant === 'embedded';
 
   const streamingEnabled = isPlannerStreamingEnabled();
+
+  const activeSession = sessions.find((item) => item.id === sessionId) ?? null;
+  const recentSessions = sessions.filter((item) => item.id !== sessionId).slice(0, 3);
 
   const streamState = usePlannerStream({
     sessionId: plannerStream?.sessionId,
@@ -71,11 +80,45 @@ export const ChatBoard: React.FC<ChatBoardProps> = ({ variant = 'drawer', onClos
     }
   }, [acknowledgeMessages, isEmbedded, messages.length]);
 
-  const handleClearMessages = () => {
-    if (window.confirm('Are you sure you want to clear all messages?')) {
-      clearMessages();
+  const handleStartNewChat = () => {
+    if (window.confirm('Start a new chat? Your current conversation summary will remain available in history.')) {
+      void startNewChat();
     }
   };
+
+  const renderSessionButton = (session: typeof sessions[number]) => (
+    <Button
+      key={session.id}
+      variant="outlined"
+      size="small"
+      onClick={() => {
+        void selectSession(session.id);
+      }}
+      sx={{
+        textTransform: 'none',
+        borderRadius: 2,
+        borderColor: 'divider',
+        px: 1.5,
+        py: 1,
+        maxWidth: 220,
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'flex-start',
+        gap: 0.5,
+      }}
+    >
+      <Typography variant="body2" sx={{ fontWeight: 600, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        {session.title}
+      </Typography>
+      <Typography
+        variant="caption"
+        color="text.secondary"
+        sx={{ maxWidth: '100%', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
+      >
+        {session.preview || 'No replies yet'}
+      </Typography>
+    </Button>
+  );
 
   const handleScrollToLatest = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -143,6 +186,37 @@ export const ChatBoard: React.FC<ChatBoardProps> = ({ variant = 'drawer', onClos
             <Typography variant="body2" color="text.secondary">
               Ask about anything in your workspace for instant help.
             </Typography>
+            <Stack spacing={1.25} sx={{ mt: 1.5 }}>
+              <Stack direction="row" alignItems="center" spacing={1}>
+                <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, letterSpacing: 0.4 }}>
+                  Current chat
+                </Typography>
+                <Chip
+                  label={activeSession?.title || 'New conversation'}
+                  color="primary"
+                  size="small"
+                  sx={{ maxWidth: 240, '& .MuiChip-label': { overflow: 'hidden', textOverflow: 'ellipsis' } }}
+                />
+                {isFetchingSessions && <CircularProgress size={14} />}
+              </Stack>
+              <Stack spacing={1}>
+                <Stack direction="row" alignItems="center" spacing={1}>
+                  <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, letterSpacing: 0.4 }}>
+                    Recent chats
+                  </Typography>
+                  {recentSessions.length === 0 && (
+                    <Typography variant="caption" color="text.disabled">
+                      You have no previous chats yet.
+                    </Typography>
+                  )}
+                </Stack>
+                {recentSessions.length > 0 && (
+                  <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                    {recentSessions.map((session) => renderSessionButton(session))}
+                  </Stack>
+                )}
+              </Stack>
+            </Stack>
           </Box>
         </Box>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25 }}>
@@ -160,11 +234,11 @@ export const ChatBoard: React.FC<ChatBoardProps> = ({ variant = 'drawer', onClos
               <KeyboardDoubleArrowDownIcon fontSize="small" />
             </IconButton>
           </Tooltip>
-          <Tooltip title="Clear conversation">
+          <Tooltip title="Start a new chat thread">
             <Button
               variant="outlined"
               size="small"
-              onClick={handleClearMessages}
+              onClick={handleStartNewChat}
               sx={{
                 textTransform: 'none',
                 fontWeight: 600,
@@ -173,7 +247,7 @@ export const ChatBoard: React.FC<ChatBoardProps> = ({ variant = 'drawer', onClos
                 borderColor: 'divider',
               }}
             >
-              Clear
+              New chat
             </Button>
           </Tooltip>
           {onClose && (

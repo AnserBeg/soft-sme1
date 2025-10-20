@@ -5,6 +5,7 @@ import {
   AgentChatEvent,
   AgentChatMessage,
   PlannerStreamHandshake,
+  AgentChatSessionPreview,
 } from '../services/chatService';
 import { ChatMessageItem } from '../components/ChatMessage';
 import { VoiceCallArtifact } from '../types/voice';
@@ -48,11 +49,18 @@ const normalizeMessage = (message: AgentChatMessage): ChatMessageItem => {
     message.callArtifacts
   );
 
+  const derivedContent =
+    message.type === 'summary'
+      ? message.summary ?? message.content
+      : message.type === 'text'
+        ? content ?? message.content
+        : message.content;
+
   return {
     id: message.id,
     role: message.role,
     type: message.type || (message.role === 'user' ? 'user_text' : 'text'),
-    content: message.type === 'text' ? content ?? message.content : message.content,
+    content: derivedContent,
     summary: message.summary,
     task: message.task,
     link: message.link,
@@ -70,6 +78,8 @@ export const useChat = () => {
   const [isOpen, setIsOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const [plannerStream, setPlannerStream] = useState<PlannerStreamHandshake | null>(null);
+  const [sessions, setSessions] = useState<AgentChatSessionPreview[]>([]);
+  const [isFetchingSessions, setIsFetchingSessions] = useState(false);
   const [sessionId, setSessionId] = useState<number | null>(() => {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (!stored) return null;
@@ -81,15 +91,44 @@ export const useChat = () => {
   const pollTimerRef = useRef<NodeJS.Timeout | null>(null);
   const pendingFetchRef = useRef<Promise<void> | null>(null);
 
+  const loadSessions = useCallback(
+    async (options?: { activeId?: number | null; quiet?: boolean }) => {
+      const includeId = options?.activeId ?? sessionId ?? null;
+      if (!options?.quiet) {
+        setIsFetchingSessions(true);
+      }
+      try {
+        const list = await chatService.listSessions(4, includeId ?? undefined);
+        setSessions(list);
+        if (!sessionId && list.length > 0) {
+          const nextId = list[0].id;
+          setSessionId(nextId);
+          localStorage.setItem(STORAGE_KEY, String(nextId));
+        }
+      } catch (error) {
+        console.error('Failed to load chat sessions', error);
+      } finally {
+        if (!options?.quiet) {
+          setIsFetchingSessions(false);
+        }
+      }
+    },
+    [sessionId]
+  );
+
   const ensureSession = useCallback(async (): Promise<number> => {
     if (sessionId) {
+      if (!sessions.length) {
+        loadSessions({ activeId: sessionId, quiet: true }).catch(() => undefined);
+      }
       return sessionId;
     }
     const newSessionId = await chatService.createSession();
     localStorage.setItem(STORAGE_KEY, String(newSessionId));
     setSessionId(newSessionId);
+    await loadSessions({ activeId: newSessionId, quiet: true });
     return newSessionId;
-  }, [sessionId]);
+  }, [sessionId, sessions.length, loadSessions]);
 
   const applyUnreadTracking = useCallback(
     (nextMessages: ChatMessageItem[]) => {
@@ -132,12 +171,12 @@ export const useChat = () => {
   );
 
   const fetchMessages = useCallback(
-    async (opts?: { showSpinner?: boolean }) => {
+    async (opts?: { showSpinner?: boolean; sessionId?: number; skipUnreadTracking?: boolean }) => {
       if (pendingFetchRef.current) {
         return pendingFetchRef.current;
       }
       const run = (async () => {
-        const id = await ensureSession();
+        const id = opts?.sessionId ?? (await ensureSession());
         if (opts?.showSpinner) {
           setIsLoading(true);
         }
@@ -145,7 +184,9 @@ export const useChat = () => {
           const serverMessages = await chatService.fetchMessages(id);
           const normalized = serverMessages.map(normalizeMessage);
           setMessages(normalized);
-          applyUnreadTracking(normalized);
+          if (!opts?.skipUnreadTracking) {
+            applyUnreadTracking(normalized);
+          }
         } catch (error) {
           console.error('Failed to load chat history', error);
           if (!opts?.showSpinner) {
@@ -170,6 +211,12 @@ export const useChat = () => {
       toast.error('Unable to start AI assistant session.');
     });
   }, [ensureSession]);
+
+  useEffect(() => {
+    loadSessions({ activeId: sessionId ?? undefined, quiet: true }).catch((error) => {
+      console.error('Failed to initialize chat sessions', error);
+    });
+  }, [loadSessions, sessionId]);
 
   useEffect(() => {
     if (!sessionId) {
@@ -264,6 +311,7 @@ export const useChat = () => {
         addEventMessages(events);
         setPlannerStream(plan ?? null);
         await fetchMessages();
+        void loadSessions({ activeId: id, quiet: true });
       } catch (error) {
         console.error('Error sending message:', error);
         toast.error('Sorry, the Workspace Copilot encountered an error.');
@@ -271,18 +319,48 @@ export const useChat = () => {
         setIsLoading(false);
       }
     },
-    [addEventMessages, ensureSession, fetchMessages]
+    [addEventMessages, ensureSession, fetchMessages, loadSessions]
   );
 
   const clearPlannerStream = useCallback(() => {
     setPlannerStream(null);
   }, []);
 
-  const clearMessages = useCallback(() => {
-    setMessages([]);
-    setUnreadCount(0);
-    clearPlannerStream();
-  }, [clearPlannerStream]);
+  const startNewChat = useCallback(async () => {
+    try {
+      setIsLoading(true);
+      const newId = await chatService.createSession();
+      localStorage.setItem(STORAGE_KEY, String(newId));
+      setSessionId(newId);
+      setMessages([]);
+      setUnreadCount(0);
+      setPlannerStream(null);
+      lastAssistantMessageIdRef.current = null;
+      await loadSessions({ activeId: newId });
+      return newId;
+    } catch (error) {
+      console.error('Failed to start new chat session', error);
+      toast.error('Unable to create a new chat right now.');
+      return null;
+    } finally {
+      setIsLoading(false);
+    }
+  }, [loadSessions]);
+
+  const selectSession = useCallback(
+    async (id: number) => {
+      if (sessionId === id) {
+        return;
+      }
+      localStorage.setItem(STORAGE_KEY, String(id));
+      setSessionId(id);
+      setMessages([]);
+      setPlannerStream(null);
+      lastAssistantMessageIdRef.current = null;
+      await loadSessions({ activeId: id, quiet: true });
+    },
+    [loadSessions, sessionId]
+  );
 
   const toggleChat = useCallback(() => {
     setIsOpen((prev) => {
@@ -315,12 +393,16 @@ export const useChat = () => {
     isOpen,
     unreadCount,
     sendMessage,
-    clearMessages,
     toggleChat,
     closeChat,
     openChat,
     acknowledgeMessages,
     plannerStream,
     clearPlannerStream,
+    sessions,
+    isFetchingSessions,
+    selectSession,
+    startNewChat,
+    sessionId,
   };
 };
