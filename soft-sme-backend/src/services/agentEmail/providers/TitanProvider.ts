@@ -66,13 +66,30 @@ const normalizeAddresses = (value?: string | string[]): string[] => {
     .filter((entry) => entry.length > 0);
 };
 
-const appendSearchValue = (current: string | string[] | undefined, value: string): string | string[] => {
+const toSearchList = (current: string | string[] | undefined): string[] => {
   if (!current) {
-    return value;
+    return [];
   }
-  const list = Array.isArray(current) ? current : [current];
-  list.push(value);
-  return list;
+
+  const source = Array.isArray(current) ? current : current.split(',');
+
+  return source
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+};
+
+const appendSearchValue = (current: string | string[] | undefined, value: string): string => {
+  const normalized = value.trim();
+  if (!normalized) {
+    return Array.isArray(current) ? current.join(', ') : current ?? '';
+  }
+
+  const entries = toSearchList(current);
+  if (!entries.includes(normalized)) {
+    entries.push(normalized);
+  }
+
+  return entries.join(', ');
 };
 
 const parseDateToken = (value: string): Date | undefined => {
@@ -83,10 +100,14 @@ const parseDateToken = (value: string): Date | undefined => {
   return date;
 };
 
+type MutableSearchObject = Partial<SearchObject> & {
+  text?: string;
+};
+
 export const parseQuery = (query: string): { search: SearchObject } => {
-  const search: SearchObject = {};
+  const search: MutableSearchObject = {};
   const textTerms: string[] = [];
-  const headerPairs: Array<[string, string]> = [];
+  const headerCriteria: Array<[string, string]> = [];
 
   const tokens = Array.from(query.matchAll(/(\w+:"[^"]+"|\w+:[^\s]+|"[^"]+"|\S+)/g)).map((match) => match[0]);
 
@@ -137,7 +158,10 @@ export const parseQuery = (query: string): { search: SearchObject } => {
       }
       case 'has':
         if (value.toLowerCase() === 'attachment') {
-          headerPairs.push(['Content-Type', 'multipart']);
+          const marker: [string, string] = ['Content-Type', 'multipart'];
+          if (!headerCriteria.some(([key, headerValue]) => key === marker[0] && headerValue === marker[1])) {
+            headerCriteria.push(marker);
+          }
         }
         break;
       case 'unread':
@@ -156,11 +180,11 @@ export const parseQuery = (query: string): { search: SearchObject } => {
     search.text = textQuery.join(' ');
   }
 
-  if (headerPairs.length > 0) {
-    search.header = headerPairs;
+  if (headerCriteria.length > 0) {
+    search.header = headerCriteria as unknown as SearchObject['header'];
   }
 
-  return { search };
+  return { search: search as SearchObject };
 };
 
 const normalizeDateString = (date: Date | string | number | undefined): string => {
@@ -335,7 +359,10 @@ export class TitanProvider implements EmailProvider {
 
   private async fetchByMessageId(messageId: string): Promise<EmailMessageDetail> {
     return this.withMailbox(async (client) => {
-      const matches = await client.search({ header: [['Message-ID', messageId]] }, { uid: true });
+      const matches = await client.search(
+        { header: [['Message-ID', messageId]] as unknown as SearchObject['header'] },
+        { uid: true }
+      );
       const uidList = Array.isArray(matches) ? matches : [];
       if (uidList.length === 0) {
         throw new Error('Original message not found in Titan mailbox for reply.');
