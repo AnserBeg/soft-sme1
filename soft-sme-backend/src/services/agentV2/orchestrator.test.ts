@@ -1,5 +1,6 @@
 import type { Pool } from 'pg';
 import { AgentOrchestratorV2, AgentToolRegistry } from './orchestrator';
+import type { AgentEvent } from './orchestrator';
 import { AgentAnalyticsLogger } from './analyticsLogger';
 import aiAssistantService from '../aiAssistantService';
 import { AIService } from '../aiService';
@@ -14,6 +15,13 @@ jest.mock('../aiAssistantService', () => ({
 describe('AgentOrchestratorV2 intent routing', () => {
   const pool = { query: jest.fn() } as unknown as Pool;
   const mockSendMessage = aiAssistantService.sendMessage as jest.Mock;
+
+  const expectTextEvent = (event: AgentEvent) => {
+    if (event.type !== 'text') {
+      throw new Error(`Expected text event but received ${event.type}`);
+    }
+    return event;
+  };
 
   const buildOrchestrator = (registry: Partial<AgentToolRegistry>) =>
     new AgentOrchestratorV2(pool, registry as AgentToolRegistry);
@@ -134,9 +142,10 @@ describe('AgentOrchestratorV2 intent routing', () => {
       const response = await orchestrator.handleMessage(11, 'find vendor parts', { companyId: 1, userId: 2 });
 
       expect(tool).toHaveBeenCalledTimes(1);
-      expect(response.events[0].content).toContain("Vendor 'Parts for Truck Inc' found (1 record).");
-      expect(response.events[0].uiHints).toBeDefined();
-      expect(response.events[0].severity).toBe('info');
+      const successEvent = expectTextEvent(response.events[0]);
+      expect(successEvent.content).toContain("Vendor 'Parts for Truck Inc' found (1 record).");
+      expect(successEvent.uiHints).toBeDefined();
+      expect(successEvent.severity).toBe('info');
       expect(summarySpy).toHaveBeenCalledWith(
         11,
         'inventoryLookup',
@@ -168,8 +177,9 @@ describe('AgentOrchestratorV2 intent routing', () => {
 
       const response = await orchestrator.handleMessage(12, 'find vendor parts', { companyId: 1, userId: 2 });
 
-      expect(response.events[0].content).toContain('Did you mean one of these vendors?');
-      expect(response.events[0].content).toContain('Reply with the number or the exact name.');
+      const disambiguationEvent = expectTextEvent(response.events[0]);
+      expect(disambiguationEvent.content).toContain('Did you mean one of these vendors?');
+      expect(disambiguationEvent.content).toContain('Reply with the number or the exact name.');
       expect(summarySpy).toHaveBeenCalledWith(
         12,
         'inventoryLookup',
@@ -191,9 +201,10 @@ describe('AgentOrchestratorV2 intent routing', () => {
 
       const response = await orchestrator.handleMessage(13, 'find unknown vendor', { companyId: 1, userId: 2 });
 
-      expect(response.events[0].content).toContain("No vendor named 'Unknown Vendor' was found.");
-      expect(response.events[0].content).toContain('What I tried:');
-      expect(response.events[0].severity).toBe('warning');
+      const emptyEvent = expectTextEvent(response.events[0]);
+      expect(emptyEvent.content).toContain("No vendor named 'Unknown Vendor' was found.");
+      expect(emptyEvent.content).toContain('What I tried:');
+      expect(emptyEvent.severity).toBe('warning');
       expect(summarySpy).toHaveBeenCalledWith(
         13,
         'inventoryLookup',
@@ -216,8 +227,9 @@ describe('AgentOrchestratorV2 intent routing', () => {
 
       const response = await orchestrator.handleMessage(14, 'find vendor parts', { companyId: 1, userId: 2 });
 
-      expect(response.events[0].content).toContain("I don't have permission to view this data.");
-      expect(response.events[0].severity).toBe('error');
+      const errorEvent = expectTextEvent(response.events[0]);
+      expect(errorEvent.content).toContain("I don't have permission to view this data.");
+      expect(errorEvent.severity).toBe('error');
       expect(summarySpy).toHaveBeenCalledWith(
         14,
         'inventoryLookup',
