@@ -60,15 +60,20 @@ describe('TitanProvider', () => {
   });
 
   it('translates search filters into IMAP criteria', () => {
-    const { criteria } = TitanProviderInternals.parseQuery('from:bob@example.com subject:"Quarterly" has:attachment after:2024-01-01 hello world');
-    expect(criteria).toEqual(
-      expect.arrayContaining([
-        ['FROM', 'bob@example.com'],
-        ['SUBJECT', 'Quarterly'],
-        ['HEADER', 'Content-Type', 'multipart'],
-        expect.arrayContaining(['TEXT', expect.stringContaining('hello world')]),
-      ])
+    const { search } = TitanProviderInternals.parseQuery(
+      'from:bob@example.com subject:"Quarterly" has:attachment after:2024-01-01 hello world'
     );
+
+    expect(search.from).toBe('bob@example.com');
+    expect(search.subject).toBe('Quarterly');
+    expect(search.since).toBeInstanceOf(Date);
+    expect(search.text).toContain('hello world');
+
+    const headerTuples = Array.isArray(search.header)
+      ? (search.header as Array<[string, string]>)
+      : [];
+
+    expect(headerTuples).toContainEqual(['Content-Type', 'multipart']);
   });
 
   it('sanitizes HTML when reading messages', async () => {

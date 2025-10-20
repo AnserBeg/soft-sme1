@@ -107,7 +107,7 @@ type MutableSearchObject = Partial<SearchObject> & {
 export const parseQuery = (query: string): { search: SearchObject } => {
   const search: MutableSearchObject = {};
   const textTerms: string[] = [];
-  const headerMap: Record<string, string | boolean> = {};
+  const headerCriteria: Array<[string, string]> = [];
 
   const tokens = Array.from(query.matchAll(/(\w+:"[^"]+"|\w+:[^\s]+|"[^"]+"|\S+)/g)).map((match) => match[0]);
 
@@ -159,8 +159,8 @@ export const parseQuery = (query: string): { search: SearchObject } => {
       case 'has':
         if (value.toLowerCase() === 'attachment') {
           const marker: [string, string] = ['Content-Type', 'multipart'];
-          if (!headerPairs.some(([key, headerValue]) => key === marker[0] && headerValue === marker[1])) {
-            headerPairs.push(marker);
+          if (!headerCriteria.some(([key, headerValue]) => key === marker[0] && headerValue === marker[1])) {
+            headerCriteria.push(marker);
           }
         }
         break;
@@ -180,8 +180,8 @@ export const parseQuery = (query: string): { search: SearchObject } => {
     search.text = textQuery.join(' ');
   }
 
-  if (headerPairs.length > 0) {
-    search.header = headerPairs as SearchObject['header'];
+  if (headerCriteria.length > 0) {
+    search.header = headerCriteria as unknown as SearchObject['header'];
   }
 
   return { search: search as SearchObject };
@@ -360,7 +360,7 @@ export class TitanProvider implements EmailProvider {
   private async fetchByMessageId(messageId: string): Promise<EmailMessageDetail> {
     return this.withMailbox(async (client) => {
       const matches = await client.search(
-        { header: [['Message-ID', messageId]] as SearchObject['header'] },
+        { header: [['Message-ID', messageId]] as unknown as SearchObject['header'] },
         { uid: true }
       );
       const uidList = Array.isArray(matches) ? matches : [];
