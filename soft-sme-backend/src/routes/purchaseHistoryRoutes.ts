@@ -697,9 +697,31 @@ router.get('/:id/allocation-suggestions', async (req: Request, res: Response) =>
       [id]
     );
     
-    const poLineItems = poLineItemsResult.rows;
-    
-    // Aggregate line items by part number to handle duplicates
+      const poLineItems = poLineItemsResult.rows;
+
+      const normalizedPartNumbers = Array.from(
+        new Set(
+          poLineItems
+            .map((item: any) => (item?.part_number ? String(item.part_number).trim().toUpperCase() : ''))
+            .filter((pn: string) => pn.length > 0)
+        )
+      );
+
+      const partTypeMap = new Map<string, string>();
+      if (normalizedPartNumbers.length > 0) {
+        const placeholders = normalizedPartNumbers.map((_, idx) => `$${idx + 1}`).join(',');
+        const typeResult = await client.query(
+          `SELECT part_number, part_type FROM inventory WHERE UPPER(part_number) IN (${placeholders})`,
+          normalizedPartNumbers
+        );
+        for (const row of typeResult.rows) {
+          if (row?.part_number) {
+            partTypeMap.set(String(row.part_number).toUpperCase(), (row.part_type || '').toLowerCase());
+          }
+        }
+      }
+
+      // Aggregate line items by part number to handle duplicates
     const aggregatedItems = new Map();
     for (const poItem of poLineItems) {
       const partNumber = poItem.part_number.toString().trim().toUpperCase();
@@ -1216,6 +1238,7 @@ router.post('/:id/close-with-allocations', async (req: Request, res: Response) =
       } else {
         console.log(`ℹ️ No surplus for part ${partNumber} - no inventory increase needed`);
       }
+    }
 
     // Update aggregated parts to order table
     await updateAggregatedPartsToOrder(poLineItems, client);
@@ -1252,13 +1275,13 @@ router.post('/:id/close-with-allocations', async (req: Request, res: Response) =
     console.log('✅ Purchase order allocation completed successfully');
     console.log(`📊 Summary: ${allocations.length} allocations processed, ${Object.keys(surplusPerPart).length} surplus parts processed`);
     
-    res.json({ 
+    res.json({
       message: 'Purchase order closed successfully with allocations',
       purchase_order_id: id,
       allocations_processed: allocations.length,
       surplus_processed: Object.keys(surplusPerPart).length
     });
-    
+
   } catch (error: any) {
     await client.query('ROLLBACK');
     console.error('Error closing purchase order with allocations:', error);
