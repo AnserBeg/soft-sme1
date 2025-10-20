@@ -14,15 +14,25 @@ router.get('/', async (req: Request, res: Response) => {
 
   try {
     let query = `
-      SELECT 
+      SELECT
         ph.*,
         CAST(ph.subtotal AS FLOAT) as subtotal,
         CAST(ph.total_gst_amount AS FLOAT) as total_gst_amount,
         CAST(ph.total_amount AS FLOAT) as total_amount,
         COALESCE(vm.vendor_name, 'No Vendor') as vendor_name,
-        ph.gst_rate
-      FROM purchasehistory ph 
-      LEFT JOIN vendormaster vm ON ph.vendor_id = vm.vendor_id 
+        ph.gst_rate,
+        COALESCE(ros.requested_count, 0) AS return_requested_count,
+        COALESCE(ros.returned_count, 0) AS return_returned_count,
+        (COALESCE(ros.requested_count, 0) + COALESCE(ros.returned_count, 0)) > 0 AS has_returns
+      FROM purchasehistory ph
+      LEFT JOIN vendormaster vm ON ph.vendor_id = vm.vendor_id
+      LEFT JOIN LATERAL (
+        SELECT
+          COUNT(*) FILTER (WHERE ro.status = 'Requested') AS requested_count,
+          COUNT(*) FILTER (WHERE ro.status = 'Returned') AS returned_count
+        FROM return_orders ro
+        WHERE ro.purchase_id = ph.purchase_id
+      ) ros ON TRUE
     `;
 
     const whereClauses = [];
@@ -72,15 +82,25 @@ router.get('/', async (req: Request, res: Response) => {
 router.get('/open', async (req: Request, res: Response) => {
   try {
     const result = await pool.query(`
-      SELECT 
+      SELECT
         ph.*,
         CAST(ph.subtotal AS FLOAT) as subtotal,
         CAST(ph.total_gst_amount AS FLOAT) as total_gst_amount,
         CAST(ph.total_amount AS FLOAT) as total_amount,
         COALESCE(vm.vendor_name, 'No Vendor') as vendor_name,
-        ph.gst_rate
-      FROM purchasehistory ph 
-      LEFT JOIN vendormaster vm ON ph.vendor_id = vm.vendor_id 
+        ph.gst_rate,
+        COALESCE(ros.requested_count, 0) AS return_requested_count,
+        COALESCE(ros.returned_count, 0) AS return_returned_count,
+        (COALESCE(ros.requested_count, 0) + COALESCE(ros.returned_count, 0)) > 0 AS has_returns
+      FROM purchasehistory ph
+      LEFT JOIN vendormaster vm ON ph.vendor_id = vm.vendor_id
+      LEFT JOIN LATERAL (
+        SELECT
+          COUNT(*) FILTER (WHERE ro.status = 'Requested') AS requested_count,
+          COUNT(*) FILTER (WHERE ro.status = 'Returned') AS returned_count
+        FROM return_orders ro
+        WHERE ro.purchase_id = ph.purchase_id
+      ) ros ON TRUE
       WHERE LOWER(ph.status) = 'open'
       ORDER BY ph.created_at DESC
     `);

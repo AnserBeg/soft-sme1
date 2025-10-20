@@ -332,8 +332,28 @@ router.get('/:id', async (req, res) => {
     if (result.rows.length === 0) return res.status(404).json({ error: 'Not found' });
     // Fetch line items
     const lineItemsRes = await pool.query('SELECT * FROM purchaselineitems WHERE purchase_id = $1', [id]);
+    const returnOrdersRes = await pool.query(
+      `SELECT ro.return_id, ro.return_number, ro.status, ro.requested_at, ro.returned_at,
+              COALESCE(SUM(rol.quantity), 0) AS total_quantity
+       FROM return_orders ro
+       LEFT JOIN return_order_line_items rol ON rol.return_id = ro.return_id
+       WHERE ro.purchase_id = $1
+       GROUP BY ro.return_id
+       ORDER BY ro.requested_at DESC`,
+      [id]
+    );
+    const returnSummaryRes = await pool.query(
+      `SELECT
+         COUNT(*) FILTER (WHERE status = 'Requested') AS requested_count,
+         COUNT(*) FILTER (WHERE status = 'Returned') AS returned_count
+       FROM return_orders
+       WHERE purchase_id = $1`,
+      [id]
+    );
     const po = result.rows[0];
     po.lineItems = lineItemsRes.rows;
+    po.return_orders = returnOrdersRes.rows;
+    po.return_summary = returnSummaryRes.rows[0] || { requested_count: 0, returned_count: 0 };
     res.json(po);
   } catch (err) {
     console.error('Error fetching PO detail:', err);

@@ -133,15 +133,39 @@ const OpenPurchaseOrdersPage: React.FC = () => {
     { field: 'gst_rate', headerName: 'GST Rate (%)', flex: 0.7, minWidth: 80, valueFormatter: (params) => params.value != null && !isNaN(Number(params.value)) ? `${Number(params.value).toFixed(2)}%` : '5.00%' },
     { field: 'total_gst_amount', headerName: 'GST', flex: 0.7, minWidth: 80, valueFormatter: (params) => params.value != null && !isNaN(Number(params.value)) ? `$${Number(params.value).toFixed(2)}` : '$0.00' },
     { field: 'total_amount', headerName: 'Total', flex: 0.8, minWidth: 100, valueFormatter: (params) => params.value != null && !isNaN(Number(params.value)) ? `$${Number(params.value).toFixed(2)}` : '$0.00' },
-    { field: 'status', headerName: 'Status', flex: 0.8, minWidth: 100, 
+    { field: 'status', headerName: 'Status', flex: 0.8, minWidth: 100,
       renderCell: (params) => (
-        <Chip 
-          label={params.value} 
+        <Chip
+          label={params.value}
           color={params.value === 'Open' ? 'success' : 'error'}
           size="small"
           variant="outlined"
         />
       )
+    },
+    {
+      field: 'return_summary',
+      headerName: 'Returns',
+      flex: 0.9,
+      minWidth: 150,
+      sortable: false,
+      renderCell: (params) => {
+        const requested = params.row.return_requested_count ?? 0;
+        const completed = params.row.return_returned_count ?? 0;
+        if (!requested && !completed) {
+          return <Typography variant="body2" color="text.secondary">None</Typography>;
+        }
+        return (
+          <Stack direction="row" spacing={1}>
+            {requested > 0 && (
+              <Chip label={`Requested ${requested}`} color="warning" size="small" variant="outlined" />
+            )}
+            {completed > 0 && (
+              <Chip label={`Returned ${completed}`} color="success" size="small" variant="outlined" />
+            )}
+          </Stack>
+        );
+      }
     },
     {
       field: 'qbo_exported',
