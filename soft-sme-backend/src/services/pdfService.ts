@@ -1,7 +1,6 @@
 import PDFDocument from 'pdfkit';
 import { Pool } from 'pg';
-import fs from 'fs';
-import path from 'path';
+import { getLogoImageSource } from '../utils/pdfLogoHelper';
 
 export class PDFService {
   private pool: Pool;
@@ -69,11 +68,10 @@ export class PDFService {
         let logoX = 50;
         let companyTitleX = logoX + logoWidth + 20;
         
-        // Logo (left) - always use bundled default logo
-        const defaultLogoPath = path.join(__dirname, '../../assets/default-logo.png');
-        if (fs.existsSync(defaultLogoPath)) {
+        const logoSource = await getLogoImageSource(businessProfile?.logo_url);
+        if (logoSource) {
           try {
-            doc.image(defaultLogoPath, logoX, headerY, { fit: [logoWidth, logoHeight] });
+            doc.image(logoSource, logoX, headerY, { fit: [logoWidth, logoHeight] });
           } catch (error) {
             console.error('Error adding logo to PDF:', error);
           }
@@ -320,11 +318,10 @@ export class PDFService {
         let pageWidth = 600;
         let logoX = 50;
         let companyTitleX = logoX + logoWidth + 20;
-        // Logo (left) - always use bundled default logo
-        const defaultLogoPath = path.join(__dirname, '../../assets/default-logo.png');
-        if (fs.existsSync(defaultLogoPath)) {
+        const logoSource = await getLogoImageSource(businessProfile?.logo_url);
+        if (logoSource) {
           try {
-            doc.image(defaultLogoPath, logoX, headerY, { fit: [logoWidth, logoHeight] });
+            doc.image(logoSource, logoX, headerY, { fit: [logoWidth, logoHeight] });
           } catch (error) {
             console.error('Error adding logo to PDF:', error);
           }

@@ -3,8 +3,7 @@ import { pool } from '../db';
 import { getNextSalesOrderSequenceNumberForYear } from '../utils/sequence';
 import { QuoteService } from '../services/QuoteService';
 import PDFDocument from 'pdfkit';
-import fs from 'fs';
-import path from 'path';
+import { getLogoImageSource } from '../utils/pdfLogoHelper';
 
 const formatCurrency = (value: number | string | null | undefined): string => {
   const amount = Number(value ?? 0);
@@ -463,15 +462,14 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
     let pageWidth = 600;
     let logoX = 50;
     let companyTitleX = logoX + logoWidth + 20;
-    // Logo (left) - always use bundled default logo
-    const defaultLogoPath = path.join(__dirname, '../../assets/default-logo.png');
-    if (fs.existsSync(defaultLogoPath)) {
-        try {
-        doc.image(defaultLogoPath, logoX, headerY, { fit: [logoWidth, logoHeight] });
-        } catch (error) {
-          console.error('Error adding logo to PDF:', error);
-        }
+    const logoSource = await getLogoImageSource(businessProfile?.logo_url);
+    if (logoSource) {
+      try {
+        doc.image(logoSource, logoX, headerY, { fit: [logoWidth, logoHeight] });
+      } catch (error) {
+        console.error('Error adding logo to PDF:', error);
       }
+    }
     // Company name (right of logo, vertically centered with logo)
     const fontSize = 16;
     // Company name slightly above vertical center of logo
