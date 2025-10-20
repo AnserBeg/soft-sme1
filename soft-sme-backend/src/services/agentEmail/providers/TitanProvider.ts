@@ -66,13 +66,30 @@ const normalizeAddresses = (value?: string | string[]): string[] => {
     .filter((entry) => entry.length > 0);
 };
 
-const appendSearchValue = (current: string | string[] | undefined, value: string): string | string[] => {
+const toSearchList = (current: string | string[] | undefined): string[] => {
   if (!current) {
-    return value;
+    return [];
   }
-  const list = Array.isArray(current) ? current : [current];
-  list.push(value);
-  return list;
+
+  const source = Array.isArray(current) ? current : current.split(',');
+
+  return source
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+};
+
+const appendSearchValue = (current: string | string[] | undefined, value: string): string => {
+  const normalized = value.trim();
+  if (!normalized) {
+    return Array.isArray(current) ? current.join(', ') : current ?? '';
+  }
+
+  const entries = toSearchList(current);
+  if (!entries.includes(normalized)) {
+    entries.push(normalized);
+  }
+
+  return entries.join(', ');
 };
 
 const parseDateToken = (value: string): Date | undefined => {
@@ -83,8 +100,13 @@ const parseDateToken = (value: string): Date | undefined => {
   return date;
 };
 
+type MutableSearchObject = SearchObject & {
+  text?: string;
+  header?: Array<[string, string]>;
+};
+
 export const parseQuery = (query: string): { search: SearchObject } => {
-  const search: SearchObject = {};
+  const search: MutableSearchObject = {};
   const textTerms: string[] = [];
   const headerPairs: Array<[string, string]> = [];
 
@@ -137,7 +159,10 @@ export const parseQuery = (query: string): { search: SearchObject } => {
       }
       case 'has':
         if (value.toLowerCase() === 'attachment') {
-          headerPairs.push(['Content-Type', 'multipart']);
+          const marker: [string, string] = ['Content-Type', 'multipart'];
+          if (!headerPairs.some(([key, headerValue]) => key === marker[0] && headerValue === marker[1])) {
+            headerPairs.push(marker);
+          }
         }
         break;
       case 'unread':
