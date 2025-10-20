@@ -215,7 +215,10 @@ fi
 
 if [[ -f package-lock.json ]]; then
   log "Installing npm dependencies with npm ci"
-  npm ci --include=dev
+  if ! npm ci --include=dev; then
+    log "npm ci failed; falling back to npm install --include=dev"
+    npm install --include=dev
+  fi
 else
   log "No package-lock.json found. Falling back to npm install"
   npm install --include=dev
