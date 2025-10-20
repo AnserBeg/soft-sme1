@@ -336,7 +336,12 @@ const ReturnOrderDetailPage: React.FC = () => {
               <Button
                 variant="outlined"
                 startIcon={<DownloadIcon />}
-                onClick={() => downloadReturnOrderPdf(Number(id))}
+                onClick={async () => {
+                  const ok = await downloadReturnOrderPdf(Number(id));
+                  if (!ok) {
+                    toast.error('Failed to download return order PDF. Please try again.');
+                  }
+                }}
               >
                 Download
               </Button>

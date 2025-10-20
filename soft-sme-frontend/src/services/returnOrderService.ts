@@ -121,6 +121,44 @@ export const fetchReturnableLineItems = async (
   return [];
 };
 
-export const downloadReturnOrderPdf = (id: number) => {
-  window.open(`/api/return-orders/${id}/pdf`, '_blank');
+const getFilenameFromDisposition = (headerValue?: string | null): string | undefined => {
+  if (!headerValue) {
+    return undefined;
+  }
+
+  const filenameStarMatch = /filename\*=UTF-8''([^;]+)/i.exec(headerValue);
+  if (filenameStarMatch?.[1]) {
+    try {
+      return decodeURIComponent(filenameStarMatch[1]);
+    } catch {
+      return filenameStarMatch[1];
+    }
+  }
+
+  const filenameMatch = /filename="?([^";]+)"?/i.exec(headerValue);
+  return filenameMatch?.[1];
+};
+
+export const downloadReturnOrderPdf = async (id: number): Promise<boolean> => {
+  try {
+    const response = await api.get(`/api/return-orders/${id}/pdf`, { responseType: 'blob' });
+    const blob = new Blob([response.data], { type: 'application/pdf' });
+    const url = window.URL.createObjectURL(blob);
+
+    const suggestedFilename =
+      getFilenameFromDisposition(response.headers['content-disposition']) || `return-order-${id}.pdf`;
+
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', suggestedFilename);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+
+    window.URL.revokeObjectURL(url);
+    return true;
+  } catch (error) {
+    console.error('Failed to download return order PDF', error);
+    return false;
+  }
 };
