@@ -977,8 +977,32 @@ class AIAssistantService {
       action_catalog: []
     };
   }
+
+  async refreshSchema(reason?: string): Promise<{ schema_version: string; schema_hash: string; refreshed_at: string }> {
+    const payload = reason ? { reason } : {};
+    const headers: Record<string, string> = {};
+    const secret = sanitizeEnvValue(process.env.AI_SCHEMA_REFRESH_SECRET);
+    if (secret) {
+      headers['x-refresh-secret'] = secret;
+    }
+
+    try {
+      const response = await axios.post(
+        `${this.aiEndpoint}/schema/refresh`,
+        payload,
+        this.createRequestConfig({
+          timeout: 15000,
+          headers
+        })
+      );
+      return response.data;
+    } catch (error) {
+      console.error('[AI Assistant] Schema refresh request failed:', error);
+      throw error;
+    }
+  }
 }
 
 // Export singleton instance
 export const aiAssistantService = new AIAssistantService();
-export default aiAssistantService; 
+export default aiAssistantService;

@@ -10,6 +10,16 @@ import aiAssistantService from '../services/aiAssistantService';
 const router = express.Router();
 const analyticsLogger = new AgentAnalyticsLogger(pool);
 const skillLibrary = new AgentSkillLibraryService(pool);
+const schemaRefreshSecret = process.env.AI_SCHEMA_REFRESH_SECRET?.trim() || null;
+
+const sanitizeHeaderValue = (value: string | string[] | undefined): string | undefined => {
+  if (!value) {
+    return undefined;
+  }
+  const raw = Array.isArray(value) ? value[0] : value;
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+};
 
 const parseEnvNumeric = (value?: string | null): number | null => {
   if (value == null) {
@@ -317,6 +327,28 @@ router.post('/analytics/events', authMiddleware, async (req: Request, res: Respo
   } catch (error) {
     console.error('agentV2: analytics event error', error);
     res.status(500).json({ error: 'Failed to record analytics event' });
+  }
+});
+
+router.post('/schema/refresh', authMiddleware, async (req: Request, res: Response) => {
+  const providedSecret = sanitizeHeaderValue(req.headers['x-refresh-secret']);
+  const secretMatches = schemaRefreshSecret && providedSecret === schemaRefreshSecret;
+  const authContext = (req as any).auth;
+  const isServiceRequest = authContext?.kind === 'service';
+  const isAdminUser = req.user?.access_role === 'Admin';
+
+  if (!secretMatches && !isAdminUser && !isServiceRequest) {
+    return res.status(403).json({ error: 'Not authorized to refresh schema' });
+  }
+
+  const reason = typeof req.body?.reason === 'string' ? req.body.reason : undefined;
+
+  try {
+    const result = await aiAssistantService.refreshSchema(reason);
+    res.json({ status: 'ok', ...result });
+  } catch (error) {
+    console.error('agentV2: schema refresh error', error);
+    res.status(500).json({ error: 'Failed to refresh schema cache' });
   }
 });
 
