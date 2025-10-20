@@ -4,11 +4,13 @@ import { PDFService } from '../services/pdfService';
 import DocumentEmailService from '../services/DocumentEmailService';
 import { pool } from '../db';
 import { authMiddleware } from '../middleware/authMiddleware';
+import { AgentEmailService } from '../services/agentEmail/service';
 
 const router = express.Router();
 const emailService = new EmailService(pool);
 const pdfService = new PDFService(pool);
 const documentEmailService = new DocumentEmailService(pool, emailService, pdfService);
+const agentEmailService = new AgentEmailService(pool);
 
 // Test email configuration
 router.get('/test', async (req: Request, res: Response) => {
@@ -44,6 +46,47 @@ router.post('/send', authMiddleware, async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Error sending email:', error);
     res.status(500).json({ success: false, message: 'Failed to send email' });
+  }
+});
+
+router.post('/connect/titan', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const userId = req.user?.id ? Number(req.user.id) : null;
+    if (!userId) {
+      return res.status(401).json({ success: false, message: 'User not authenticated' });
+    }
+
+    const connection = await agentEmailService.connectTitan(userId, req.body ?? {});
+    res.json({ success: true, connection });
+  } catch (error: any) {
+    const message = error?.message ?? 'Failed to connect Titan mailbox';
+    if (typeof message === 'string' && message.toLowerCase().includes('failed to connect to titan imap')) {
+      return res.status(502).json({ success: false, message });
+    }
+    if (typeof message === 'string' && message.toLowerCase().includes('failed to verify titan smtp')) {
+      return res.status(502).json({ success: false, message });
+    }
+    if (typeof message === 'string' && message.toLowerCase().includes('required')) {
+      return res.status(400).json({ success: false, message });
+    }
+    console.error('Error connecting Titan mailbox:', message);
+    res.status(500).json({ success: false, message: 'Failed to connect Titan mailbox' });
+  }
+});
+
+router.post('/disconnect', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const userId = req.user?.id ? Number(req.user.id) : null;
+    if (!userId) {
+      return res.status(401).json({ success: false, message: 'User not authenticated' });
+    }
+
+    const result = await agentEmailService.disconnect(userId);
+    res.json({ success: true, result });
+  } catch (error: any) {
+    const message = error?.message ?? 'Failed to disconnect email provider';
+    console.error('Error disconnecting email provider:', message);
+    res.status(500).json({ success: false, message: 'Failed to disconnect email provider' });
   }
 });
 
