@@ -2315,11 +2315,6 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
               </>
             )}
           </Stack>
-          {status === 'Closed' && isEditingClosed && (
-            <Alert severity="info" sx={{ mt: 2 }}>
-              Editing a closed purchase order will immediately adjust on-hand inventory when you save. Quantity reductions are blocked if there is insufficient stock available.
-            </Alert>
-          )}
         </Box>
 
         {!isCreationMode && purchaseOrder && (
