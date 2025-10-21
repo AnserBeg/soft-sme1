@@ -18,6 +18,56 @@ import { AgentEmailService } from '../agentEmail/service';
 import type { ComposeEmailAttachmentPayload } from '../agentEmail/types';
 import { withTransaction, idempotentWrite, extractIdempotencyKeyFromArgs } from '../../lib/idempotency';
 
+type ProcessingResult = { status: 'processing' };
+
+interface TaskCreateDeterministicResult {
+  id: number;
+  status: TaskStatus;
+}
+
+interface TaskUpdateDeterministicResult {
+  id: number;
+  updated: true;
+  status: TaskStatus;
+}
+
+interface TaskMessageDeterministicResult {
+  task_id: number;
+  message_id: number;
+}
+
+function isProcessingResult(value: unknown): value is ProcessingResult {
+  return Boolean(value && typeof value === 'object' && (value as any).status === 'processing');
+}
+
+function isTaskCreateDeterministicResult(value: unknown): value is TaskCreateDeterministicResult {
+  return Boolean(
+    value &&
+      typeof value === 'object' &&
+      typeof (value as any).id === 'number' &&
+      typeof (value as any).status === 'string'
+  );
+}
+
+function isTaskUpdateDeterministicResult(value: unknown): value is TaskUpdateDeterministicResult {
+  return Boolean(
+    value &&
+      typeof value === 'object' &&
+      typeof (value as any).id === 'number' &&
+      (value as any).updated === true &&
+      typeof (value as any).status === 'string'
+  );
+}
+
+function isTaskMessageDeterministicResult(value: unknown): value is TaskMessageDeterministicResult {
+  return Boolean(
+    value &&
+      typeof value === 'object' &&
+      typeof (value as any).task_id === 'number' &&
+      typeof (value as any).message_id === 'number'
+  );
+}
+
 export class AgentToolsV2 {
   private soService: SalesOrderService;
   private emailService: EmailService;
@@ -880,12 +930,57 @@ export class AgentToolsV2 {
     };
 
     const followUp = typeof payload?.followUp === 'string' ? payload.followUp : undefined;
+    const idempotencyKey = extractIdempotencyKeyFromArgs(payload);
 
     try {
-      const event = await this.taskFacade.createTask(sessionId, companyId, userId, {
-        ...taskPayload,
-        followUp,
+      const { deterministicResult, event } = await withTransaction(this.pool, async (client) => {
+        let resolvedEvent: AgentTaskEvent | null = null;
+        const deterministicResult = await idempotentWrite({
+          db: this.pool,
+          toolName: 'task.create',
+          tenantId: String(companyId),
+          idempotencyKey,
+          requestPayload: payload,
+          work: async () => {
+            const createdEvent = await this.taskFacade.createTask(
+              sessionId,
+              companyId,
+              userId,
+              {
+                ...taskPayload,
+                followUp,
+              },
+              client
+            );
+            resolvedEvent = createdEvent;
+            return createdEvent;
+          },
+          buildDeterministicResult: (createdEvent) => ({
+            id: createdEvent.task.id,
+            status: createdEvent.task.status,
+          }),
+        });
+
+        if (!resolvedEvent && isTaskCreateDeterministicResult(deterministicResult)) {
+          resolvedEvent = await this.taskFacade.hydrateTaskEvent(
+            'task_created',
+            companyId,
+            deterministicResult.id,
+            {},
+            client
+          );
+        }
+
+        return { deterministicResult, event: resolvedEvent };
       });
+
+      if (!event) {
+        if (isProcessingResult(deterministicResult)) {
+          throw new Error('Task creation is still processing. Please retry shortly.');
+        }
+        throw new Error('Failed to resolve task creation result.');
+      }
+
       await this.audit(sessionId, 'createTask', payload, { taskId: event.task.id }, true);
       return event;
     } catch (error: any) {
@@ -916,8 +1011,57 @@ export class AgentToolsV2 {
       updates.note = payload.note.trim();
     }
 
+    const idempotencyKey = extractIdempotencyKeyFromArgs(payload);
+
     try {
-      const event = await this.taskFacade.updateTask(sessionId, companyId, userId, taskId, updates);
+      const { deterministicResult, event } = await withTransaction(this.pool, async (client) => {
+        let resolvedEvent: AgentTaskEvent | null = null;
+        const deterministicResult = await idempotentWrite({
+          db: this.pool,
+          toolName: 'task.update',
+          tenantId: String(companyId),
+          targetId: String(taskId),
+          idempotencyKey,
+          requestPayload: payload,
+          work: async () => {
+            const updatedEvent = await this.taskFacade.updateTask(
+              sessionId,
+              companyId,
+              userId,
+              taskId,
+              updates,
+              client
+            );
+            resolvedEvent = updatedEvent;
+            return updatedEvent;
+          },
+          buildDeterministicResult: (updatedEvent) => ({
+            id: taskId,
+            updated: true,
+            status: updatedEvent.task.status,
+          }),
+        });
+
+        if (!resolvedEvent && isTaskUpdateDeterministicResult(deterministicResult)) {
+          resolvedEvent = await this.taskFacade.hydrateTaskEvent(
+            'task_updated',
+            companyId,
+            deterministicResult.id,
+            {},
+            client
+          );
+        }
+
+        return { deterministicResult, event: resolvedEvent };
+      });
+
+      if (!event) {
+        if (isProcessingResult(deterministicResult)) {
+          throw new Error('Task update is still processing. Please retry shortly.');
+        }
+        throw new Error('Failed to resolve task update result.');
+      }
+
       await this.audit(sessionId, 'updateTask', payload, { taskId: event.task.id }, true);
       return event;
     } catch (error: any) {
@@ -950,15 +1094,62 @@ export class AgentToolsV2 {
 
     const reason = typeof payload?.reason === 'string' ? payload.reason : 'agent_comment';
 
+    const idempotencyKey = extractIdempotencyKeyFromArgs(payload);
+
     try {
-      const event = await this.taskFacade.postMessage(
-        sessionId,
-        companyId,
-        userId,
-        taskId,
-        contentSource,
-        reason
-      );
+      const { deterministicResult, event } = await withTransaction(this.pool, async (client) => {
+        let resolvedEvent: AgentTaskEvent | null = null;
+        const deterministicResult = await idempotentWrite({
+          db: this.pool,
+          toolName: 'task.message',
+          tenantId: String(companyId),
+          targetId: String(taskId),
+          idempotencyKey,
+          requestPayload: payload,
+          work: async () => {
+            const messageEvent = await this.taskFacade.postMessage(
+              sessionId,
+              companyId,
+              userId,
+              taskId,
+              contentSource,
+              reason,
+              client
+            );
+            if (!messageEvent.messageId) {
+              throw new Error('Task message creation did not return a message id');
+            }
+            resolvedEvent = messageEvent;
+            return messageEvent;
+          },
+          buildDeterministicResult: (messageEvent) => {
+            if (!messageEvent.messageId) {
+              throw new Error('Task message creation did not return a message id');
+            }
+            return { task_id: taskId, message_id: messageEvent.messageId };
+          },
+        });
+
+        if (!resolvedEvent && isTaskMessageDeterministicResult(deterministicResult)) {
+          resolvedEvent = await this.taskFacade.hydrateTaskEvent(
+            'task_message',
+            companyId,
+            deterministicResult.task_id,
+            { messageId: deterministicResult.message_id },
+            client
+          );
+        }
+
+        return { deterministicResult, event: resolvedEvent };
+      });
+
+      if (!event) {
+        if (isProcessingResult(deterministicResult)) {
+          throw new Error('Task message is still processing. Please retry shortly.');
+        }
+        throw new Error('Failed to resolve task message result.');
+      }
+
       await this.audit(sessionId, 'postTaskMessage', payload, { taskId: event.task.id }, true);
       return event;
     } catch (error: any) {

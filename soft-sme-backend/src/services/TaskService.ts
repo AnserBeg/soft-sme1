@@ -255,7 +255,8 @@ export class TaskService {
     companyId: number,
     creatorId: number,
     input: TaskInput,
-    options: CreateTaskOptions = {}
+    options: CreateTaskOptions = {},
+    clientArg?: PoolClient
   ): Promise<TaskWithRelations> {
     if (!input.title || !input.title.trim()) {
       throw new ServiceError('Task title is required');
@@ -265,10 +266,13 @@ export class TaskService {
     const dueDate = input.dueDate ? this.normalizeDate(input.dueDate, 'dueDate') : null;
     const createdByAgent = Boolean(options.createdByAgent);
     const agentSessionId = options.agentSessionId ?? null;
-    const client = await this.pool.connect();
+    const client = clientArg ?? (await this.pool.connect());
+    const manageTransaction = !clientArg;
 
     try {
-      await client.query('BEGIN');
+      if (manageTransaction) {
+        await client.query('BEGIN');
+      }
       const completedAt = status === 'completed' ? new Date().toISOString() : null;
       const insertResult = await client.query(
         `
@@ -325,21 +329,34 @@ export class TaskService {
       }
 
       const task = await this.getTask(companyId, taskId, client);
-      await client.query('COMMIT');
+      if (manageTransaction) {
+        await client.query('COMMIT');
+      }
       return task;
     } catch (error) {
-      await client.query('ROLLBACK');
+      if (manageTransaction) {
+        await client.query('ROLLBACK');
+      }
       throw error;
     } finally {
-      client.release();
+      if (!clientArg) {
+        client.release();
+      }
     }
   }
 
-  async updateTask(companyId: number, taskId: number, updates: TaskUpdate): Promise<TaskWithRelations> {
+  async updateTask(
+    companyId: number,
+    taskId: number,
+    updates: TaskUpdate,
+    clientArg?: PoolClient
+  ): Promise<TaskWithRelations> {
     const fields: string[] = [];
     const values: any[] = [];
 
-    const existingResult = await this.pool.query(
+    const executor: DbExecutor = clientArg ?? this.pool;
+
+    const existingResult = await executor.query(
       'SELECT status FROM tasks WHERE company_id = $1 AND id = $2',
       [companyId, taskId]
     );
@@ -396,13 +413,13 @@ export class TaskService {
 
     values.push(companyId, taskId);
 
-    const result = await this.pool.query(query, values);
+    const result = await executor.query(query, values);
     if (result.rowCount === 0) {
       throw new ServiceError('Task not found', 404);
     }
 
-    const task = await this.getTask(companyId, taskId);
-    await this.emitAgentStatusUpdate(this.pool, task, previousStatus);
+    const task = await this.getTask(companyId, taskId, executor);
+    await this.emitAgentStatusUpdate(executor, task, previousStatus);
     return task;
   }
 

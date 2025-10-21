@@ -1,6 +1,6 @@
-import { Pool } from 'pg';
+import { Pool, PoolClient } from 'pg';
 import { TaskInput, TaskService, TaskUpdate, TaskWithRelations, CreateTaskOptions } from '../TaskService';
-import { TaskMessageService, TaskParticipant } from '../TaskMessageService';
+import { TaskMessageService, TaskParticipant, Queryable, TaskMessage } from '../TaskMessageService';
 
 interface AgentTaskPayload extends TaskInput {
   followUp?: string;
@@ -14,6 +14,7 @@ export interface AgentTaskEvent {
   type: 'task_created' | 'task_updated' | 'task_message';
   task: TaskWithRelations;
   summary: string;
+  messageId?: number;
 }
 
 export class AgentTaskFacade {
@@ -29,25 +30,30 @@ export class AgentTaskFacade {
     sessionId: number,
     companyId: number,
     userId: number,
-    payload: AgentTaskPayload
+    payload: AgentTaskPayload,
+    client?: PoolClient
   ): Promise<AgentTaskEvent> {
     const options: CreateTaskOptions = {
       createdByAgent: true,
       agentSessionId: sessionId,
     };
 
-    const task = await this.taskService.createTask(companyId, userId, payload, options);
+    const db: Queryable = client ?? this.pool;
+    const messageService = client ? new TaskMessageService(client) : this.messageService;
 
-    await this.subscribe(sessionId, task.id, userId, task.status);
-    await this.ensureParticipant(task.id, userId);
+    const task = await this.taskService.createTask(companyId, userId, payload, options, client);
+
+    await this.subscribe(db, sessionId, task.id, userId, task.status);
+    const participant = await this.ensureParticipant(db, messageService, task.id, userId);
 
     const followUp = payload.followUp?.trim();
     if (followUp) {
-      await this.createAgentMessage(task.id, userId, followUp, 'follow_up');
+      await this.createAgentMessage(messageService, task.id, participant, followUp, 'follow_up');
     } else {
       await this.createAgentMessage(
+        messageService,
         task.id,
-        userId,
+        participant,
         'Workspace Copilot created this task to track your request. I\'ll share updates here as things change.',
         'creation'
       );
@@ -65,14 +71,24 @@ export class AgentTaskFacade {
     companyId: number,
     userId: number,
     taskId: number,
-    updates: AgentTaskUpdate
+    updates: AgentTaskUpdate,
+    client?: PoolClient
   ): Promise<AgentTaskEvent> {
-    const task = await this.taskService.updateTask(companyId, taskId, updates);
-    await this.subscribe(sessionId, taskId, userId, task.status);
+    const db: Queryable = client ?? this.pool;
+    const messageService = client ? new TaskMessageService(client) : this.messageService;
+
+    const task = await this.taskService.updateTask(companyId, taskId, updates, client);
+    await this.subscribe(db, sessionId, taskId, userId, task.status);
 
     if (updates.note && updates.note.trim()) {
-      await this.ensureParticipant(taskId, userId);
-      await this.createAgentMessage(taskId, userId, updates.note.trim(), 'status_update');
+      const participant = await this.ensureParticipant(db, messageService, taskId, userId);
+      await this.createAgentMessage(
+        messageService,
+        taskId,
+        participant,
+        updates.note.trim(),
+        'status_update'
+      );
     }
 
     return {
@@ -88,29 +104,42 @@ export class AgentTaskFacade {
     userId: number,
     taskId: number,
     content: string,
-    metadataType: string = 'comment'
+    metadataType: string = 'comment',
+    client?: PoolClient
   ): Promise<AgentTaskEvent> {
-    const task = await this.taskService.getTask(companyId, taskId);
-    await this.subscribe(sessionId, taskId, userId, task.status);
-    await this.ensureParticipant(taskId, userId);
+    const db: Queryable = client ?? this.pool;
+    const messageService = client ? new TaskMessageService(client) : this.messageService;
+
+    const task = await this.taskService.getTask(companyId, taskId, client);
+    await this.subscribe(db, sessionId, taskId, userId, task.status);
+    const participant = await this.ensureParticipant(db, messageService, taskId, userId);
     const trimmed = content.trim();
+    let message: TaskMessage | null = null;
     if (trimmed) {
-      await this.createAgentMessage(taskId, userId, trimmed, metadataType);
+      message = await this.createAgentMessage(
+        messageService,
+        taskId,
+        participant,
+        trimmed,
+        metadataType
+      );
     }
     return {
       type: 'task_message',
       task,
       summary: trimmed || 'Shared an update in task chat.',
+      messageId: message?.id,
     };
   }
 
   private async subscribe(
+    db: Queryable,
     sessionId: number,
     taskId: number,
     userId: number,
     status: string
   ): Promise<void> {
-    await this.pool.query(
+    await db.query(
       `
         INSERT INTO agent_task_subscriptions (session_id, task_id, subscribed_by, last_notified_status)
         VALUES ($1, $2, $3, $4)
@@ -125,8 +154,13 @@ export class AgentTaskFacade {
     );
   }
 
-  private async ensureParticipant(taskId: number, userId: number): Promise<TaskParticipant> {
-    await this.pool.query(
+  private async ensureParticipant(
+    db: Queryable,
+    messageService: TaskMessageService,
+    taskId: number,
+    userId: number
+  ): Promise<TaskParticipant> {
+    await db.query(
       `
         INSERT INTO task_participants (task_id, user_id, role, is_watcher)
         VALUES ($1, $2, 'requester', TRUE)
@@ -135,17 +169,17 @@ export class AgentTaskFacade {
       [taskId, userId]
     );
 
-    return this.messageService.ensureParticipant(taskId, userId);
+    return messageService.ensureParticipant(taskId, userId);
   }
 
   private async createAgentMessage(
+    messageService: TaskMessageService,
     taskId: number,
-    userId: number,
+    participant: TaskParticipant,
     content: string,
     reason: string
-  ): Promise<void> {
-    const participant = await this.ensureParticipant(taskId, userId);
-    await this.messageService.createMessage(
+  ): Promise<TaskMessage> {
+    return messageService.createMessage(
       taskId,
       participant,
       content,
@@ -153,5 +187,69 @@ export class AgentTaskFacade {
       [],
       true
     );
+  }
+
+  async hydrateTaskEvent(
+    type: AgentTaskEvent['type'],
+    companyId: number,
+    taskId: number,
+    identifiers: { messageId?: number },
+    client?: PoolClient
+  ): Promise<AgentTaskEvent> {
+    const db: Queryable = client ?? this.pool;
+    const task = await this.taskService.getTask(companyId, taskId, client);
+
+    let summary: string;
+    let messageId: number | undefined;
+
+    switch (type) {
+      case 'task_created':
+        summary = `Created task "${task.title}" with status ${task.status}.`;
+        break;
+      case 'task_updated':
+        summary = `Updated task "${task.title}" to status ${task.status}.`;
+        break;
+      case 'task_message': {
+        messageId = identifiers.messageId;
+        let content: string | null = null;
+        if (messageId != null) {
+          content = await this.fetchMessageContent(db, taskId, messageId);
+        }
+        const trimmed = content?.trim() ?? '';
+        summary = trimmed || 'Shared an update in task chat.';
+        break;
+      }
+      default:
+        summary = '';
+    }
+
+    const event: AgentTaskEvent = {
+      type,
+      task,
+      summary,
+    };
+
+    if (messageId != null) {
+      event.messageId = messageId;
+    }
+
+    return event;
+  }
+
+  private async fetchMessageContent(
+    db: Queryable,
+    taskId: number,
+    messageId: number
+  ): Promise<string | null> {
+    const result = await db.query<{ content: string | null }>(
+      'SELECT content FROM task_messages WHERE id = $1 AND task_id = $2',
+      [messageId, taskId]
+    );
+
+    if (result.rowCount === 0) {
+      return null;
+    }
+
+    return result.rows[0]?.content ?? null;
   }
 }
