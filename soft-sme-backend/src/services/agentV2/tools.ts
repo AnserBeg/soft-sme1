@@ -16,6 +16,7 @@ import { PurchaseOrderService } from '../PurchaseOrderService';
 import DocumentEmailService from '../DocumentEmailService';
 import { AgentEmailService } from '../agentEmail/service';
 import type { ComposeEmailAttachmentPayload } from '../agentEmail/types';
+import { withTransaction, idempotentWrite, extractIdempotencyKeyFromArgs } from '../../lib/idempotency';
 
 export class AgentToolsV2 {
   private soService: SalesOrderService;
@@ -1186,23 +1187,108 @@ export class AgentToolsV2 {
       valid_until: resolvedValidUntil,
     };
 
+    const idempotencyKey = extractIdempotencyKeyFromArgs(payload);
+
     try {
-      const result = await this.quoteService.createQuote(quoteInput as any);
-      await this.audit(sessionId, 'createQuote', payload, result, true);
-      return result;
+      const { deterministicResult, workResult } = await withTransaction(
+        this.pool,
+        async (client) => {
+          let lastWorkResult: any | null = null;
+          const deterministicResult = await idempotentWrite({
+            db: this.pool,
+            toolName: 'quote.create',
+            idempotencyKey,
+            requestPayload: quoteInput,
+            work: async () => {
+              const created = await this.quoteService.createQuote(quoteInput as any, client);
+              lastWorkResult = created;
+              return created;
+            },
+            buildDeterministicResult: (result) => ({
+              id: result.quote_id,
+              number: result.quote_number,
+              status: 'Open',
+              total: (result as any)?.total ?? null,
+            }),
+          });
+
+          return { deterministicResult, workResult: lastWorkResult };
+        }
+      );
+
+      const auditPayload = workResult ?? deterministicResult;
+      await this.audit(sessionId, 'createQuote', payload, auditPayload, true);
+      return deterministicResult;
     } catch (error: any) {
       await this.audit(sessionId, 'createQuote', payload, { error: error?.message }, false);
       throw error;
     }
   }
   async updateQuote(sessionId: number, quoteId: number, patch: any) {
-    const allowed=['customer_id','quote_date','valid_until','product_name','product_description','estimated_cost','status','terms','customer_po_number','vin_number','vehicle_make','vehicle_model'];
-    const fields:string[]=[]; const vals:any[]=[]; let i=1;
-    for (const [k,v] of Object.entries(patch)) { if (allowed.includes(k) && v!==undefined && v!==null){ fields.push(`${k}=$${i++}`); vals.push(v);} }
-    if (fields.length){ vals.push(quoteId); await this.pool.query(`UPDATE quotes SET ${fields.join(', ')}, updated_at = NOW() WHERE quote_id = $${i}`, vals); }
-    const out = { updated: true };
-    await this.audit(sessionId,'updateQuote',{quoteId,patch},out,true);
-    return out;
+    const idempotencyKey = extractIdempotencyKeyFromArgs(patch);
+
+    try {
+      const { deterministicResult, workResult } = await withTransaction(
+        this.pool,
+        async (client) => {
+          let lastWorkResult: any | null = null;
+          const deterministicResult = await idempotentWrite({
+            db: this.pool,
+            toolName: 'quote.update',
+            targetId: String(quoteId),
+            idempotencyKey,
+            requestPayload: patch,
+            work: async () => {
+              const allowed = [
+                'customer_id',
+                'quote_date',
+                'valid_until',
+                'product_name',
+                'product_description',
+                'estimated_cost',
+                'status',
+                'terms',
+                'customer_po_number',
+                'vin_number',
+                'vehicle_make',
+                'vehicle_model',
+              ];
+              const fields: string[] = [];
+              const vals: any[] = [];
+              let i = 1;
+              for (const [k, v] of Object.entries(patch ?? {})) {
+                if (allowed.includes(k) && v !== undefined && v !== null) {
+                  fields.push(`${k}=$${i++}`);
+                  vals.push(v);
+                }
+              }
+              if (fields.length) {
+                vals.push(quoteId);
+                await client.query(
+                  `UPDATE quotes SET ${fields.join(', ')}, updated_at = NOW() WHERE quote_id = $${i}`,
+                  vals
+                );
+              }
+              lastWorkResult = { updated: true };
+              return { id: quoteId, updated: true };
+            },
+            buildDeterministicResult: (result) => ({
+              id: result.id,
+              updated: true,
+            }),
+          });
+
+          return { deterministicResult, workResult: lastWorkResult };
+        }
+      );
+
+      const auditPayload = workResult ?? deterministicResult;
+      await this.audit(sessionId, 'updateQuote', { quoteId, patch }, auditPayload, true);
+      return deterministicResult;
+    } catch (error: any) {
+      await this.audit(sessionId, 'updateQuote', { quoteId, patch }, { error: error?.message }, false);
+      throw error;
+    }
   }
 
   async emailQuote(
@@ -1745,30 +1831,82 @@ export class AgentToolsV2 {
     }
   }
 
-  async convertQuoteToSO(sessionId: number, quoteId: number) {
-    // Simple conversion: fetch quote, create SO header from it
-    const q = await this.pool.query('SELECT * FROM quotes WHERE quote_id=$1',[quoteId]);
-    if (q.rows.length===0) throw new Error('Quote not found');
-    const quote = q.rows[0];
-    const so = await this.createSalesOrder(sessionId, { header: {
-      customer_id: quote.customer_id,
-      sales_date: quote.quote_date,
-      product_name: quote.product_name,
-      product_description: quote.product_description,
-      terms: quote.terms,
-      customer_po_number: quote.customer_po_number,
-      vin_number: quote.vin_number,
-      vehicle_make: quote.vehicle_make,
-      vehicle_model: quote.vehicle_model,
-      subtotal: quote.estimated_cost,
-      total_gst_amount: Number(quote.estimated_cost||0)*0.05,
-      total_amount: Number(quote.estimated_cost||0)*1.05,
-      status: 'Open',
-      quote_id: quote.quote_id,
-      source_quote_number: quote.quote_number
-    }, lineItems: [] });
-    await this.audit(sessionId,'convertQuoteToSO',{quoteId},so,true);
-    return so;
+  async convertQuoteToSO(
+    sessionId: number,
+    quoteId: number,
+    options?: { idempotency_key?: string; idempotencyKey?: string }
+  ) {
+    const idempotencyKey = extractIdempotencyKeyFromArgs(options);
+
+    try {
+      const { deterministicResult, workResult } = await withTransaction(
+        this.pool,
+        async (client) => {
+          let lastWorkResult: any | null = null;
+          const deterministicResult = await idempotentWrite({
+            db: this.pool,
+            toolName: 'quote.convert_to_so',
+            targetId: String(quoteId),
+            idempotencyKey,
+            requestPayload: { quoteId },
+            work: async () => {
+              const q = await client.query('SELECT * FROM quotes WHERE quote_id=$1', [quoteId]);
+              if (q.rows.length === 0) {
+                throw new Error('Quote not found');
+              }
+              const quote = q.rows[0];
+              const estimatedCost = Number(quote.estimated_cost || 0);
+              const salesOrder = await this.soService.createSalesOrder(
+                {
+                  header: {
+                    customer_id: quote.customer_id,
+                    sales_date: quote.quote_date,
+                    product_name: quote.product_name,
+                    product_description: quote.product_description,
+                    terms: quote.terms,
+                    customer_po_number: quote.customer_po_number,
+                    vin_number: quote.vin_number,
+                    vehicle_make: quote.vehicle_make,
+                    vehicle_model: quote.vehicle_model,
+                    subtotal: quote.estimated_cost,
+                    total_gst_amount: estimatedCost * 0.05,
+                    total_amount: estimatedCost * 1.05,
+                    status: 'Open',
+                    quote_id: quote.quote_id,
+                    source_quote_number: quote.quote_number,
+                  },
+                  lineItems: [],
+                },
+                { access_role: 'Admin' },
+                client
+              );
+              lastWorkResult = salesOrder;
+              return { quote, salesOrder };
+            },
+            buildDeterministicResult: (result) => ({
+              quote_id: result.quote.quote_id,
+              sales_order_id: result.salesOrder.sales_order_id,
+              sales_order_number: result.salesOrder.sales_order_number,
+            }),
+          });
+
+          return { deterministicResult, workResult: lastWorkResult };
+        }
+      );
+
+      const auditPayload = workResult ?? deterministicResult;
+      await this.audit(sessionId, 'convertQuoteToSO', { quoteId }, auditPayload, true);
+      return deterministicResult;
+    } catch (error: any) {
+      await this.audit(
+        sessionId,
+        'convertQuoteToSO',
+        { quoteId },
+        { error: error?.message ?? String(error) },
+        false
+      );
+      throw error;
+    }
   }
 
   // Voice call management
