@@ -969,10 +969,34 @@ export class AgentToolsV2 {
 
   // Sales Orders
   async createSalesOrder(sessionId: number, payload: any) {
+    const idempotencyKey = extractIdempotencyKeyFromArgs(payload);
+
     try {
-      const result = await this.soService.createSalesOrder(payload, { access_role: 'Admin' });
-      await this.audit(sessionId, 'createSalesOrder', payload, result, true);
-      return result;
+      const { deterministicResult, workResult } = await withTransaction(this.pool, async (client) => {
+        let lastWorkResult: any | null = null;
+        const deterministicResult = await idempotentWrite({
+          db: this.pool,
+          toolName: 'sales_order.create',
+          idempotencyKey,
+          requestPayload: payload,
+          work: async () => {
+            const result = await this.soService.createSalesOrder(payload, { access_role: 'Admin' }, client);
+            lastWorkResult = result;
+            return result;
+          },
+          buildDeterministicResult: (result) => ({
+            id: result.sales_order_id,
+            number: result.sales_order_number,
+            status: 'Open',
+          }),
+        });
+
+        return { deterministicResult, workResult: lastWorkResult };
+      });
+
+      const auditPayload = workResult ?? deterministicResult;
+      await this.audit(sessionId, 'createSalesOrder', payload, auditPayload, true);
+      return deterministicResult;
     } catch (e: any) {
       await this.audit(sessionId, 'createSalesOrder', payload, { error: e.message }, false);
       throw e;
@@ -980,55 +1004,74 @@ export class AgentToolsV2 {
   }
 
   async updateSalesOrder(sessionId: number, salesOrderId: number, patch: any) {
-    const client = await this.pool.connect();
+    const idempotencyKey = extractIdempotencyKeyFromArgs(patch);
+
     try {
-      await client.query('BEGIN');
-      const allowed = ['customer_id','sales_date','product_name','product_description','terms','subtotal','total_gst_amount','total_amount','status','estimated_cost','sequence_number','customer_po_number','vin_number','vehicle_make','vehicle_model','invoice_status','quote_id','source_quote_number'];
-      const header = patch.header || {};
-      if (Object.prototype.hasOwnProperty.call(header, 'invoice_required')) {
-        header.invoice_status = this.normalizeInvoiceStatus(header.invoice_required);
-        delete header.invoice_required;
-      }
-      if (Object.prototype.hasOwnProperty.call(header, 'invoice_status')) {
-        header.invoice_status = this.normalizeInvoiceStatus(header.invoice_status);
-      }
-      if (Object.keys(header).length) {
-        const fields:string[]=[]; const values:any[]=[]; let i=1;
-        for (const [k,v] of Object.entries(header)) {
-          if (allowed.includes(k) && v!==undefined && (v!==null || k === 'invoice_status')){
-            const valueToUse = k === 'invoice_status' ? this.normalizeInvoiceStatus(v) : v;
-            fields.push(`${k}=$${i++}`);
-            values.push(valueToUse);
-          }
-        }
-        if (fields.length){ values.push(salesOrderId); await client.query(`UPDATE salesorderhistory SET ${fields.join(', ')}, updated_at = NOW() WHERE sales_order_id = $${i}`, values); }
-      }
-      if (Array.isArray(patch.lineItems)) {
-        await this.soService.updateSalesOrder(salesOrderId, patch.lineItems, client, { access_role: 'Admin' }); // Agent V2 has admin privileges
-      }
-      if (Array.isArray(patch.partsToOrder)) {
-        for (const p of patch.partsToOrder) {
-          await client.query('DELETE FROM sales_order_parts_to_order WHERE sales_order_id=$1 AND part_number=$2', [salesOrderId, p.part_number]);
-          await client.query('INSERT INTO sales_order_parts_to_order (sales_order_id, part_number, part_description, quantity_needed, unit, unit_price, line_amount) VALUES ($1,$2,$3,$4,$5,$6,$7)',
-            [salesOrderId, p.part_number, p.part_description||'', Number(p.quantity_needed||0), p.unit||'Each', Number(p.unit_price||0), Number(p.line_amount||0)]);
-        }
-      }
-      await this.soService.recalculateAndUpdateSummary(salesOrderId, client);
-      if (header.status){
-        const stRes = await client.query('SELECT status FROM salesorderhistory WHERE sales_order_id=$1',[salesOrderId]);
-        const curr = stRes.rows[0]?.status;
-        if (header.status==='Closed' && curr!=='Closed') await this.soService.closeOrder(salesOrderId, client);
-        if (header.status==='Open' && curr==='Closed') await this.soService.openOrder(salesOrderId, client);
-      }
-      await client.query('COMMIT');
-      const out = { updated: true };
-      await this.audit(sessionId, 'updateSalesOrder', { salesOrderId, patch }, out, true);
-      return out;
+      const { deterministicResult, workResult } = await withTransaction(this.pool, async (client) => {
+        let lastWorkResult: any | null = null;
+        const deterministicResult = await idempotentWrite({
+          db: this.pool,
+          toolName: 'sales_order.update',
+          targetId: String(salesOrderId),
+          idempotencyKey,
+          requestPayload: patch,
+          work: async () => {
+            const allowed = ['customer_id','sales_date','product_name','product_description','terms','subtotal','total_gst_amount','total_amount','status','estimated_cost','sequence_number','customer_po_number','vin_number','vehicle_make','vehicle_model','invoice_status','quote_id','source_quote_number'];
+            const header = patch.header || {};
+            if (Object.prototype.hasOwnProperty.call(header, 'invoice_required')) {
+              header.invoice_status = this.normalizeInvoiceStatus(header.invoice_required);
+              delete header.invoice_required;
+            }
+            if (Object.prototype.hasOwnProperty.call(header, 'invoice_status')) {
+              header.invoice_status = this.normalizeInvoiceStatus(header.invoice_status);
+            }
+            if (Object.keys(header).length) {
+              const fields:string[]=[]; const values:any[]=[]; let i=1;
+              for (const [k,v] of Object.entries(header)) {
+                if (allowed.includes(k) && v!==undefined && (v!==null || k === 'invoice_status')){
+                  const valueToUse = k === 'invoice_status' ? this.normalizeInvoiceStatus(v) : v;
+                  fields.push(`${k}=$${i++}`);
+                  values.push(valueToUse);
+                }
+              }
+              if (fields.length){ values.push(salesOrderId); await client.query(`UPDATE salesorderhistory SET ${fields.join(', ')}, updated_at = NOW() WHERE sales_order_id = $${i}`, values); }
+            }
+            if (Array.isArray(patch.lineItems)) {
+              await this.soService.updateSalesOrder(salesOrderId, patch.lineItems, client, { access_role: 'Admin' }); // Agent V2 has admin privileges
+            }
+            if (Array.isArray(patch.partsToOrder)) {
+              for (const p of patch.partsToOrder) {
+                await client.query('DELETE FROM sales_order_parts_to_order WHERE sales_order_id=$1 AND part_number=$2', [salesOrderId, p.part_number]);
+                await client.query('INSERT INTO sales_order_parts_to_order (sales_order_id, part_number, part_description, quantity_needed, unit, unit_price, line_amount) VALUES ($1,$2,$3,$4,$5,$6,$7)',
+                  [salesOrderId, p.part_number, p.part_description||'', Number(p.quantity_needed||0), p.unit||'Each', Number(p.unit_price||0), Number(p.line_amount||0)]);
+              }
+            }
+            await this.soService.recalculateAndUpdateSummary(salesOrderId, client);
+            if (header.status){
+              const stRes = await client.query('SELECT status FROM salesorderhistory WHERE sales_order_id=$1',[salesOrderId]);
+              const curr = stRes.rows[0]?.status;
+              if (header.status==='Closed' && curr!=='Closed') await this.soService.closeOrder(salesOrderId, client);
+              if (header.status==='Open' && curr==='Closed') await this.soService.openOrder(salesOrderId, client);
+            }
+            lastWorkResult = { updated: true };
+            return { id: salesOrderId, updated: true };
+          },
+          buildDeterministicResult: () => ({
+            id: salesOrderId,
+            updated: true,
+          }),
+        });
+
+        return { deterministicResult, workResult: lastWorkResult };
+      });
+
+      const auditPayload = workResult ?? deterministicResult;
+      await this.audit(sessionId, 'updateSalesOrder', { salesOrderId, patch }, auditPayload, true);
+      return deterministicResult;
     } catch(e:any){
-      await client.query('ROLLBACK');
       await this.audit(sessionId, 'updateSalesOrder', { salesOrderId, patch }, { error: e.message }, false);
       throw e;
-    } finally { client.release(); }
+    }
   }
 
   // Purchase Orders
