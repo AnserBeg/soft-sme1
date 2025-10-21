@@ -16,7 +16,14 @@ import { PurchaseOrderService } from '../PurchaseOrderService';
 import DocumentEmailService from '../DocumentEmailService';
 import { AgentEmailService } from '../agentEmail/service';
 import type { ComposeEmailAttachmentPayload } from '../agentEmail/types';
-import { withTransaction, idempotentWrite, extractIdempotencyKeyFromArgs } from '../../lib/idempotency';
+import {
+  withTransaction,
+  idempotentWrite,
+  extractIdempotencyKeyFromArgs,
+  IdempotencyError,
+} from '../../lib/idempotency';
+import type { IdempotentWriteResult } from '../../lib/idempotency';
+import { AgentAnalyticsLogger } from './analyticsLogger';
 
 type ProcessingResult = { status: 'processing' };
 
@@ -78,6 +85,7 @@ export class AgentToolsV2 {
   private purchaseOrderService: PurchaseOrderService;
   private documentEmailService: DocumentEmailService;
   private agentEmailService?: AgentEmailService;
+  private analytics: AgentAnalyticsLogger;
   constructor(private pool: Pool) {
     this.soService = new SalesOrderService(pool);
     this.emailService = new EmailService(pool);
@@ -87,6 +95,7 @@ export class AgentToolsV2 {
     this.quoteService = new QuoteService(pool);
     this.purchaseOrderService = new PurchaseOrderService(pool);
     this.documentEmailService = new DocumentEmailService(pool, this.emailService, this.pdfService);
+    this.analytics = new AgentAnalyticsLogger(pool);
   }
 
   private getAgentEmailService(): AgentEmailService {
@@ -282,6 +291,24 @@ export class AgentToolsV2 {
       return '%';
     }
     return `%${value.replace(/\s+/g, '%')}%`;
+  }
+
+  private recordIdempotencyResult(
+    sessionId: number,
+    didRunWork: boolean,
+    result: IdempotentWriteResult<unknown>
+  ): void {
+    if (didRunWork) {
+      void this.analytics.incrementCounter(sessionId, 'idempotency.first_run.count');
+    } else if (!isProcessingResult(result)) {
+      void this.analytics.incrementCounter(sessionId, 'idempotency.replay.count');
+    }
+  }
+
+  private recordIdempotencyConflict(sessionId: number, error: unknown): void {
+    if (error instanceof IdempotencyError && error.statusCode === 409) {
+      void this.analytics.incrementCounter(sessionId, 'idempotency.conflict.count');
+    }
   }
 
   private async resolveCustomerIdFromPayload(payload: any): Promise<number> {
@@ -933,8 +960,9 @@ export class AgentToolsV2 {
     const idempotencyKey = extractIdempotencyKeyFromArgs(payload);
 
     try {
-      const { deterministicResult, event } = await withTransaction(this.pool, async (client) => {
+      const { deterministicResult, event, didRunWork } = await withTransaction(this.pool, async (client) => {
         let resolvedEvent: AgentTaskEvent | null = null;
+        let didRunWork = false;
         const deterministicResult = await idempotentWrite({
           db: this.pool,
           toolName: 'task.create',
@@ -942,6 +970,7 @@ export class AgentToolsV2 {
           idempotencyKey,
           requestPayload: payload,
           work: async () => {
+            didRunWork = true;
             const createdEvent = await this.taskFacade.createTask(
               sessionId,
               companyId,
@@ -971,8 +1000,10 @@ export class AgentToolsV2 {
           );
         }
 
-        return { deterministicResult, event: resolvedEvent };
+        return { deterministicResult, event: resolvedEvent, didRunWork };
       });
+
+      this.recordIdempotencyResult(sessionId, didRunWork, deterministicResult);
 
       if (!event) {
         if (isProcessingResult(deterministicResult)) {
@@ -984,6 +1015,7 @@ export class AgentToolsV2 {
       await this.audit(sessionId, 'createTask', payload, { taskId: event.task.id }, true);
       return event;
     } catch (error: any) {
+      this.recordIdempotencyConflict(sessionId, error);
       await this.audit(sessionId, 'createTask', payload, { error: error?.message ?? String(error) }, false);
       throw error;
     }
@@ -1014,8 +1046,9 @@ export class AgentToolsV2 {
     const idempotencyKey = extractIdempotencyKeyFromArgs(payload);
 
     try {
-      const { deterministicResult, event } = await withTransaction(this.pool, async (client) => {
+      const { deterministicResult, event, didRunWork } = await withTransaction(this.pool, async (client) => {
         let resolvedEvent: AgentTaskEvent | null = null;
+        let didRunWork = false;
         const deterministicResult = await idempotentWrite({
           db: this.pool,
           toolName: 'task.update',
@@ -1024,6 +1057,7 @@ export class AgentToolsV2 {
           idempotencyKey,
           requestPayload: payload,
           work: async () => {
+            didRunWork = true;
             const updatedEvent = await this.taskFacade.updateTask(
               sessionId,
               companyId,
@@ -1052,8 +1086,10 @@ export class AgentToolsV2 {
           );
         }
 
-        return { deterministicResult, event: resolvedEvent };
+        return { deterministicResult, event: resolvedEvent, didRunWork };
       });
+
+      this.recordIdempotencyResult(sessionId, didRunWork, deterministicResult);
 
       if (!event) {
         if (isProcessingResult(deterministicResult)) {
@@ -1065,6 +1101,7 @@ export class AgentToolsV2 {
       await this.audit(sessionId, 'updateTask', payload, { taskId: event.task.id }, true);
       return event;
     } catch (error: any) {
+      this.recordIdempotencyConflict(sessionId, error);
       await this.audit(sessionId, 'updateTask', payload, { error: error?.message ?? String(error) }, false);
       throw error;
     }
@@ -1097,8 +1134,9 @@ export class AgentToolsV2 {
     const idempotencyKey = extractIdempotencyKeyFromArgs(payload);
 
     try {
-      const { deterministicResult, event } = await withTransaction(this.pool, async (client) => {
+      const { deterministicResult, event, didRunWork } = await withTransaction(this.pool, async (client) => {
         let resolvedEvent: AgentTaskEvent | null = null;
+        let didRunWork = false;
         const deterministicResult = await idempotentWrite({
           db: this.pool,
           toolName: 'task.message',
@@ -1107,6 +1145,7 @@ export class AgentToolsV2 {
           idempotencyKey,
           requestPayload: payload,
           work: async () => {
+            didRunWork = true;
             const messageEvent = await this.taskFacade.postMessage(
               sessionId,
               companyId,
@@ -1140,8 +1179,10 @@ export class AgentToolsV2 {
           );
         }
 
-        return { deterministicResult, event: resolvedEvent };
+        return { deterministicResult, event: resolvedEvent, didRunWork };
       });
+
+      this.recordIdempotencyResult(sessionId, didRunWork, deterministicResult);
 
       if (!event) {
         if (isProcessingResult(deterministicResult)) {
@@ -1153,6 +1194,7 @@ export class AgentToolsV2 {
       await this.audit(sessionId, 'postTaskMessage', payload, { taskId: event.task.id }, true);
       return event;
     } catch (error: any) {
+      this.recordIdempotencyConflict(sessionId, error);
       await this.audit(sessionId, 'postTaskMessage', payload, { error: error?.message ?? String(error) }, false);
       throw error;
     }
@@ -1163,14 +1205,16 @@ export class AgentToolsV2 {
     const idempotencyKey = extractIdempotencyKeyFromArgs(payload);
 
     try {
-      const { deterministicResult, workResult } = await withTransaction(this.pool, async (client) => {
+      const { deterministicResult, workResult, didRunWork } = await withTransaction(this.pool, async (client) => {
         let lastWorkResult: any | null = null;
+        let didRunWork = false;
         const deterministicResult = await idempotentWrite({
           db: this.pool,
           toolName: 'sales_order.create',
           idempotencyKey,
           requestPayload: payload,
           work: async () => {
+            didRunWork = true;
             const result = await this.soService.createSalesOrder(payload, { access_role: 'Admin' }, client);
             lastWorkResult = result;
             return result;
@@ -1182,13 +1226,16 @@ export class AgentToolsV2 {
           }),
         });
 
-        return { deterministicResult, workResult: lastWorkResult };
+        return { deterministicResult, workResult: lastWorkResult, didRunWork };
       });
+
+      this.recordIdempotencyResult(sessionId, didRunWork, deterministicResult);
 
       const auditPayload = workResult ?? deterministicResult;
       await this.audit(sessionId, 'createSalesOrder', payload, auditPayload, true);
       return deterministicResult;
     } catch (e: any) {
+      this.recordIdempotencyConflict(sessionId, e);
       await this.audit(sessionId, 'createSalesOrder', payload, { error: e.message }, false);
       throw e;
     }
@@ -1198,8 +1245,9 @@ export class AgentToolsV2 {
     const idempotencyKey = extractIdempotencyKeyFromArgs(patch);
 
     try {
-      const { deterministicResult, workResult } = await withTransaction(this.pool, async (client) => {
+      const { deterministicResult, workResult, didRunWork } = await withTransaction(this.pool, async (client) => {
         let lastWorkResult: any | null = null;
+        let didRunWork = false;
         const deterministicResult = await idempotentWrite({
           db: this.pool,
           toolName: 'sales_order.update',
@@ -1207,6 +1255,7 @@ export class AgentToolsV2 {
           idempotencyKey,
           requestPayload: patch,
           work: async () => {
+            didRunWork = true;
             const allowed = ['customer_id','sales_date','product_name','product_description','terms','subtotal','total_gst_amount','total_amount','status','estimated_cost','sequence_number','customer_po_number','vin_number','vehicle_make','vehicle_model','invoice_status','quote_id','source_quote_number'];
             const header = patch.header || {};
             if (Object.prototype.hasOwnProperty.call(header, 'invoice_required')) {
@@ -1253,13 +1302,16 @@ export class AgentToolsV2 {
           }),
         });
 
-        return { deterministicResult, workResult: lastWorkResult };
+        return { deterministicResult, workResult: lastWorkResult, didRunWork };
       });
+
+      this.recordIdempotencyResult(sessionId, didRunWork, deterministicResult);
 
       const auditPayload = workResult ?? deterministicResult;
       await this.audit(sessionId, 'updateSalesOrder', { salesOrderId, patch }, auditPayload, true);
       return deterministicResult;
-    } catch(e:any){
+    } catch (e: any) {
+      this.recordIdempotencyConflict(sessionId, e);
       await this.audit(sessionId, 'updateSalesOrder', { salesOrderId, patch }, { error: e.message }, false);
       throw e;
     }
@@ -1270,14 +1322,16 @@ export class AgentToolsV2 {
     const idempotencyKey = extractIdempotencyKeyFromArgs(payload);
 
     try {
-      const { deterministicResult, workResult } = await withTransaction(this.pool, async (client) => {
+      const { deterministicResult, workResult, didRunWork } = await withTransaction(this.pool, async (client) => {
         let lastWorkResult: any | null = null;
+        let didRunWork = false;
         const deterministicResult = await idempotentWrite({
           db: this.pool,
           toolName: 'purchase_order.create',
           idempotencyKey,
           requestPayload: payload,
           work: async () => {
+            didRunWork = true;
             const result = await this.purchaseOrderService.createPurchaseOrder(payload, client);
             lastWorkResult = {
               id: result.purchase_id,
@@ -1293,13 +1347,16 @@ export class AgentToolsV2 {
           }),
         });
 
-        return { deterministicResult, workResult: lastWorkResult };
+        return { deterministicResult, workResult: lastWorkResult, didRunWork };
       });
+
+      this.recordIdempotencyResult(sessionId, didRunWork, deterministicResult);
 
       const auditPayload = workResult ?? deterministicResult;
       await this.audit(sessionId, 'createPurchaseOrder', payload, auditPayload, true);
       return deterministicResult;
     } catch (e: any) {
+      this.recordIdempotencyConflict(sessionId, e);
       await this.audit(sessionId, 'createPurchaseOrder', payload, { error: e.message }, false);
       throw e;
     }
@@ -1309,8 +1366,9 @@ export class AgentToolsV2 {
     const idempotencyKey = extractIdempotencyKeyFromArgs(patch);
 
     try {
-      const { deterministicResult, workResult } = await withTransaction(this.pool, async (client) => {
+      const { deterministicResult, workResult, didRunWork } = await withTransaction(this.pool, async (client) => {
         let lastWorkResult: any | null = null;
+        let didRunWork = false;
         const deterministicResult = await idempotentWrite({
           db: this.pool,
           toolName: 'purchase_order.update',
@@ -1318,6 +1376,7 @@ export class AgentToolsV2 {
           idempotencyKey,
           requestPayload: patch,
           work: async () => {
+            didRunWork = true;
             const allowed = ['vendor_id','purchase_date','subtotal','total_gst_amount','total_amount','status','sequence_number','pickup_notes','pickup_time','pickup_location','pickup_contact_person','pickup_phone','pickup_instructions'];
             const header = patch.header || {};
             if (Object.keys(header).length) {
@@ -1349,13 +1408,16 @@ export class AgentToolsV2 {
           }),
         });
 
-        return { deterministicResult, workResult: lastWorkResult };
+        return { deterministicResult, workResult: lastWorkResult, didRunWork };
       });
+
+      this.recordIdempotencyResult(sessionId, didRunWork, deterministicResult);
 
       const auditPayload = workResult ?? deterministicResult;
       await this.audit(sessionId, 'updatePurchaseOrder', { purchaseOrderId, patch }, auditPayload, true);
       return deterministicResult;
-    } catch (e:any) {
+    } catch (e: any) {
+      this.recordIdempotencyConflict(sessionId, e);
       await this.audit(sessionId, 'updatePurchaseOrder', { purchaseOrderId, patch }, { error: e.message }, false);
       throw e;
     }
@@ -1417,8 +1479,9 @@ export class AgentToolsV2 {
     const idempotencyKey = extractIdempotencyKeyFromArgs({ purchaseId });
 
     try {
-      const { deterministicResult, workResult } = await withTransaction(this.pool, async (client) => {
+      const { deterministicResult, workResult, didRunWork } = await withTransaction(this.pool, async (client) => {
         let lastWorkResult: any | null = null;
+        let didRunWork = false;
         const deterministicResult = await idempotentWrite({
           db: this.pool,
           toolName: 'purchase_order.close',
@@ -1426,6 +1489,7 @@ export class AgentToolsV2 {
           idempotencyKey,
           requestPayload: { purchaseId },
           work: async () => {
+            didRunWork = true;
             const current = await client.query(
               'SELECT status, closed_at FROM purchasehistory WHERE purchase_id = $1 FOR UPDATE',
               [purchaseId]
@@ -1458,13 +1522,16 @@ export class AgentToolsV2 {
           }),
         });
 
-        return { deterministicResult, workResult: lastWorkResult };
+        return { deterministicResult, workResult: lastWorkResult, didRunWork };
       });
+
+      this.recordIdempotencyResult(sessionId, didRunWork, deterministicResult);
 
       const auditPayload = workResult ?? deterministicResult;
       await this.audit(sessionId, 'closePurchaseOrder', { purchaseId }, auditPayload, true);
       return deterministicResult;
     } catch (e: any) {
+      this.recordIdempotencyConflict(sessionId, e);
       await this.audit(sessionId, 'closePurchaseOrder', { purchaseId }, { error: e.message }, false);
       throw e;
     }
@@ -1522,16 +1589,18 @@ export class AgentToolsV2 {
     const idempotencyKey = extractIdempotencyKeyFromArgs(payload);
 
     try {
-      const { deterministicResult, workResult } = await withTransaction(
+      const { deterministicResult, workResult, didRunWork } = await withTransaction(
         this.pool,
         async (client) => {
           let lastWorkResult: any | null = null;
+          let didRunWork = false;
           const deterministicResult = await idempotentWrite({
             db: this.pool,
             toolName: 'quote.create',
             idempotencyKey,
             requestPayload: quoteInput,
             work: async () => {
+              didRunWork = true;
               const created = await this.quoteService.createQuote(quoteInput as any, client);
               lastWorkResult = created;
               return created;
@@ -1544,14 +1613,17 @@ export class AgentToolsV2 {
             }),
           });
 
-          return { deterministicResult, workResult: lastWorkResult };
+          return { deterministicResult, workResult: lastWorkResult, didRunWork };
         }
       );
+
+      this.recordIdempotencyResult(sessionId, didRunWork, deterministicResult);
 
       const auditPayload = workResult ?? deterministicResult;
       await this.audit(sessionId, 'createQuote', payload, auditPayload, true);
       return deterministicResult;
     } catch (error: any) {
+      this.recordIdempotencyConflict(sessionId, error);
       await this.audit(sessionId, 'createQuote', payload, { error: error?.message }, false);
       throw error;
     }
@@ -1560,10 +1632,11 @@ export class AgentToolsV2 {
     const idempotencyKey = extractIdempotencyKeyFromArgs(patch);
 
     try {
-      const { deterministicResult, workResult } = await withTransaction(
+      const { deterministicResult, workResult, didRunWork } = await withTransaction(
         this.pool,
         async (client) => {
           let lastWorkResult: any | null = null;
+          let didRunWork = false;
           const deterministicResult = await idempotentWrite({
             db: this.pool,
             toolName: 'quote.update',
@@ -1571,6 +1644,7 @@ export class AgentToolsV2 {
             idempotencyKey,
             requestPayload: patch,
             work: async () => {
+              didRunWork = true;
               const allowed = [
                 'customer_id',
                 'quote_date',
@@ -1610,14 +1684,17 @@ export class AgentToolsV2 {
             }),
           });
 
-          return { deterministicResult, workResult: lastWorkResult };
+          return { deterministicResult, workResult: lastWorkResult, didRunWork };
         }
       );
+
+      this.recordIdempotencyResult(sessionId, didRunWork, deterministicResult);
 
       const auditPayload = workResult ?? deterministicResult;
       await this.audit(sessionId, 'updateQuote', { quoteId, patch }, auditPayload, true);
       return deterministicResult;
     } catch (error: any) {
+      this.recordIdempotencyConflict(sessionId, error);
       await this.audit(sessionId, 'updateQuote', { quoteId, patch }, { error: error?.message }, false);
       throw error;
     }
@@ -2171,10 +2248,11 @@ export class AgentToolsV2 {
     const idempotencyKey = extractIdempotencyKeyFromArgs(options);
 
     try {
-      const { deterministicResult, workResult } = await withTransaction(
+      const { deterministicResult, workResult, didRunWork } = await withTransaction(
         this.pool,
         async (client) => {
           let lastWorkResult: any | null = null;
+          let didRunWork = false;
           const deterministicResult = await idempotentWrite({
             db: this.pool,
             toolName: 'quote.convert_to_so',
@@ -2182,6 +2260,7 @@ export class AgentToolsV2 {
             idempotencyKey,
             requestPayload: { quoteId },
             work: async () => {
+              didRunWork = true;
               const q = await client.query('SELECT * FROM quotes WHERE quote_id=$1', [quoteId]);
               if (q.rows.length === 0) {
                 throw new Error('Quote not found');
@@ -2222,14 +2301,17 @@ export class AgentToolsV2 {
             }),
           });
 
-          return { deterministicResult, workResult: lastWorkResult };
+          return { deterministicResult, workResult: lastWorkResult, didRunWork };
         }
       );
+
+      this.recordIdempotencyResult(sessionId, didRunWork, deterministicResult);
 
       const auditPayload = workResult ?? deterministicResult;
       await this.audit(sessionId, 'convertQuoteToSO', { quoteId }, auditPayload, true);
       return deterministicResult;
     } catch (error: any) {
+      this.recordIdempotencyConflict(sessionId, error);
       await this.audit(
         sessionId,
         'convertQuoteToSO',
