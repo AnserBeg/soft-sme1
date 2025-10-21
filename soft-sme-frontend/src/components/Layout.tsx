@@ -125,6 +125,7 @@ const Layout: React.FC = () => {
       { text: 'Products', icon: <LocalOfferIcon />, path: '/products' },
       { text: 'Stock', icon: <InventoryIcon />, path: '/inventory' },
       { text: 'Supply', icon: <InventoryIcon />, path: '/supply' },
+      { text: 'Service', icon: <InventoryIcon />, path: '/service' },
 
       { type: 'header', text: 'Time Tracking' },
       { text: 'Attendance', icon: <TimelineIcon />, path: '/attendance' },
@@ -177,6 +178,7 @@ const Layout: React.FC = () => {
         { type: 'header', text: 'Inventory' },
         { text: 'Stock', icon: <InventoryIcon />, path: '/inventory' },
         { text: 'Supply', icon: <InventoryIcon />, path: '/supply' },
+        { text: 'Service', icon: <InventoryIcon />, path: '/service' },
         { type: 'header', text: 'Settings' },
         { text: 'Email Settings', icon: <EmailIcon />, path: '/email-settings' },
       ];

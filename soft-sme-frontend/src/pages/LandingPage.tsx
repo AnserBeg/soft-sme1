@@ -99,7 +99,8 @@ const LandingPage: React.FC = () => {
       items: [
         { title: 'Products', description: 'Manage your products', icon: <LocalOfferIcon sx={{ fontSize: 40, color: 'primary.main' }} />, path: '/products' },
         { title: 'Stock', description: 'Manage your product inventory and stock levels', icon: <InventoryIcon sx={{ fontSize: 40, color: 'primary.main' }} />, path: '/inventory' },
-        { title: 'Supply', description: 'Manage supply and materials', icon: <InventoryIcon sx={{ fontSize: 40, color: 'primary.main' }} />, path: '/supply' }
+        { title: 'Supply', description: 'Manage supply and materials', icon: <InventoryIcon sx={{ fontSize: 40, color: 'primary.main' }} />, path: '/supply' },
+        { title: 'Service', description: 'Manage service line items', icon: <InventoryIcon sx={{ fontSize: 40, color: 'primary.main' }} />, path: '/service' }
       ]
     },
     {
@@ -149,6 +150,7 @@ const LandingPage: React.FC = () => {
         items: [
           { title: 'Stock', description: 'Manage your product inventory and stock levels', icon: <InventoryIcon sx={{ fontSize: 40, color: 'primary.main' }} />, path: '/inventory' },
           { title: 'Supply', description: 'Manage supply and materials', icon: <InventoryIcon sx={{ fontSize: 40, color: 'primary.main' }} />, path: '/supply' },
+          { title: 'Service', description: 'Manage service line items', icon: <InventoryIcon sx={{ fontSize: 40, color: 'primary.main' }} />, path: '/service' },
         ],
       },
       {

@@ -18,6 +18,7 @@ import VendorDetailPage from './pages/VendorDetailPage';
 import ProductDetailPage from './pages/ProductDetailPage';
 import InventoryPage from './pages/InventoryPage';
 import SupplyPage from './pages/SupplyPage';
+import ServicePage from './pages/ServicePage';
 import QuotePage from './pages/QuotePage';
 import QuoteEditorPage from './pages/QuoteEditorPage';
 import MessagingPage from './pages/MessagingPage';
@@ -91,6 +92,7 @@ const PrivateRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => 
       '/parts-to-order',
       '/inventory',
       '/supply',
+      '/service',
       '/email-settings',
       '/tasks',
       '/messaging',
@@ -164,6 +166,7 @@ const AppRoutes: React.FC = () => {
         {/* Inventory */}
         <Route path="inventory" element={<InventoryPage />} />
         <Route path="supply" element={<SupplyPage />} />
+        <Route path="service" element={<ServicePage />} />
         
         {/* Employee Management */}
         <Route path="employees" element={<EmployeeManagementPage />} />
