@@ -1,5 +1,6 @@
 import express, { Request, Response } from 'express';
 import { PoolClient } from 'pg';
+import { v4 as uuidv4 } from 'uuid';
 import { pool } from '../db';
 import { authMiddleware } from '../middleware/authMiddleware';
 import { AgentOrchestratorV2, AgentToolRegistry } from '../services/agentV2/orchestrator';
@@ -127,6 +128,22 @@ const summarizeConversationChunk = (messages: StoredAgentMessage[]): {
     summary: summaryText,
     metadata: { highlights, resolution },
   };
+};
+
+const ensureIdempotencyKey = (value: any, idempotencyKey: string) => {
+  if (!idempotencyKey) {
+    return value ?? {};
+  }
+
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const existing = (value as any).idempotency_key;
+    if (typeof existing === 'string' && existing.trim().length > 0) {
+      return value;
+    }
+    return { ...value, idempotency_key: idempotencyKey };
+  }
+
+  return { idempotency_key: idempotencyKey };
 };
 
 const loadDefaultServiceContext = async (): Promise<ServiceContext> => {
@@ -355,18 +372,33 @@ const buildToolRegistry = (
   tools: AgentToolsV2,
   sessionId: number,
   companyId: number,
-  userId: number
+  userId: number,
+  idempotencyKey: string
 ): AgentToolRegistry => ({
   retrieveDocs: async ({ query }: any) => tools.retrieveDocs(query),
   inventoryLookup: async (args: any) => tools.inventoryLookup(sessionId, args),
-  createSalesOrder: async (args: any) => tools.createSalesOrder(sessionId, args),
+  createSalesOrder: async (args: any) =>
+    tools.createSalesOrder(sessionId, ensureIdempotencyKey(args, idempotencyKey)),
   updateSalesOrder: async (args: any) =>
-    tools.updateSalesOrder(sessionId, requireId(args?.sales_order_id ?? args?.id, 'sales_order_id'), args?.patch ?? args),
-  createPurchaseOrder: async (args: any) => tools.createPurchaseOrder(sessionId, args),
+    tools.updateSalesOrder(
+      sessionId,
+      requireId(args?.sales_order_id ?? args?.id, 'sales_order_id'),
+      ensureIdempotencyKey(args?.patch ?? args, idempotencyKey)
+    ),
+  createPurchaseOrder: async (args: any) =>
+    tools.createPurchaseOrder(sessionId, ensureIdempotencyKey(args, idempotencyKey)),
   updatePurchaseOrder: async (args: any) =>
-    tools.updatePurchaseOrder(sessionId, requireId(args?.purchase_id ?? args?.id, 'purchase_id'), args?.patch ?? args),
+    tools.updatePurchaseOrder(
+      sessionId,
+      requireId(args?.purchase_id ?? args?.id, 'purchase_id'),
+      ensureIdempotencyKey(args?.patch ?? args, idempotencyKey)
+    ),
   closePurchaseOrder: async (args: any) =>
-    tools.closePurchaseOrder(sessionId, requireId(args?.purchase_id ?? args?.id, 'purchase_id')),
+    tools.updatePurchaseOrder(
+      sessionId,
+      requireId(args?.purchase_id ?? args?.id, 'purchase_id'),
+      ensureIdempotencyKey({ header: { status: 'Closed' } }, idempotencyKey)
+    ),
   emailPurchaseOrder: async (args: any) =>
     tools.emailPurchaseOrder(
       sessionId,
@@ -375,9 +407,13 @@ const buildToolRegistry = (
       args?.message,
       userId
     ),
-  createQuote: async (args: any) => tools.createQuote(sessionId, args),
+  createQuote: async (args: any) => tools.createQuote(sessionId, ensureIdempotencyKey(args, idempotencyKey)),
   updateQuote: async (args: any) =>
-    tools.updateQuote(sessionId, requireId(args?.quote_id ?? args?.id, 'quote_id'), args?.patch ?? args),
+    tools.updateQuote(
+      sessionId,
+      requireId(args?.quote_id ?? args?.id, 'quote_id'),
+      ensureIdempotencyKey(args?.patch ?? args, idempotencyKey)
+    ),
   emailQuote: async (args: any) =>
     tools.emailQuote(sessionId, requireId(args?.quote_id ?? args?.id, 'quote_id'), args?.to, userId),
   email_search: async (args: any) => tools.emailSearch(sessionId, userId, args),
@@ -386,10 +422,17 @@ const buildToolRegistry = (
   email_send: async (args: any) => tools.emailSend(sessionId, userId, args),
   email_reply: async (args: any) => tools.emailReply(sessionId, userId, args),
   convertQuoteToSO: async (args: any) =>
-    tools.convertQuoteToSO(sessionId, requireId(args?.quote_id ?? args?.id, 'quote_id')),
-  createTask: async (args: any) => tools.createAgentTask(sessionId, companyId, userId, args),
-  updateTask: async (args: any) => tools.updateAgentTask(sessionId, companyId, userId, args),
-  postTaskMessage: async (args: any) => tools.postAgentTaskMessage(sessionId, companyId, userId, args),
+    (tools.convertQuoteToSO as any)(
+      sessionId,
+      requireId(args?.quote_id ?? args?.id, 'quote_id'),
+      ensureIdempotencyKey(args, idempotencyKey)
+    ),
+  createTask: async (args: any) =>
+    tools.createAgentTask(sessionId, companyId, userId, ensureIdempotencyKey(args, idempotencyKey)),
+  updateTask: async (args: any) =>
+    tools.updateAgentTask(sessionId, companyId, userId, ensureIdempotencyKey(args, idempotencyKey)),
+  postTaskMessage: async (args: any) =>
+    tools.postAgentTaskMessage(sessionId, companyId, userId, ensureIdempotencyKey(args, idempotencyKey)),
   getEmailSettings: async () => tools.getEmailSettings(sessionId, userId),
   saveEmailSettings: async (args: any) => tools.saveEmailSettings(sessionId, userId, args),
   testEmailConnection: async () => tools.testEmailConnection(sessionId, userId),
@@ -788,8 +831,14 @@ router.post('/chat', authMiddleware, async (req: Request, res: Response) => {
       await updateSessionActivity(Number(sessionId));
     }
 
+    const headerIdempotencyKey = sanitizeHeaderValue(req.headers['x-idempotency-key']);
+    const bodyIdempotencyKeyRaw =
+      typeof req.body?.idempotency_key === 'string' ? req.body.idempotency_key.trim() : undefined;
+    const normalizedBodyKey = bodyIdempotencyKeyRaw && bodyIdempotencyKeyRaw.length > 0 ? bodyIdempotencyKeyRaw : undefined;
+    const idempotencyKey = headerIdempotencyKey ?? normalizedBodyKey ?? uuidv4();
+
     const tools = new AgentToolsV2(pool);
-    const registry = buildToolRegistry(tools, Number(sessionId), companyId, userId);
+    const registry = buildToolRegistry(tools, Number(sessionId), companyId, userId, idempotencyKey);
     const skillCatalog = await skillLibrary.listWorkflows();
     const skillRegistry = buildSkillToolRegistry(skillCatalog, registry);
     const orchestrator = new AgentOrchestratorV2(pool, { ...registry, ...skillRegistry }, skillCatalog);
