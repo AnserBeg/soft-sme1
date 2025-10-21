@@ -237,7 +237,9 @@ const UnifiedPartDialog: React.FC<UnifiedPartDialogProps> = ({
         part_description: formData.part_description.trim(),
         unit: formData.unit.trim(),
         last_unit_cost: formData.last_unit_cost === '' ? null : parseFloat(String(formData.last_unit_cost)),
-        quantity_on_hand: formData.part_type === 'supply' ? 'NA' : (formData.quantity_on_hand === '' ? 0 : parseFloat(String(formData.quantity_on_hand))),
+        quantity_on_hand: (formData.part_type === 'supply' || formData.part_type === 'service')
+          ? 'NA'
+          : (formData.quantity_on_hand === '' ? 0 : parseFloat(String(formData.quantity_on_hand))),
         reorder_point: formData.reorder_point === '' ? null : parseFloat(String(formData.reorder_point)),
         part_type: formData.part_type.trim(),
         category: formData.category.trim(),
@@ -462,21 +464,21 @@ const UnifiedPartDialog: React.FC<UnifiedPartDialogProps> = ({
                 inputProps={{ step: "0.01", min: "0" }}
               />
             </Grid>
-                         {formData.part_type !== 'supply' && (
-               <Grid item xs={12} sm={4}>
-                 <TextField
-                   label="Quantity on Hand"
-                   value={formData.quantity_on_hand}
-                   onChange={(e) => handleFieldChange('quantity_on_hand', e.target.value)}
-                   type="number"
-                   fullWidth
-                   error={!!errors.quantity_on_hand}
-                   helperText={errors.quantity_on_hand}
-                   inputProps={{ step: "1", min: "0" }}
-                   disabled={user?.access_role === 'Sales and Purchase'}
-                 />
-               </Grid>
-             )}
+            {formData.part_type === 'stock' && (
+              <Grid item xs={12} sm={4}>
+                <TextField
+                  label="Quantity on Hand"
+                  value={formData.quantity_on_hand}
+                  onChange={(e) => handleFieldChange('quantity_on_hand', e.target.value)}
+                  type="number"
+                  fullWidth
+                  error={!!errors.quantity_on_hand}
+                  helperText={errors.quantity_on_hand}
+                  inputProps={{ step: "1", min: "0" }}
+                  disabled={user?.access_role === 'Sales and Purchase'}
+                />
+              </Grid>
+            )}
             <Grid item xs={12} sm={6}>
               <TextField
                 label="Reorder Point"
