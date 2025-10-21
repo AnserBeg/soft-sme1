@@ -1,4 +1,4 @@
-import { Pool, PoolClient } from 'pg';
+import { Pool } from 'pg';
 import { SalesOrderService } from '../SalesOrderService';
 import { EmailService } from '../emailService';
 import { PDFService } from '../pdfService';
@@ -1076,10 +1076,38 @@ export class AgentToolsV2 {
 
   // Purchase Orders
   async createPurchaseOrder(sessionId: number, payload: any) {
+    const idempotencyKey = extractIdempotencyKeyFromArgs(payload);
+
     try {
-      const result = await this.purchaseOrderService.createPurchaseOrder(payload);
-      await this.audit(sessionId, 'createPurchaseOrder', payload, result, true);
-      return result;
+      const { deterministicResult, workResult } = await withTransaction(this.pool, async (client) => {
+        let lastWorkResult: any | null = null;
+        const deterministicResult = await idempotentWrite({
+          db: this.pool,
+          toolName: 'purchase_order.create',
+          idempotencyKey,
+          requestPayload: payload,
+          work: async () => {
+            const result = await this.purchaseOrderService.createPurchaseOrder(payload, client);
+            lastWorkResult = {
+              id: result.purchase_id,
+              number: result.purchase_number,
+              status: 'Open',
+            };
+            return lastWorkResult;
+          },
+          buildDeterministicResult: (result) => ({
+            id: result.id ?? result.purchase_id,
+            number: result.number ?? result.purchase_number,
+            status: 'Open',
+          }),
+        });
+
+        return { deterministicResult, workResult: lastWorkResult };
+      });
+
+      const auditPayload = workResult ?? deterministicResult;
+      await this.audit(sessionId, 'createPurchaseOrder', payload, auditPayload, true);
+      return deterministicResult;
     } catch (e: any) {
       await this.audit(sessionId, 'createPurchaseOrder', payload, { error: e.message }, false);
       throw e;
@@ -1087,41 +1115,59 @@ export class AgentToolsV2 {
   }
 
   async updatePurchaseOrder(sessionId: number, purchaseOrderId: number, patch: any) {
-    const client = await this.pool.connect();
+    const idempotencyKey = extractIdempotencyKeyFromArgs(patch);
+
     try {
-      await client.query('BEGIN');
-      const allowed = ['vendor_id','purchase_date','subtotal','total_gst_amount','total_amount','status','sequence_number','pickup_notes','pickup_time','pickup_location','pickup_contact_person','pickup_phone','pickup_instructions'];
-      const header = patch.header || {};
-      if (Object.keys(header).length) {
-        const fields:string[]=[]; const values:any[]=[]; let i=1;
-        for (const [k,v] of Object.entries(header)) { if (allowed.includes(k) && v!==undefined && v!==null){ fields.push(`${k}=$${i++}`); values.push(v);} }
-        if (fields.length){ values.push(purchaseOrderId); await client.query(`UPDATE purchasehistory SET ${fields.join(', ')}, updated_at = NOW() WHERE purchase_id = $${i}`, values); }
-      }
-      if (Array.isArray(patch.lineItems)) {
-        // Clear existing line items and add new ones
-        await client.query('DELETE FROM purchaselineitems WHERE purchase_id = $1', [purchaseOrderId]);
-        for (const item of patch.lineItems) {
-          const normalized = String(item.part_number || '').trim().toUpperCase();
-          const invQ = await client.query(
-            `SELECT part_id FROM inventory WHERE REPLACE(REPLACE(UPPER(part_number), '-', ''), ' ', '') = REPLACE(REPLACE(UPPER($1), '-', ''), ' ', '')`,
-            [normalized]
-          );
-          const resolvedPartId = invQ.rows[0]?.part_id || null;
-          await client.query(
-            'INSERT INTO purchaselineitems (purchase_id, part_number, part_description, quantity, unit_cost, line_amount, unit, part_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
-            [purchaseOrderId, item.part_number || '', item.part_description || '', Number(item.quantity || 0), Number(item.unit_cost || 0), Number(item.line_amount || 0), item.unit || 'Each', resolvedPartId]
-          );
-        }
-      }
-      await client.query('COMMIT');
-      const out = { updated: true };
-      await this.audit(sessionId, 'updatePurchaseOrder', { purchaseOrderId, patch }, out, true);
-      return out;
+      const { deterministicResult, workResult } = await withTransaction(this.pool, async (client) => {
+        let lastWorkResult: any | null = null;
+        const deterministicResult = await idempotentWrite({
+          db: this.pool,
+          toolName: 'purchase_order.update',
+          targetId: String(purchaseOrderId),
+          idempotencyKey,
+          requestPayload: patch,
+          work: async () => {
+            const allowed = ['vendor_id','purchase_date','subtotal','total_gst_amount','total_amount','status','sequence_number','pickup_notes','pickup_time','pickup_location','pickup_contact_person','pickup_phone','pickup_instructions'];
+            const header = patch.header || {};
+            if (Object.keys(header).length) {
+              const fields:string[]=[]; const values:any[]=[]; let i=1;
+              for (const [k,v] of Object.entries(header)) { if (allowed.includes(k) && v!==undefined && v!==null){ fields.push(`${k}=$${i++}`); values.push(v);} }
+              if (fields.length){ values.push(purchaseOrderId); await client.query(`UPDATE purchasehistory SET ${fields.join(', ')}, updated_at = NOW() WHERE purchase_id = $${i}`, values); }
+            }
+            if (Array.isArray(patch.lineItems)) {
+              await client.query('DELETE FROM purchaselineitems WHERE purchase_id = $1', [purchaseOrderId]);
+              for (const item of patch.lineItems) {
+                const normalized = String(item.part_number || '').trim().toUpperCase();
+                const invQ = await client.query(
+                  `SELECT part_id FROM inventory WHERE REPLACE(REPLACE(UPPER(part_number), '-', ''), ' ', '') = REPLACE(REPLACE(UPPER($1), '-', ''), ' ', '')`,
+                  [normalized]
+                );
+                const resolvedPartId = invQ.rows[0]?.part_id || null;
+                await client.query(
+                  'INSERT INTO purchaselineitems (purchase_id, part_number, part_description, quantity, unit_cost, line_amount, unit, part_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
+                  [purchaseOrderId, item.part_number || '', item.part_description || '', Number(item.quantity || 0), Number(item.unit_cost || 0), Number(item.line_amount || 0), item.unit || 'Each', resolvedPartId]
+                );
+              }
+            }
+            lastWorkResult = { id: purchaseOrderId, updated: true };
+            return lastWorkResult;
+          },
+          buildDeterministicResult: () => ({
+            id: purchaseOrderId,
+            updated: true,
+          }),
+        });
+
+        return { deterministicResult, workResult: lastWorkResult };
+      });
+
+      const auditPayload = workResult ?? deterministicResult;
+      await this.audit(sessionId, 'updatePurchaseOrder', { purchaseOrderId, patch }, auditPayload, true);
+      return deterministicResult;
     } catch (e:any) {
-      await client.query('ROLLBACK');
       await this.audit(sessionId, 'updatePurchaseOrder', { purchaseOrderId, patch }, { error: e.message }, false);
       throw e;
-    } finally { client.release(); }
+    }
   }
 
   // Pickup Management Tools
@@ -1177,8 +1223,60 @@ export class AgentToolsV2 {
   }
 
   async closePurchaseOrder(sessionId: number, purchaseId: number) {
-    const out = await this.updatePurchaseOrder(sessionId, purchaseId, { header: { status: 'Closed' } });
-    return out;
+    const idempotencyKey = extractIdempotencyKeyFromArgs({ purchaseId });
+
+    try {
+      const { deterministicResult, workResult } = await withTransaction(this.pool, async (client) => {
+        let lastWorkResult: any | null = null;
+        const deterministicResult = await idempotentWrite({
+          db: this.pool,
+          toolName: 'purchase_order.close',
+          targetId: String(purchaseId),
+          idempotencyKey,
+          requestPayload: { purchaseId },
+          work: async () => {
+            const current = await client.query(
+              'SELECT status, closed_at FROM purchasehistory WHERE purchase_id = $1 FOR UPDATE',
+              [purchaseId]
+            );
+
+            if (current.rowCount === 0) {
+              throw new Error('Purchase order not found');
+            }
+
+            let closedAt = current.rows[0]?.closed_at ?? null;
+            const status = current.rows[0]?.status;
+
+            if (status !== 'Closed' || !closedAt) {
+              const updateResult = await client.query(
+                'UPDATE purchasehistory SET status = $1, closed_at = COALESCE(closed_at, NOW()), updated_at = NOW() WHERE purchase_id = $2 RETURNING closed_at',
+                ['Closed', purchaseId]
+              );
+              closedAt = updateResult.rows[0]?.closed_at ?? closedAt;
+            }
+
+            lastWorkResult = closedAt
+              ? { id: purchaseId, status: 'Closed', closed_at: closedAt }
+              : { id: purchaseId, status: 'Closed' };
+            return lastWorkResult;
+          },
+          buildDeterministicResult: (result) => ({
+            id: result.id ?? purchaseId,
+            status: 'Closed',
+            ...(result.closed_at ? { closed_at: result.closed_at } : {}),
+          }),
+        });
+
+        return { deterministicResult, workResult: lastWorkResult };
+      });
+
+      const auditPayload = workResult ?? deterministicResult;
+      await this.audit(sessionId, 'closePurchaseOrder', { purchaseId }, auditPayload, true);
+      return deterministicResult;
+    } catch (e: any) {
+      await this.audit(sessionId, 'closePurchaseOrder', { purchaseId }, { error: e.message }, false);
+      throw e;
+    }
   }
 
   async emailPurchaseOrder(
