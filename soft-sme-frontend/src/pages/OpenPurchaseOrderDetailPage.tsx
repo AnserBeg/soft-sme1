@@ -19,7 +19,6 @@ import EmailIcon from '@mui/icons-material/Email';
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import EditIcon from '@mui/icons-material/Edit';
-import { createFilterOptions } from '@mui/material/Autocomplete';
 import { InputAdornment } from '@mui/material';
 import { getLabourLineItems, LabourLineItem } from '../services/timeTrackingService';
 import { getPartVendors, recordVendorUsage, InventoryVendorLink } from '../services/inventoryService';
@@ -48,6 +47,8 @@ import {
 } from '../utils/purchaseOrderCalculations';
 import { useAuth } from '../contexts/AuthContext';
 import { useDebounce } from '../hooks/useDebounce';
+import { fuzzySearch } from '../services/searchService';
+import { canonicalizePartNumber } from '../utils/normalize';
 
 const UNIT_OPTIONS = ['Each', 'cm', 'ft', 'kg', 'pcs', 'L'];
 const DEFAULT_GST_RATE = 5.0;
@@ -161,12 +162,15 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
   const [refreshKey, setRefreshKey] = useState(0);
 
   const [vendors, setVendors] = useState<VendorOption[]>([]);
+  const [vendorSearchResults, setVendorSearchResults] = useState<VendorOption[]>([]);
   const [vendorInput, setVendorInput] = useState('');
   const vendorInputRef = useRef<HTMLInputElement | null>(null);
   const [vendorOpen, setVendorOpen] = useState<boolean>(false);
-  const [vendorTypingTimer, setVendorTypingTimer] = useState<number | null>(null);
   const [highlightedVendor, setHighlightedVendor] = useState<VendorOption | null>(null);
   const [vendorEnterPressed, setVendorEnterPressed] = useState(false);
+  const vendorSearchAbortRef = useRef<AbortController | null>(null);
+  const vendorSearchTimerRef = useRef<number | null>(null);
+  const [vendorSearchLoading, setVendorSearchLoading] = useState(false);
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
   const [vendorPartMap, setVendorPartMap] = useState<Record<string, InventoryVendorLink[]>>({});
   const [callSessionId, setCallSessionId] = useState<number | null>(null);
@@ -178,7 +182,19 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
   // Add loading state to prevent onInputChange during initial load
   const [isInitialLoad, setIsInitialLoad] = useState(true);
 
-  type PartOption = string | { label: string; isNew?: true; inputValue?: string };
+  type PartOption =
+    | string
+    | {
+        label: string;
+        isNew?: true;
+        inputValue?: string;
+        id?: number;
+        score?: number;
+        canonical?: string | null;
+        description?: string | null;
+        unit?: string | null;
+        partType?: string | null;
+      };
 
   // State for new part modal
   const [openPartDialog, setOpenPartDialog] = useState(false);
@@ -193,9 +209,32 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
   const [pendingPartCreations, setPendingPartCreations] = useState<PendingPartSuggestion[]>([]);
   // Advanced combobox state for Part Number fields
   const [partOpenIndex, setPartOpenIndex] = useState<number | null>(null);
-  const [partTypingTimer, setPartTypingTimer] = useState<number | null>(null);
   const [partEnterPressedIndex, setPartEnterPressedIndex] = useState<number | null>(null);
   const [partInputs, setPartInputs] = useState<Record<number, string>>({});
+  const [partSearchResults, setPartSearchResults] = useState<Record<number, PartOption[]>>({});
+  const [partSearchLoadingMap, setPartSearchLoadingMap] = useState<Record<number, boolean>>({});
+  const partSearchAbortControllers = useRef<Record<number, AbortController | null>>({});
+  const partSearchTimerRefs = useRef<Record<number, number>>({});
+  const partExactAppliedRef = useRef<Record<number, string>>({});
+
+  useEffect(() => {
+    return () => {
+      if (vendorSearchTimerRef.current) {
+        window.clearTimeout(vendorSearchTimerRef.current);
+      }
+      if (vendorSearchAbortRef.current) {
+        vendorSearchAbortRef.current.abort();
+      }
+      Object.values(partSearchTimerRefs.current).forEach((timer) => {
+        if (timer) {
+          window.clearTimeout(timer);
+        }
+      });
+      Object.values(partSearchAbortControllers.current).forEach((controller) => {
+        controller?.abort();
+      });
+    };
+  }, []);
 
   const [errors, setErrors] = useState<{ 
     vendor?: string;
@@ -208,9 +247,6 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
       unit_cost?: string;
     }>;
   }>({});
-
-  // Helper for filtering vendor options
-  const filterVendorOptions = useMemo(() => createFilterOptions<VendorOption>(), []);
 
   const [error, setError] = useState<string | null>(null);
 
@@ -896,8 +932,17 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
     setLineItems((prev) => prev.filter((_, i) => i !== idx));
   };
 
-  const findInventory = (partNumber: string) =>
-    inventoryItems.find((p) => p.part_number === partNumber);
+  const findInventory = (partNumber: string, canonical?: string | null) => {
+    const direct = inventoryItems.find((p) => p.part_number === partNumber);
+    if (direct) {
+      return direct;
+    }
+    const normalized = canonical || canonicalizePartNumber(partNumber);
+    if (!normalized) {
+      return undefined;
+    }
+    return inventoryItems.find((p) => canonicalizePartNumber(p.part_number) === normalized);
+  };
 
   const handlePartNumberChange = (idx: number, newValue: PartOption | null) => {
     console.log('handlePartNumberChange called:', { idx, newValue, inventoryItemsLength: inventoryItems.length });
@@ -939,7 +984,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
           console.log('Preserving existing data despite empty input value');
           // Keep existing data unchanged
         }
-      } else if (typeof newValue !== 'string' && newValue.isNew) {
+      } else if (typeof newValue !== 'string' && (newValue as any).isNew) {
         console.log('Opening part dialog for new part');
         setPartToAddIndex(idx);
         const inputValue = newValue.inputValue || '';
@@ -947,57 +992,150 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
         setPartDialogInitialPart({ part_number: inputValue.toUpperCase(), category: 'Uncategorized' });
         setPartDialogSource('manual');
         setOpenPartDialog(true);
-      } else if (typeof newValue === 'string') {
-        const inv = findInventory(newValue);
+      } else if (typeof newValue === 'string' || (typeof newValue === 'object' && newValue)) {
+        const option = typeof newValue === 'string' ? { label: newValue } : (newValue as any);
+        const selectedLabel = option.label || '';
+        const canonicalFromOption = option.canonical ?? null;
+        const inv = findInventory(selectedLabel, canonicalFromOption);
         console.log('Found inventory item:', inv);
-        
-        // Get the quantity to order for this part (check both exact match and case-insensitive)
-        const quantityToOrder = aggregateQuantities[newValue] || 
-                               aggregateQuantities[newValue.toUpperCase()] || 
-                               aggregateQuantities[newValue.toLowerCase()] || 0;
-        // Ensure quantityToOrder is a number
+
+        const quantityToOrderSource = selectedLabel || (canonicalFromOption ?? '');
+        const quantityToOrder =
+          aggregateQuantities[quantityToOrderSource] ||
+          aggregateQuantities[quantityToOrderSource.toUpperCase?.() || ''] ||
+          aggregateQuantities[quantityToOrderSource.toLowerCase?.() || ''] || 0;
         const numericQuantityToOrder = typeof quantityToOrder === 'string' ? parseFloat(quantityToOrder) : quantityToOrder;
-        console.log(`Quantity to order for ${newValue}:`, quantityToOrder, 'as number:', numericQuantityToOrder);
-        console.log('Available aggregate quantities keys:', Object.keys(aggregateQuantities));
-        console.log('Looking for part:', newValue, 'in aggregate quantities:', aggregateQuantities);
-        
+
         if (inv) {
-          // Preserve existing unit_cost if it's already been manually set
-          // This allows users to override the default inventory cost with their own value
           const currentUnitCost = currentItem.unit_cost;
           const shouldUseInventoryCost = !currentUnitCost || currentUnitCost === '' || currentUnitCost === '0';
-          
+
           updated[idx] = {
             ...currentItem,
-            part_number: newValue,
+            part_number: selectedLabel,
             part_description: inv.part_description,
             unit: inv.unit,
             unit_cost: shouldUseInventoryCost ? String(inv.last_unit_cost) : currentUnitCost,
             quantity_to_order: numericQuantityToOrder,
           };
         } else {
-          // If inventory item not found, preserve existing data but update part_number
-          // This prevents resetting line items when inventory isn't loaded yet
-          console.log('Inventory item not found, preserving existing data');
           updated[idx] = {
             ...currentItem,
-            part_number: newValue,
+            part_number: selectedLabel,
             quantity_to_order: numericQuantityToOrder,
-            // Keep existing part_description, unit, unit_cost, etc.
           };
         }
+
+        if (typeof option.description === 'string' && option.description && !inv) {
+          updated[idx].part_description = option.description;
+        }
+        if (typeof option.unit === 'string' && option.unit && !inv) {
+          updated[idx].unit = option.unit;
+        }
+
+        const canonicalApplied = canonicalFromOption || canonicalizePartNumber(selectedLabel);
+        if (canonicalApplied) {
+          partExactAppliedRef.current[idx] = canonicalApplied;
+        }
+
+        setPartSearchResults((prev) => {
+          const next = { ...prev };
+          delete next[idx];
+          return next;
+        });
       }
 
       updated[idx].line_amount = calculateLineItemAmount(updated[idx]);
       console.log('Updated item after change:', updated[idx]);
       return updated;
     });
-    
+
     // If a part was selected, refresh aggregate quantities to ensure we have the latest data
-    if (typeof newValue === 'string' && newValue.trim() !== '') {
+    const selectedLabel =
+      typeof newValue === 'string'
+        ? newValue.trim()
+        : (typeof newValue === 'object' && newValue && !(newValue as any).isNew ? (newValue as any).label?.trim?.() : '') || '';
+    if (selectedLabel) {
       fetchAggregateQuantities();
     }
   };
+
+  const runPartSearch = useCallback(async (index: number, query: string) => {
+    const trimmed = query.trim();
+
+    if (!trimmed) {
+      setPartSearchResults((prev) => {
+        const next = { ...prev };
+        delete next[index];
+        return next;
+      });
+      setPartSearchLoadingMap((prev) => {
+        const next = { ...prev };
+        delete next[index];
+        return next;
+      });
+      const controller = partSearchAbortControllers.current[index];
+      if (controller) {
+        controller.abort();
+      }
+      partSearchAbortControllers.current[index] = null;
+      partExactAppliedRef.current[index] = '';
+      return;
+    }
+
+    const canonical = canonicalizePartNumber(trimmed);
+    if (canonical && partExactAppliedRef.current[index] !== canonical) {
+      const invMatch = inventoryItems.find(
+        (inv) => canonicalizePartNumber(inv.part_number) === canonical
+      );
+      if (invMatch) {
+        partExactAppliedRef.current[index] = canonical;
+        handlePartNumberChange(index, invMatch.part_number);
+      }
+    }
+
+    const existingController = partSearchAbortControllers.current[index];
+    if (existingController) {
+      existingController.abort();
+    }
+
+    const controller = new AbortController();
+    partSearchAbortControllers.current[index] = controller;
+    setPartSearchLoadingMap((prev) => ({ ...prev, [index]: true }));
+
+    try {
+      const matches = await fuzzySearch('part', trimmed, {
+        limit: 12,
+        signal: controller.signal,
+      });
+
+      if (controller.signal.aborted) {
+        return;
+      }
+
+      setPartSearchResults((prev) => ({
+        ...prev,
+        [index]: matches.map((match) => ({
+          label: match.label,
+          id: match.id,
+          score: match.score,
+          canonical: typeof (match.extra as any)?.canonical === 'string' ? (match.extra as any).canonical : null,
+          description: typeof (match.extra as any)?.description === 'string' ? (match.extra as any).description : null,
+          unit: typeof (match.extra as any)?.unit === 'string' ? (match.extra as any).unit : null,
+          partType: typeof (match.extra as any)?.partType === 'string' ? (match.extra as any).partType : null,
+        })),
+      }));
+    } catch (err) {
+      if (!controller.signal.aborted) {
+        console.error('Part fuzzy search failed:', err);
+      }
+    } finally {
+      if (!controller.signal.aborted) {
+        setPartSearchLoadingMap((prev) => ({ ...prev, [index]: false }));
+        partSearchAbortControllers.current[index] = null;
+      }
+    }
+  }, [handlePartNumberChange, inventoryItems]);
 
   const checkDuplicateBillNumber = async (billNumber: string, currentPurchaseId?: number): Promise<boolean> => {
     if (!billNumber || billNumber.trim() === '') {
@@ -1643,44 +1781,79 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
       .toUpperCase();
   };
 
-  const rankAndFilterVendors = (options: VendorOption[], query: string): VendorOption[] => {
-    const q = normalizeString(query);
-    if (!q) return options.slice(0, 8);
-    const scored = options
-      .map((opt) => {
-        const labelNorm = normalizeString(opt.label);
-        let score = -1;
-        if (labelNorm.startsWith(q)) score = 3;
-        else if (labelNorm.split(' ').some(w => w.startsWith(q))) score = 2;
-        else if (labelNorm.includes(q)) score = 1;
-        return { opt, score };
-      })
-      .filter((x) => x.score >= 0);
-    scored.sort((a, b) => b.score - a.score || a.opt.label.localeCompare(b.opt.label));
-    return scored.slice(0, 8).map((x) => x.opt);
-  };
+  const runVendorSearch = useCallback(async (query: string) => {
+    const trimmed = query.trim();
+    if (!trimmed) {
+      setVendorSearchResults([]);
+      setVendorSearchLoading(false);
+      if (vendorSearchAbortRef.current) {
+        vendorSearchAbortRef.current.abort();
+        vendorSearchAbortRef.current = null;
+      }
+      return;
+    }
+
+    if (vendorSearchAbortRef.current) {
+      vendorSearchAbortRef.current.abort();
+    }
+
+    const controller = new AbortController();
+    vendorSearchAbortRef.current = controller;
+    setVendorSearchLoading(true);
+
+    try {
+      const matches = await fuzzySearch('vendor', trimmed, {
+        limit: 8,
+        signal: controller.signal,
+      });
+
+      if (controller.signal.aborted) {
+        return;
+      }
+
+      setVendorSearchResults(
+        matches.map((match) => ({
+          label: match.label,
+          id: match.id,
+          score: match.score,
+          email: typeof (match.extra as any)?.email === 'string' ? (match.extra as any).email : undefined,
+        }))
+      );
+    } catch (err) {
+      if (!controller.signal.aborted) {
+        console.error('Vendor fuzzy search failed:', err);
+      }
+    } finally {
+      if (!controller.signal.aborted) {
+        setVendorSearchLoading(false);
+        vendorSearchAbortRef.current = null;
+      }
+    }
+  }, []);
+
+  const vendorAutocompleteOptions = useMemo(() => {
+    const base: VendorOption[] = [...vendorSearchResults];
+    if (vendor && vendor.id && !base.some((opt) => opt.id === vendor.id)) {
+      base.unshift(vendor);
+    }
+
+    const trimmed = vendorInput.trim();
+    const hasExact = trimmed
+      ? base.some((opt) => normalizeString(opt.label) === normalizeString(trimmed))
+      : false;
+
+    if (trimmed && !hasExact) {
+      base.push({ label: `Add "${trimmed}" as New Vendor`, isNew: true });
+    }
+
+    return base;
+  }, [vendorSearchResults, vendor, vendorInput]);
 
   const exactVendorMatch = (query: string): VendorOption | null => {
     const nq = normalizeString(query);
-    return vendors.find((v) => normalizeString(v.label) === nq) || null;
-  };
-
-  // Parts combobox helpers
-  const rankAndFilterParts = (options: string[], query: string): string[] => {
-    const q = normalizeString(query);
-    if (!q) return options.slice(0, 20); // show more for parts
-    const scored = options
-      .map((opt) => {
-        const labelNorm = normalizeString(opt);
-        let score = -1;
-        if (labelNorm.startsWith(q)) score = 3;
-        else if (labelNorm.split(' ').some(w => w.startsWith(q))) score = 2;
-        else if (labelNorm.includes(q)) score = 1;
-        return { opt, score };
-      })
-      .filter((x) => x.score >= 0);
-    scored.sort((a, b) => b.score - a.score || a.opt.localeCompare(b.opt));
-    return scored.slice(0, 20).map((x) => x.opt);
+    return vendorSearchResults.find((v) => normalizeString(v.label) === nq)
+      || vendors.find((v) => normalizeString(v.label) === nq)
+      || null;
   };
 
   const exactPartMatch = (query: string): string | null => {
@@ -2490,91 +2663,141 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
           <Paper sx={{ p: 3 }}>
             <Grid container spacing={3}> 
               {/* Purchase Order fields: Vendor, Bill Number, GST Rate */} 
-              <Grid item xs={12} sm={4}> 
-                <Autocomplete<VendorOption, false, false, true>
-                  disablePortal={false}
-                  open={vendorOpen}
-                  onOpen={() => setVendorOpen(true)}
-                  onClose={() => setVendorOpen(false)}
-                  autoHighlight
-                  value={vendor}
-                  onChange={(_, newValue) => {
-                    if (vendorEnterPressed) {
-                      setVendorEnterPressed(false);
-                      return;
-                    }
-                    if (newValue && (newValue as VendorOption).isNew) {
-                      setIsAddVendorModalOpen(true);
-                      setVendorDialogInitialValues({ vendor_name: vendorInput });
-                      setVendor(null);
-                      setVendorInput('');
-                    setVendorOpen(false);
-                    } else {
-                      setVendor(newValue as VendorOption);
-                      setVendorOpen(false);
-                    }
-                  }}
-                  filterOptions={(options, params) => {
-                    const ranked = rankAndFilterVendors(options, params.inputValue || '');
-                    const hasExact = !!exactVendorMatch(params.inputValue || '');
-                    const result: any[] = [...ranked];
-                    if ((params.inputValue || '').trim() !== '' && !hasExact) {
-                      result.push({
-                        label: `Add "${params.inputValue}" as New Vendor`,
-                        isNew: true,
-                      });
-                    }
-                    if (ranked.length === 0 && (params.inputValue || '').trim() !== '' && !hasExact) {
-                      return result;
-                    }
-                    return result;
-                  }}
-                  inputValue={vendorInput}
-                  onInputChange={(_, newInputValue, reason) => {
-                    setVendorInput(newInputValue);
-                    if (reason === 'reset') return;
-                    const text = (newInputValue || '').trim();
-                    if (!text) setVendorOpen(false);
-                  }}
-                  options={vendors}
-                  getOptionLabel={option => typeof option === 'string' ? option : option.label}
-                  isOptionEqualToValue={(option, value) => option.id === value.id}
-                  onHighlightChange={(_, opt) => setHighlightedVendor(opt as VendorOption)}
-                  ListboxProps={{ role: 'listbox', style: { maxHeight: 320, overflowY: 'auto' } }}
-                  renderOption={(props, option) => {
-                    const isNew = (option as VendorOption).isNew;
-                    const { key, ...otherProps } = props;
-                    return (
-                      <li key={key} {...otherProps} style={{ display: 'flex', alignItems: 'center', opacity: isNew ? 0.9 : 1 }}>
-                        {isNew && <AddCircleOutlineIcon fontSize="small" style={{ marginRight: 8, color: '#666' }} />}
-                        <span>{(option as VendorOption).label}</span>
-                      </li>
-                    );
-                  }}
-                  renderInput={params => (
-                    <TextField 
-                      {...params} 
-                      label="Vendor" 
-                      error={!!errors.vendor} 
-                      helperText={errors.vendor}
-                      onKeyDown={handleVendorKeyDown}
-                      onBlur={() => {
+              <Grid item xs={12} sm={4}>
+                {vendor ? (
+                  <Stack spacing={0.5} alignItems="flex-start">
+                    <Typography variant="caption" sx={{ fontWeight: 500, color: 'text.secondary' }}>
+                      Vendor
+                    </Typography>
+                    <Stack direction="row" spacing={1} alignItems="center">
+                      <Chip
+                        color="primary"
+                        variant="outlined"
+                        label={vendor.label}
+                        onDelete={() => {
+                          setVendor(null);
+                          setVendorInput('');
+                          setVendorSearchResults([]);
+                          setTimeout(() => {
+                            setVendorOpen(true);
+                            vendorInputRef.current?.focus();
+                          }, 0);
+                        }}
+                      />
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        onClick={() => {
+                          setVendor(null);
+                          setVendorOpen(true);
+                          setTimeout(() => vendorInputRef.current?.focus(), 0);
+                        }}
+                      >
+                        Change
+                      </Button>
+                    </Stack>
+                  </Stack>
+                ) : (
+                  <Autocomplete<VendorOption, false, false, true>
+                    disablePortal={false}
+                    open={vendorOpen}
+                    onOpen={() => {
+                      setVendorOpen(true);
+                      if (vendorInput.trim() && vendorSearchResults.length === 0) {
+                        runVendorSearch(vendorInput);
+                      }
+                    }}
+                    onClose={() => setVendorOpen(false)}
+                    autoHighlight
+                    loading={vendorSearchLoading}
+                    options={vendorAutocompleteOptions}
+                    value={vendor}
+                    filterOptions={(options) => options}
+                    onChange={(_, newValue) => {
+                      if (vendorEnterPressed) {
+                        setVendorEnterPressed(false);
+                        return;
+                      }
+                      if (newValue && (newValue as VendorOption).isNew) {
+                        setIsAddVendorModalOpen(true);
+                        setVendorDialogInitialValues({ vendor_name: vendorInput.trim() });
+                        setVendor(null);
+                        setVendorInput('');
                         setVendorOpen(false);
-                        if (!vendor) {
-                          const inputValue = vendorInput.trim();
-                          if (inputValue) {
-                            const match = exactVendorMatch(inputValue);
-                            if (match) {
-                              setVendor(match);
-                              setVendorInput(match.label);
+                      } else {
+                        const selected = newValue as VendorOption | null;
+                        if (selected) {
+                          setVendor(selected);
+                          setVendorInput(selected.label);
+                          setVendorSearchResults([]);
+                          setVendorOpen(false);
+                        }
+                      }
+                    }}
+                    inputValue={vendorInput}
+                    onInputChange={(_, newInputValue, reason) => {
+                      if (reason === 'reset') {
+                        setVendorInput(newInputValue);
+                        return;
+                      }
+                      setVendorInput(newInputValue);
+                      if (vendorSearchTimerRef.current) {
+                        window.clearTimeout(vendorSearchTimerRef.current);
+                      }
+                      const timer = window.setTimeout(() => {
+                        runVendorSearch(newInputValue);
+                      }, 250);
+                      vendorSearchTimerRef.current = timer as unknown as number;
+                      setVendorOpen(Boolean(newInputValue.trim()));
+                    }}
+                    getOptionLabel={(option) => (typeof option === 'string' ? option : option.label)}
+                    isOptionEqualToValue={(option, value) => option.id === value?.id}
+                    onHighlightChange={(_, opt) => setHighlightedVendor(opt as VendorOption)}
+                    ListboxProps={{ role: 'listbox', style: { maxHeight: 320, overflowY: 'auto' } }}
+                    renderOption={(props, option) => {
+                      const opt = option as VendorOption;
+                      const { key, ...otherProps } = props;
+                      const score = typeof opt.score === 'number' ? Math.round(opt.score * 100) : null;
+                      return (
+                        <li key={key} {...otherProps} style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
+                          <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                            {opt.isNew && <AddCircleOutlineIcon fontSize="small" style={{ marginRight: 8, color: '#666' }} />}
+                            <Typography variant="body2">{opt.label}</Typography>
+                          </Box>
+                          {!opt.isNew && score !== null && (
+                            <Typography variant="caption" color="text.secondary">
+                              Score: {score}%
+                            </Typography>
+                          )}
+                        </li>
+                      );
+                    }}
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        label="Vendor"
+                        error={!!errors.vendor}
+                        helperText={errors.vendor}
+                        onKeyDown={handleVendorKeyDown}
+                        onBlur={() => {
+                          setVendorOpen(false);
+                          if (!vendor) {
+                            const inputValue = vendorInput.trim();
+                            if (inputValue) {
+                              const match = exactVendorMatch(inputValue);
+                              if (match) {
+                                setVendor(match);
+                                setVendorInput(match.label);
+                                setVendorSearchResults([]);
+                              }
                             }
                           }
-                        }
-                      }}
-                      inputRef={(el) => { vendorInputRef.current = el; }}
-                    />
-                  )}
-                />
+                        }}
+                        inputRef={(el) => { vendorInputRef.current = el; }}
+                      />
+                    )}
+                  />
+                )}
               </Grid>
               <Grid item xs={12} sm={4}> 
                 <TextField
@@ -2636,24 +2859,67 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
                     <Autocomplete<PartOption, false, false, true>
                       disablePortal={false}
                       open={partOpenIndex === idx}
-                      onOpen={() => setPartOpenIndex(idx)}
+                      onOpen={() => {
+                        setPartOpenIndex(idx);
+                        const currentInput = (partInputs[idx] ?? item.part_number ?? '').trim();
+                        if (currentInput && !(partSearchResults[idx]?.length)) {
+                          runPartSearch(idx, currentInput);
+                        }
+                      }}
                       onClose={() => setPartOpenIndex(null)}
                       autoHighlight
                       value={item.part_number}
                       inputValue={partInputs[idx] ?? item.part_number}
+                      loading={!!partSearchLoadingMap[idx]}
+                      filterOptions={(options) => options}
+                      options={(() => {
+                        const existingOptions = partSearchResults[idx] ?? [];
+                        const baseOptions = [...existingOptions];
+                        const selectedPartNumber = item.part_number;
+                        if (selectedPartNumber && !baseOptions.some((opt) =>
+                          (typeof opt === 'string' ? opt : opt.label) === selectedPartNumber
+                        )) {
+                          baseOptions.unshift(selectedPartNumber);
+                        }
+                        const currentInput = (partInputs[idx] ?? '').trim();
+                        const normalizedInput = currentInput ? normalizeString(currentInput) : '';
+                        const hasExact = normalizedInput
+                          ? baseOptions.some((opt) =>
+                              typeof opt === 'string'
+                                ? normalizeString(opt) === normalizedInput
+                                : normalizeString(opt.label) === normalizedInput
+                            )
+                          : false;
+                        if (currentInput && !hasExact) {
+                          baseOptions.push({ label: currentInput, isNew: true, inputValue: currentInput });
+                        }
+                        return baseOptions;
+                      })()}
                       onInputChange={(_, newInputValue, reason) => {
                         setPartInputs(prev => ({ ...prev, [idx]: newInputValue }));
                         if (reason === 'reset') return;
                         const text = (newInputValue || '').trim();
-                        if (!text) setPartOpenIndex(null);
+                        if (!text) {
+                          setPartOpenIndex(null);
+                          runPartSearch(idx, '');
+                          return;
+                        }
+                        const existingTimer = partSearchTimerRefs.current[idx];
+                        if (existingTimer) {
+                          window.clearTimeout(existingTimer);
+                        }
+                        const timer = window.setTimeout(() => {
+                          runPartSearch(idx, newInputValue);
+                        }, 250);
+                        partSearchTimerRefs.current[idx] = timer as unknown as number;
                       }}
                       onChange={(_, newValue) => {
                         if (typeof newValue === 'string') {
                           const selected = newValue;
                           // Update both UI state and calc state immediately
                           const inv = inventoryItems.find(inv => inv.part_number === selected);
-                          const quantityToOrder = aggregateQuantities[selected] || 
-                                                  aggregateQuantities[selected?.toUpperCase?.() || ''] || 
+                          const quantityToOrder = aggregateQuantities[selected] ||
+                                                  aggregateQuantities[selected?.toUpperCase?.() || ''] ||
                                                   aggregateQuantities[selected?.toLowerCase?.() || ''] || 0;
                           const numericQto = typeof quantityToOrder === 'string' ? parseFloat(quantityToOrder) : quantityToOrder;
                           setLineItems(prev => {
@@ -2701,6 +2967,17 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
                           handlePartNumberChange(idx, selected);
                           setPartOpenIndex(null);
                           setPartInputs(prev => ({ ...prev, [idx]: '' }));
+                          const existingTimer = partSearchTimerRefs.current[idx];
+                          if (existingTimer) {
+                            window.clearTimeout(existingTimer);
+                            delete partSearchTimerRefs.current[idx];
+                          }
+                          partExactAppliedRef.current[idx] = canonicalizePartNumber(selected);
+                          setPartSearchResults(prev => {
+                            const next = { ...prev };
+                            delete next[idx];
+                            return next;
+                          });
                         } else if (newValue && typeof newValue === 'object' && 'isNew' in newValue) {
                           const inputValue = (newValue as any).inputValue || '';
                           setPartNumberForModal(inputValue);
@@ -2710,9 +2987,17 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
                           setOpenPartDialog(true);
                           setPartOpenIndex(null);
                           setPartInputs(prev => ({ ...prev, [idx]: '' }));
+                        } else if (newValue && typeof newValue === 'object') {
+                          handlePartNumberChange(idx, newValue);
+                          setPartOpenIndex(null);
+                          setPartInputs(prev => ({ ...prev, [idx]: '' }));
+                          const existingTimer = partSearchTimerRefs.current[idx];
+                          if (existingTimer) {
+                            window.clearTimeout(existingTimer);
+                            delete partSearchTimerRefs.current[idx];
+                          }
                         }
                       }}
-                      options={inventoryItems.map(inv => inv.part_number)}
                       freeSolo
                       selectOnFocus
                       clearOnBlur
@@ -2743,23 +3028,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
                           </li>
                         );
                       }}
-                      filterOptions={(options, params) => {
-                        const text = (params.inputValue || '').toUpperCase();
-                        // Filter by both part number and description
-                        const filtered = (options as string[]).filter(partNumber => {
-                          const inv = inventoryItems.find(inv => inv.part_number === partNumber);
-                          if (!inv) return String(partNumber).toUpperCase().includes(text);
-                          return String(partNumber).toUpperCase().includes(text) || 
-                                 String(inv.part_description || '').toUpperCase().includes(text);
-                        });
-                        const hasExact = filtered.some(o => String(o).toUpperCase() === text);
-                        const result: PartOption[] = [...filtered] as any;
-                        if (text && !hasExact) {
-                          result.push({ inputValue: params.inputValue, label: `Add "${params.inputValue}" as New Part`, isNew: true });
-                        }
-                        return result as any;
-                      }}
-                      ListboxProps={{ role: 'listbox', style: { maxHeight: 320, overflowY: 'auto' } }}
+                        ListboxProps={{ role: 'listbox', style: { maxHeight: 320, overflowY: 'auto' } }}
                       renderInput={(params) => (
                         <TextField
                           {...params}
@@ -3329,6 +3598,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
                 
                 // Update vendors list
                 setVendors(prev => [...prev, { label: newVendor.vendor_name, id: newVendor.vendor_id, email: newVendor.email }]);
+                setVendorSearchResults(prev => [{ label: newVendor.vendor_name, id: newVendor.vendor_id, email: newVendor.email }, ...prev]);
 
                 // Set the new vendor as selected
                 setVendor({ label: newVendor.vendor_name, id: newVendor.vendor_id, email: newVendor.email });
