@@ -8,7 +8,7 @@ import { pool } from '../db';
 import { AIService } from './aiService';
 import { ConversationManager, ConversationMessage } from './aiConversationManager';
 import { AITaskQueueService } from './aiTaskQueueService';
-import { getFuzzyConfig } from '../config';
+import { getDocsConfig, getFuzzyConfig } from '../config';
 import { ChatOut, StreamEvent } from '../schema';
 import type { StreamEvent as StreamEventPayload } from '../schema';
 import type { Response as ExpressResponse } from 'express';
@@ -985,14 +985,26 @@ class AIAssistantService {
     };
   }
 
-  private ensureDocsEventsHaveItems(events: StreamEventPayload[]): void {
-    if (process.env.DOCS_REQUIRE_CITATIONS !== 'true') {
+  private enforceDocsCitationPolicy(events: StreamEventPayload[]): void {
+    const { requireCitations } = getDocsConfig();
+    if (!requireCitations) {
       return;
     }
 
     for (const event of events) {
-      if (event.type === 'docs' && event.items.length === 0) {
+      if (event.type !== 'docs') {
+        continue;
+      }
+
+      if (event.items.length === 0) {
         throw new Error('Documentation events must include at least one item when DOCS_REQUIRE_CITATIONS is true.');
+      }
+
+      for (const item of event.items) {
+        const citationTitle = item.citation?.title?.trim();
+        if (!citationTitle) {
+          throw new Error('Documentation items must include a citation title when DOCS_REQUIRE_CITATIONS is true.');
+        }
       }
     }
   }
@@ -1000,7 +1012,7 @@ class AIAssistantService {
   protected async parseChatOutResponse(res: globalThis.Response): Promise<ReturnType<(typeof ChatOut)['parse']>> {
     const json = await res.json();
     const parsed = ChatOut.parse(json);
-    this.ensureDocsEventsHaveItems(parsed.events);
+    this.enforceDocsCitationPolicy(parsed.events);
     return parsed;
   }
 
@@ -1105,7 +1117,7 @@ class AIAssistantService {
       }
 
       try {
-        this.ensureDocsEventsHaveItems([validation.data]);
+        this.enforceDocsCitationPolicy([validation.data]);
       } catch (error) {
         await closeWithError(
           error instanceof Error ? error.message : 'Agent stream missing documentation citations',
