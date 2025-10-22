@@ -664,14 +664,42 @@ export class AgentOrchestratorV2 {
     const timestamp = new Date().toISOString();
 
     if (tool === 'retrieveDocs') {
-      return [
-        {
-          type: 'docs',
-          info: 'Relevant docs',
-          chunks: Array.isArray(result) ? result : [],
-          timestamp,
-        },
-      ];
+      const docResult = result && typeof result === 'object' ? (result as any) : {};
+      const info = typeof docResult.info === 'string' ? docResult.info : 'Relevant docs';
+      const chunks = Array.isArray(docResult.chunks)
+        ? docResult.chunks
+        : Array.isArray(result)
+        ? result
+        : [];
+      const citations = Array.isArray(docResult.citations) ? docResult.citations : [];
+      const docsEvent: AgentEvent = {
+        type: 'docs',
+        info,
+        chunks,
+        citations,
+        timestamp,
+      };
+
+      if (citations.length === 0) {
+        void this.analytics.incrementCounter(context.sessionId, 'docs.citations.missing');
+        docsEvent.severity = 'warning';
+        if (!docsEvent.info.includes(' (no citations)')) {
+          docsEvent.info = `${docsEvent.info} (no citations)`;
+        }
+        if (process.env.DOCS_REQUIRE_CITATIONS === 'true') {
+          return [
+            {
+              type: 'text',
+              content: "Sorry, I couldn’t find cited documentation for that. Please rephrase.",
+              timestamp,
+            },
+          ];
+        }
+      } else {
+        void this.analytics.incrementCounter(context.sessionId, 'docs.rag.used');
+      }
+
+      return [docsEvent];
     }
 
     if (this.isToolResultEnvelope(result)) {
