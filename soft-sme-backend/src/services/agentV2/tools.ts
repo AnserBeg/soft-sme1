@@ -24,6 +24,7 @@ import {
 } from '../../lib/idempotency';
 import type { IdempotentWriteResult } from '../../lib/idempotency';
 import { AgentAnalyticsLogger } from './analyticsLogger';
+import { queryDocsRag } from '../../services/ragClient';
 
 type ProcessingResult = { status: 'processing' };
 
@@ -566,12 +567,48 @@ export class AgentToolsV2 {
 
   // RAG: simple keyword search over agent_docs for now
   async retrieveDocs(query: string, k = 5) {
-    const terms = query.split(/\s+/).filter(Boolean).slice(0, 6);
-    if (terms.length === 0) return [];
-    const like = terms.map((_, i) => `chunk ILIKE $${i + 1}`).join(' OR ');
-    const params = terms.map(t => `%${t}%`);
-    const res = await this.pool.query(`SELECT path, section, chunk FROM agent_docs WHERE ${like} LIMIT ${k}`, params);
-    return res.rows;
+    const trimmed = typeof query === 'string' ? query.trim() : '';
+    if (!trimmed) {
+      return { type: 'docs', info: 'No documentation coverage found.', chunks: [], citations: [] };
+    }
+
+    if (process.env.DOCS_RAG_MODE === 'python') {
+      const topK = Number(process.env.DOCS_RAG_TOP_K) || 5;
+      try {
+        const result = await queryDocsRag(trimmed, topK);
+        if (result?.answer && Array.isArray(result.citations) && result.citations.length > 0) {
+          return {
+            type: 'docs' as const,
+            info: result.answer,
+            chunks: Array.isArray(result.chunks) ? result.chunks : [],
+            citations: result.citations,
+          };
+        }
+      } catch (error) {
+        // fall back to legacy path if enabled
+      }
+    }
+
+    if (process.env.DOCS_LEGACY_SQL_FALLBACK === 'true') {
+      const terms = trimmed.split(/\s+/).filter(Boolean).slice(0, 6);
+      if (!terms.length) {
+        return { type: 'docs', info: 'No documentation coverage found.', chunks: [], citations: [] };
+      }
+      const like = terms.map((_, i) => `chunk ILIKE $${i + 1}`).join(' OR ');
+      const params = terms.map((t) => `%${t}%`);
+      const res = await this.pool.query(
+        `SELECT path, section, chunk FROM agent_docs WHERE ${like} LIMIT ${k}`,
+        params
+      );
+      return {
+        type: 'docs',
+        info: res.rows.length ? 'Relevant docs' : 'No documentation coverage found.',
+        chunks: res.rows,
+        citations: [],
+      };
+    }
+
+    return { type: 'docs', info: 'No documentation coverage found.', chunks: [], citations: [] };
   }
 
   async inventoryLookup(sessionId: number, args: any): Promise<ToolResultEnvelope> {
