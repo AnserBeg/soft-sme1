@@ -25,12 +25,22 @@ import {
 import type { IdempotentWriteResult } from '../../lib/idempotency';
 import { AgentAnalyticsLogger } from './analyticsLogger';
 import { queryDocsRag } from '../../services/ragClient';
+import { canonicalizeName, canonicalizePartNumber } from '../../lib/normalize';
 
 type ProcessingResult = { status: 'processing' };
 
 interface TaskCreateDeterministicResult {
   id: number;
   status: TaskStatus;
+}
+
+type FuzzyEntityType = 'customer' | 'vendor' | 'part';
+
+interface FuzzyEntityMatch {
+  id: number;
+  label: string;
+  score: number;
+  extra: Record<string, unknown>;
 }
 
 interface TaskUpdateDeterministicResult {
@@ -87,6 +97,7 @@ export class AgentToolsV2 {
   private documentEmailService: DocumentEmailService;
   private agentEmailService?: AgentEmailService;
   private analytics: AgentAnalyticsLogger;
+  private internalApiBaseUrl: string;
   constructor(private pool: Pool) {
     this.soService = new SalesOrderService(pool);
     this.emailService = new EmailService(pool);
@@ -97,6 +108,185 @@ export class AgentToolsV2 {
     this.purchaseOrderService = new PurchaseOrderService(pool);
     this.documentEmailService = new DocumentEmailService(pool, this.emailService, this.pdfService);
     this.analytics = new AgentAnalyticsLogger(pool);
+    this.internalApiBaseUrl = this.resolveInternalApiBaseUrl();
+  }
+
+  async fuzzyResolveEntity(
+    sessionId: number,
+    args: { entityType: FuzzyEntityType; query: string; minScore?: number }
+  ): Promise<{ matches: FuzzyEntityMatch[] }> {
+    const entityType = args?.entityType;
+    if (entityType !== 'customer' && entityType !== 'vendor' && entityType !== 'part') {
+      throw new Error('entityType must be one of customer, vendor, or part');
+    }
+
+    const query = typeof args?.query === 'string' ? args.query.trim() : '';
+    if (!query) {
+      throw new Error('query is required for fuzzyResolveEntity');
+    }
+
+    const matches = await this.performFuzzyEntitySearch({
+      entityType,
+      query,
+      minScore: args?.minScore,
+    });
+
+    const canonical = this.canonicalizeEntityQuery(entityType, query);
+    this.logEntityResolutionAttempt(entityType, 'tool_query', {
+      sessionId,
+      query,
+      canonical,
+      score: matches[0]?.score ?? null,
+      candidateCount: matches.length,
+    });
+
+    return { matches };
+  }
+
+  private resolveInternalApiBaseUrl(): string {
+    const candidateEnvs = [
+      process.env.AGENT_INTERNAL_API_BASE_URL,
+      process.env.INTERNAL_API_BASE_URL,
+      process.env.API_BASE_URL,
+    ];
+
+    for (const value of candidateEnvs) {
+      if (typeof value !== 'string') {
+        continue;
+      }
+      const trimmed = value.trim();
+      if (!trimmed) {
+        continue;
+      }
+      if (/^https?:\/\//i.test(trimmed)) {
+        return trimmed.replace(/\/+$/, '');
+      }
+    }
+
+    const port = typeof process.env.PORT === 'string' && process.env.PORT.trim().length > 0 ? process.env.PORT.trim() : '3000';
+    return `http://127.0.0.1:${port}`;
+  }
+
+  private buildInternalApiUrl(path: string): URL {
+    const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+    return new URL(normalizedPath, this.internalApiBaseUrl);
+  }
+
+  private canonicalizeEntityQuery(entityType: FuzzyEntityType, value: string): string {
+    switch (entityType) {
+      case 'part':
+        return canonicalizePartNumber(value);
+      case 'customer':
+      case 'vendor':
+      default:
+        return canonicalizeName(value);
+    }
+  }
+
+  private logEntityResolutionAttempt(
+    entityType: FuzzyEntityType,
+    strategy: string,
+    metadata: {
+      sessionId?: number;
+      query?: string;
+      canonical?: string;
+      score?: number | null;
+      candidateCount?: number;
+    }
+  ): void {
+    const { sessionId, ...rest } = metadata;
+    void this.analytics
+      .logEvent({
+        source: 'orchestrator',
+        sessionId,
+        tool: 'entity_resolution',
+        eventType: 'entity_resolution',
+        status: strategy,
+        metadata: {
+          entity_type: entityType,
+          ...rest,
+        },
+      })
+      .catch((error) => {
+        if (process.env.NODE_ENV !== 'production') {
+          console.debug('agentV2 entity resolution analytics error', error);
+        }
+      });
+  }
+
+  private async performFuzzyEntitySearch(params: {
+    entityType: FuzzyEntityType;
+    query: string;
+    minScore?: number;
+  }): Promise<FuzzyEntityMatch[]> {
+    const trimmedQuery = typeof params.query === 'string' ? params.query.trim() : '';
+    if (!trimmedQuery) {
+      return [];
+    }
+
+    const canonicalQuery = this.canonicalizeEntityQuery(params.entityType, trimmedQuery);
+    if (!canonicalQuery) {
+      return [];
+    }
+
+    const target = this.buildInternalApiUrl('/api/search/fuzzy');
+    target.searchParams.set('type', params.entityType);
+    target.searchParams.set('q', canonicalQuery);
+    target.searchParams.set('limit', '5');
+    if (typeof params.minScore === 'number' && Number.isFinite(params.minScore)) {
+      target.searchParams.set('minScore', String(params.minScore));
+    }
+
+    const fetchFn = typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : null;
+    if (!fetchFn) {
+      throw new Error('Fuzzy entity search failed: fetch is not available in this environment');
+    }
+
+    let response: globalThis.Response;
+    try {
+      response = await fetchFn(target, {
+        headers: { Accept: 'application/json' },
+      });
+    } catch (error) {
+      throw new Error(`Fuzzy entity search failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => '');
+      throw new Error(
+        `Fuzzy entity search failed with status ${response.status}: ${body || response.statusText}`
+      );
+    }
+
+    const json = (await response.json().catch(() => ({}))) as {
+      matches?: Array<Record<string, unknown>>;
+    };
+
+    const matches = Array.isArray(json.matches) ? json.matches.slice(0, 5) : [];
+
+    return matches
+      .map((match): FuzzyEntityMatch | null => {
+        const rawId = (match as any)?.id;
+        const numericId = typeof rawId === 'number' ? rawId : Number(rawId);
+        if (!Number.isFinite(numericId)) {
+          return null;
+        }
+
+        const labelValue = (match as any)?.label;
+        const label = typeof labelValue === 'string' ? labelValue : String(labelValue ?? numericId);
+        const scoreValue = (match as any)?.score;
+        const score = typeof scoreValue === 'number' ? scoreValue : Number(scoreValue ?? 0);
+        const extraValue = (match as any)?.extra;
+        const extra = extraValue && typeof extraValue === 'object' ? (extraValue as Record<string, unknown>) : {};
+
+        return {
+          id: numericId,
+          label,
+          score: Number.isFinite(score) ? score : 0,
+          extra,
+        };
+      })
+      .filter((match): match is FuzzyEntityMatch => Boolean(match));
   }
 
   private getAgentEmailService(): AgentEmailService {
@@ -312,102 +502,494 @@ export class AgentToolsV2 {
     }
   }
 
-  private async resolveCustomerIdFromPayload(payload: any): Promise<number> {
+  private async resolveCustomerIdFromPayload(payload: any, sessionId?: number): Promise<number> {
     const directCandidates: any[] = [];
     const addCandidate = (candidate: any) => {
-      directCandidates.push(candidate);
+      if (candidate !== undefined && candidate !== null) {
+        directCandidates.push(candidate);
+      }
     };
 
     addCandidate(payload?.customer_id);
     addCandidate(payload?.customerId);
 
-    const customerObject = payload?.customer && typeof payload.customer === 'object' ? payload.customer : null;
-    if (customerObject) {
-      Object.entries(customerObject).forEach(([key, value]) => {
-        if (key.toLowerCase().includes('id')) {
+    const traverseCustomer = (source: any, depth = 0) => {
+      if (!source || typeof source !== 'object' || Array.isArray(source) || depth > 3) {
+        return;
+      }
+
+      Object.entries(source).forEach(([key, value]) => {
+        const lower = key.toLowerCase();
+        if (lower.includes('id')) {
           addCandidate(value);
         }
+        if (lower.includes('name') || lower.includes('customer')) {
+          addNameCandidate(value);
+        }
+        if (value && typeof value === 'object' && !Array.isArray(value)) {
+          traverseCustomer(value, depth + 1);
+        }
       });
+    };
 
-      const nestedValue = (customerObject as any).value;
-      if (nestedValue && typeof nestedValue === 'object') {
-        Object.entries(nestedValue).forEach(([key, value]) => {
-          if (key.toLowerCase().includes('id')) {
-            addCandidate(value);
-          }
-        });
+    const nameCandidates = new Map<string, string>();
+    const addNameCandidate = (value: any) => {
+      const extracted = this.extractNonEmptyString(value);
+      if (!extracted) {
+        return;
       }
+
+      const canonical = this.canonicalizeEntityQuery('customer', extracted);
+      if (!canonical) {
+        return;
+      }
+
+      if (!nameCandidates.has(canonical)) {
+        nameCandidates.set(canonical, extracted);
+      }
+    };
+
+    addNameCandidate(payload?.customer_name);
+    addNameCandidate(payload?.customerName);
+    if (typeof payload?.customer === 'string') {
+      addNameCandidate(payload.customer);
+    }
+
+    const customerObject = payload?.customer && typeof payload.customer === 'object' ? payload.customer : null;
+    if (customerObject) {
+      traverseCustomer(customerObject);
     }
 
     for (const candidate of directCandidates) {
       const normalized = this.normalizeNumericId(candidate);
       if (normalized !== null) {
+        this.logEntityResolutionAttempt('customer', 'numeric_id', {
+          sessionId,
+          candidateCount: 1,
+          score: null,
+        });
         return normalized;
       }
     }
 
-    const nameCandidates = new Set<string>();
-    const addName = (value: any) => {
-      const extracted = this.extractNonEmptyString(value);
-      if (extracted) {
-        nameCandidates.add(extracted);
+    let lastLowConfidence: { original: string; canonical: string; matches: FuzzyEntityMatch[]; topScore: number } | null = null;
+    let lastNoCandidateQuery: string | null = null;
+
+    for (const [canonical, original] of nameCandidates) {
+      const matches = await this.performFuzzyEntitySearch({ entityType: 'customer', query: canonical });
+      const candidateCount = matches.length;
+
+      if (!candidateCount) {
+        this.logEntityResolutionAttempt('customer', 'no_candidates', {
+          sessionId,
+          query: original,
+          canonical,
+          score: null,
+          candidateCount: 0,
+        });
+        lastNoCandidateQuery = original;
+        continue;
+      }
+
+      const top = matches[0];
+      const topScore = Number.isFinite(top?.score) ? top.score : 0;
+
+      if (topScore >= 0.6) {
+        this.logEntityResolutionAttempt('customer', 'fuzzy_auto', {
+          sessionId,
+          query: original,
+          canonical,
+          score: topScore,
+          candidateCount,
+        });
+        return top.id;
+      }
+
+      if (topScore >= 0.35) {
+        this.logEntityResolutionAttempt('customer', 'fuzzy_disambiguate', {
+          sessionId,
+          query: original,
+          canonical,
+          score: topScore,
+          candidateCount,
+        });
+        const suggestions = matches
+          .slice(0, 3)
+          .map((match) => this.formatFuzzyCandidate('customer', match))
+          .join('; ');
+        const suffix = suggestions ? ` Top matches: ${suggestions}.` : '';
+        throw new Error(
+          `Multiple customers match "${original}".${suffix} Please provide the customer ID or refine the name.`
+        );
+      }
+
+      this.logEntityResolutionAttempt('customer', 'fuzzy_refine', {
+        sessionId,
+        query: original,
+        canonical,
+        score: topScore,
+        candidateCount,
+      });
+      lastLowConfidence = { original, canonical, matches, topScore };
+    }
+
+    if (lastLowConfidence) {
+      const top = lastLowConfidence.matches[0];
+      const suggestion = top
+        ? ` Closest match: ${this.formatFuzzyCandidate('customer', top)} (score ${top.score.toFixed(2)}).`
+        : '';
+      throw new Error(
+        `I found only low-confidence customer matches for "${lastLowConfidence.original}".${suggestion} ` +
+          'Please refine the customer details or provide the customer ID.'
+      );
+    }
+
+    if (lastNoCandidateQuery) {
+      throw new Error(
+        `No customers matched "${lastNoCandidateQuery}". Please refine the customer details or provide the customer ID.`
+      );
+    }
+
+    throw new Error(
+      'Unable to resolve the customer from the provided information. Please supply the numeric customer ID.'
+    );
+  }
+
+  private async resolveVendorIdFromPayload(payload: any, sessionId?: number): Promise<number> {
+    const directCandidates: any[] = [];
+    const addCandidate = (candidate: any) => {
+      if (candidate !== undefined && candidate !== null) {
+        directCandidates.push(candidate);
       }
     };
 
-    addName(payload?.customer_name);
-    addName(payload?.customerName);
-    if (customerObject) {
-      addName((customerObject as any).name);
-      addName((customerObject as any).customer_name);
-      addName((customerObject as any).customerName);
-      addName((customerObject as any).display_name);
+    addCandidate(payload?.vendor_id);
+    addCandidate(payload?.vendorId);
 
-      const nestedValue = (customerObject as any).value;
-      if (nestedValue && typeof nestedValue === 'object') {
-        addName((nestedValue as any).name);
-        addName((nestedValue as any).customer_name);
-        addName((nestedValue as any).customerName);
-        addName((nestedValue as any).display_name);
+    const nameCandidates = new Map<string, string>();
+    const addNameCandidate = (value: any) => {
+      const extracted = this.extractNonEmptyString(value);
+      if (!extracted) {
+        return;
+      }
+      const canonical = this.canonicalizeEntityQuery('vendor', extracted);
+      if (!canonical) {
+        return;
+      }
+      if (!nameCandidates.has(canonical)) {
+        nameCandidates.set(canonical, extracted);
+      }
+    };
+
+    addNameCandidate(payload?.vendor_name);
+    addNameCandidate(payload?.vendorName);
+    if (typeof payload?.vendor === 'string') {
+      addNameCandidate(payload.vendor);
+    }
+
+    const traverseVendor = (source: any, depth = 0) => {
+      if (!source || typeof source !== 'object' || Array.isArray(source) || depth > 3) {
+        return;
+      }
+
+      Object.entries(source).forEach(([key, value]) => {
+        const lower = key.toLowerCase();
+        if (lower.includes('id')) {
+          addCandidate(value);
+        }
+        if (lower.includes('name') || lower.includes('vendor')) {
+          addNameCandidate(value);
+        }
+        if (value && typeof value === 'object' && !Array.isArray(value)) {
+          traverseVendor(value, depth + 1);
+        }
+      });
+    };
+
+    const vendorObject = payload?.vendor && typeof payload.vendor === 'object' ? payload.vendor : null;
+    if (vendorObject) {
+      traverseVendor(vendorObject);
+    }
+
+    for (const candidate of directCandidates) {
+      const normalized = this.normalizeNumericId(candidate);
+      if (normalized !== null) {
+        this.logEntityResolutionAttempt('vendor', 'numeric_id', {
+          sessionId,
+          candidateCount: 1,
+          score: null,
+        });
+        return normalized;
       }
     }
 
-    for (const name of nameCandidates) {
+    let lastLowConfidence: { original: string; canonical: string; matches: FuzzyEntityMatch[]; topScore: number } | null = null;
+    let lastNoCandidateQuery: string | null = null;
+
+    for (const [canonical, original] of nameCandidates) {
+      const matches = await this.performFuzzyEntitySearch({ entityType: 'vendor', query: canonical });
+      const candidateCount = matches.length;
+
+      if (!candidateCount) {
+        this.logEntityResolutionAttempt('vendor', 'no_candidates', {
+          sessionId,
+          query: original,
+          canonical,
+          score: null,
+          candidateCount: 0,
+        });
+        lastNoCandidateQuery = original;
+        continue;
+      }
+
+      const top = matches[0];
+      const topScore = Number.isFinite(top?.score) ? top.score : 0;
+
+      if (topScore >= 0.6) {
+        this.logEntityResolutionAttempt('vendor', 'fuzzy_auto', {
+          sessionId,
+          query: original,
+          canonical,
+          score: topScore,
+          candidateCount,
+        });
+        return top.id;
+      }
+
+      if (topScore >= 0.35) {
+        this.logEntityResolutionAttempt('vendor', 'fuzzy_disambiguate', {
+          sessionId,
+          query: original,
+          canonical,
+          score: topScore,
+          candidateCount,
+        });
+        const suggestions = matches
+          .slice(0, 3)
+          .map((match) => this.formatFuzzyCandidate('vendor', match))
+          .join('; ');
+        const suffix = suggestions ? ` Top matches: ${suggestions}.` : '';
+        throw new Error(
+          `Multiple vendors match "${original}".${suffix} Please provide the vendor ID or refine the name.`
+        );
+      }
+
+      this.logEntityResolutionAttempt('vendor', 'fuzzy_refine', {
+        sessionId,
+        query: original,
+        canonical,
+        score: topScore,
+        candidateCount,
+      });
+      lastLowConfidence = { original, canonical, matches, topScore };
+    }
+
+    if (lastLowConfidence) {
+      const top = lastLowConfidence.matches[0];
+      const suggestion = top
+        ? ` Closest match: ${this.formatFuzzyCandidate('vendor', top)} (score ${top.score.toFixed(2)}).`
+        : '';
+      throw new Error(
+        `I found only low-confidence vendor matches for "${lastLowConfidence.original}".${suggestion} ` +
+          'Please refine the vendor details or provide the vendor ID.'
+      );
+    }
+
+    if (lastNoCandidateQuery) {
+      throw new Error(
+        `No vendors matched "${lastNoCandidateQuery}". Please refine the vendor details or provide the vendor ID.`
+      );
+    }
+
+    throw new Error('Unable to resolve the vendor from the provided information. Please supply the numeric vendor ID.');
+  }
+
+  private async resolvePartIdFromPayload(payload: any, sessionId?: number): Promise<number> {
+    const directCandidates: any[] = [];
+    const addCandidate = (candidate: any) => {
+      if (candidate !== undefined && candidate !== null) {
+        directCandidates.push(candidate);
+      }
+    };
+
+    addCandidate(payload?.part_id);
+    addCandidate(payload?.partId);
+    addCandidate(payload?.inventory_id);
+    addCandidate(payload?.inventoryId);
+
+    const identifierCandidates = new Map<string, string>();
+    const addIdentifierCandidate = (value: any) => {
+      const extracted = this.extractNonEmptyString(value);
+      if (!extracted) {
+        return;
+      }
+      const canonical = this.canonicalizeEntityQuery('part', extracted);
+      if (!canonical) {
+        return;
+      }
+      if (!identifierCandidates.has(canonical)) {
+        identifierCandidates.set(canonical, extracted);
+      }
+    };
+
+    addIdentifierCandidate(payload?.part_number);
+    addIdentifierCandidate(payload?.partNumber);
+    addIdentifierCandidate(payload?.part_identifier);
+    addIdentifierCandidate(payload?.partIdentifier);
+    if (typeof payload?.part === 'string') {
+      addIdentifierCandidate(payload.part);
+    }
+    if (typeof payload?.part_number === 'number') {
+      addIdentifierCandidate(String(payload.part_number));
+    }
+
+    const traversePart = (source: any, depth = 0) => {
+      if (!source || typeof source !== 'object' || Array.isArray(source) || depth > 3) {
+        return;
+      }
+
+      Object.entries(source).forEach(([key, value]) => {
+        const lower = key.toLowerCase();
+        if (lower.includes('id') && !lower.includes('description')) {
+          addCandidate(value);
+        }
+        if (lower.includes('part') || lower.includes('item') || lower.includes('number')) {
+          addIdentifierCandidate(value);
+        }
+        if (value && typeof value === 'object' && !Array.isArray(value)) {
+          traversePart(value, depth + 1);
+        }
+      });
+    };
+
+    const partObject = payload?.part && typeof payload.part === 'object' ? payload.part : null;
+    if (partObject) {
+      traversePart(partObject);
+    }
+
+    for (const candidate of directCandidates) {
+      const normalized = this.normalizeNumericId(candidate);
+      if (normalized !== null) {
+        this.logEntityResolutionAttempt('part', 'numeric_id', {
+          sessionId,
+          candidateCount: 1,
+          score: null,
+        });
+        return normalized;
+      }
+    }
+
+    let lastLowConfidence: { original: string; canonical: string; match: FuzzyEntityMatch | null } | null = null;
+    let lastNoCandidateQuery: string | null = null;
+
+    for (const [canonical, original] of identifierCandidates) {
       const exact = await this.pool.query(
-        'SELECT customer_id FROM customermaster WHERE LOWER(customer_name) = LOWER($1)',
-        [name]
+        'SELECT part_id FROM inventory WHERE canonical_part_number = $1 LIMIT 5',
+        [canonical]
       );
 
       if (exact.rowCount === 1) {
-        return Number(exact.rows[0].customer_id);
+        const resolvedId = Number(exact.rows[0]?.part_id);
+        if (Number.isFinite(resolvedId)) {
+          this.logEntityResolutionAttempt('part', 'canonical_exact', {
+            sessionId,
+            query: original,
+            canonical,
+            score: 1,
+            candidateCount: 1,
+          });
+          return resolvedId;
+        }
       }
 
       if ((exact.rowCount ?? 0) > 1) {
-        throw new Error(`Multiple customers found with the name "${name}". Please specify the customer ID.`);
-      }
-    }
-
-    for (const name of nameCandidates) {
-      const fuzzy = await this.pool.query(
-        'SELECT customer_id, customer_name FROM customermaster WHERE customer_name ILIKE $1 ORDER BY customer_name ASC LIMIT 2',
-        [this.buildLikeTerm(name)]
-      );
-
-      if (fuzzy.rowCount === 1) {
-        return Number(fuzzy.rows[0].customer_id);
+        this.logEntityResolutionAttempt('part', 'canonical_conflict', {
+          sessionId,
+          query: original,
+          canonical,
+          score: 1,
+          candidateCount: exact.rowCount ?? 0,
+        });
+        throw new Error(
+          `Multiple parts share the part number "${original}". Please provide the part ID to continue.`
+        );
       }
 
-      if ((fuzzy.rowCount ?? 0) > 1) {
-        const preview = fuzzy.rows
-          .map((row: any) => row?.customer_name)
-          .filter((value: any) => typeof value === 'string' && value.trim().length > 0)
+      const matches = await this.performFuzzyEntitySearch({ entityType: 'part', query: canonical });
+      const candidateCount = matches.length;
+
+      if (!candidateCount) {
+        this.logEntityResolutionAttempt('part', 'no_candidates', {
+          sessionId,
+          query: original,
+          canonical,
+          score: null,
+          candidateCount: 0,
+        });
+        lastNoCandidateQuery = original;
+        continue;
+      }
+
+      const top = matches[0];
+      const topScore = Number.isFinite(top?.score) ? top.score : 0;
+
+      if (topScore >= 0.6) {
+        this.logEntityResolutionAttempt('part', 'fuzzy_auto', {
+          sessionId,
+          query: original,
+          canonical,
+          score: topScore,
+          candidateCount,
+        });
+        return top.id;
+      }
+
+      if (topScore >= 0.35) {
+        this.logEntityResolutionAttempt('part', 'fuzzy_disambiguate', {
+          sessionId,
+          query: original,
+          canonical,
+          score: topScore,
+          candidateCount,
+        });
+        const suggestions = matches
           .slice(0, 3)
-          .join(', ');
-        const suffix = preview ? ` Matches: ${preview}.` : '';
-        throw new Error(`Multiple customers match "${name}". Please provide the customer ID.${suffix}`);
+          .map((match) => this.formatFuzzyCandidate('part', match))
+          .join('; ');
+        const suffix = suggestions ? ` Top matches: ${suggestions}.` : '';
+        throw new Error(
+          `Multiple parts match "${original}".${suffix} Please provide the part ID or refine the part number.`
+        );
       }
+
+      this.logEntityResolutionAttempt('part', 'fuzzy_refine', {
+        sessionId,
+        query: original,
+        canonical,
+        score: topScore,
+        candidateCount,
+      });
+
+      lastLowConfidence = { original, canonical, match: matches.length ? matches[0] : null };
     }
 
-    throw new Error('Unable to resolve a customer_id from the provided customer information. Please supply the numeric customer ID.');
+    if (lastLowConfidence) {
+      const suggestion = lastLowConfidence.match
+        ? ` Closest match: ${this.formatFuzzyCandidate('part', lastLowConfidence.match)} (score ${lastLowConfidence.match.score.toFixed(2)}).`
+        : '';
+      throw new Error(
+        `I found only low-confidence part matches for "${lastLowConfidence.original}".${suggestion} ` +
+          'Please refine the part number or provide the part ID.'
+      );
+    }
+
+    if (lastNoCandidateQuery) {
+      throw new Error(
+        `No parts matched "${lastNoCandidateQuery}". Please refine the part details or provide the part ID.`
+      );
+    }
+
+    throw new Error('Unable to resolve the part from the provided information. Please supply the numeric part ID.');
   }
 
   private describeLookup(entityLabel: string, values: string[]): string {
@@ -423,6 +1005,38 @@ export class AgentToolsV2 {
     const remaining = values.length > 3 ? `, plus ${values.length - 3} more` : '';
     const plural = entityLabel.endsWith('s') ? entityLabel : `${entityLabel}s`;
     return `Found ${values.length} ${plural}: ${preview}${remaining}.`;
+  }
+
+  private formatFuzzyCandidate(entityType: FuzzyEntityType, match: FuzzyEntityMatch): string {
+    const label = typeof match.label === 'string' ? match.label.trim() : String(match.id);
+    const extras: string[] = [];
+    const { extra } = match;
+
+    if (entityType === 'customer' || entityType === 'vendor') {
+      const city = typeof extra.city === 'string' ? extra.city.trim() : '';
+      const province = typeof extra.province === 'string' ? extra.province.trim() : '';
+      const country = typeof extra.country === 'string' ? extra.country.trim() : '';
+      const location = [city, province, country].filter((value) => value.length > 0).join(', ');
+      if (location) {
+        extras.push(location);
+      }
+    } else if (entityType === 'part') {
+      const description = typeof extra.description === 'string' ? extra.description.trim() : '';
+      const unit = typeof extra.unit === 'string' ? extra.unit.trim() : '';
+      const partType = typeof extra.partType === 'string' ? extra.partType.trim() : '';
+      if (description) {
+        extras.push(description);
+      }
+      if (unit) {
+        extras.push(unit);
+      }
+      if (partType) {
+        extras.push(partType);
+      }
+    }
+
+    const details = extras.length ? ` – ${extras.join(' · ')}` : '';
+    return `${label} (#${match.id})${details}`;
   }
 
   private formatVendorSummary(row: any): string {
@@ -1616,7 +2230,7 @@ export class AgentToolsV2 {
 
   // Quotes
   async createQuote(sessionId: number, payload: any) {
-    const customerId = await this.resolveCustomerIdFromPayload(payload);
+    const customerId = await this.resolveCustomerIdFromPayload(payload, sessionId);
     const baseQuoteDate = payload?.quote_date ? new Date(payload.quote_date) : new Date();
     const quoteDate = Number.isNaN(baseQuoteDate.getTime()) ? new Date() : baseQuoteDate;
     const validUntilCandidate = payload?.valid_until ? new Date(payload.valid_until) : null;

@@ -1,15 +1,34 @@
 import type { Pool } from 'pg';
 import { AgentToolsV2 } from './tools';
 import { QuoteService } from '../QuoteService';
+import { AgentAnalyticsLogger } from './analyticsLogger';
+import * as idempotency from '../../lib/idempotency';
 
 describe('AgentToolsV2.createQuote customer resolution', () => {
   let pool: jest.Mocked<Pool>;
+  let fetchMock: jest.Mock;
+  let client: { query: jest.Mock; release: jest.Mock };
 
   beforeEach(() => {
-    pool = { query: jest.fn() } as unknown as jest.Mocked<Pool>;
+    client = {
+      query: jest.fn().mockResolvedValue({ rows: [], rowCount: 0 }),
+      release: jest.fn(),
+    };
+    pool = {
+      query: jest.fn().mockResolvedValue({ rows: [], rowCount: 0 }),
+      connect: jest.fn().mockResolvedValue(client),
+    } as unknown as jest.Mocked<Pool>;
+    fetchMock = jest.fn();
+    (global as any).fetch = fetchMock;
+    jest.spyOn(AgentAnalyticsLogger.prototype, 'logEvent').mockResolvedValue();
+    jest.spyOn(idempotency, 'idempotentWrite').mockImplementation(async (options: any) => {
+      const workResult = await options.work();
+      return options.buildDeterministicResult(workResult);
+    });
   });
 
   afterEach(() => {
+    delete (global as any).fetch;
     jest.restoreAllMocks();
   });
 
@@ -26,20 +45,26 @@ describe('AgentToolsV2.createQuote customer resolution', () => {
     });
 
     expect(quoteSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ customer_id: 4, product_name: 'Truck Deck' })
+      expect.objectContaining({ customer_id: 4, product_name: 'Truck Deck' }),
+      expect.anything()
     );
-    const lookupCalls = (pool.query as jest.Mock).mock.calls.filter((call) =>
-      typeof call[0] === 'string' && call[0].includes('customermaster')
-    );
-    expect(lookupCalls).toHaveLength(0);
-    expect(result).toEqual({ quote_id: 1, quote_number: 'QO-TEST' });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(result).toEqual({ id: 1, number: 'QO-TEST', status: 'Open', total: null });
   });
 
   it('looks up the customer_id by name when not provided', async () => {
     const quoteSpy = jest
       .spyOn(QuoteService.prototype, 'createQuote')
       .mockResolvedValue({ quote_id: 2, quote_number: 'QO-LOOKUP' } as any);
-    (pool.query as jest.Mock).mockResolvedValueOnce({ rowCount: 1, rows: [{ customer_id: 7 }] });
+
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        matches: [
+          { id: 7, label: 'Test Customer', score: 0.92, extra: {} },
+        ],
+      }),
+    } as any);
 
     const tools = new AgentToolsV2(pool);
 
@@ -49,19 +74,18 @@ describe('AgentToolsV2.createQuote customer resolution', () => {
       estimated_cost: 15000,
     });
 
-    expect(pool.query).toHaveBeenCalledWith(
-      'SELECT customer_id FROM customermaster WHERE LOWER(customer_name) = LOWER($1)',
-      ['Test Customer']
-    );
-    expect(quoteSpy).toHaveBeenCalledWith(expect.objectContaining({ customer_id: 7 }));
-    expect(result).toEqual({ quote_id: 2, quote_number: 'QO-LOOKUP' });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const urlArg = fetchMock.mock.calls[0][0] as URL;
+    expect(urlArg.pathname).toBe('/api/search/fuzzy');
+    expect(urlArg.searchParams.get('type')).toBe('customer');
+    expect(urlArg.searchParams.get('q')).toBe('TEST CUSTOMER');
+    expect(quoteSpy).toHaveBeenCalledWith(expect.objectContaining({ customer_id: 7 }), expect.anything());
+    expect(result).toEqual({ id: 2, number: 'QO-LOOKUP', status: 'Open', total: null });
   });
 
   it('throws when the customer cannot be resolved from the provided information', async () => {
     const quoteSpy = jest.spyOn(QuoteService.prototype, 'createQuote');
-    (pool.query as jest.Mock)
-      .mockResolvedValueOnce({ rowCount: 0, rows: [] })
-      .mockResolvedValueOnce({ rowCount: 0, rows: [] });
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ matches: [] }) } as any);
 
     const tools = new AgentToolsV2(pool);
 
@@ -71,7 +95,7 @@ describe('AgentToolsV2.createQuote customer resolution', () => {
         product_name: 'Truck Deck',
         estimated_cost: 15000,
       })
-    ).rejects.toThrow('Unable to resolve a customer_id from the provided customer information.');
+    ).rejects.toThrow('No customers matched "Unknown Customer". Please refine the customer details or provide the customer ID.');
 
     expect(quoteSpy).not.toHaveBeenCalled();
   });
