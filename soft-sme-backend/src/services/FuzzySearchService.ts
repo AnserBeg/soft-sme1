@@ -1,5 +1,6 @@
 import { pool } from '../db';
 import { canonicalizeName, canonicalizePartNumber } from '../lib/normalize';
+import { getFuzzyConfig } from '../config';
 
 export type FuzzySearchType = 'vendor' | 'customer' | 'part';
 
@@ -34,9 +35,7 @@ interface SearchConfig {
   buildExtra: (row: QueryRow) => Record<string, unknown>;
 }
 
-const DEFAULT_LIMIT = 10;
 const MAX_LIMIT = 50;
-const DEFAULT_MIN_SCORE = 0.35;
 
 const searchConfigs: Record<FuzzySearchType, SearchConfig> = {
   vendor: {
@@ -93,23 +92,27 @@ const searchConfigs: Record<FuzzySearchType, SearchConfig> = {
 };
 
 function normalizeLimit(value: number | undefined): number {
+  const defaultLimit = getFuzzyConfig().maxResults;
+
   if (!Number.isFinite(value)) {
-    return DEFAULT_LIMIT;
+    return defaultLimit;
   }
   const floored = Math.floor(Number(value));
   if (!Number.isFinite(floored) || floored <= 0) {
-    return DEFAULT_LIMIT;
+    return defaultLimit;
   }
   return Math.min(MAX_LIMIT, floored);
 }
 
 function normalizeMinScore(value: number | undefined): number {
+  const defaultMinScore = getFuzzyConfig().minScoreShow;
+
   if (!Number.isFinite(value)) {
-    return DEFAULT_MIN_SCORE;
+    return defaultMinScore;
   }
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) {
-    return DEFAULT_MIN_SCORE;
+    return defaultMinScore;
   }
   if (numeric < 0) {
     return 0;

@@ -6,6 +6,7 @@ import fs from 'fs';
 import path from 'path';
 import PDFDocument from 'pdfkit';
 import { canonicalizeName, canonicalizePartNumber } from '../lib/normalize';
+import { getCanonicalConfig } from '../config';
 
 const router = express.Router();
 
@@ -257,17 +258,24 @@ router.post('/', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Part number cannot be empty after normalization' });
     }
 
-    const existingResult = await pool.query(
-      'SELECT part_number FROM inventory WHERE canonical_part_number = $1',
-      [canonicalPartNumber]
-    );
-    if (existingResult.rows.length > 0) {
-      const existingPn = existingResult.rows[0].part_number;
-      console.log('inventoryRoutes: Duplicate part number detected (canonical match):', trimmedPartNumber, 'matches', existingPn);
-      return res.status(409).json({
-        error: 'Part number already exists',
-        details: `A part with number "${existingPn}" already exists (normalized match for "${trimmedPartNumber}").`
-      });
+    if (getCanonicalConfig().enforceUniquePart) {
+      const existingResult = await pool.query(
+        'SELECT part_number FROM inventory WHERE canonical_part_number = $1',
+        [canonicalPartNumber]
+      );
+      if (existingResult.rows.length > 0) {
+        const existingPn = existingResult.rows[0].part_number;
+        console.log(
+          'inventoryRoutes: Duplicate part number detected (canonical match):',
+          trimmedPartNumber,
+          'matches',
+          existingPn,
+        );
+        return res.status(409).json({
+          error: 'Part number already exists',
+          details: `A part with number "${existingPn}" already exists (normalized match for "${trimmedPartNumber}").`,
+        });
+      }
     }
 
     const result = await pool.query(
@@ -366,13 +374,15 @@ router.put('/:id', async (req: Request, res: Response) => {
       }
 
       // Check if new part number already exists
-      const duplicateCheck = await client.query(
-        'SELECT part_number FROM inventory WHERE canonical_part_number = $1 AND part_id != $2',
-        [canonicalPartNumber, partId]
-      );
-      if (duplicateCheck.rows.length > 0) {
-        await client.query('ROLLBACK');
-        return res.status(409).json({ error: 'Part number already exists' });
+      if (getCanonicalConfig().enforceUniquePart) {
+        const duplicateCheck = await client.query(
+          'SELECT part_number FROM inventory WHERE canonical_part_number = $1 AND part_id != $2',
+          [canonicalPartNumber, partId]
+        );
+        if (duplicateCheck.rows.length > 0) {
+          await client.query('ROLLBACK');
+          return res.status(409).json({ error: 'Part number already exists' });
+        }
       }
 
       // Update part number in inventory

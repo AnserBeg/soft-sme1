@@ -26,6 +26,7 @@ import type { IdempotentWriteResult } from '../../lib/idempotency';
 import { AgentAnalyticsLogger } from './analyticsLogger';
 import { queryDocsRag } from '../../services/ragClient';
 import { canonicalizeName, canonicalizePartNumber } from '../../lib/normalize';
+import { getCanonicalConfig, getFuzzyConfig } from '../../config';
 
 type ProcessingResult = { status: 'processing' };
 
@@ -230,9 +231,10 @@ export class AgentToolsV2 {
     }
 
     const target = this.buildInternalApiUrl('/api/search/fuzzy');
+    const { maxResults } = getFuzzyConfig();
     target.searchParams.set('type', params.entityType);
     target.searchParams.set('q', canonicalQuery);
-    target.searchParams.set('limit', '5');
+    target.searchParams.set('limit', String(maxResults));
     if (typeof params.minScore === 'number' && Number.isFinite(params.minScore)) {
       target.searchParams.set('minScore', String(params.minScore));
     }
@@ -560,6 +562,8 @@ export class AgentToolsV2 {
       traverseCustomer(customerObject);
     }
 
+    const { minScoreAuto, minScoreShow } = getFuzzyConfig();
+
     for (const candidate of directCandidates) {
       const normalized = this.normalizeNumericId(candidate);
       if (normalized !== null) {
@@ -594,7 +598,7 @@ export class AgentToolsV2 {
       const top = matches[0];
       const topScore = Number.isFinite(top?.score) ? top.score : 0;
 
-      if (topScore >= 0.6) {
+      if (topScore >= minScoreAuto) {
         this.logEntityResolutionAttempt('customer', 'fuzzy_auto', {
           sessionId,
           query: original,
@@ -605,7 +609,7 @@ export class AgentToolsV2 {
         return top.id;
       }
 
-      if (topScore >= 0.35) {
+      if (topScore >= minScoreShow) {
         this.logEntityResolutionAttempt('customer', 'fuzzy_disambiguate', {
           sessionId,
           query: original,
@@ -711,6 +715,8 @@ export class AgentToolsV2 {
       traverseVendor(vendorObject);
     }
 
+    const { minScoreAuto, minScoreShow } = getFuzzyConfig();
+
     for (const candidate of directCandidates) {
       const normalized = this.normalizeNumericId(candidate);
       if (normalized !== null) {
@@ -745,7 +751,7 @@ export class AgentToolsV2 {
       const top = matches[0];
       const topScore = Number.isFinite(top?.score) ? top.score : 0;
 
-      if (topScore >= 0.6) {
+      if (topScore >= minScoreAuto) {
         this.logEntityResolutionAttempt('vendor', 'fuzzy_auto', {
           sessionId,
           query: original,
@@ -756,7 +762,7 @@ export class AgentToolsV2 {
         return top.id;
       }
 
-      if (topScore >= 0.35) {
+      if (topScore >= minScoreShow) {
         this.logEntityResolutionAttempt('vendor', 'fuzzy_disambiguate', {
           sessionId,
           query: original,
@@ -867,6 +873,9 @@ export class AgentToolsV2 {
       traversePart(partObject);
     }
 
+    const { minScoreAuto, minScoreShow } = getFuzzyConfig();
+    const { enforceUniquePart } = getCanonicalConfig();
+
     for (const candidate of directCandidates) {
       const normalized = this.normalizeNumericId(candidate);
       if (normalized !== null) {
@@ -888,7 +897,22 @@ export class AgentToolsV2 {
         [canonical]
       );
 
-      if (exact.rowCount === 1) {
+      const exactCount = exact.rowCount ?? 0;
+
+      if (enforceUniquePart && exactCount > 1) {
+        this.logEntityResolutionAttempt('part', 'canonical_conflict', {
+          sessionId,
+          query: original,
+          canonical,
+          score: 1,
+          candidateCount: exactCount,
+        });
+        throw new Error(
+          `Multiple parts share the part number "${original}". Please provide the part ID to continue.`
+        );
+      }
+
+      if (exactCount > 0) {
         const resolvedId = Number(exact.rows[0]?.part_id);
         if (Number.isFinite(resolvedId)) {
           this.logEntityResolutionAttempt('part', 'canonical_exact', {
@@ -896,23 +920,10 @@ export class AgentToolsV2 {
             query: original,
             canonical,
             score: 1,
-            candidateCount: 1,
+            candidateCount: exactCount || 1,
           });
           return resolvedId;
         }
-      }
-
-      if ((exact.rowCount ?? 0) > 1) {
-        this.logEntityResolutionAttempt('part', 'canonical_conflict', {
-          sessionId,
-          query: original,
-          canonical,
-          score: 1,
-          candidateCount: exact.rowCount ?? 0,
-        });
-        throw new Error(
-          `Multiple parts share the part number "${original}". Please provide the part ID to continue.`
-        );
       }
 
       const matches = await this.performFuzzyEntitySearch({ entityType: 'part', query: canonical });
@@ -933,7 +944,7 @@ export class AgentToolsV2 {
       const top = matches[0];
       const topScore = Number.isFinite(top?.score) ? top.score : 0;
 
-      if (topScore >= 0.6) {
+      if (topScore >= minScoreAuto) {
         this.logEntityResolutionAttempt('part', 'fuzzy_auto', {
           sessionId,
           query: original,
@@ -944,7 +955,7 @@ export class AgentToolsV2 {
         return top.id;
       }
 
-      if (topScore >= 0.35) {
+      if (topScore >= minScoreShow) {
         this.logEntityResolutionAttempt('part', 'fuzzy_disambiguate', {
           sessionId,
           query: original,
