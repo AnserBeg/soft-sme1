@@ -375,7 +375,7 @@ const buildToolRegistry = (
   userId: number,
   idempotencyKey: string
 ): AgentToolRegistry => ({
-  retrieveDocs: async ({ query }: any) => tools.retrieveDocs(query),
+  retrieveDocs: async ({ query, k }: any) => tools.retrieveDocs(sessionId, query, k),
   inventoryLookup: async (args: any) => tools.inventoryLookup(sessionId, args),
   createSalesOrder: async (args: any) =>
     tools.createSalesOrder(sessionId, ensureIdempotencyKey(args, idempotencyKey)),

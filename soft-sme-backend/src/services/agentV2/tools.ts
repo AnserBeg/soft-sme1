@@ -566,9 +566,10 @@ export class AgentToolsV2 {
   }
 
   // RAG: simple keyword search over agent_docs for now
-  async retrieveDocs(query: string, k = 5) {
+  async retrieveDocs(sessionId: number, query: string, k = 5) {
     const trimmed = typeof query === 'string' ? query.trim() : '';
     if (!trimmed) {
+      await this.analytics.incrementCounter(sessionId, 'docs.none');
       return { type: 'docs', info: 'No documentation coverage found.', chunks: [], citations: [] };
     }
 
@@ -577,6 +578,7 @@ export class AgentToolsV2 {
       try {
         const result = await queryDocsRag(trimmed, topK);
         if (result?.answer && Array.isArray(result.citations) && result.citations.length > 0) {
+          await this.analytics.incrementCounter(sessionId, 'docs.rag.used');
           return {
             type: 'docs' as const,
             info: result.answer,
@@ -591,7 +593,9 @@ export class AgentToolsV2 {
 
     if (process.env.DOCS_LEGACY_SQL_FALLBACK === 'true') {
       const terms = trimmed.split(/\s+/).filter(Boolean).slice(0, 6);
+      await this.analytics.incrementCounter(sessionId, 'docs.legacy.used');
       if (!terms.length) {
+        await this.analytics.incrementCounter(sessionId, 'docs.none');
         return { type: 'docs', info: 'No documentation coverage found.', chunks: [], citations: [] };
       }
       const like = terms.map((_, i) => `chunk ILIKE $${i + 1}`).join(' OR ');
@@ -600,6 +604,9 @@ export class AgentToolsV2 {
         `SELECT path, section, chunk FROM agent_docs WHERE ${like} LIMIT ${k}`,
         params
       );
+      if (!res.rows.length) {
+        await this.analytics.incrementCounter(sessionId, 'docs.none');
+      }
       return {
         type: 'docs',
         info: res.rows.length ? 'Relevant docs' : 'No documentation coverage found.',
@@ -608,6 +615,7 @@ export class AgentToolsV2 {
       };
     }
 
+    await this.analytics.incrementCounter(sessionId, 'docs.none');
     return { type: 'docs', info: 'No documentation coverage found.', chunks: [], citations: [] };
   }
 
