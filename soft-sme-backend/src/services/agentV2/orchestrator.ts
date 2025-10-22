@@ -1,5 +1,6 @@
 import { Pool } from 'pg';
 import { randomUUID } from 'crypto';
+import { z, ZodError, type ZodSchema } from 'zod';
 import aiAssistantService from '../aiAssistantService';
 import { AIService } from '../aiService';
 import { AgentAnalyticsLogger } from './analyticsLogger';
@@ -11,6 +12,36 @@ import {
 } from './answerComposer';
 import type { SkillWorkflowSummary } from './skillLibrary';
 import { GeminiIntentRouter, StructuredIntent } from './geminiRouter';
+import {
+  Id,
+  LookupArgs,
+  PurchaseOrderPatch,
+  QuoteCreateArgs,
+  QuoteUpdateArgs,
+  SalesOrderPatch,
+  TaskCreateArgs,
+  TaskUpdateArgs,
+} from './toolSchemas';
+
+const TOOL_SCHEMAS: Record<string, ZodSchema<any>> = {
+  'quote.create': QuoteCreateArgs,
+  'quote.update': QuoteUpdateArgs,
+  'sales_order.update': z
+    .object({
+      id: Id,
+      patch: SalesOrderPatch,
+    })
+    .strict(),
+  'purchase_order.update': z
+    .object({
+      id: Id,
+      patch: PurchaseOrderPatch,
+    })
+    .strict(),
+  'task.create': TaskCreateArgs,
+  'task.update': TaskUpdateArgs,
+  lookup: LookupArgs,
+};
 
 export interface AgentToolRegistry {
   [name: string]: (args: any) => Promise<any>;
@@ -219,8 +250,31 @@ export class AgentOrchestratorV2 {
 
     if (intent && this.tools[intent.tool]) {
       const trace = this.analytics.startToolTrace(sessionId, intent.tool, intent.args);
+      const schema = TOOL_SCHEMAS[intent.tool];
+      let parsedArgs = intent.args;
+
+      if (schema) {
+        try {
+          parsedArgs = schema.parse(intent.args);
+        } catch (error) {
+          await this.analytics.finishToolTrace(trace, { status: 'failure', error });
+          const baseMessage = `Invalid arguments for tool "${intent.tool}".`;
+          const detail =
+            error instanceof ZodError && error.issues.length > 0
+              ? ` ${error.issues.map((issue) => issue.message).join('; ')}`
+              : '';
+          events.push({
+            type: 'text',
+            content: `${baseMessage}${detail}`,
+            severity: 'error',
+            timestamp: new Date().toISOString(),
+          });
+          return { events };
+        }
+      }
+
       try {
-        const result = await this.tools[intent.tool](intent.args);
+        const result = await this.tools[intent.tool](parsedArgs);
         await this.analytics.finishToolTrace(trace, { status: 'success', output: result });
         events.push(...this.normalizeToolResult(intent.tool, result, { userText: message, sessionId }));
       } catch (error: any) {
