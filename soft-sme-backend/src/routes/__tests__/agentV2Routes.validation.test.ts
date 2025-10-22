@@ -12,10 +12,23 @@ jest.mock('../../middleware/authMiddleware', () => ({
   authMiddleware: (_req: unknown, _res: unknown, next: () => void) => next(),
 }));
 
+const handleMessageMock = jest.fn();
+
+jest.mock('../../services/agentV2/orchestrator', () => ({
+  AgentOrchestratorV2: jest.fn().mockImplementation(() => ({
+    handleMessage: handleMessageMock,
+    getToolCatalog: jest.fn().mockReturnValue([]),
+  })),
+}));
+
 import type { Request, Response } from 'express';
 import router from '../agentV2Routes';
 
 describe('agentV2Routes validation', () => {
+  beforeEach(() => {
+    handleMessageMock.mockReset();
+  });
+
   const getChatHandler = () => {
     const layer = (router as any).stack.find((entry: any) => entry.route?.path === '/chat');
     if (!layer) {
@@ -53,5 +66,25 @@ describe('agentV2Routes validation', () => {
         }),
       })
     );
+  });
+
+  it('returns 422 when tool invocation is missing quote_id', async () => {
+    const handler = getChatHandler();
+    const status = jest.fn().mockReturnThis();
+    const json = jest.fn();
+    const res = { status, json } as unknown as Response;
+
+    const req = {
+      body: { sessionId: 1, message: 'please close quote 123', userId: 5, companyId: 8 },
+      headers: {},
+    } as unknown as Request;
+
+    handleMessageMock.mockRejectedValueOnce(new Error('quote_id is required'));
+
+    await handler(req, res, jest.fn());
+
+    expect(handleMessageMock).toHaveBeenCalled();
+    expect(status).toHaveBeenCalledWith(422);
+    expect(json).toHaveBeenCalledWith({ error: 'quote_id is required' });
   });
 });

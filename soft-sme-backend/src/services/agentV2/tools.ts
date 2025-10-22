@@ -517,6 +517,23 @@ export class AgentToolsV2 {
     return rest as T;
   }
 
+  private normalizeQuoteCloseStatus(value: unknown): 'Closed' | 'Won' | 'Lost' {
+    if (typeof value === 'string') {
+      const trimmed = value.trim().toLowerCase();
+      if (trimmed === 'won') {
+        return 'Won';
+      }
+      if (trimmed === 'lost') {
+        return 'Lost';
+      }
+      if (trimmed === 'closed') {
+        return 'Closed';
+      }
+    }
+
+    return 'Closed';
+  }
+
   private parseWithSchema<T>(schema: ZodSchema<T>, raw: unknown, toolName: string): T {
     try {
       return schema.parse(raw);
@@ -2799,6 +2816,18 @@ export class AgentToolsV2 {
       );
       throw error;
     }
+  }
+
+  async closeQuote(sessionId: number, quoteId: number, payload: any) {
+    const idempotencyKey = extractIdempotencyKeyFromArgs(payload);
+    const sanitizedPayload = this.stripIdempotencyKey(payload) as Record<string, unknown> | undefined;
+    const status = this.normalizeQuoteCloseStatus(sanitizedPayload?.status);
+    const patch: Record<string, unknown> = { status };
+    if (idempotencyKey) {
+      patch.idempotency_key = idempotencyKey;
+    }
+
+    return this.updateQuote(sessionId, quoteId, patch);
   }
 
   async emailQuote(
