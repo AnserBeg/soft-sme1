@@ -10,7 +10,7 @@ import type {
   ToolDisambiguationCandidate,
 } from './answerComposer';
 import { VoiceService } from '../voice/VoiceService';
-import { TaskInput, TaskStatus } from '../TaskService';
+import { TaskInput, TaskStatus, ServiceError } from '../TaskService';
 import { QuoteService } from '../QuoteService';
 import { PurchaseOrderService } from '../PurchaseOrderService';
 import DocumentEmailService from '../DocumentEmailService';
@@ -27,6 +27,25 @@ import { AgentAnalyticsLogger } from './analyticsLogger';
 import { queryDocsRag } from '../../services/ragClient';
 import { canonicalizeName, canonicalizePartNumber } from '../../lib/normalize';
 import { getCanonicalConfig, getFuzzyConfig } from '../../config';
+import { ZodError, type ZodSchema } from 'zod';
+import {
+  QuoteCreateArgs as QuoteCreateSchema,
+  QuoteUpdateArgs as QuoteUpdateSchema,
+  SalesOrderPatch as SalesOrderPatchSchema,
+  PurchaseOrderPatch as PurchaseOrderPatchSchema,
+  TaskCreateArgs as TaskCreateSchema,
+  TaskUpdateArgs as TaskUpdateSchema,
+  LookupArgs as LookupArgsSchema,
+} from './toolSchemas';
+import type {
+  QuoteCreateArgs,
+  QuoteUpdateArgs,
+  SalesOrderPatch,
+  PurchaseOrderPatch,
+  TaskCreateArgs,
+  TaskUpdateArgs,
+  LookupArgs,
+} from './toolSchemas';
 
 type ProcessingResult = { status: 'processing' };
 
@@ -486,6 +505,89 @@ export class AgentToolsV2 {
 
   private normalizeLookupValue(value: any): string {
     return typeof value === 'string' ? value.trim() : '';
+  }
+
+  private stripIdempotencyKey<T>(value: T): T {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return value;
+    }
+
+    const { idempotency_key: _ignored, ...rest } = value as Record<string, unknown>;
+    return rest as T;
+  }
+
+  private parseWithSchema<T>(schema: ZodSchema<T>, raw: unknown, toolName: string): T {
+    try {
+      return schema.parse(raw);
+    } catch (error: unknown) {
+      if (error instanceof ZodError) {
+        const flattened = error.flatten();
+        throw new ServiceError(JSON.stringify({ tool: toolName, issues: flattened }), 422);
+      }
+      throw error;
+    }
+  }
+
+  private pickDefined<T extends Record<string, unknown>>(
+    source: any,
+    keys: readonly (keyof T)[]
+  ): Partial<T> {
+    if (!source || typeof source !== 'object') {
+      return {};
+    }
+
+    const result: Record<string, unknown> = {};
+    for (const key of keys) {
+      if (Object.prototype.hasOwnProperty.call(source, key)) {
+        const value = (source as Record<string, unknown>)[key as string];
+        if (value !== undefined) {
+          result[key as string] = value;
+        }
+      }
+    }
+
+    return result as Partial<T>;
+  }
+
+  private mapTaskSchemaStatus(status?: string | null): TaskStatus | undefined {
+    if (!status) {
+      return undefined;
+    }
+
+    const normalized = status.trim().toLowerCase();
+    switch (normalized) {
+      case 'open':
+        return 'pending';
+      case 'in progress':
+      case 'in_progress':
+        return 'in_progress';
+      case 'blocked':
+        return 'in_progress';
+      case 'done':
+        return 'completed';
+      default:
+        return this.normalizeTaskStatus(status);
+    }
+  }
+
+  private mapInvoiceStatusFromSchema(value: unknown): unknown {
+    if (typeof value !== 'string') {
+      return value;
+    }
+
+    const normalized = value.trim().toLowerCase();
+    switch (normalized) {
+      case 'draft':
+        return null;
+      case 'pending':
+        return 'pending';
+      case 'sent':
+        return 'sent';
+      case 'paid':
+        return 'done';
+      default:
+        return value;
+    }
   }
 
   private normalizeNumericId(value: any): number | null {
@@ -1307,11 +1409,38 @@ export class AgentToolsV2 {
   }
 
   async inventoryLookup(sessionId: number, args: any): Promise<ToolResultEnvelope> {
-    const entityType = this.normalizeLookupType(args?.entity_type);
-    const entityName = this.normalizeLookupValue(args?.entity_name);
-    const orderNumber = this.normalizeLookupValue(args?.order_number);
-    const partIdentifier = this.normalizeLookupValue(args?.part_identifier);
-    const filters = Array.isArray(args?.filters) ? args.filters : [];
+    const sanitizedArgs = this.stripIdempotencyKey(args);
+    const primaryTerm =
+      typeof (sanitizedArgs as any)?.term === 'string' && (sanitizedArgs as any).term.trim().length > 0
+        ? (sanitizedArgs as any).term
+        : typeof (sanitizedArgs as any)?.entity_name === 'string' && (sanitizedArgs as any).entity_name.trim().length > 0
+          ? (sanitizedArgs as any).entity_name
+          : typeof (sanitizedArgs as any)?.order_number === 'string' && (sanitizedArgs as any).order_number.trim().length > 0
+            ? (sanitizedArgs as any).order_number
+            : typeof (sanitizedArgs as any)?.part_identifier === 'string' &&
+                (sanitizedArgs as any).part_identifier.trim().length > 0
+              ? (sanitizedArgs as any).part_identifier
+              : '';
+
+    const lookupValidationArgs: Record<string, unknown> = {
+      entity_type: (sanitizedArgs as any)?.entity_type ?? (sanitizedArgs as any)?.entityType,
+      term: primaryTerm,
+    };
+    if ((sanitizedArgs as any)?.limit !== undefined) {
+      lookupValidationArgs.limit = (sanitizedArgs as any).limit;
+    }
+
+    const validatedLookupArgs = this.parseWithSchema<LookupArgs>(
+      LookupArgsSchema,
+      lookupValidationArgs,
+      'lookup'
+    );
+
+    const entityType = this.normalizeLookupType(validatedLookupArgs.entity_type);
+    const entityName = this.normalizeLookupValue((sanitizedArgs as any)?.entity_name);
+    const orderNumber = this.normalizeLookupValue((sanitizedArgs as any)?.order_number);
+    const partIdentifier = this.normalizeLookupValue((sanitizedArgs as any)?.part_identifier);
+    const filters = Array.isArray((sanitizedArgs as any)?.filters) ? (sanitizedArgs as any).filters : [];
 
     const payload = {
       entity_type: entityType,
@@ -1666,29 +1795,71 @@ export class AgentToolsV2 {
     userId: number,
     payload: any
   ): Promise<AgentTaskEvent> {
-    const titleSource = typeof payload?.title === 'string' && payload.title.trim().length > 0
-      ? payload.title.trim()
-      : typeof payload?.subject === 'string' && payload.subject.trim().length > 0
-        ? payload.subject.trim()
-        : 'Follow-up task';
+    const sanitizedPayload = this.stripIdempotencyKey(payload);
+    const validationPayload: Record<string, unknown> = {};
+    if (typeof (sanitizedPayload as any)?.title === 'string' && (sanitizedPayload as any).title.trim().length > 0) {
+      validationPayload.title = (sanitizedPayload as any).title;
+    } else if (
+      typeof (sanitizedPayload as any)?.subject === 'string' &&
+      (sanitizedPayload as any).subject.trim().length > 0
+    ) {
+      validationPayload.title = (sanitizedPayload as any).subject;
+    }
+    if (typeof (sanitizedPayload as any)?.status === 'string') {
+      validationPayload.status = (sanitizedPayload as any).status;
+    }
+    const dueDateCandidate =
+      typeof (sanitizedPayload as any)?.due_date === 'string'
+        ? (sanitizedPayload as any).due_date
+        : typeof (sanitizedPayload as any)?.dueDate === 'string'
+          ? (sanitizedPayload as any).dueDate
+          : undefined;
+    if (dueDateCandidate) {
+      validationPayload.due_date = dueDateCandidate;
+    }
+    const assigneeSource =
+      (sanitizedPayload as any)?.assignee_ids ??
+      (sanitizedPayload as any)?.assigneeIds ??
+      (sanitizedPayload as any)?.assignees;
+    if (assigneeSource !== undefined) {
+      validationPayload.assignee_ids = assigneeSource;
+    }
 
-    const status = this.normalizeTaskStatus(payload?.status);
+    const validatedTaskCreate = this.parseWithSchema<TaskCreateArgs>(
+      TaskCreateSchema,
+      validationPayload,
+      'task.create'
+    );
+
+    const titleSource = validatedTaskCreate.title.trim();
+
+    const status = this.mapTaskSchemaStatus(validatedTaskCreate.status);
 
     const taskPayload: TaskInput = {
       title: titleSource,
-      description: typeof payload?.description === 'string' ? payload.description : undefined,
+      description:
+        typeof (sanitizedPayload as any)?.description === 'string'
+          ? (sanitizedPayload as any).description
+          : undefined,
       status,
       dueDate:
-        payload?.dueDate === null
+        (sanitizedPayload as any)?.dueDate === null
           ? null
-          : typeof payload?.dueDate === 'string'
-            ? payload.dueDate
+          : typeof validatedTaskCreate.due_date === 'string'
+            ? validatedTaskCreate.due_date
             : undefined,
-      assigneeIds: this.normalizeAssigneeIds(payload?.assigneeIds ?? payload?.assignees),
-      initialNote: typeof payload?.initialNote === 'string' ? payload.initialNote : undefined,
+      assigneeIds: this.normalizeAssigneeIds(
+        Array.isArray(validatedTaskCreate.assignee_ids)
+          ? validatedTaskCreate.assignee_ids
+          : []
+      ),
+      initialNote:
+        typeof (sanitizedPayload as any)?.initialNote === 'string'
+          ? (sanitizedPayload as any).initialNote
+          : undefined,
     };
 
-    const followUp = typeof payload?.followUp === 'string' ? payload.followUp : undefined;
+    const followUp = typeof (sanitizedPayload as any)?.followUp === 'string' ? (sanitizedPayload as any).followUp : undefined;
     const idempotencyKey = extractIdempotencyKeyFromArgs(payload);
 
     try {
@@ -1700,7 +1871,7 @@ export class AgentToolsV2 {
           toolName: 'task.create',
           tenantId: String(companyId),
           idempotencyKey,
-          requestPayload: payload,
+          requestPayload: sanitizedPayload,
           work: async () => {
             didRunWork = true;
             const createdEvent = await this.taskFacade.createTask(
@@ -1744,11 +1915,17 @@ export class AgentToolsV2 {
         throw new Error('Failed to resolve task creation result.');
       }
 
-      await this.audit(sessionId, 'createTask', payload, { taskId: event.task.id }, true);
+      await this.audit(sessionId, 'createTask', sanitizedPayload, { taskId: event.task.id }, true);
       return event;
     } catch (error: any) {
       this.recordIdempotencyConflict(sessionId, error);
-      await this.audit(sessionId, 'createTask', payload, { error: error?.message ?? String(error) }, false);
+      await this.audit(
+        sessionId,
+        'createTask',
+        sanitizedPayload,
+        { error: error?.message ?? String(error) },
+        false
+      );
       throw error;
     }
   }
@@ -1759,20 +1936,55 @@ export class AgentToolsV2 {
     userId: number,
     payload: any
   ): Promise<AgentTaskEvent> {
-    const taskId = Number(payload?.taskId ?? payload?.id);
-    if (!Number.isFinite(taskId)) {
-      throw new Error('Task id is required to update a task');
+    const sanitizedPayload = this.stripIdempotencyKey(payload);
+    const validationPatch: Record<string, unknown> = {};
+    if (typeof (sanitizedPayload as any)?.status === 'string') {
+      validationPatch.status = (sanitizedPayload as any).status;
+    }
+    if (typeof (sanitizedPayload as any)?.note === 'string') {
+      validationPatch.note = (sanitizedPayload as any).note;
+    }
+    const dueDateCandidate =
+      typeof (sanitizedPayload as any)?.due_date === 'string'
+        ? (sanitizedPayload as any).due_date
+        : typeof (sanitizedPayload as any)?.dueDate === 'string'
+          ? (sanitizedPayload as any).dueDate
+          : undefined;
+    if (dueDateCandidate) {
+      validationPatch.due_date = dueDateCandidate;
     }
 
+    const parsedTaskUpdate = this.parseWithSchema<TaskUpdateArgs>(
+      TaskUpdateSchema,
+      { id: (sanitizedPayload as any)?.taskId ?? (sanitizedPayload as any)?.id, patch: validationPatch },
+      'task.update'
+    );
+
+    const taskId = parsedTaskUpdate.id;
+
     const updates: { status?: TaskStatus; dueDate?: string | null; note?: string } = {};
-    if (typeof payload?.status === 'string' && payload.status.trim().length > 0) {
-      updates.status = this.normalizeTaskStatus(payload.status);
+    if (parsedTaskUpdate.patch.status !== undefined) {
+      const mappedStatus = this.mapTaskSchemaStatus(parsedTaskUpdate.patch.status);
+      if (mappedStatus !== undefined) {
+        updates.status = mappedStatus;
+      }
     }
-    if (Object.prototype.hasOwnProperty.call(payload ?? {}, 'dueDate')) {
-      updates.dueDate = payload?.dueDate === null ? null : typeof payload?.dueDate === 'string' ? payload.dueDate : undefined;
+    let dueDateUpdate: string | null | undefined;
+    if (Object.prototype.hasOwnProperty.call(sanitizedPayload ?? {}, 'dueDate')) {
+      dueDateUpdate =
+        (sanitizedPayload as any)?.dueDate === null
+          ? null
+          : typeof parsedTaskUpdate.patch.due_date === 'string'
+            ? parsedTaskUpdate.patch.due_date
+            : undefined;
+    } else if (parsedTaskUpdate.patch.due_date !== undefined) {
+      dueDateUpdate = parsedTaskUpdate.patch.due_date;
     }
-    if (typeof payload?.note === 'string' && payload.note.trim().length > 0) {
-      updates.note = payload.note.trim();
+    if (dueDateUpdate !== undefined) {
+      updates.dueDate = dueDateUpdate;
+    }
+    if (parsedTaskUpdate.patch.note !== undefined) {
+      updates.note = parsedTaskUpdate.patch.note;
     }
 
     const idempotencyKey = extractIdempotencyKeyFromArgs(payload);
@@ -1787,7 +1999,7 @@ export class AgentToolsV2 {
           tenantId: String(companyId),
           targetId: String(taskId),
           idempotencyKey,
-          requestPayload: payload,
+          requestPayload: sanitizedPayload,
           work: async () => {
             didRunWork = true;
             const updatedEvent = await this.taskFacade.updateTask(
@@ -1830,11 +2042,17 @@ export class AgentToolsV2 {
         throw new Error('Failed to resolve task update result.');
       }
 
-      await this.audit(sessionId, 'updateTask', payload, { taskId: event.task.id }, true);
+      await this.audit(sessionId, 'updateTask', sanitizedPayload, { taskId: event.task.id }, true);
       return event;
     } catch (error: any) {
       this.recordIdempotencyConflict(sessionId, error);
-      await this.audit(sessionId, 'updateTask', payload, { error: error?.message ?? String(error) }, false);
+      await this.audit(
+        sessionId,
+        'updateTask',
+        sanitizedPayload,
+        { error: error?.message ?? String(error) },
+        false
+      );
       throw error;
     }
   }
@@ -1975,6 +2193,44 @@ export class AgentToolsV2 {
 
   async updateSalesOrder(sessionId: number, salesOrderId: number, patch: any) {
     const idempotencyKey = extractIdempotencyKeyFromArgs(patch);
+    const sanitizedPatch = this.stripIdempotencyKey(patch);
+    const headerSource =
+      sanitizedPatch &&
+      typeof sanitizedPatch === 'object' &&
+      !Array.isArray(sanitizedPatch) &&
+      (sanitizedPatch as any).header &&
+      typeof (sanitizedPatch as any).header === 'object'
+        ? (sanitizedPatch as any).header
+        : sanitizedPatch;
+    const validatedHeaderPatch = this.parseWithSchema<SalesOrderPatch>(
+      SalesOrderPatchSchema,
+      this.pickDefined<SalesOrderPatch>(headerSource, ['invoice_status', 'due_date', 'notes']),
+      'sales_order.update'
+    );
+    const normalizedHeaderPatch: Record<string, unknown> = {};
+    if (validatedHeaderPatch.invoice_status !== undefined) {
+      normalizedHeaderPatch.invoice_status = this.mapInvoiceStatusFromSchema(
+        validatedHeaderPatch.invoice_status
+      );
+    }
+    if (validatedHeaderPatch.due_date !== undefined) {
+      normalizedHeaderPatch.due_date = validatedHeaderPatch.due_date;
+    }
+    if (validatedHeaderPatch.notes !== undefined) {
+      normalizedHeaderPatch.notes = validatedHeaderPatch.notes;
+    }
+    if (
+      sanitizedPatch &&
+      typeof sanitizedPatch === 'object' &&
+      !Array.isArray(sanitizedPatch) &&
+      (sanitizedPatch as any).header &&
+      typeof (sanitizedPatch as any).header === 'object'
+    ) {
+      (sanitizedPatch as any).header = {
+        ...(sanitizedPatch as any).header,
+        ...normalizedHeaderPatch,
+      };
+    }
 
     try {
       const { deterministicResult, workResult, didRunWork } = await withTransaction(this.pool, async (client) => {
@@ -1985,11 +2241,13 @@ export class AgentToolsV2 {
           toolName: 'sales_order.update',
           targetId: String(salesOrderId),
           idempotencyKey,
-          requestPayload: patch,
+          requestPayload: sanitizedPatch,
           work: async () => {
             didRunWork = true;
-            const allowed = ['customer_id','sales_date','product_name','product_description','terms','subtotal','total_gst_amount','total_amount','status','estimated_cost','sequence_number','customer_po_number','vin_number','vehicle_make','vehicle_model','invoice_status','quote_id','source_quote_number'];
-            const header = patch.header || {};
+            const patchForWork =
+              sanitizedPatch && typeof sanitizedPatch === 'object' ? (sanitizedPatch as any) : {};
+            const allowed = ['customer_id','sales_date','product_name','product_description','terms','subtotal','total_gst_amount','total_amount','status','estimated_cost','sequence_number','customer_po_number','vin_number','vehicle_make','vehicle_model','invoice_status','quote_id','source_quote_number','due_date','notes'];
+            const header = patchForWork.header || {};
             if (Object.prototype.hasOwnProperty.call(header, 'invoice_required')) {
               header.invoice_status = this.normalizeInvoiceStatus(header.invoice_required);
               delete header.invoice_required;
@@ -2008,11 +2266,11 @@ export class AgentToolsV2 {
               }
               if (fields.length){ values.push(salesOrderId); await client.query(`UPDATE salesorderhistory SET ${fields.join(', ')}, updated_at = NOW() WHERE sales_order_id = $${i}`, values); }
             }
-            if (Array.isArray(patch.lineItems)) {
-              await this.soService.updateSalesOrder(salesOrderId, patch.lineItems, client, { access_role: 'Admin' }); // Agent V2 has admin privileges
+            if (Array.isArray(patchForWork.lineItems)) {
+              await this.soService.updateSalesOrder(salesOrderId, patchForWork.lineItems, client, { access_role: 'Admin' }); // Agent V2 has admin privileges
             }
-            if (Array.isArray(patch.partsToOrder)) {
-              for (const p of patch.partsToOrder) {
+            if (Array.isArray(patchForWork.partsToOrder)) {
+              for (const p of patchForWork.partsToOrder) {
                 await client.query('DELETE FROM sales_order_parts_to_order WHERE sales_order_id=$1 AND part_number=$2', [salesOrderId, p.part_number]);
                 await client.query('INSERT INTO sales_order_parts_to_order (sales_order_id, part_number, part_description, quantity_needed, unit, unit_price, line_amount) VALUES ($1,$2,$3,$4,$5,$6,$7)',
                   [salesOrderId, p.part_number, p.part_description||'', Number(p.quantity_needed||0), p.unit||'Each', Number(p.unit_price||0), Number(p.line_amount||0)]);
@@ -2040,11 +2298,11 @@ export class AgentToolsV2 {
       this.recordIdempotencyResult(sessionId, didRunWork, deterministicResult);
 
       const auditPayload = workResult ?? deterministicResult;
-      await this.audit(sessionId, 'updateSalesOrder', { salesOrderId, patch }, auditPayload, true);
+      await this.audit(sessionId, 'updateSalesOrder', { salesOrderId, patch: sanitizedPatch }, auditPayload, true);
       return deterministicResult;
     } catch (e: any) {
       this.recordIdempotencyConflict(sessionId, e);
-      await this.audit(sessionId, 'updateSalesOrder', { salesOrderId, patch }, { error: e.message }, false);
+      await this.audit(sessionId, 'updateSalesOrder', { salesOrderId, patch: sanitizedPatch }, { error: e.message }, false);
       throw e;
     }
   }
@@ -2096,6 +2354,54 @@ export class AgentToolsV2 {
 
   async updatePurchaseOrder(sessionId: number, purchaseOrderId: number, patch: any) {
     const idempotencyKey = extractIdempotencyKeyFromArgs(patch);
+    const sanitizedPatch = this.stripIdempotencyKey(patch);
+    const headerSource =
+      sanitizedPatch &&
+      typeof sanitizedPatch === 'object' &&
+      !Array.isArray(sanitizedPatch) &&
+      (sanitizedPatch as any).header &&
+      typeof (sanitizedPatch as any).header === 'object'
+        ? (sanitizedPatch as any).header
+        : sanitizedPatch;
+    const validatedHeaderPatch = this.parseWithSchema<PurchaseOrderPatch>(
+      PurchaseOrderPatchSchema,
+      this.pickDefined<PurchaseOrderPatch>(headerSource, [
+        'status',
+        'subtotal',
+        'total_gst_amount',
+        'total_amount',
+        'notes',
+      ]),
+      'purchase_order.update'
+    );
+    const normalizedHeaderPatch: Record<string, unknown> = {};
+    if (validatedHeaderPatch.status !== undefined) {
+      normalizedHeaderPatch.status = validatedHeaderPatch.status;
+    }
+    if (validatedHeaderPatch.subtotal !== undefined) {
+      normalizedHeaderPatch.subtotal = validatedHeaderPatch.subtotal;
+    }
+    if (validatedHeaderPatch.total_gst_amount !== undefined) {
+      normalizedHeaderPatch.total_gst_amount = validatedHeaderPatch.total_gst_amount;
+    }
+    if (validatedHeaderPatch.total_amount !== undefined) {
+      normalizedHeaderPatch.total_amount = validatedHeaderPatch.total_amount;
+    }
+    if (validatedHeaderPatch.notes !== undefined) {
+      normalizedHeaderPatch.notes = validatedHeaderPatch.notes;
+    }
+    if (
+      sanitizedPatch &&
+      typeof sanitizedPatch === 'object' &&
+      !Array.isArray(sanitizedPatch) &&
+      (sanitizedPatch as any).header &&
+      typeof (sanitizedPatch as any).header === 'object'
+    ) {
+      (sanitizedPatch as any).header = {
+        ...(sanitizedPatch as any).header,
+        ...normalizedHeaderPatch,
+      };
+    }
 
     try {
       const { deterministicResult, workResult, didRunWork } = await withTransaction(this.pool, async (client) => {
@@ -2106,19 +2412,21 @@ export class AgentToolsV2 {
           toolName: 'purchase_order.update',
           targetId: String(purchaseOrderId),
           idempotencyKey,
-          requestPayload: patch,
+          requestPayload: sanitizedPatch,
           work: async () => {
             didRunWork = true;
-            const allowed = ['vendor_id','purchase_date','subtotal','total_gst_amount','total_amount','status','sequence_number','pickup_notes','pickup_time','pickup_location','pickup_contact_person','pickup_phone','pickup_instructions'];
-            const header = patch.header || {};
+            const patchForWork =
+              sanitizedPatch && typeof sanitizedPatch === 'object' ? (sanitizedPatch as any) : {};
+            const allowed = ['vendor_id','purchase_date','subtotal','total_gst_amount','total_amount','status','sequence_number','pickup_notes','pickup_time','pickup_location','pickup_contact_person','pickup_phone','pickup_instructions','notes'];
+            const header = patchForWork.header || {};
             if (Object.keys(header).length) {
               const fields:string[]=[]; const values:any[]=[]; let i=1;
               for (const [k,v] of Object.entries(header)) { if (allowed.includes(k) && v!==undefined && v!==null){ fields.push(`${k}=$${i++}`); values.push(v);} }
               if (fields.length){ values.push(purchaseOrderId); await client.query(`UPDATE purchasehistory SET ${fields.join(', ')}, updated_at = NOW() WHERE purchase_id = $${i}`, values); }
             }
-            if (Array.isArray(patch.lineItems)) {
+            if (Array.isArray(patchForWork.lineItems)) {
               await client.query('DELETE FROM purchaselineitems WHERE purchase_id = $1', [purchaseOrderId]);
-              for (const item of patch.lineItems) {
+              for (const item of patchForWork.lineItems) {
                 const normalized = String(item.part_number || '').trim().toUpperCase();
                 const invQ = await client.query(
                   `SELECT part_id FROM inventory WHERE REPLACE(REPLACE(UPPER(part_number), '-', ''), ' ', '') = REPLACE(REPLACE(UPPER($1), '-', ''), ' ', '')`,
@@ -2146,11 +2454,11 @@ export class AgentToolsV2 {
       this.recordIdempotencyResult(sessionId, didRunWork, deterministicResult);
 
       const auditPayload = workResult ?? deterministicResult;
-      await this.audit(sessionId, 'updatePurchaseOrder', { purchaseOrderId, patch }, auditPayload, true);
+      await this.audit(sessionId, 'updatePurchaseOrder', { purchaseOrderId, patch: sanitizedPatch }, auditPayload, true);
       return deterministicResult;
     } catch (e: any) {
       this.recordIdempotencyConflict(sessionId, e);
-      await this.audit(sessionId, 'updatePurchaseOrder', { purchaseOrderId, patch }, { error: e.message }, false);
+      await this.audit(sessionId, 'updatePurchaseOrder', { purchaseOrderId, patch: sanitizedPatch }, { error: e.message }, false);
       throw e;
     }
   }
@@ -2303,22 +2611,57 @@ export class AgentToolsV2 {
 
   // Quotes
   async createQuote(sessionId: number, payload: any) {
-    const customerId = await this.resolveCustomerIdFromPayload(payload, sessionId);
-    const baseQuoteDate = payload?.quote_date ? new Date(payload.quote_date) : new Date();
+    const idempotencyKey = extractIdempotencyKeyFromArgs(payload);
+    const sanitizedPayload = this.stripIdempotencyKey(payload);
+    const customerId = await this.resolveCustomerIdFromPayload(sanitizedPayload, sessionId);
+
+    const validationPayload: Record<string, unknown> = {
+      customer_id: customerId,
+      line_items: (sanitizedPayload as any)?.line_items ?? (sanitizedPayload as any)?.lineItems,
+    };
+    if (Object.prototype.hasOwnProperty.call(sanitizedPayload ?? {}, 'valid_until')) {
+      validationPayload.valid_until = (sanitizedPayload as any).valid_until;
+    }
+    if (Object.prototype.hasOwnProperty.call(sanitizedPayload ?? {}, 'notes')) {
+      validationPayload.notes = (sanitizedPayload as any).notes;
+    }
+
+    const validatedArgs = this.parseWithSchema<QuoteCreateArgs>(
+      QuoteCreateSchema,
+      validationPayload,
+      'quote.create'
+    );
+
+    const payloadForWork: Record<string, unknown> = {
+      ...sanitizedPayload,
+      customer_id: validatedArgs.customer_id,
+      line_items: validatedArgs.line_items,
+    };
+
+    if (Object.prototype.hasOwnProperty.call(validatedArgs, 'valid_until')) {
+      payloadForWork.valid_until = validatedArgs.valid_until;
+    }
+    if (Object.prototype.hasOwnProperty.call(validatedArgs, 'notes')) {
+      payloadForWork.notes = validatedArgs.notes;
+    }
+
+    const baseQuoteDate = (payloadForWork as any)?.quote_date
+      ? new Date((payloadForWork as any).quote_date as string)
+      : new Date();
     const quoteDate = Number.isNaN(baseQuoteDate.getTime()) ? new Date() : baseQuoteDate;
-    const validUntilCandidate = payload?.valid_until ? new Date(payload.valid_until) : null;
+    const validUntilCandidate = (payloadForWork as any)?.valid_until
+      ? new Date((payloadForWork as any).valid_until as string)
+      : null;
     const resolvedValidUntil = validUntilCandidate && !Number.isNaN(validUntilCandidate.getTime())
       ? validUntilCandidate
       : new Date(quoteDate.getTime() + 30 * 24 * 60 * 60 * 1000);
 
     const quoteInput = {
-      ...payload,
+      ...payloadForWork,
       customer_id: customerId,
       quote_date: quoteDate,
       valid_until: resolvedValidUntil,
     };
-
-    const idempotencyKey = extractIdempotencyKeyFromArgs(payload);
 
     try {
       const { deterministicResult, workResult, didRunWork } = await withTransaction(
@@ -2352,16 +2695,29 @@ export class AgentToolsV2 {
       this.recordIdempotencyResult(sessionId, didRunWork, deterministicResult);
 
       const auditPayload = workResult ?? deterministicResult;
-      await this.audit(sessionId, 'createQuote', payload, auditPayload, true);
+      await this.audit(sessionId, 'createQuote', payloadForWork, auditPayload, true);
       return deterministicResult;
     } catch (error: any) {
       this.recordIdempotencyConflict(sessionId, error);
-      await this.audit(sessionId, 'createQuote', payload, { error: error?.message }, false);
+      await this.audit(sessionId, 'createQuote', payloadForWork, { error: error?.message }, false);
       throw error;
     }
   }
   async updateQuote(sessionId: number, quoteId: number, patch: any) {
     const idempotencyKey = extractIdempotencyKeyFromArgs(patch);
+    const sanitizedPatch = this.stripIdempotencyKey(patch);
+    const validationPatch = this.pickDefined<QuoteUpdateArgs['patch']>(sanitizedPatch, [
+      'valid_until',
+      'status',
+      'notes',
+    ]);
+    const parsedPatch = this.parseWithSchema<QuoteUpdateArgs>(
+      QuoteUpdateSchema,
+      { quote_id: quoteId, patch: validationPatch },
+      'quote.update'
+    );
+    const targetQuoteId = parsedPatch.quote_id;
+    const validatedPatch = parsedPatch.patch;
 
     try {
       const { deterministicResult, workResult, didRunWork } = await withTransaction(
@@ -2372,43 +2728,30 @@ export class AgentToolsV2 {
           const deterministicResult = await idempotentWrite({
             db: this.pool,
             toolName: 'quote.update',
-            targetId: String(quoteId),
+            targetId: String(targetQuoteId),
             idempotencyKey,
-            requestPayload: patch,
+            requestPayload: validatedPatch,
             work: async () => {
               didRunWork = true;
-              const allowed = [
-                'customer_id',
-                'quote_date',
-                'valid_until',
-                'product_name',
-                'product_description',
-                'estimated_cost',
-                'status',
-                'terms',
-                'customer_po_number',
-                'vin_number',
-                'vehicle_make',
-                'vehicle_model',
-              ];
+              const allowed = ['valid_until', 'status', 'notes'];
               const fields: string[] = [];
               const vals: any[] = [];
               let i = 1;
-              for (const [k, v] of Object.entries(patch ?? {})) {
+              for (const [k, v] of Object.entries(validatedPatch ?? {})) {
                 if (allowed.includes(k) && v !== undefined && v !== null) {
                   fields.push(`${k}=$${i++}`);
                   vals.push(v);
                 }
               }
               if (fields.length) {
-                vals.push(quoteId);
+                vals.push(targetQuoteId);
                 await client.query(
                   `UPDATE quotes SET ${fields.join(', ')}, updated_at = NOW() WHERE quote_id = $${i}`,
                   vals
                 );
               }
               lastWorkResult = { updated: true };
-              return { id: quoteId, updated: true };
+              return { id: targetQuoteId, updated: true };
             },
             buildDeterministicResult: (result) => ({
               id: result.id,
@@ -2423,11 +2766,17 @@ export class AgentToolsV2 {
       this.recordIdempotencyResult(sessionId, didRunWork, deterministicResult);
 
       const auditPayload = workResult ?? deterministicResult;
-      await this.audit(sessionId, 'updateQuote', { quoteId, patch }, auditPayload, true);
+      await this.audit(sessionId, 'updateQuote', { quoteId: targetQuoteId, patch: validatedPatch }, auditPayload, true);
       return deterministicResult;
     } catch (error: any) {
       this.recordIdempotencyConflict(sessionId, error);
-      await this.audit(sessionId, 'updateQuote', { quoteId, patch }, { error: error?.message }, false);
+      await this.audit(
+        sessionId,
+        'updateQuote',
+        { quoteId: targetQuoteId, patch: validatedPatch },
+        { error: error?.message },
+        false
+      );
       throw error;
     }
   }
