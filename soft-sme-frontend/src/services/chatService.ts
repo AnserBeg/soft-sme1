@@ -4,6 +4,12 @@ import { VoiceCallArtifact } from '../types/voice';
 
 export type AgentEventType = 'text' | 'docs' | 'task_created' | 'task_updated' | 'task_message';
 
+export interface AgentCitation {
+  title?: string;
+  path?: string;
+  score?: number;
+}
+
 export interface AgentChatEvent {
   type: AgentEventType;
   content?: string;
@@ -14,6 +20,7 @@ export interface AgentChatEvent {
   link?: string;
   timestamp?: string;
   callArtifacts?: VoiceCallArtifact[];
+  citations?: AgentCitation[];
 }
 
 export interface AgentChatMessage {
@@ -26,6 +33,7 @@ export interface AgentChatMessage {
   link?: string;
   info?: string;
   chunks?: any[];
+  citations?: AgentCitation[];
   timestamp?: string;
   createdAt?: string;
   callArtifacts?: VoiceCallArtifact[];
@@ -53,6 +61,32 @@ const isVoiceArtifactArray = (value: unknown): VoiceCallArtifact[] | undefined =
     return undefined;
   }
   return value.filter((item) => typeof item === 'object' && item !== null) as VoiceCallArtifact[];
+};
+
+const normalizeCitations = (value: unknown): AgentCitation[] | undefined => {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const normalized = value
+    .map((entry) => {
+      if (!entry || typeof entry !== 'object') {
+        return null;
+      }
+      const candidate = entry as AgentCitation;
+      const path = typeof candidate.path === 'string' ? candidate.path : undefined;
+      const title = typeof candidate.title === 'string' ? candidate.title : undefined;
+      const score =
+        typeof candidate.score === 'number' && Number.isFinite(candidate.score)
+          ? candidate.score
+          : undefined;
+      if (!path && !title) {
+        return null;
+      }
+      return { path, title, score } as AgentCitation;
+    })
+    .filter(Boolean) as AgentCitation[];
+
+  return normalized.length > 0 ? normalized : undefined;
 };
 
 const normalizeExpectedSubagents = (value: unknown): Array<{ key: string; resultKey?: string | null }> | undefined => {
@@ -135,6 +169,7 @@ export const chatService = {
     return messages.map((message) => ({
       ...message,
       callArtifacts: isVoiceArtifactArray((message as any).callArtifacts),
+      citations: normalizeCitations((message as any).citations),
     }));
   },
 
@@ -147,6 +182,7 @@ export const chatService = {
     const normalizedEvents = events.map((event) => ({
       ...event,
       callArtifacts: isVoiceArtifactArray((event as any).callArtifacts),
+      citations: normalizeCitations((event as any).citations),
     }));
     const plan = normalizePlannerHandshake(sessionId, response.data?.plan ?? response.data?.plannerStream);
     return { events: normalizedEvents, plan };
