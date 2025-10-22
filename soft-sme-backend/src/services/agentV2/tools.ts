@@ -44,6 +44,11 @@ interface FuzzyEntityMatch {
   extra: Record<string, unknown>;
 }
 
+interface FuzzySearchResult {
+  matches: FuzzyEntityMatch[];
+  tookMs: number;
+}
+
 interface TaskUpdateDeterministicResult {
   id: number;
   updated: true;
@@ -126,7 +131,7 @@ export class AgentToolsV2 {
       throw new Error('query is required for fuzzyResolveEntity');
     }
 
-    const matches = await this.performFuzzyEntitySearch({
+    const { matches, tookMs } = await this.performFuzzyEntitySearch({
       entityType,
       query,
       minScore: args?.minScore,
@@ -137,8 +142,9 @@ export class AgentToolsV2 {
       sessionId,
       query,
       canonical,
-      score: matches[0]?.score ?? null,
+      topScore: matches[0]?.score ?? null,
       candidateCount: matches.length,
+      tookMs,
     });
 
     return { matches };
@@ -191,11 +197,34 @@ export class AgentToolsV2 {
       sessionId?: number;
       query?: string;
       canonical?: string;
-      score?: number | null;
-      candidateCount?: number;
+      topScore?: number | null;
+      candidateCount?: number | null;
+      tookMs?: number | null;
     }
   ): void {
-    const { sessionId, ...rest } = metadata;
+    const { sessionId, topScore, candidateCount, tookMs, ...rest } = metadata;
+    const queryLength = typeof rest.query === 'string' ? rest.query.length : null;
+    const normalizedTopScore =
+      typeof topScore === 'number' && Number.isFinite(topScore)
+        ? topScore
+        : topScore === null
+          ? null
+          : undefined;
+    const normalizedCandidateCount =
+      typeof candidateCount === 'number' && Number.isFinite(candidateCount)
+        ? candidateCount
+        : candidateCount === 0
+          ? 0
+          : candidateCount === null
+            ? null
+            : undefined;
+    const normalizedTookMs =
+      typeof tookMs === 'number' && Number.isFinite(tookMs)
+        ? Math.max(0, Math.round(tookMs))
+        : tookMs === null
+          ? null
+          : undefined;
+
     void this.analytics
       .logEvent({
         source: 'orchestrator',
@@ -206,6 +235,10 @@ export class AgentToolsV2 {
         metadata: {
           entity_type: entityType,
           ...rest,
+          query_len: queryLength,
+          top_score: normalizedTopScore,
+          candidate_count: normalizedCandidateCount,
+          took_ms: normalizedTookMs,
         },
       })
       .catch((error) => {
@@ -219,15 +252,15 @@ export class AgentToolsV2 {
     entityType: FuzzyEntityType;
     query: string;
     minScore?: number;
-  }): Promise<FuzzyEntityMatch[]> {
+  }): Promise<FuzzySearchResult> {
     const trimmedQuery = typeof params.query === 'string' ? params.query.trim() : '';
     if (!trimmedQuery) {
-      return [];
+      return { matches: [], tookMs: 0 };
     }
 
     const canonicalQuery = this.canonicalizeEntityQuery(params.entityType, trimmedQuery);
     if (!canonicalQuery) {
-      return [];
+      return { matches: [], tookMs: 0 };
     }
 
     const target = this.buildInternalApiUrl('/api/search/fuzzy');
@@ -244,6 +277,7 @@ export class AgentToolsV2 {
       throw new Error('Fuzzy entity search failed: fetch is not available in this environment');
     }
 
+    const startedAt = Date.now();
     let response: globalThis.Response;
     try {
       response = await fetchFn(target, {
@@ -265,8 +299,9 @@ export class AgentToolsV2 {
     };
 
     const matches = Array.isArray(json.matches) ? json.matches.slice(0, 5) : [];
+    const tookMs = Date.now() - startedAt;
 
-    return matches
+    const normalized = matches
       .map((match): FuzzyEntityMatch | null => {
         const rawId = (match as any)?.id;
         const numericId = typeof rawId === 'number' ? rawId : Number(rawId);
@@ -289,6 +324,8 @@ export class AgentToolsV2 {
         };
       })
       .filter((match): match is FuzzyEntityMatch => Boolean(match));
+
+    return { matches: normalized, tookMs };
   }
 
   private getAgentEmailService(): AgentEmailService {
@@ -570,7 +607,7 @@ export class AgentToolsV2 {
         this.logEntityResolutionAttempt('customer', 'numeric_id', {
           sessionId,
           candidateCount: 1,
-          score: null,
+          topScore: null,
         });
         return normalized;
       }
@@ -580,16 +617,20 @@ export class AgentToolsV2 {
     let lastNoCandidateQuery: string | null = null;
 
     for (const [canonical, original] of nameCandidates) {
-      const matches = await this.performFuzzyEntitySearch({ entityType: 'customer', query: canonical });
+      const { matches, tookMs } = await this.performFuzzyEntitySearch({
+        entityType: 'customer',
+        query: canonical,
+      });
       const candidateCount = matches.length;
 
       if (!candidateCount) {
-        this.logEntityResolutionAttempt('customer', 'no_candidates', {
+        this.logEntityResolutionAttempt('customer', 'fuzzy_no_match', {
           sessionId,
           query: original,
           canonical,
-          score: null,
+          topScore: null,
           candidateCount: 0,
+          tookMs,
         });
         lastNoCandidateQuery = original;
         continue;
@@ -599,12 +640,13 @@ export class AgentToolsV2 {
       const topScore = Number.isFinite(top?.score) ? top.score : 0;
 
       if (topScore >= minScoreAuto) {
-        this.logEntityResolutionAttempt('customer', 'fuzzy_auto', {
+        this.logEntityResolutionAttempt('customer', 'fuzzy_auto_pick', {
           sessionId,
           query: original,
           canonical,
-          score: topScore,
+          topScore,
           candidateCount,
+          tookMs,
         });
         return top.id;
       }
@@ -614,8 +656,9 @@ export class AgentToolsV2 {
           sessionId,
           query: original,
           canonical,
-          score: topScore,
+          topScore,
           candidateCount,
+          tookMs,
         });
         const suggestions = matches
           .slice(0, 3)
@@ -631,8 +674,9 @@ export class AgentToolsV2 {
         sessionId,
         query: original,
         canonical,
-        score: topScore,
+        topScore,
         candidateCount,
+        tookMs,
       });
       lastLowConfidence = { original, canonical, matches, topScore };
     }
@@ -723,7 +767,7 @@ export class AgentToolsV2 {
         this.logEntityResolutionAttempt('vendor', 'numeric_id', {
           sessionId,
           candidateCount: 1,
-          score: null,
+          topScore: null,
         });
         return normalized;
       }
@@ -733,16 +777,20 @@ export class AgentToolsV2 {
     let lastNoCandidateQuery: string | null = null;
 
     for (const [canonical, original] of nameCandidates) {
-      const matches = await this.performFuzzyEntitySearch({ entityType: 'vendor', query: canonical });
+      const { matches, tookMs } = await this.performFuzzyEntitySearch({
+        entityType: 'vendor',
+        query: canonical,
+      });
       const candidateCount = matches.length;
 
       if (!candidateCount) {
-        this.logEntityResolutionAttempt('vendor', 'no_candidates', {
+        this.logEntityResolutionAttempt('vendor', 'fuzzy_no_match', {
           sessionId,
           query: original,
           canonical,
-          score: null,
+          topScore: null,
           candidateCount: 0,
+          tookMs,
         });
         lastNoCandidateQuery = original;
         continue;
@@ -752,12 +800,13 @@ export class AgentToolsV2 {
       const topScore = Number.isFinite(top?.score) ? top.score : 0;
 
       if (topScore >= minScoreAuto) {
-        this.logEntityResolutionAttempt('vendor', 'fuzzy_auto', {
+        this.logEntityResolutionAttempt('vendor', 'fuzzy_auto_pick', {
           sessionId,
           query: original,
           canonical,
-          score: topScore,
+          topScore,
           candidateCount,
+          tookMs,
         });
         return top.id;
       }
@@ -767,8 +816,9 @@ export class AgentToolsV2 {
           sessionId,
           query: original,
           canonical,
-          score: topScore,
+          topScore,
           candidateCount,
+          tookMs,
         });
         const suggestions = matches
           .slice(0, 3)
@@ -784,8 +834,9 @@ export class AgentToolsV2 {
         sessionId,
         query: original,
         canonical,
-        score: topScore,
+        topScore,
         candidateCount,
+        tookMs,
       });
       lastLowConfidence = { original, canonical, matches, topScore };
     }
@@ -882,7 +933,7 @@ export class AgentToolsV2 {
         this.logEntityResolutionAttempt('part', 'numeric_id', {
           sessionId,
           candidateCount: 1,
-          score: null,
+          topScore: null,
         });
         return normalized;
       }
@@ -892,10 +943,12 @@ export class AgentToolsV2 {
     let lastNoCandidateQuery: string | null = null;
 
     for (const [canonical, original] of identifierCandidates) {
+      const lookupStartedAt = Date.now();
       const exact = await this.pool.query(
         'SELECT part_id FROM inventory WHERE canonical_part_number = $1 LIMIT 5',
         [canonical]
       );
+      const canonicalLookupMs = Date.now() - lookupStartedAt;
 
       const exactCount = exact.rowCount ?? 0;
 
@@ -904,8 +957,9 @@ export class AgentToolsV2 {
           sessionId,
           query: original,
           canonical,
-          score: 1,
+          topScore: 1,
           candidateCount: exactCount,
+          tookMs: canonicalLookupMs,
         });
         throw new Error(
           `Multiple parts share the part number "${original}". Please provide the part ID to continue.`
@@ -915,27 +969,32 @@ export class AgentToolsV2 {
       if (exactCount > 0) {
         const resolvedId = Number(exact.rows[0]?.part_id);
         if (Number.isFinite(resolvedId)) {
-          this.logEntityResolutionAttempt('part', 'canonical_exact', {
+          this.logEntityResolutionAttempt('part', 'canonical_exact_hit', {
             sessionId,
             query: original,
             canonical,
-            score: 1,
+            topScore: 1,
             candidateCount: exactCount || 1,
+            tookMs: canonicalLookupMs,
           });
           return resolvedId;
         }
       }
 
-      const matches = await this.performFuzzyEntitySearch({ entityType: 'part', query: canonical });
+      const { matches, tookMs } = await this.performFuzzyEntitySearch({
+        entityType: 'part',
+        query: canonical,
+      });
       const candidateCount = matches.length;
 
       if (!candidateCount) {
-        this.logEntityResolutionAttempt('part', 'no_candidates', {
+        this.logEntityResolutionAttempt('part', 'fuzzy_no_match', {
           sessionId,
           query: original,
           canonical,
-          score: null,
+          topScore: null,
           candidateCount: 0,
+          tookMs,
         });
         lastNoCandidateQuery = original;
         continue;
@@ -945,12 +1004,13 @@ export class AgentToolsV2 {
       const topScore = Number.isFinite(top?.score) ? top.score : 0;
 
       if (topScore >= minScoreAuto) {
-        this.logEntityResolutionAttempt('part', 'fuzzy_auto', {
+        this.logEntityResolutionAttempt('part', 'fuzzy_auto_pick', {
           sessionId,
           query: original,
           canonical,
-          score: topScore,
+          topScore,
           candidateCount,
+          tookMs,
         });
         return top.id;
       }
@@ -960,8 +1020,9 @@ export class AgentToolsV2 {
           sessionId,
           query: original,
           canonical,
-          score: topScore,
+          topScore,
           candidateCount,
+          tookMs,
         });
         const suggestions = matches
           .slice(0, 3)
@@ -977,8 +1038,9 @@ export class AgentToolsV2 {
         sessionId,
         query: original,
         canonical,
-        score: topScore,
+        topScore,
         candidateCount,
+        tookMs,
       });
 
       lastLowConfidence = { original, canonical, match: matches.length ? matches[0] : null };
