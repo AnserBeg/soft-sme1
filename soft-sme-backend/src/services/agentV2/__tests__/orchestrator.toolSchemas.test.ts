@@ -69,4 +69,58 @@ describe('AgentOrchestratorV2 tool schema validation', () => {
       expect.objectContaining({ status: 'failure' })
     );
   });
+
+  it('emits an error for quote.update when patch has wrong types', async () => {
+    const pool = { query: jest.fn() } as any;
+    const quoteUpdate = jest.fn();
+    const orchestrator = new AgentOrchestratorV2(pool, { 'quote.update': quoteUpdate });
+
+    jest.spyOn(orchestrator as any, 'classifyIntent').mockResolvedValue({
+      tool: 'quote.update',
+      args: {
+        quote_id: 42,
+        patch: { status: 'INVALID_STATUS' },
+      },
+    });
+
+    const response = await orchestrator.handleMessage(999, 'update quote', {});
+
+    expect(quoteUpdate).not.toHaveBeenCalled();
+    expect(response.events).toHaveLength(1);
+    expect(response.events[0].type).toBe('text');
+    expect(response.events[0].severity).toBe('error');
+    expect(response.events[0].content).toContain('Invalid arguments for tool "quote.update"');
+    expect(response.events[0].content).toContain('Invalid enum value');
+    expect(finishToolTraceMock).toHaveBeenCalledWith(
+      expect.objectContaining({ traceId: expect.any(String) }),
+      expect.objectContaining({ status: 'failure' })
+    );
+  });
+
+  it('emits an error for quote.update when patch includes unknown fields', async () => {
+    const pool = { query: jest.fn() } as any;
+    const quoteUpdate = jest.fn();
+    const orchestrator = new AgentOrchestratorV2(pool, { 'quote.update': quoteUpdate });
+
+    jest.spyOn(orchestrator as any, 'classifyIntent').mockResolvedValue({
+      tool: 'quote.update',
+      args: {
+        quote_id: 99,
+        patch: { notes: 'hello', unexpected: 'nope' },
+      },
+    });
+
+    const response = await orchestrator.handleMessage(321, 'update quote', {});
+
+    expect(quoteUpdate).not.toHaveBeenCalled();
+    expect(response.events).toHaveLength(1);
+    expect(response.events[0].type).toBe('text');
+    expect(response.events[0].severity).toBe('error');
+    expect(response.events[0].content).toContain('Invalid arguments for tool "quote.update"');
+    expect(response.events[0].content).toContain('Unrecognized key(s) in object');
+    expect(finishToolTraceMock).toHaveBeenCalledWith(
+      expect.objectContaining({ traceId: expect.any(String) }),
+      expect.objectContaining({ status: 'failure' })
+    );
+  });
 });
