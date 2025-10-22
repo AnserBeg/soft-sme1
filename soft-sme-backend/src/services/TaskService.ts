@@ -1,4 +1,8 @@
 import { Pool, PoolClient, QueryResult } from 'pg';
+import {
+  TaskUpdateArgs as TaskUpdateArgsSchema,
+  type TaskUpdateArgs as TaskUpdateArgsType,
+} from './agentV2/toolSchemas';
 
 export type TaskStatus = 'pending' | 'in_progress' | 'completed' | 'archived';
 
@@ -96,6 +100,26 @@ const ALLOWED_STATUSES: TaskStatus[] = ['pending', 'in_progress', 'completed', '
 
 export class TaskService {
   constructor(private readonly pool: Pool) {}
+
+  private mapStatusFromSchema(status: TaskUpdateArgsType['patch']['status'] | undefined): TaskStatus | undefined {
+    if (!status) {
+      return undefined;
+    }
+
+    const normalized = status.trim().toLowerCase();
+    switch (normalized) {
+      case 'open':
+        return 'pending';
+      case 'in progress':
+      case 'in_progress':
+      case 'blocked':
+        return 'in_progress';
+      case 'done':
+        return 'completed';
+      default:
+        return undefined;
+    }
+  }
 
   async listTasks(companyId: number, filters: TaskFilters = {}): Promise<TaskWithRelations[]> {
     const conditions: string[] = ['t.company_id = $1'];
@@ -421,6 +445,42 @@ export class TaskService {
     const task = await this.getTask(companyId, taskId, executor);
     await this.emitAgentStatusUpdate(executor, task, previousStatus);
     return task;
+  }
+
+  async applyPatch(
+    companyId: number,
+    taskId: number,
+    patch: unknown,
+    clientArg?: PoolClient
+  ): Promise<TaskWithRelations> {
+    const parsed = TaskUpdateArgsSchema.parse({ id: taskId, patch: patch ?? {} });
+    const validatedPatch = parsed.patch;
+
+    if (Object.keys(validatedPatch ?? {}).length === 0) {
+      throw new ServiceError('No valid updates provided');
+    }
+
+    const mappedUpdates: TaskUpdate = {};
+    if (Object.prototype.hasOwnProperty.call(validatedPatch, 'status')) {
+      const mapped = this.mapStatusFromSchema(validatedPatch.status);
+      if (mapped !== undefined) {
+        mappedUpdates.status = mapped;
+      }
+    }
+
+    if (Object.prototype.hasOwnProperty.call(validatedPatch, 'due_date')) {
+      mappedUpdates.dueDate = validatedPatch.due_date ?? null;
+    }
+
+    const hasMappedUpdates = Object.keys(mappedUpdates).length > 0;
+    if (!hasMappedUpdates) {
+      if (validatedPatch.note && validatedPatch.note.trim()) {
+        return this.getTask(companyId, taskId, clientArg);
+      }
+      throw new ServiceError('No actionable updates provided');
+    }
+
+    return this.updateTask(companyId, taskId, mappedUpdates, clientArg);
   }
 
   async updateAssignments(companyId: number, taskId: number, assigneeIds: number[], actingUserId: number): Promise<TaskWithRelations> {
