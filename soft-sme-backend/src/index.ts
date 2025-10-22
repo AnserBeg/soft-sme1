@@ -6,6 +6,7 @@ import bodyParser from 'body-parser';
 import expressWs from 'express-ws';
 import { pool } from './db';
 import { authMiddleware } from './middleware/authMiddleware';
+import { runSchemaDriftGuard } from './startup/schemaDriftGuard';
 
 // Load environment variables - only load from .env file in development
 if (process.env.NODE_ENV !== 'production') {
@@ -574,43 +575,67 @@ if (process.env.ENABLE_VENDOR_CALLING !== 'false') {
 }
 
 // Use the regular app for all functionality
-const server = app.listen(PORT, HOST, async () => {
-  console.log(`Server is running on port ${PORT}`);
+let server: any = null;
 
-  await verifyDatabaseConnection();
-
-  if (shouldAutoStartAiAssistant) {
-    // Start AI agent automatically
-    try {
-      console.log('Starting AI Assistant...');
-      await aiAssistantService.startAIAgent();
-      console.log('AI Assistant started successfully');
-    } catch (error) {
-      console.error('Failed to start AI Assistant:', error);
-      console.log('Server will continue without AI Assistant');
-    }
-  } else {
-    console.log(
-      'AI Assistant auto-start is disabled. Set ENABLE_AI_ASSISTANT=true to enable automatic startup.'
-    );
+const startServer = async () => {
+  try {
+    await runSchemaDriftGuard();
+  } catch (error) {
+    console.error('[bootstrap] Schema drift guard failed:', error);
+    throw error;
   }
+
+  server = app.listen(PORT, HOST, async () => {
+    console.log(`Server is running on port ${PORT}`);
+
+    await verifyDatabaseConnection();
+
+    if (shouldAutoStartAiAssistant) {
+      // Start AI agent automatically
+      try {
+        console.log('Starting AI Assistant...');
+        await aiAssistantService.startAIAgent();
+        console.log('AI Assistant started successfully');
+      } catch (error) {
+        console.error('Failed to start AI Assistant:', error);
+        console.log('Server will continue without AI Assistant');
+      }
+    } else {
+      console.log(
+        'AI Assistant auto-start is disabled. Set ENABLE_AI_ASSISTANT=true to enable automatic startup.'
+      );
+    }
+  });
+};
+
+startServer().catch(error => {
+  console.error('[bootstrap] Failed to start server:', error);
+  process.exit(1);
 });
 
 // Graceful shutdown
 process.on('SIGTERM', async () => {
   console.log('SIGTERM received, shutting down gracefully...');
   await aiAssistantService.stopAIAgent();
-  server.close(() => {
-    console.log('Server closed');
+  if (server) {
+    server.close(() => {
+      console.log('Server closed');
+      process.exit(0);
+    });
+  } else {
     process.exit(0);
-  });
+  }
 });
 
 process.on('SIGINT', async () => {
   console.log('SIGINT received, shutting down gracefully...');
   await aiAssistantService.stopAIAgent();
-  server.close(() => {
-    console.log('Server closed');
+  if (server) {
+    server.close(() => {
+      console.log('Server closed');
+      process.exit(0);
+    });
+  } else {
     process.exit(0);
-  });
-}); 
+  }
+});
