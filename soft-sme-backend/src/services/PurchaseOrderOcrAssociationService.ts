@@ -1,4 +1,6 @@
 import { pool } from '../db';
+import { canonicalizeName, canonicalizePartNumber } from '../lib/normalize';
+import { fuzzySearch } from './FuzzySearchService';
 import {
   PurchaseOrderOcrLineItem,
   PurchaseOrderOcrLineItemMatch,
@@ -31,7 +33,7 @@ interface VendorRow {
   telephone_number: string | null;
   email: string | null;
   website: string | null;
-  normalized_name: string;
+  canonical_name: string | null;
 }
 
 interface PartRow {
@@ -40,7 +42,14 @@ interface PartRow {
   part_description: string | null;
   unit: string | null;
   last_unit_cost: number | null;
-  normalized_number: string;
+  canonical_part_number: string | null;
+  canonical_name: string | null;
+}
+
+interface PartFuzzyResult {
+  part: PartRow | null;
+  score: number;
+  matches: Array<{ label: string; score: number }>;
 }
 
 const EMAIL_RE = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i;
@@ -78,8 +87,9 @@ export class PurchaseOrderOcrAssociationService {
       clone.vendorMatch = vendorEnrichment.match;
     }
 
-    const partWarnings = await this.enrichLineItems(clone);
-    partWarnings.forEach((warning) => warnings.add(warning));
+    const partEnrichment = await this.enrichLineItems(clone);
+    partEnrichment.warnings.forEach((warning) => warnings.add(warning));
+    partEnrichment.notes.forEach((note) => notes.add(note));
 
     return {
       normalized: clone,
@@ -98,8 +108,8 @@ export class PurchaseOrderOcrAssociationService {
       return {};
     }
 
-    const normalizedName = this.normalizeVendorName(candidateName);
-    if (!normalizedName) {
+    const canonicalName = this.canonicalizeVendorName(candidateName);
+    if (!canonicalName) {
       return {};
     }
 
@@ -109,7 +119,7 @@ export class PurchaseOrderOcrAssociationService {
       normalized.vendorAddress || heuristicNormalized?.vendorAddress || null,
     );
 
-    const existingVendor = await this.findVendorByNormalizedName(normalizedName, candidateName);
+    const existingVendor = await this.findVendorByCanonicalName(canonicalName);
 
     if (existingVendor) {
       const match: PurchaseOrderOcrVendorMatch = {
@@ -117,8 +127,8 @@ export class PurchaseOrderOcrAssociationService {
         vendorId: existingVendor.vendor_id,
         vendorName: candidateName,
         matchedVendorName: existingVendor.vendor_name,
-        normalizedVendorName: normalizedName,
-        confidence: existingVendor.normalized_name === normalizedName ? 1 : 0.75,
+        normalizedVendorName: canonicalName,
+        confidence: 1,
         details: {
           streetAddress: existingVendor.street_address,
           city: existingVendor.city,
@@ -138,73 +148,135 @@ export class PurchaseOrderOcrAssociationService {
       };
     }
 
+    const fuzzyVendor = await this.findVendorByFuzzy(candidateName);
+    if (fuzzyVendor?.vendor) {
+      const { vendor, score } = fuzzyVendor;
+      const match: PurchaseOrderOcrVendorMatch = {
+        status: 'existing',
+        vendorId: vendor.vendor_id,
+        vendorName: candidateName,
+        matchedVendorName: vendor.vendor_name,
+        normalizedVendorName: canonicalName,
+        confidence: score,
+        details: {
+          streetAddress: vendor.street_address,
+          city: vendor.city,
+          province: vendor.province,
+          country: vendor.country,
+          postalCode: vendor.postal_code,
+          contactPerson: vendor.contact_person,
+          telephone: vendor.telephone_number,
+          email: vendor.email,
+          website: vendor.website,
+        },
+      };
+
+      const confidenceText = Number.isFinite(score)
+        ? ` (confidence ${(score * 100).toFixed(0)}%)`
+        : '';
+
+      return {
+        match,
+        note: `Fuzzy matched invoice vendor to existing vendor "${vendor.vendor_name}"${confidenceText}.`,
+      };
+    }
+
     const match: PurchaseOrderOcrVendorMatch = {
       status: 'missing',
       vendorId: undefined,
       vendorName: candidateName,
-      normalizedVendorName: normalizedName,
+      normalizedVendorName: canonicalName,
       matchedVendorName: null,
       confidence: 0,
       details: vendorDetails,
     };
 
-    const warning = `Vendor "${candidateName}" was not found in the vendor list. Review the captured details and add the vendor if needed.`;
+    let warning = `Vendor "${candidateName}" was not found in the vendor list. Review the captured details and add the vendor if needed.`;
+
+    if (fuzzyVendor && fuzzyVendor.matches.length > 0 && fuzzyVendor.score >= 0.35) {
+      const suggestions = this.formatFuzzySuggestions(fuzzyVendor.matches);
+      if (suggestions) {
+        warning += ` Potential matches: ${suggestions}.`;
+      }
+    }
 
     return { match, warning };
   }
 
-  private static async enrichLineItems(normalized: PurchaseOrderOcrNormalizedData): Promise<string[]> {
+  private static async enrichLineItems(
+    normalized: PurchaseOrderOcrNormalizedData,
+  ): Promise<{ warnings: string[]; notes: string[] }> {
     const warnings: string[] = [];
+    const notes: string[] = [];
 
     const items: PurchaseOrderOcrLineItem[] = Array.isArray(normalized.lineItems)
       ? normalized.lineItems
       : [];
 
-    const normalizedNumbers = items
-      .map((item) => this.normalizePartNumber(item.partNumber))
+    const canonicalNumbers = items
+      .map((item) => this.canonicalizePartNumberValue(item.partNumber))
       .filter((value): value is string => Boolean(value));
 
-    const uniqueNormalized = Array.from(new Set(normalizedNumbers));
+    const uniqueCanonicalNumbers = Array.from(new Set(canonicalNumbers));
 
     let partMap = new Map<string, PartRow>();
-    if (uniqueNormalized.length > 0) {
-      const query = `
-        SELECT
-          part_id,
-          part_number,
-          part_description,
-          unit,
-          last_unit_cost,
-          UPPER(regexp_replace(part_number, '[^A-Za-z0-9]', '', 'g')) AS normalized_number
-        FROM inventory
-        WHERE UPPER(regexp_replace(part_number, '[^A-Za-z0-9]', '', 'g')) = ANY($1::text[])
-      `;
-
+    if (uniqueCanonicalNumbers.length > 0) {
       try {
-        const result = await pool.query<PartRow>(query, [uniqueNormalized]);
-        partMap = new Map(result.rows.map((row) => [row.normalized_number, row]));
+        const result = await this.findPartsByCanonicalNumbers(uniqueCanonicalNumbers);
+        partMap = new Map(
+          result.map((row) => {
+            const canonical = row.canonical_part_number || this.canonicalizePartNumberValue(row.part_number) || '';
+            return [canonical, row];
+          }),
+        );
       } catch (error) {
         console.error('PurchaseOrderOcrAssociationService: failed to lookup parts', error);
       }
     }
 
-    items.forEach((item) => {
-      const normalizedNumber = this.normalizePartNumber(item.partNumber);
-      item.normalizedPartNumber = normalizedNumber;
+    const fuzzyCache = new Map<string, PartFuzzyResult>();
 
-      if (!normalizedNumber) {
+    for (const item of items) {
+      const canonicalNumber = this.canonicalizePartNumberValue(item.partNumber);
+      item.normalizedPartNumber = canonicalNumber;
+
+      if (!canonicalNumber) {
         item.match = undefined;
-        return;
+        continue;
       }
 
-      const part = partMap.get(normalizedNumber);
+      let part = partMap.get(canonicalNumber);
+      let matchedViaFuzzy = false;
+      let fuzzyScore: number | null = null;
+      let fuzzyResult: PartFuzzyResult | null = null;
+
+      if (!part) {
+        fuzzyResult = await this.findPartByFuzzy(canonicalNumber, item.partNumber, fuzzyCache);
+        if (fuzzyResult?.part && fuzzyResult.score >= 0.6) {
+          part = fuzzyResult.part;
+          matchedViaFuzzy = true;
+          fuzzyScore = fuzzyResult.score;
+          if (part.canonical_part_number) {
+            partMap.set(part.canonical_part_number, part);
+          }
+        } else if (fuzzyResult && fuzzyResult.matches.length > 0 && fuzzyResult.score >= 0.35) {
+          const suggestions = this.formatFuzzySuggestions(fuzzyResult.matches);
+          if (suggestions) {
+            warnings.push(
+              `Part "${item.partNumber || canonicalNumber}" was not matched exactly. Possible matches: ${suggestions}.`,
+            );
+          }
+        }
+      }
+
       if (part) {
-        const descriptionMatches = this.normalizeDescription(item.description)
-          === this.normalizeDescription(part.part_description || '');
+        const descriptionMatches =
+          this.canonicalizeDescription(item.description) ===
+          this.canonicalizeDescription(part.part_description || '');
 
         const match: PurchaseOrderOcrLineItemMatch = {
           status: 'existing',
-          normalizedPartNumber: normalizedNumber,
+          normalizedPartNumber: canonicalNumber,
           matchedPartNumber: part.part_number,
           partId: part.part_id,
           partDescription: part.part_description,
@@ -216,58 +288,41 @@ export class PurchaseOrderOcrAssociationService {
 
         item.match = match;
 
+        if (matchedViaFuzzy && Number.isFinite(fuzzyScore)) {
+          notes.push(
+            `Fuzzy matched part "${item.partNumber || canonicalNumber}" to inventory part "${part.part_number}" (confidence ${(fuzzyScore! * 100).toFixed(0)}%).`,
+          );
+        }
+
         if (!descriptionMatches) {
           warnings.push(
             `Invoice description for part "${item.partNumber || part.part_number}" does not match inventory description. Confirm whether this should be a new part.`,
           );
         }
 
-        return;
+        continue;
       }
 
       const match: PurchaseOrderOcrLineItemMatch = {
         status: 'missing',
-        normalizedPartNumber: normalizedNumber,
+        normalizedPartNumber: canonicalNumber,
         matchedPartNumber: null,
         partId: undefined,
         partDescription: null,
         unit: item.unit,
         lastUnitCost: item.unitCost,
         descriptionMatches: undefined,
-        suggestedPartNumber: this.buildSuggestedPartNumber(item.partNumber, normalizedNumber),
+        suggestedPartNumber: this.buildSuggestedPartNumber(item.partNumber, canonicalNumber),
       };
 
       item.match = match;
 
       warnings.push(
-        `Part "${item.partNumber || normalizedNumber}" is not in the inventory system. Add it before finalizing the purchase order.`,
+        `Part "${item.partNumber || canonicalNumber}" is not in the inventory system. Add it before finalizing the purchase order.`,
       );
-    });
-
-    return warnings;
-  }
-
-  private static normalizeVendorName(name: string | null | undefined): string | null {
-    if (!name) {
-      return null;
     }
-    const normalized = name
-      .normalize('NFKD')
-      .replace(/[^\p{L}\p{N}]+/gu, '')
-      .toUpperCase();
-    return normalized || null;
-  }
 
-  private static normalizePartNumber(partNumber: string | null | undefined): string | null {
-    if (!partNumber) {
-      return null;
-    }
-    const normalized = partNumber
-      .normalize('NFKD')
-      .replace(/["'\s]/g, '')
-      .replace(/[^A-Za-z0-9]/g, '')
-      .toUpperCase();
-    return normalized || null;
+    return { warnings, notes };
   }
 
   private static buildSuggestedPartNumber(original: string | null, normalized: string | null): string | null {
@@ -277,19 +332,38 @@ export class PurchaseOrderOcrAssociationService {
     return normalized;
   }
 
-  private static normalizeDescription(value: string | null | undefined): string {
-    if (!value) {
-      return '';
-    }
-    return value
-      .normalize('NFKD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .replace(/[^A-Za-z0-9]+/g, ' ')
-      .trim()
-      .toUpperCase();
+  private static canonicalizeVendorName(value: string | null | undefined): string | null {
+    const canonical = canonicalizeName(value ?? '');
+    return canonical || null;
   }
 
-  private static async findVendorByNormalizedName(normalizedName: string, candidateName: string): Promise<VendorRow | null> {
+  private static canonicalizePartNumberValue(value: string | null | undefined): string | null {
+    const canonical = canonicalizePartNumber(value ?? '');
+    return canonical || null;
+  }
+
+  private static canonicalizeDescription(value: string | null | undefined): string {
+    return canonicalizeName(value ?? '') || '';
+  }
+
+  private static formatFuzzySuggestions(matches: Array<{ label: string; score: number }>): string {
+    const suggestions = matches
+      .filter((match) => Boolean(match?.label))
+      .slice(0, 3)
+      .map((match) => {
+        const label = typeof match.label === 'string' ? match.label : String(match.label ?? '');
+        if (!label.trim()) {
+          return '';
+        }
+        const score = Number.isFinite(match.score) ? Math.round(match.score * 100) : null;
+        return score !== null ? `${label} (${score}%)` : label;
+      })
+      .filter((entry) => entry.trim().length > 0);
+
+    return suggestions.join(', ');
+  }
+
+  private static async findVendorByCanonicalName(canonicalName: string): Promise<VendorRow | null> {
     const query = `
       SELECT
         vendor_id,
@@ -303,45 +377,189 @@ export class PurchaseOrderOcrAssociationService {
         telephone_number,
         email,
         website,
-        UPPER(regexp_replace(vendor_name, '[^A-Za-z0-9]', '', 'g')) AS normalized_name
+        canonical_name
       FROM vendormaster
-      WHERE UPPER(regexp_replace(vendor_name, '[^A-Za-z0-9]', '', 'g')) = $1
+      WHERE canonical_name = $1
       LIMIT 1
     `;
 
     try {
-      const exact = await pool.query<VendorRow>(query, [normalizedName]);
-      if (exact.rows.length > 0) {
-        return exact.rows[0];
-      }
-
-      const fuzzyQuery = `
-        SELECT
-          vendor_id,
-          vendor_name,
-          street_address,
-          city,
-          province,
-          country,
-          postal_code,
-          contact_person,
-          telephone_number,
-          email,
-          website,
-          UPPER(regexp_replace(vendor_name, '[^A-Za-z0-9]', '', 'g')) AS normalized_name
-        FROM vendormaster
-        WHERE vendor_name ILIKE $1
-        ORDER BY vendor_name ASC
-        LIMIT 1
-      `;
-
-      const likePattern = `%${candidateName.replace(/[%_]/g, '').trim()}%`;
-      const fuzzy = await pool.query<VendorRow>(fuzzyQuery, [likePattern]);
-      return fuzzy.rows[0] ?? null;
+      const result = await pool.query<VendorRow>(query, [canonicalName]);
+      return result.rows[0] ?? null;
     } catch (error) {
-      console.error('PurchaseOrderOcrAssociationService: failed to lookup vendor', error);
+      console.error('PurchaseOrderOcrAssociationService: failed to lookup vendor by canonical name', error);
       return null;
     }
+  }
+
+  private static async findVendorById(id: number): Promise<VendorRow | null> {
+    const query = `
+      SELECT
+        vendor_id,
+        vendor_name,
+        street_address,
+        city,
+        province,
+        country,
+        postal_code,
+        contact_person,
+        telephone_number,
+        email,
+        website,
+        canonical_name
+      FROM vendormaster
+      WHERE vendor_id = $1
+      LIMIT 1
+    `;
+
+    try {
+      const result = await pool.query<VendorRow>(query, [id]);
+      return result.rows[0] ?? null;
+    } catch (error) {
+      console.error('PurchaseOrderOcrAssociationService: failed to lookup vendor by id', error);
+      return null;
+    }
+  }
+
+  private static async findVendorByFuzzy(
+    candidateName: string,
+  ): Promise<{ vendor: VendorRow | null; score: number; matches: Array<{ label: string; score: number }> } | null> {
+    const trimmed = candidateName.trim();
+    if (!trimmed) {
+      return null;
+    }
+
+    let matches: Awaited<ReturnType<typeof fuzzySearch>> = [];
+    try {
+      matches = await fuzzySearch({ type: 'vendor', query: trimmed, limit: 5 });
+    } catch (error) {
+      console.error('PurchaseOrderOcrAssociationService: fuzzy vendor search failed', error);
+      return null;
+    }
+
+    if (!matches.length) {
+      return { vendor: null, score: 0, matches: [] };
+    }
+
+    const sanitized = matches.map((match) => {
+      const label = typeof match.label === 'string' ? match.label : String(match.label ?? match.id);
+      const score = Number.isFinite(match.score) ? match.score : 0;
+      return { id: match.id, label, score };
+    });
+
+    const top = sanitized[0];
+    const topScore = top ? top.score : 0;
+
+    if (top && topScore >= 0.6) {
+      const vendor = await this.findVendorById(top.id);
+      if (vendor) {
+        return {
+          vendor,
+          score: topScore,
+          matches: sanitized.map(({ label, score }) => ({ label, score })),
+        };
+      }
+    }
+
+    return {
+      vendor: null,
+      score: topScore,
+      matches: sanitized.map(({ label, score }) => ({ label, score })),
+    };
+  }
+
+  private static async findPartsByCanonicalNumbers(canonicalNumbers: string[]): Promise<PartRow[]> {
+    const query = `
+      SELECT
+        part_id,
+        part_number,
+        part_description,
+        unit,
+        last_unit_cost,
+        canonical_part_number,
+        canonical_name
+      FROM inventory
+      WHERE canonical_part_number = ANY($1::text[])
+    `;
+
+    const result = await pool.query<PartRow>(query, [canonicalNumbers]);
+    return result.rows;
+  }
+
+  private static async findPartById(id: number): Promise<PartRow | null> {
+    const query = `
+      SELECT
+        part_id,
+        part_number,
+        part_description,
+        unit,
+        last_unit_cost,
+        canonical_part_number,
+        canonical_name
+      FROM inventory
+      WHERE part_id = $1
+      LIMIT 1
+    `;
+
+    try {
+      const result = await pool.query<PartRow>(query, [id]);
+      return result.rows[0] ?? null;
+    } catch (error) {
+      console.error('PurchaseOrderOcrAssociationService: failed to lookup part by id', error);
+      return null;
+    }
+  }
+
+  private static async findPartByFuzzy(
+    canonicalNumber: string,
+    originalValue: string | null | undefined,
+    cache: Map<string, PartFuzzyResult>,
+  ): Promise<PartFuzzyResult | null> {
+    const key = canonicalNumber;
+    if (cache.has(key)) {
+      return cache.get(key) ?? null;
+    }
+
+    const queryValue = originalValue && originalValue.trim() ? originalValue.trim() : canonicalNumber;
+
+    let matches: Awaited<ReturnType<typeof fuzzySearch>> = [];
+    try {
+      matches = await fuzzySearch({ type: 'part', query: queryValue, limit: 5 });
+    } catch (error) {
+      console.error('PurchaseOrderOcrAssociationService: fuzzy part search failed', error);
+      const fallback: PartFuzzyResult = { part: null, score: 0, matches: [] };
+      cache.set(key, fallback);
+      return fallback;
+    }
+
+    if (!matches.length) {
+      const empty: PartFuzzyResult = { part: null, score: 0, matches: [] };
+      cache.set(key, empty);
+      return empty;
+    }
+
+    const sanitized = matches.map((match) => {
+      const label = typeof match.label === 'string' ? match.label : String(match.label ?? match.id);
+      const score = Number.isFinite(match.score) ? match.score : 0;
+      return { id: match.id, label, score };
+    });
+
+    const top = sanitized[0];
+    const topScore = top ? top.score : 0;
+
+    let part: PartRow | null = null;
+    if (top && topScore >= 0.6) {
+      part = await this.findPartById(top.id);
+    }
+
+    const result: PartFuzzyResult = {
+      part,
+      score: topScore,
+      matches: sanitized.map(({ label, score }) => ({ label, score })),
+    };
+
+    cache.set(key, result);
+    return result;
   }
 
   private static extractVendorDetails(
