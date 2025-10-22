@@ -24,12 +24,13 @@ describe('AgentToolsV2 entity resolution thresholds', () => {
     const { minScoreAuto, minScoreShow } = getFuzzyConfig();
     const autoScore = Math.min(0.99, minScoreAuto + 0.03);
     const secondaryScore = Math.max(minScoreShow, Math.min(minScoreAuto - 0.05, autoScore - 0.05));
-    jest
-      .spyOn(tools as any, 'performFuzzyEntitySearch')
-      .mockResolvedValue([
+    jest.spyOn(tools as any, 'performFuzzyEntitySearch').mockResolvedValue({
+      matches: [
         { id: 7, label: 'Acme Corp', score: autoScore, extra: {} },
         { id: 9, label: 'Acme Services', score: secondaryScore, extra: {} },
-      ]);
+      ],
+      tookMs: 17,
+    });
 
     const resolvedId = await (tools as any).resolveCustomerIdFromPayload({ customer_name: 'Acme Corp' }, 101);
 
@@ -44,9 +45,8 @@ describe('AgentToolsV2 entity resolution thresholds', () => {
     const midScore = gap > epsilon
       ? minScoreAuto - epsilon
       : minScoreShow + gap / 2;
-    jest
-      .spyOn(tools as any, 'performFuzzyEntitySearch')
-      .mockResolvedValue([
+    jest.spyOn(tools as any, 'performFuzzyEntitySearch').mockResolvedValue({
+      matches: [
         {
           id: 11,
           label: 'Acme Primary',
@@ -55,7 +55,9 @@ describe('AgentToolsV2 entity resolution thresholds', () => {
         },
         { id: 12, label: 'Acme Backup', score: Math.max(minScoreShow, midScore - 0.04), extra: {} },
         { id: 13, label: 'Acme Warehouse', score: Math.max(minScoreShow, midScore - 0.06), extra: {} },
-      ]);
+      ],
+      tookMs: 19,
+    });
 
     await expect(
       (tools as any).resolveCustomerIdFromPayload({ customer_name: 'Acme' }, 102),
@@ -66,11 +68,12 @@ describe('AgentToolsV2 entity resolution thresholds', () => {
     const tools = new AgentToolsV2(pool);
     const { minScoreShow } = getFuzzyConfig();
     const lowScore = Math.max(0, minScoreShow - 0.13);
-    jest
-      .spyOn(tools as any, 'performFuzzyEntitySearch')
-      .mockResolvedValue([
+    jest.spyOn(tools as any, 'performFuzzyEntitySearch').mockResolvedValue({
+      matches: [
         { id: 21, label: 'Acme Maybe', score: lowScore, extra: { city: 'Calgary', province: 'AB', country: 'Canada' } },
-      ]);
+      ],
+      tookMs: 21,
+    });
 
     await expect(
       (tools as any).resolveCustomerIdFromPayload({ customer_name: 'Acme' }, 103),
