@@ -1,9 +1,13 @@
-import { z } from 'zod';
+import { z, type ZodString, type ZodTypeAny } from 'zod';
+
+type MaybeDatetime = ZodString & {
+  datetime?: () => ZodTypeAny;
+};
 
 const isoDatetime = () => {
-  const base = z.string();
-  if (typeof (base as any).datetime === 'function') {
-    return (base as any).datetime();
+  const base = z.string() as MaybeDatetime;
+  if (typeof base.datetime === 'function') {
+    return base.datetime();
   }
   return base.refine((value) => !Number.isNaN(Date.parse(value)), {
     message: 'Invalid datetime string',
@@ -106,3 +110,4 @@ export type PurchaseOrderPatch = z.infer<typeof PurchaseOrderPatch>;
 export type TaskCreateArgs = z.infer<typeof TaskCreateArgs>;
 export type TaskUpdateArgs = z.infer<typeof TaskUpdateArgs>;
 export type LookupArgs = z.infer<typeof LookupArgs>;
+export type Id = z.infer<typeof Id>;

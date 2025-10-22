@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-const chatContextSchema = z.record(z.any());
+const chatContextSchema = z.record(z.unknown());
 
 export const ChatIn = z
   .object({
