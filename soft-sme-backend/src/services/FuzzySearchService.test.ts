@@ -93,6 +93,17 @@ describe('fuzzySearch', () => {
     ]);
   });
 
+  it('orders exact canonical matches ahead of typo-similar results', async () => {
+    mockQuery.mockResolvedValue({ rows: [] });
+
+    await fuzzySearch({ type: 'vendor', query: 'Acme' });
+
+    expect(mockQuery).toHaveBeenCalledTimes(1);
+    const [text] = mockQuery.mock.calls[0];
+    expect(text).toContain('similarity(canonical_name, $1)');
+    expect(text).toContain('ORDER BY (canonical_name = $1) DESC, score DESC');
+  });
+
   it('returns empty results when canonical query is empty and skips the database call', async () => {
     const matches = await fuzzySearch({ type: 'customer', query: '!!!' });
 
@@ -100,4 +111,3 @@ describe('fuzzySearch', () => {
     expect(matches).toEqual([]);
   });
 });
-
