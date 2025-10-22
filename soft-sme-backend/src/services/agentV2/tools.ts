@@ -28,6 +28,7 @@ import { queryDocsRag } from '../../services/ragClient';
 import { canonicalizeName, canonicalizePartNumber } from '../../lib/normalize';
 import { getCanonicalConfig, getFuzzyConfig } from '../../config';
 import { ZodError, type ZodSchema } from 'zod';
+import { toValidationProblem } from '../../utils/schemaError';
 import {
   QuoteCreateArgs as QuoteCreateSchema,
   QuoteUpdateArgs as QuoteUpdateSchema,
@@ -521,8 +522,8 @@ export class AgentToolsV2 {
       return schema.parse(raw);
     } catch (error: unknown) {
       if (error instanceof ZodError) {
-        const flattened = error.flatten();
-        throw new ServiceError(JSON.stringify({ tool: toolName, issues: flattened }), 422);
+        const problem = toValidationProblem(error);
+        throw new ServiceError(JSON.stringify({ tool: toolName, ...problem }), 422);
       }
       throw error;
     }
