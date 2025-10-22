@@ -44,7 +44,7 @@ describe('agentV2Routes validation', () => {
     expect(status).toHaveBeenCalledWith(422);
     expect(json).toHaveBeenCalledWith(
       expect.objectContaining({
-        error: 'Invalid request',
+        error: 'Invalid payload',
         issues: expect.objectContaining({
           fieldErrors: expect.objectContaining({
             sessionId: expect.arrayContaining(['A positive integer sessionId is required.']),

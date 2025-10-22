@@ -10,6 +10,8 @@ import { AgentSkillLibraryService, SkillWorkflowSummary } from '../services/agen
 import aiAssistantService from '../services/aiAssistantService';
 import ConversationSummarizer from '../services/conversationSummarizer';
 import { ConversationMessage } from '../services/aiConversationManager';
+import type { ZodError } from 'zod';
+import { toValidationProblem } from '../utils/schemaError';
 import { ChatIn, isChatInFailure } from './agentV2Schemas';
 
 const router = express.Router();
@@ -765,9 +767,7 @@ router.post('/chat', authMiddleware, async (req: Request, res: Response) => {
   try {
     const parsed = ChatIn.safeParse(req.body);
     if (isChatInFailure(parsed)) {
-      return res
-        .status(422)
-        .json({ error: 'Invalid request', issues: parsed.error.flatten() });
+      return res.status(422).json(toValidationProblem(parsed.error as ZodError));
     }
 
     const {
