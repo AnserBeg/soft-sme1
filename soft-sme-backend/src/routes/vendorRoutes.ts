@@ -3,6 +3,7 @@ import { pool } from '../db';
 import PDFDocument from 'pdfkit';
 import fs from 'fs';
 import path from 'path';
+import { canonicalizeName } from '../lib/normalize';
 
 const router = express.Router();
 
@@ -10,7 +11,8 @@ const router = express.Router();
 router.get('/', async (req: Request, res: Response) => {
   try {
     const result = await pool.query('SELECT * FROM vendormaster ORDER BY vendor_name ASC');
-    res.json(result.rows);
+    const vendors = result.rows.map(({ canonical_name, ...vendor }) => vendor);
+    res.json(vendors);
   } catch (err) {
     console.error('vendorRoutes: Error fetching vendors:', err);
     res.status(500).json({ error: 'Internal server error' });
@@ -120,7 +122,8 @@ router.get('/:id', async (req: Request, res: Response) => {
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Vendor not found' });
     }
-    res.json(result.rows[0]);
+    const { canonical_name, ...vendor } = result.rows[0];
+    res.json(vendor);
   } catch (err) {
     console.error('vendorRoutes: Error fetching vendor:', err);
     res.status(500).json({ error: 'Internal server error' });
@@ -129,58 +132,155 @@ router.get('/:id', async (req: Request, res: Response) => {
 
 // Create a new vendor
 router.post('/', async (req: Request, res: Response) => {
-    const {
-        vendor_name,
-        street_address,
-        city,
-        province,
-        country,
-        postal_code,
-        contact_person,
-        telephone_number,
-        email,
-        website
-    } = req.body;
-    try {
-        const result = await pool.query(
-            'INSERT INTO vendormaster (vendor_name, street_address, city, province, country, postal_code, contact_person, telephone_number, email, website) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *',
-            [vendor_name, street_address, city, province, country, postal_code, contact_person, telephone_number, email, website]
-        );
-        res.status(201).json({ message: 'Vendor added successfully!', vendor: result.rows[0] });
-    } catch (err) {
-        console.error('vendorRoutes: Error creating vendor:', err);
-        res.status(500).json({ error: 'Internal server error' });
+  const {
+    vendor_name,
+    street_address,
+    city,
+    province,
+    country,
+    postal_code,
+    contact_person,
+    telephone_number,
+    email,
+    website
+  } = req.body;
+
+  const trimmedVendorName = vendor_name ? vendor_name.toString().trim() : '';
+  if (!trimmedVendorName) {
+    return res.status(400).json({ error: 'Vendor name is required' });
+  }
+
+  const canonicalName = canonicalizeName(trimmedVendorName);
+
+  try {
+    const duplicateCheck = await pool.query(
+      'SELECT vendor_id, vendor_name FROM vendormaster WHERE canonical_name = $1',
+      [canonicalName]
+    );
+
+    if (duplicateCheck.rows.length > 0) {
+      const existing = duplicateCheck.rows[0];
+      return res.status(409).json({
+        error: 'Vendor already exists',
+        details: `Vendor "${existing.vendor_name}" already exists (normalized match for "${trimmedVendorName}").`
+      });
     }
+
+    const result = await pool.query(
+      'INSERT INTO vendormaster (vendor_name, canonical_name, street_address, city, province, country, postal_code, contact_person, telephone_number, email, website) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *',
+      [
+        trimmedVendorName,
+        canonicalName,
+        street_address ?? null,
+        city ?? null,
+        province ?? null,
+        country ?? null,
+        postal_code ?? null,
+        contact_person ?? null,
+        telephone_number ?? null,
+        email ?? null,
+        website ?? null
+      ]
+    );
+
+    const { canonical_name, ...vendor } = result.rows[0];
+    res.status(201).json({ message: 'Vendor added successfully!', vendor });
+  } catch (err) {
+    console.error('vendorRoutes: Error creating vendor:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 // Update a vendor
 router.put('/:id', async (req: Request, res: Response) => {
-    const { id } = req.params;
-    const {
-        vendor_name,
-        street_address,
-        city,
-        province,
-        country,
-        postal_code,
-        contact_person,
-        telephone_number,
-        email,
-        website
-    } = req.body;
-    try {
-        const result = await pool.query(
-            'UPDATE vendormaster SET vendor_name = $1, street_address = $2, city = $3, province = $4, country = $5, postal_code = $6, contact_person = $7, telephone_number = $8, email = $9, website = $10, updated_at = CURRENT_TIMESTAMP WHERE vendor_id = $11 RETURNING *',
-            [vendor_name, street_address, city, province, country, postal_code, contact_person, telephone_number, email, website, id]
-        );
-        if (result.rows.length === 0) {
-            return res.status(404).json({ error: 'Vendor not found' });
-        }
-        res.json({ message: 'Vendor updated successfully!', vendor: result.rows[0] });
-    } catch (err) {
-        console.error('vendorRoutes: Error updating vendor:', err);
-        res.status(500).json({ error: 'Internal server error' });
+  const { id } = req.params;
+  const {
+    vendor_name,
+    street_address,
+    city,
+    province,
+    country,
+    postal_code,
+    contact_person,
+    telephone_number,
+    email,
+    website
+  } = req.body;
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const existingResult = await client.query('SELECT * FROM vendormaster WHERE vendor_id = $1', [id]);
+    if (existingResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Vendor not found' });
     }
+
+    const existingVendor = existingResult.rows[0];
+    const trimmedVendorName = vendor_name !== undefined
+      ? vendor_name.toString().trim()
+      : existingVendor.vendor_name;
+
+    if (!trimmedVendorName) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Vendor name is required' });
+    }
+
+    const canonicalName = canonicalizeName(trimmedVendorName);
+
+    const duplicateCheck = await client.query(
+      'SELECT vendor_id FROM vendormaster WHERE canonical_name = $1 AND vendor_id <> $2',
+      [canonicalName, id]
+    );
+
+    if (duplicateCheck.rows.length > 0) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({
+        error: 'Vendor already exists',
+        details: `Another vendor already exists with a similar name to "${trimmedVendorName}"`
+      });
+    }
+
+    const resolvedStreetAddress = street_address !== undefined ? street_address : existingVendor.street_address;
+    const resolvedCity = city !== undefined ? city : existingVendor.city;
+    const resolvedProvince = province !== undefined ? province : existingVendor.province;
+    const resolvedCountry = country !== undefined ? country : existingVendor.country;
+    const resolvedPostalCode = postal_code !== undefined ? postal_code : existingVendor.postal_code;
+    const resolvedContactPerson = contact_person !== undefined ? contact_person : existingVendor.contact_person;
+    const resolvedTelephone = telephone_number !== undefined ? telephone_number : existingVendor.telephone_number;
+    const resolvedEmail = email !== undefined ? email : existingVendor.email;
+    const resolvedWebsite = website !== undefined ? website : existingVendor.website;
+
+    const result = await client.query(
+      'UPDATE vendormaster SET vendor_name = $1, canonical_name = $2, street_address = $3, city = $4, province = $5, country = $6, postal_code = $7, contact_person = $8, telephone_number = $9, email = $10, website = $11, updated_at = CURRENT_TIMESTAMP WHERE vendor_id = $12 RETURNING *',
+      [
+        trimmedVendorName,
+        canonicalName,
+        resolvedStreetAddress ?? null,
+        resolvedCity ?? null,
+        resolvedProvince ?? null,
+        resolvedCountry ?? null,
+        resolvedPostalCode ?? null,
+        resolvedContactPerson ?? null,
+        resolvedTelephone ?? null,
+        resolvedEmail ?? null,
+        resolvedWebsite ?? null,
+        id
+      ]
+    );
+
+    await client.query('COMMIT');
+
+    const { canonical_name, ...vendor } = result.rows[0];
+    res.json({ message: 'Vendor updated successfully!', vendor });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('vendorRoutes: Error updating vendor:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  } finally {
+    client.release();
+  }
 });
 
 // Delete a vendor
