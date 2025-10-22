@@ -30,6 +30,7 @@ import profileDocumentRouter from './routes/profileDocumentRoutes';
 import taskRouter from './routes/taskRoutes';
 import messagingRouter from './routes/messagingRoutes';
 import plannerRoutes from './routes/plannerRoutes';
+import searchRoutes from './routes/searchRoutes';
 
 import chatRouter from './routes/chatRoutes';
 
@@ -162,6 +163,9 @@ console.log('Registered vendor routes');
 
 app.use('/api/inventory', authMiddleware, inventoryRouter);
 console.log('Registered inventory routes at /api/inventory');
+
+app.use('/api/search', authMiddleware, searchRoutes);
+console.log('Registered search routes at /api/search');
 
 app.use('/api/categories', authMiddleware, categoryRouter);
 console.log('Registered category routes at /api/categories');
