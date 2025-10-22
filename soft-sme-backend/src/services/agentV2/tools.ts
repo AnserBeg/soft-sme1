@@ -2707,18 +2707,27 @@ export class AgentToolsV2 {
   async updateQuote(sessionId: number, quoteId: number, patch: any) {
     const idempotencyKey = extractIdempotencyKeyFromArgs(patch);
     const sanitizedPatch = this.stripIdempotencyKey(patch);
-    const validationPatch = this.pickDefined<QuoteUpdateArgs['patch']>(sanitizedPatch, [
-      'valid_until',
-      'status',
-      'notes',
-    ]);
     const parsedPatch = this.parseWithSchema<QuoteUpdateArgs>(
       QuoteUpdateSchema,
-      { quote_id: quoteId, patch: validationPatch },
+      { quote_id: quoteId, patch: sanitizedPatch },
       'quote.update'
     );
     const targetQuoteId = parsedPatch.quote_id;
     const validatedPatch = parsedPatch.patch;
+
+    if (!validatedPatch || Object.keys(validatedPatch).length === 0) {
+      throw new ServiceError(
+        JSON.stringify({
+          tool: 'quote.update',
+          error: 'Invalid payload',
+          issues: {
+            fieldErrors: { patch: ['At least one field must be provided.'] },
+            formErrors: [],
+          },
+        }),
+        422
+      );
+    }
 
     try {
       const { deterministicResult, workResult, didRunWork } = await withTransaction(
@@ -2739,7 +2748,17 @@ export class AgentToolsV2 {
               const vals: any[] = [];
               let i = 1;
               for (const [k, v] of Object.entries(validatedPatch ?? {})) {
-                if (allowed.includes(k) && v !== undefined && v !== null) {
+                if (!allowed.includes(k)) {
+                  continue;
+                }
+                if (v === undefined) {
+                  continue;
+                }
+                if (k === 'valid_until' && v === null) {
+                  fields.push(`${k} = NULL`);
+                  continue;
+                }
+                if (v !== null) {
                   fields.push(`${k}=$${i++}`);
                   vals.push(v);
                 }
