@@ -396,6 +396,12 @@ AI agent logs are available in:
 3. **Mobile App**: Native mobile support
 4. **API Gateway**: External API access
 
+## RAG & Citations
+
+- Toggle documentation retrieval with `DOCS_RAG_MODE`, allow SQL-only fallback via `DOCS_LEGACY_SQL_FALLBACK`, and enforce reference output with `DOCS_REQUIRE_CITATIONS`.
+- Node reaches the Python agent either over HTTP (`AI_AGENT_ENDPOINT` with a persistent server) or by launching the CLI runner (`python ai_agent/main.py --once`).
+- Responses return `{ "answer": string, "citations": [{ "title": string, "path": string, "score": number }] }` so clients can display sourced answers.
+
 ## Support
 
 For issues and questions:
