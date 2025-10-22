@@ -7,6 +7,7 @@ import { pool } from '../db';
 import { AIService } from './aiService';
 import { ConversationManager, ConversationMessage } from './aiConversationManager';
 import { AITaskQueueService } from './aiTaskQueueService';
+import { getFuzzyConfig } from '../config';
 
 const sanitizeEnvValue = (value?: string | null): string | undefined => {
   if (!value) {
@@ -967,10 +968,12 @@ class AIAssistantService {
   private async createGeminiFallbackResponse(message: string, userId?: number): Promise<AIResponse> {
     const fallbackResponse = await AIService.sendMessage(message, userId);
 
+    const { minScoreAuto } = getFuzzyConfig();
+
     return {
       response: fallbackResponse,
       sources: ['gemini'],
-      confidence: 0.6,
+      confidence: minScoreAuto,
       tool_used: 'gemini_direct',
       actions: [],
       action_message: null,

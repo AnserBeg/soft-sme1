@@ -1,4 +1,5 @@
 import { fuzzySearch } from './FuzzySearchService';
+import { getFuzzyConfig } from '../config';
 
 jest.mock('../db', () => ({
   pool: {
@@ -33,9 +34,11 @@ describe('fuzzySearch', () => {
     expect(mockQuery).toHaveBeenCalledTimes(1);
     const [, params] = mockQuery.mock.calls[0];
     expect(params[0]).toBe('ACME INDUSTRIES');
-    expect(params[1]).toBe(0.35);
+    const { minScoreShow, maxResults } = getFuzzyConfig();
+
+    expect(params[1]).toBe(minScoreShow);
     expect(params[2]).toBe('ACME INDUSTRIES%');
-    expect(params[3]).toBe(10);
+    expect(params[3]).toBe(maxResults);
 
     expect(matches).toEqual([
       {

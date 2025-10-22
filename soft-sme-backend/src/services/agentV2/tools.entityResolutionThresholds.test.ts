@@ -1,6 +1,7 @@
 import type { Pool } from 'pg';
 import { AgentToolsV2 } from './tools';
 import { AgentAnalyticsLogger } from './analyticsLogger';
+import { getFuzzyConfig } from '../../config';
 
 describe('AgentToolsV2 entity resolution thresholds', () => {
   let pool: jest.Mocked<Pool>;
@@ -20,11 +21,14 @@ describe('AgentToolsV2 entity resolution thresholds', () => {
 
   it('auto-resolves customers when the top fuzzy score meets the high threshold', async () => {
     const tools = new AgentToolsV2(pool);
+    const { minScoreAuto, minScoreShow } = getFuzzyConfig();
+    const autoScore = Math.min(0.99, minScoreAuto + 0.03);
+    const secondaryScore = Math.max(minScoreShow, Math.min(minScoreAuto - 0.05, autoScore - 0.05));
     jest
       .spyOn(tools as any, 'performFuzzyEntitySearch')
       .mockResolvedValue([
-        { id: 7, label: 'Acme Corp', score: 0.63, extra: {} },
-        { id: 9, label: 'Acme Services', score: 0.58, extra: {} },
+        { id: 7, label: 'Acme Corp', score: autoScore, extra: {} },
+        { id: 9, label: 'Acme Services', score: secondaryScore, extra: {} },
       ]);
 
     const resolvedId = await (tools as any).resolveCustomerIdFromPayload({ customer_name: 'Acme Corp' }, 101);
@@ -34,17 +38,23 @@ describe('AgentToolsV2 entity resolution thresholds', () => {
 
   it('asks for disambiguation when scores fall in the mid confidence band', async () => {
     const tools = new AgentToolsV2(pool);
+    const { minScoreAuto, minScoreShow } = getFuzzyConfig();
+    const epsilon = 0.01;
+    const gap = minScoreAuto - minScoreShow;
+    const midScore = gap > epsilon
+      ? minScoreAuto - epsilon
+      : minScoreShow + gap / 2;
     jest
       .spyOn(tools as any, 'performFuzzyEntitySearch')
       .mockResolvedValue([
         {
           id: 11,
           label: 'Acme Primary',
-          score: 0.44,
+          score: midScore,
           extra: { city: 'Springfield', province: 'IL', country: 'USA' },
         },
-        { id: 12, label: 'Acme Backup', score: 0.4, extra: {} },
-        { id: 13, label: 'Acme Warehouse', score: 0.38, extra: {} },
+        { id: 12, label: 'Acme Backup', score: Math.max(minScoreShow, midScore - 0.04), extra: {} },
+        { id: 13, label: 'Acme Warehouse', score: Math.max(minScoreShow, midScore - 0.06), extra: {} },
       ]);
 
     await expect(
@@ -54,10 +64,12 @@ describe('AgentToolsV2 entity resolution thresholds', () => {
 
   it('requests refinement when no fuzzy matches meet the minimum confidence', async () => {
     const tools = new AgentToolsV2(pool);
+    const { minScoreShow } = getFuzzyConfig();
+    const lowScore = Math.max(0, minScoreShow - 0.13);
     jest
       .spyOn(tools as any, 'performFuzzyEntitySearch')
       .mockResolvedValue([
-        { id: 21, label: 'Acme Maybe', score: 0.22, extra: { city: 'Calgary', province: 'AB', country: 'Canada' } },
+        { id: 21, label: 'Acme Maybe', score: lowScore, extra: { city: 'Calgary', province: 'AB', country: 'Canada' } },
       ]);
 
     await expect(

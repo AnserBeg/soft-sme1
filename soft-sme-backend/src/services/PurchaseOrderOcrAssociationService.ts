@@ -1,5 +1,6 @@
 import { pool } from '../db';
 import { canonicalizeName, canonicalizePartNumber } from '../lib/normalize';
+import { getFuzzyConfig } from '../config';
 import { fuzzySearch } from './FuzzySearchService';
 import {
   PurchaseOrderOcrLineItem,
@@ -193,7 +194,9 @@ export class PurchaseOrderOcrAssociationService {
 
     let warning = `Vendor "${candidateName}" was not found in the vendor list. Review the captured details and add the vendor if needed.`;
 
-    if (fuzzyVendor && fuzzyVendor.matches.length > 0 && fuzzyVendor.score >= 0.35) {
+    const { minScoreShow } = getFuzzyConfig();
+
+    if (fuzzyVendor && fuzzyVendor.matches.length > 0 && fuzzyVendor.score >= minScoreShow) {
       const suggestions = this.formatFuzzySuggestions(fuzzyVendor.matches);
       if (suggestions) {
         warning += ` Potential matches: ${suggestions}.`;
@@ -212,6 +215,8 @@ export class PurchaseOrderOcrAssociationService {
     const items: PurchaseOrderOcrLineItem[] = Array.isArray(normalized.lineItems)
       ? normalized.lineItems
       : [];
+
+    const { minScoreAuto, minScoreShow } = getFuzzyConfig();
 
     const canonicalNumbers = items
       .map((item) => this.canonicalizePartNumberValue(item.partNumber))
@@ -252,14 +257,14 @@ export class PurchaseOrderOcrAssociationService {
 
       if (!part) {
         fuzzyResult = await this.findPartByFuzzy(canonicalNumber, item.partNumber, fuzzyCache);
-        if (fuzzyResult?.part && fuzzyResult.score >= 0.6) {
+        if (fuzzyResult?.part && fuzzyResult.score >= minScoreAuto) {
           part = fuzzyResult.part;
           matchedViaFuzzy = true;
           fuzzyScore = fuzzyResult.score;
           if (part.canonical_part_number) {
             partMap.set(part.canonical_part_number, part);
           }
-        } else if (fuzzyResult && fuzzyResult.matches.length > 0 && fuzzyResult.score >= 0.35) {
+        } else if (fuzzyResult && fuzzyResult.matches.length > 0 && fuzzyResult.score >= minScoreShow) {
           const suggestions = this.formatFuzzySuggestions(fuzzyResult.matches);
           if (suggestions) {
             warnings.push(
@@ -429,9 +434,10 @@ export class PurchaseOrderOcrAssociationService {
       return null;
     }
 
+    const { minScoreAuto, maxResults } = getFuzzyConfig();
     let matches: Awaited<ReturnType<typeof fuzzySearch>> = [];
     try {
-      matches = await fuzzySearch({ type: 'vendor', query: trimmed, limit: 5 });
+      matches = await fuzzySearch({ type: 'vendor', query: trimmed, limit: maxResults });
     } catch (error) {
       console.error('PurchaseOrderOcrAssociationService: fuzzy vendor search failed', error);
       return null;
@@ -450,7 +456,7 @@ export class PurchaseOrderOcrAssociationService {
     const top = sanitized[0];
     const topScore = top ? top.score : 0;
 
-    if (top && topScore >= 0.6) {
+    if (top && topScore >= minScoreAuto) {
       const vendor = await this.findVendorById(top.id);
       if (vendor) {
         return {
@@ -522,9 +528,10 @@ export class PurchaseOrderOcrAssociationService {
 
     const queryValue = originalValue && originalValue.trim() ? originalValue.trim() : canonicalNumber;
 
+    const { minScoreAuto, maxResults } = getFuzzyConfig();
     let matches: Awaited<ReturnType<typeof fuzzySearch>> = [];
     try {
-      matches = await fuzzySearch({ type: 'part', query: queryValue, limit: 5 });
+      matches = await fuzzySearch({ type: 'part', query: queryValue, limit: maxResults });
     } catch (error) {
       console.error('PurchaseOrderOcrAssociationService: fuzzy part search failed', error);
       const fallback: PartFuzzyResult = { part: null, score: 0, matches: [] };
@@ -548,7 +555,7 @@ export class PurchaseOrderOcrAssociationService {
     const topScore = top ? top.score : 0;
 
     let part: PartRow | null = null;
-    if (top && topScore >= 0.6) {
+    if (top && topScore >= minScoreAuto) {
       part = await this.findPartById(top.id);
     }
 
