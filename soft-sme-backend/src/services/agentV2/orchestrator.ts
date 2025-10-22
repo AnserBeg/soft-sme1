@@ -53,7 +53,7 @@ export type AgentEvent =
         uiHints?: Record<string, unknown>;
         severity?: 'info' | 'warning' | 'error';
       } & AgentEventBase)
-  | ({ type: 'docs'; info: string; chunks: any[] } & AgentEventBase)
+  | ({ type: 'docs'; info: string; chunks: any[]; citations?: any[] } & AgentEventBase)
   | ({ type: 'task_created' | 'task_updated' | 'task_message'; summary: string; task: any; link: string } & AgentEventBase);
 
 export interface AgentResponse {
@@ -238,17 +238,16 @@ export class AgentOrchestratorV2 {
       });
       try {
         const result = await this.tools['retrieveDocs']({ query: message });
-        await this.analytics.finishToolTrace(trace, { status: 'success', output: Array.isArray(result) ? result : [] });
+        if (trace.metadata && result && typeof result === 'object' && 'citations' in result) {
+          const citations = Array.isArray((result as any).citations) ? (result as any).citations : [];
+          trace.metadata.citations_count = citations.length;
+        }
+        await this.analytics.finishToolTrace(trace, { status: 'success', output: result });
         await this.analytics.logFallback(sessionId, 'documentation', {
           reason: intent ? 'tool_not_available' : 'no_intent_match',
           matched_intent: matchedIntent,
         });
-        events.push({
-          type: 'docs',
-          info: 'Relevant docs',
-          chunks: Array.isArray(result) ? result : [],
-          timestamp: new Date().toISOString(),
-        });
+        events.push(this.buildDocsEvent(result));
       } catch (error: any) {
         await this.analytics.finishToolTrace(trace, { status: 'failure', error });
         await this.analytics.logFallback(sessionId, 'documentation', {
@@ -321,6 +320,19 @@ export class AgentOrchestratorV2 {
     }
 
     return { events };
+  }
+
+  private buildDocsEvent(result: unknown): AgentEvent {
+    const timestamp = new Date().toISOString();
+    if (result && typeof result === 'object' && (result as any).type === 'docs') {
+      const info = typeof (result as any).info === 'string' ? (result as any).info : 'Relevant docs';
+      const chunks = Array.isArray((result as any).chunks) ? (result as any).chunks : [];
+      const citations = Array.isArray((result as any).citations) ? (result as any).citations : undefined;
+      return { type: 'docs', info, chunks, citations, timestamp };
+    }
+
+    const chunks = Array.isArray(result) ? result : [];
+    return { type: 'docs', info: 'Relevant docs', chunks, citations: [], timestamp };
   }
 
   private async processAgentInstruction(

@@ -52,19 +52,33 @@ describe('AgentOrchestratorV2 intent routing', () => {
   it('falls back to documentation search when the ai assistant returns no text', async () => {
     mockSendMessage.mockResolvedValue({ response: '   ', sources: [], confidence: 0, tool_used: 'llm' });
 
-    const retrieveDocs = jest.fn().mockResolvedValue([{ path: 'docs/po.md', section: 'Creating POs', chunk: 'Step 1' }]);
+    const retrieveDocs = jest.fn().mockResolvedValue({
+      type: 'docs',
+      info: 'Follow these steps to create a PO.',
+      chunks: [{ path: 'docs/po.md', section: 'Creating POs', chunk: 'Step 1' }],
+      citations: [{ path: 'docs/po.md', title: 'Creating POs', score: 0.95 }],
+    });
     const orchestrator = buildOrchestrator({ retrieveDocs });
 
     const response = await orchestrator.handleMessage(2, 'How do I make a PO?', { companyId: 1, userId: 2 });
 
     expect(retrieveDocs).toHaveBeenCalledTimes(1);
-    expect(response.events[0].type).toBe('docs');
+    expect(response.events[0]).toMatchObject({
+      type: 'docs',
+      info: 'Follow these steps to create a PO.',
+      citations: [{ path: 'docs/po.md', title: 'Creating POs', score: 0.95 }],
+    });
   });
 
   it('treats help requests for quotes as documentation lookups instead of actions', async () => {
     mockSendMessage.mockResolvedValue({ response: '', sources: [], confidence: 0, tool_used: 'llm' });
 
-    const retrieveDocs = jest.fn().mockResolvedValue([{ path: 'docs/quotes.md', section: 'Creating quotes', chunk: 'Step 1' }]);
+    const retrieveDocs = jest.fn().mockResolvedValue({
+      type: 'docs',
+      info: 'Quote creation steps.',
+      chunks: [{ path: 'docs/quotes.md', section: 'Creating quotes', chunk: 'Step 1' }],
+      citations: [{ path: 'docs/quotes.md', title: 'Creating quotes', score: 0.88 }],
+    });
     const createQuote = jest.fn();
     const orchestrator = buildOrchestrator({ retrieveDocs, createQuote });
 
@@ -72,7 +86,10 @@ describe('AgentOrchestratorV2 intent routing', () => {
 
     expect(retrieveDocs).toHaveBeenCalledTimes(1);
     expect(createQuote).not.toHaveBeenCalled();
-    expect(response.events[0].type).toBe('docs');
+    expect(response.events[0]).toMatchObject({
+      type: 'docs',
+      info: 'Quote creation steps.',
+    });
   });
 
   it('executes registered tools for agent-origin instructions', async () => {
