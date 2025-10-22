@@ -1,6 +1,7 @@
 import express, { Request, Response } from 'express';
 import { pool } from '../db';
 import PDFDocument from 'pdfkit';
+import { canonicalizeName } from '../lib/normalize';
 
 const router = express.Router();
 
@@ -109,8 +110,9 @@ router.get('/:id', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Customer not found' });
     }
     // Add 'id' field to match frontend expectations
+    const { canonical_name, ...customerFields } = result.rows[0];
     const customer = {
-      ...result.rows[0],
+      ...customerFields,
       id: result.rows[0].customer_id
     };
     console.log('customerRoutes: GET /:id - returning customer', customer);
@@ -130,33 +132,49 @@ router.post('/', async (req: Request, res: Response) => {
     console.log('Received new customer data:', req.body);
 
     // Validate required fields
-    if (!customer_name || customer_name.trim() === '') {
+    const trimmedCustomerName = customer_name ? customer_name.toString().trim() : '';
+    if (!trimmedCustomerName) {
       return res.status(400).json({ error: 'Customer name is required' });
     }
 
+    const canonicalName = canonicalizeName(trimmedCustomerName);
+
     // Check if customer with same name already exists
     const existingCustomer = await client.query(
-      'SELECT customer_id FROM customermaster WHERE LOWER(customer_name) = LOWER($1)',
-      [customer_name.trim()]
+      'SELECT customer_id, customer_name FROM customermaster WHERE canonical_name = $1',
+      [canonicalName]
     );
 
     if (existingCustomer.rows.length > 0) {
-      return res.status(409).json({ 
+      return res.status(409).json({
         error: 'Customer already exists',
-        message: `A customer with the name "${customer_name}" already exists`,
+        message: `A customer with the name "${existingCustomer.rows[0].customer_name}" already exists`,
         existingCustomerId: existingCustomer.rows[0].customer_id
       });
     }
 
     const result = await client.query(
-      'INSERT INTO customermaster (customer_name, street_address, city, province, country, postal_code, contact_person, telephone_number, email, website, general_notes) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *',
-      [customer_name.trim(), street_address, city, province, country, postal_code, contact_person, phone_number, email, website, general_notes]
+      'INSERT INTO customermaster (customer_name, canonical_name, street_address, city, province, country, postal_code, contact_person, telephone_number, email, website, general_notes) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *',
+      [
+        trimmedCustomerName,
+        canonicalName,
+        street_address ?? null,
+        city ?? null,
+        province ?? null,
+        country ?? null,
+        postal_code ?? null,
+        contact_person ?? null,
+        phone_number ?? null,
+        email ?? null,
+        website ?? null,
+        general_notes ?? null
+      ]
     );
 
     const newCustomer = result.rows[0];
-    // Add 'id' field to match frontend expectations
+    const { canonical_name: _canonicalName, ...customerFields } = newCustomer;
     const customerWithId = {
-      ...newCustomer,
+      ...customerFields,
       id: newCustomer.customer_id
     };
     
@@ -208,7 +226,32 @@ router.put('/:id', async (req: Request, res: Response) => {
   const queryParams = [];
   let paramIndex = 1;
 
-  if (customer_name !== undefined) { updateFields.push(`customer_name = $${paramIndex++}`); queryParams.push(customer_name); }
+  let trimmedNameForUpdate: string | undefined;
+  let canonicalNameForUpdate: string | undefined;
+
+  if (customer_name !== undefined) {
+    trimmedNameForUpdate = customer_name ? customer_name.toString().trim() : '';
+    if (!trimmedNameForUpdate) {
+      return res.status(400).json({ error: 'Customer name is required' });
+    }
+
+    canonicalNameForUpdate = canonicalizeName(trimmedNameForUpdate);
+
+    const duplicateCheck = await pool.query(
+      'SELECT customer_id FROM customermaster WHERE canonical_name = $1 AND customer_id <> $2',
+      [canonicalNameForUpdate, id]
+    );
+
+    if (duplicateCheck.rows.length > 0) {
+      return res.status(409).json({ error: 'Customer already exists with a similar name' });
+    }
+
+    updateFields.push(`customer_name = $${paramIndex++}`);
+    queryParams.push(trimmedNameForUpdate);
+    updateFields.push(`canonical_name = $${paramIndex++}`);
+    queryParams.push(canonicalNameForUpdate);
+  }
+
   if (street_address !== undefined) { updateFields.push(`street_address = $${paramIndex++}`); queryParams.push(street_address); }
   if (city !== undefined) { updateFields.push(`city = $${paramIndex++}`); queryParams.push(city); }
   if (province !== undefined) { updateFields.push(`province = $${paramIndex++}`); queryParams.push(province); }
@@ -236,9 +279,9 @@ router.put('/:id', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Customer not found' });
     }
 
-    // Add 'id' field to match frontend expectations
+    const { canonical_name: _canonicalNameUpdate, ...updatedFields } = result.rows[0];
     const updatedCustomer = {
-      ...result.rows[0],
+      ...updatedFields,
       id: result.rows[0].customer_id
     };
 

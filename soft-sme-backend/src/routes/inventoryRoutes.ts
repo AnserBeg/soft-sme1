@@ -5,6 +5,7 @@ import csv from 'csv-parser';
 import fs from 'fs';
 import path from 'path';
 import PDFDocument from 'pdfkit';
+import { canonicalizeName, canonicalizePartNumber } from '../lib/normalize';
 
 const router = express.Router();
 
@@ -89,8 +90,9 @@ router.get('/:partNumber', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Inventory item not found' });
     }
     
-    console.log('inventoryRoutes: Successfully fetched inventory item:', result.rows[0]);
-    res.json(result.rows[0]);
+    const { canonical_part_number, canonical_name, ...item } = result.rows[0];
+    console.log('inventoryRoutes: Successfully fetched inventory item:', item);
+    res.json(item);
   } catch (err) {
     console.error('inventoryRoutes: Error fetching inventory item:', err);
     res.status(500).json({ error: 'Internal server error' });
@@ -248,28 +250,45 @@ router.post('/', async (req: Request, res: Response) => {
   const trimmedCategory = category ? category.toString().trim() : 'Uncategorized';
 
   try {
-    // Duplicate check with normalization: ignore dashes and spaces
-    const normalized = normalizePartNumberForDuplicateCheck(trimmedPartNumber);
+    const canonicalPartNumber = canonicalizePartNumber(trimmedPartNumber);
+    const canonicalDescription = canonicalizeName(trimmedPartDescription);
+
+    if (!canonicalPartNumber) {
+      return res.status(400).json({ error: 'Part number cannot be empty after normalization' });
+    }
+
     const existingResult = await pool.query(
-      `SELECT part_number FROM inventory WHERE REPLACE(REPLACE(UPPER(part_number), '-', ''), ' ', '') = $1`,
-      [normalized]
+      'SELECT part_number FROM inventory WHERE canonical_part_number = $1',
+      [canonicalPartNumber]
     );
     if (existingResult.rows.length > 0) {
       const existingPn = existingResult.rows[0].part_number;
-      console.log('inventoryRoutes: Duplicate part number detected (normalized match):', trimmedPartNumber, 'matches', existingPn);
-      return res.status(409).json({ 
+      console.log('inventoryRoutes: Duplicate part number detected (canonical match):', trimmedPartNumber, 'matches', existingPn);
+      return res.status(409).json({
         error: 'Part number already exists',
         details: `A part with number "${existingPn}" already exists (normalized match for "${trimmedPartNumber}").`
       });
     }
 
     const result = await pool.query(
-      'INSERT INTO inventory (part_number, part_description, unit, last_unit_cost, quantity_on_hand, reorder_point, part_type, category) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *',
-      [trimmedPartNumber, trimmedPartDescription, trimmedUnit, last_unit_cost, quantity_on_hand, reorder_point, trimmedPartType, trimmedCategory]
+      'INSERT INTO inventory (part_number, canonical_part_number, part_description, canonical_name, unit, last_unit_cost, quantity_on_hand, reorder_point, part_type, category) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *',
+      [
+        trimmedPartNumber,
+        canonicalPartNumber,
+        trimmedPartDescription,
+        canonicalDescription,
+        trimmedUnit,
+        last_unit_cost,
+        quantity_on_hand,
+        reorder_point,
+        trimmedPartType,
+        trimmedCategory
+      ]
     );
     const newItem = result.rows[0];
-    console.log('inventoryRoutes: Successfully added new item:', newItem);
-    res.status(201).json({ message: 'Inventory item added successfully', item: newItem });
+    const { canonical_part_number, canonical_name, ...item } = newItem;
+    console.log('inventoryRoutes: Successfully added new item:', item);
+    res.status(201).json({ message: 'Inventory item added successfully', item });
   } catch (err) {
     console.error('inventoryRoutes: Error adding new item:', err);
     res.status(500).json({ error: 'Internal server error' });
@@ -293,8 +312,9 @@ router.delete('/:id', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Inventory item not found' });
     }
     
-    console.log('inventoryRoutes: Successfully deleted inventory item:', result.rows[0]);
-    res.json({ message: 'Inventory item deleted successfully', deletedItem: result.rows[0] });
+    const { canonical_part_number, canonical_name, ...deletedItem } = result.rows[0];
+    console.log('inventoryRoutes: Successfully deleted inventory item:', deletedItem);
+    res.json({ message: 'Inventory item deleted successfully', deletedItem });
   } catch (err) {
     console.error('inventoryRoutes: Error deleting inventory item:', err);
     res.status(500).json({ error: 'Internal server error' });
@@ -339,15 +359,24 @@ router.put('/:id', async (req: Request, res: Response) => {
     if (trimmedPartNumber && trimmedPartNumber !== decodedPartNumber) {
       console.log(`✅ Part number change detected: ${decodedPartNumber} -> ${trimmedPartNumber}`);
 
+      const canonicalPartNumber = canonicalizePartNumber(trimmedPartNumber);
+      if (!canonicalPartNumber) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'Part number cannot be empty after normalization' });
+      }
+
       // Check if new part number already exists
-      const duplicateCheck = await client.query('SELECT part_number FROM inventory WHERE part_number = $1 AND part_id != $2', [trimmedPartNumber, partId]);
+      const duplicateCheck = await client.query(
+        'SELECT part_number FROM inventory WHERE canonical_part_number = $1 AND part_id != $2',
+        [canonicalPartNumber, partId]
+      );
       if (duplicateCheck.rows.length > 0) {
         await client.query('ROLLBACK');
         return res.status(409).json({ error: 'Part number already exists' });
       }
 
       // Update part number in inventory
-      await client.query('UPDATE inventory SET part_number = $1 WHERE part_id = $2', [trimmedPartNumber, partId]);
+      await client.query('UPDATE inventory SET part_number = $1, canonical_part_number = $2 WHERE part_id = $3', [trimmedPartNumber, canonicalPartNumber, partId]);
 
       // Update part_number in related tables (only those that have part_number column)
       await client.query('UPDATE inventory_vendors SET part_number = $1 WHERE part_id = $2', [trimmedPartNumber, partId]);
@@ -382,8 +411,11 @@ router.put('/:id', async (req: Request, res: Response) => {
       values.push(last_unit_cost);
     }
     if (trimmedPartDescription !== undefined) {
+      const canonicalDescription = canonicalizeName(trimmedPartDescription);
       fields.push(`part_description = $${idx++}`);
       values.push(trimmedPartDescription);
+      fields.push(`canonical_name = $${idx++}`);
+      values.push(canonicalDescription);
     }
     if (trimmedUnit !== undefined) {
       fields.push(`unit = $${idx++}`);
@@ -403,12 +435,14 @@ router.put('/:id', async (req: Request, res: Response) => {
       const updateQuery = `UPDATE inventory SET ${fields.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE part_id = $${idx} RETURNING *`;
       const result = await client.query(updateQuery, values);
       await client.query('COMMIT');
-      res.json({ message: 'Inventory item updated successfully', updatedItem: result.rows[0] });
+      const { canonical_part_number, canonical_name, ...updatedItem } = result.rows[0];
+      res.json({ message: 'Inventory item updated successfully', updatedItem });
     } else {
       // Just get the updated item if no other fields changed
       const result = await client.query('SELECT * FROM inventory WHERE part_id = $1', [partId]);
       await client.query('COMMIT');
-      res.json({ message: 'Inventory item updated successfully', updatedItem: result.rows[0] });
+      const { canonical_part_number, canonical_name, ...updatedItem } = result.rows[0];
+      res.json({ message: 'Inventory item updated successfully', updatedItem });
     }
   } catch (err) {
     await client.query('ROLLBACK');
