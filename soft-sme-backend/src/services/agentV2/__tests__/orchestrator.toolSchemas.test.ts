@@ -123,4 +123,28 @@ describe('AgentOrchestratorV2 tool schema validation', () => {
       expect.objectContaining({ status: 'failure' })
     );
   });
+
+  it('emits an error for quote.close when quote_id is invalid', async () => {
+    const pool = { query: jest.fn() } as any;
+    const quoteClose = jest.fn();
+    const orchestrator = new AgentOrchestratorV2(pool, { 'quote.close': quoteClose });
+
+    jest.spyOn(orchestrator as any, 'classifyIntent').mockResolvedValue({
+      tool: 'quote.close',
+      args: { quote_id: 0 },
+    });
+
+    const response = await orchestrator.handleMessage(555, 'close quote', {});
+
+    expect(quoteClose).not.toHaveBeenCalled();
+    expect(response.events).toHaveLength(1);
+    expect(response.events[0].type).toBe('text');
+    expect(response.events[0].severity).toBe('error');
+    expect(response.events[0].content).toContain('Invalid arguments for tool "quote.close"');
+    expect(response.events[0].content).toContain('Number must be greater than 0');
+    expect(finishToolTraceMock).toHaveBeenCalledWith(
+      expect.objectContaining({ traceId: expect.any(String) }),
+      expect.objectContaining({ status: 'failure' })
+    );
+  });
 });

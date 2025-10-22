@@ -417,6 +417,13 @@ const buildToolRegistry = (
       requireId(args?.quote_id ?? args?.id, 'quote_id'),
       ensureIdempotencyKey(args?.patch ?? args, idempotencyKey)
     ),
+  closeQuote: async (args: any) => {
+    const quoteId = requireId(args?.quote_id ?? args?.id, 'quote_id');
+    const payload = { ...(args ?? {}) };
+    delete (payload as any).quote_id;
+    delete (payload as any).id;
+    return tools.closeQuote(sessionId, quoteId, ensureIdempotencyKey(payload, idempotencyKey));
+  },
   emailQuote: async (args: any) =>
     tools.emailQuote(sessionId, requireId(args?.quote_id ?? args?.id, 'quote_id'), args?.to, userId),
   email_search: async (args: any) => tools.emailSearch(sessionId, userId, args),
@@ -854,7 +861,7 @@ router.post('/chat', authMiddleware, async (req: Request, res: Response) => {
       });
     } catch (error: any) {
       if (error instanceof Error && /is required/i.test(error.message)) {
-        return res.status(400).json({ error: error.message });
+        return res.status(422).json({ error: error.message });
       }
       console.error('agentV2: orchestrator error', error);
       throw error;

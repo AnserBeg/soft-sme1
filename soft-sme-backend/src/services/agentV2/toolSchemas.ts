@@ -43,10 +43,17 @@ export const QuoteUpdateArgs = z
     patch: z
       .object({
         valid_until: isoDatetime().optional(),
-        status: z.enum(['Open', 'Won', 'Lost', 'Expired']).optional(),
+        status: z.enum(['Open', 'Won', 'Lost', 'Expired', 'Closed']).optional(),
         notes: limitedNote.optional(),
       })
       .strict(),
+  })
+  .strict();
+
+export const QuoteCloseArgs = z
+  .object({
+    quote_id: Id,
+    status: z.enum(['Closed', 'Won', 'Lost']).optional(),
   })
   .strict();
 
@@ -105,6 +112,7 @@ export const LookupArgs = z
 
 export type QuoteCreateArgs = z.infer<typeof QuoteCreateArgs>;
 export type QuoteUpdateArgs = z.infer<typeof QuoteUpdateArgs>;
+export type QuoteCloseArgs = z.infer<typeof QuoteCloseArgs>;
 export type SalesOrderPatch = z.infer<typeof SalesOrderPatch>;
 export type PurchaseOrderPatch = z.infer<typeof PurchaseOrderPatch>;
 export type TaskCreateArgs = z.infer<typeof TaskCreateArgs>;
