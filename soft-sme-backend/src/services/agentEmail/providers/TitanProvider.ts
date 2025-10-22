@@ -19,7 +19,7 @@ import type {
 
 const MAILBOX = 'INBOX';
 
-const sanitizeOptions: sanitizeHtml.IOptions = {
+const sanitizeOptions = {
   allowedTags: sanitizeHtml.defaults.allowedTags.concat(['img', 'table', 'thead', 'tbody', 'tfoot', 'tr', 'td', 'th']),
   allowedAttributes: {
     ...sanitizeHtml.defaults.allowedAttributes,
@@ -334,8 +334,11 @@ export class TitanProvider implements EmailProvider {
       }
 
       const parsed = await simpleParser(message.source);
-      const attachments = (parsed.attachments || []).map((attachment, index) => toAttachmentMeta(attachment, index));
+      const attachments = (parsed.attachments || []).map((attachment: any, index: number) =>
+        toAttachmentMeta(attachment, index)
+      );
       const htmlBody = parsed.html ? sanitizeHtml(parsed.html, sanitizeOptions) : undefined;
+      const headerEntries = Array.from(parsed.headers.entries()) as Array<[string, unknown]>;
 
       return {
         id: String(uid),
@@ -352,7 +355,7 @@ export class TitanProvider implements EmailProvider {
         textBody: parsed.text || undefined,
         htmlBody,
         attachments,
-        headers: Object.fromEntries(Array.from(parsed.headers.entries()).map(([key, value]) => [key, String(value)])),
+        headers: Object.fromEntries(headerEntries.map(([key, value]) => [key, String(value)])),
       };
     });
   }
