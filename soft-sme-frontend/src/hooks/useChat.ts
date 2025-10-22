@@ -66,6 +66,7 @@ const normalizeMessage = (message: AgentChatMessage): ChatMessageItem => {
     link: message.link,
     info: message.info,
     chunks: message.chunks,
+    citations: message.citations,
     timestamp: message.timestamp,
     createdAt: message.createdAt,
     callArtifacts: artifacts ?? message.callArtifacts,
@@ -275,6 +276,7 @@ export const useChat = () => {
               link: event.link,
               info: event.info,
               chunks: event.chunks,
+              citations: event.citations,
               timestamp: event.timestamp ?? new Date().toISOString(),
               callArtifacts: artifacts ?? event.callArtifacts,
             } as ChatMessageItem;
