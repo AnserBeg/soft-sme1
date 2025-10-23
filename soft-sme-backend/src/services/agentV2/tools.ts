@@ -566,7 +566,23 @@ export class AgentToolsV2 {
   }
 
   // RAG: simple keyword search over agent_docs for now
-  async retrieveDocs(sessionId: number, query: string, k = 5) {
+  async retrieveDocs(sessionId: number, query: string, k?: number): Promise<{ type: 'docs'; info: string; chunks: any[]; citations: any[] }>;
+  async retrieveDocs(query: string, k?: number): Promise<{ type: 'docs'; info: string; chunks: any[]; citations: any[] }>;
+  async retrieveDocs(
+    sessionIdOrQuery: number | string,
+    queryOrK?: string | number,
+    maybeK = 5
+  ): Promise<{ type: 'docs'; info: string; chunks: any[]; citations: any[] }> {
+    const sessionId = typeof sessionIdOrQuery === 'number' ? sessionIdOrQuery : undefined;
+    const query =
+      typeof sessionIdOrQuery === 'number'
+        ? (typeof queryOrK === 'string' ? queryOrK : '')
+        : (typeof sessionIdOrQuery === 'string' ? sessionIdOrQuery : '');
+    const k =
+      typeof sessionIdOrQuery === 'number'
+        ? typeof maybeK === 'number' && Number.isFinite(maybeK) ? maybeK : 5
+        : typeof queryOrK === 'number' && Number.isFinite(queryOrK) ? queryOrK : 5;
+
     const trimmed = typeof query === 'string' ? query.trim() : '';
     if (!trimmed) {
       await this.analytics.incrementCounter(sessionId, 'docs.none');
