@@ -3,6 +3,21 @@ CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE EXTENSION IF NOT EXISTS unaccent;
 CREATE EXTENSION IF NOT EXISTS fuzzystrmatch;
 
+-- Drop the canonical uniqueness constraint if it already exists so the
+-- backfill statements below can run without immediate uniqueness checks.
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'inventory_canonical_part_number_key'
+          AND conrelid = 'inventory'::regclass
+    ) THEN
+        ALTER TABLE inventory
+            DROP CONSTRAINT inventory_canonical_part_number_key;
+    END IF;
+END;
+$$;
+
 -- Ensure canonical columns exist with a non-null default
 ALTER TABLE vendormaster
     ADD COLUMN IF NOT EXISTS canonical_name TEXT NOT NULL DEFAULT '';
@@ -103,7 +118,7 @@ WITH duplicate_part_numbers AS (
     WHERE canonical_part_number <> ''
 )
 UPDATE inventory i
-SET canonical_part_number = duplicate_part_numbers.canonical_part_number || 'DUP' || UPPER(MD5(duplicate_part_numbers.part_number::TEXT))
+SET canonical_part_number = duplicate_part_numbers.canonical_part_number || 'DUP' || LPAD(duplicate_part_numbers.rn::TEXT, 6, '0')
 FROM duplicate_part_numbers
 WHERE i.part_number = duplicate_part_numbers.part_number
   AND duplicate_part_numbers.rn > 1;
@@ -127,7 +142,7 @@ BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM pg_constraint
         WHERE conname = 'inventory_canonical_part_number_key'
-            AND conrelid = 'inventory'::regclass
+          AND conrelid = 'inventory'::regclass
     ) THEN
         ALTER TABLE inventory
             ADD CONSTRAINT inventory_canonical_part_number_key
