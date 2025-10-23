@@ -24,19 +24,25 @@ export class SalesOrderService {
       return null;
     }
 
-    const normalized = value.trim().toLowerCase();
-    switch (normalized) {
-      case 'draft':
-        return null;
-      case 'pending':
-        return 'pending';
-      case 'sent':
-        return 'sent';
-      case 'paid':
-        return 'done';
-      default:
-        return value;
+    const trimmed = typeof value === 'string' ? value.trim() : '';
+    if (!trimmed) {
+      return null;
     }
+
+    const canonical = SalesOrderService.normalizeInvoiceStatus(trimmed);
+    if (canonical) {
+      if (trimmed.toLowerCase() === 'sent' && canonical === 'done') {
+        return 'needed';
+      }
+      return canonical;
+    }
+
+    const lowered = trimmed.toLowerCase();
+    if (lowered === 'sent') {
+      return 'needed';
+    }
+
+    return null;
   }
 
   async applyPatch(
