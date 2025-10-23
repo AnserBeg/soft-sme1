@@ -1,4 +1,5 @@
 import { spawn } from 'child_process';
+import path from 'path';
 
 export interface RagChunk {
   title: string;
@@ -74,8 +75,9 @@ async function queryViaHttp(query: string, topK: number, timeoutMs: number): Pro
 
 async function queryViaCli(query: string, topK: number, timeoutMs: number): Promise<RagResponse> {
   return new Promise<RagResponse>((resolve) => {
+    const cliScript = path.resolve(__dirname, '..', '..', 'ai_agent', 'rag_cli.py');
     const subprocess = spawn('python3', [
-      'soft-sme-backend/ai_agent/rag_cli.py',
+      cliScript,
       '--query',
       query,
       '--top_k',
