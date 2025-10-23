@@ -357,10 +357,21 @@ const QuoteEditorPage: React.FC = () => {
     return base;
   }, [customerOptions, customerInput, selectedCustomer]);
 
-  const exactCustomerMatch = (query: string): CustomerOption | null => {
-    const nq = normalizeString(query);
-    return customerOptions.find((c) => normalizeString(c.label) === nq) || null;
-  };
+  const exactCustomerMatch = useCallback(
+    (query: string): CustomerOption | null => {
+      const nq = normalizeString(query);
+      if (!nq) {
+        return null;
+      }
+
+      if (selectedCustomer && normalizeString(selectedCustomer.label) === nq) {
+        return selectedCustomer;
+      }
+
+      return customerOptions.find((c) => normalizeString(c.label) === nq) || null;
+    },
+    [customerOptions, selectedCustomer]
+  );
 
   const resetForm = () => {
     setSelectedCustomer(null);
