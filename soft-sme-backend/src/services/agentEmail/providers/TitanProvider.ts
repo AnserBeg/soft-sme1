@@ -78,18 +78,19 @@ const toSearchList = (current: string | string[] | undefined): string[] => {
     .filter((entry) => entry.length > 0);
 };
 
-const appendSearchValue = (current: string | string[] | undefined, value: string): string => {
+const appendSearchValue = (current: string | string[] | undefined, value: string): string[] => {
   const normalized = value.trim();
+  const entries = toSearchList(current);
+
   if (!normalized) {
-    return Array.isArray(current) ? current.join(', ') : current ?? '';
+    return entries;
   }
 
-  const entries = toSearchList(current);
   if (!entries.includes(normalized)) {
     entries.push(normalized);
   }
 
-  return entries.join(', ');
+  return entries;
 };
 
 const parseDateToken = (value: string): Date | undefined => {
@@ -107,7 +108,7 @@ type MutableSearchObject = Partial<SearchObject> & {
 export const parseQuery = (query: string): { search: SearchObject } => {
   const search: MutableSearchObject = {};
   const textTerms: string[] = [];
-  const headerMap: Record<string, string | boolean> = {};
+  const headerPairs: Array<[string, string]> = [];
 
   const tokens = Array.from(query.matchAll(/(\w+:"[^"]+"|\w+:[^\s]+|"[^"]+"|\S+)/g)).map((match) => match[0]);
 
