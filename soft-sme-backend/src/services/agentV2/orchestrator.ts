@@ -303,7 +303,7 @@ export class AgentOrchestratorV2 {
           reason: intent ? 'tool_not_available' : 'no_intent_match',
           matched_intent: matchedIntent,
         });
-        events.push(this.buildDocsEvent(result));
+        events.push(...this.buildDocsEvents(result, { sessionId }));
       } catch (error: any) {
         await this.analytics.finishToolTrace(trace, { status: 'failure', error });
         await this.analytics.logFallback(sessionId, 'documentation', {
@@ -378,17 +378,43 @@ export class AgentOrchestratorV2 {
     return { events };
   }
 
-  private buildDocsEvent(result: unknown): AgentEvent {
-    const timestamp = new Date().toISOString();
-    if (result && typeof result === 'object' && (result as any).type === 'docs') {
-      const info = typeof (result as any).info === 'string' ? (result as any).info : 'Relevant docs';
-      const chunks = Array.isArray((result as any).chunks) ? (result as any).chunks : [];
-      const citations = Array.isArray((result as any).citations) ? (result as any).citations : undefined;
-      return { type: 'docs', info, chunks, citations, timestamp };
+  private buildDocsEvents(
+    result: unknown,
+    options: { sessionId?: number; timestamp?: string } = {}
+  ): AgentEvent[] {
+    const timestamp = options.timestamp ?? new Date().toISOString();
+
+    const docResult = result && typeof result === 'object' ? (result as any) : {};
+    const info = typeof docResult.info === 'string' ? docResult.info : 'Relevant docs';
+    const chunks = Array.isArray(docResult.chunks)
+      ? docResult.chunks
+      : Array.isArray(result)
+      ? (result as any[])
+      : [];
+    const citations = Array.isArray(docResult.citations) ? docResult.citations : [];
+
+    const docsEvent: AgentEvent = { type: 'docs', info, chunks, citations, timestamp };
+
+    if (citations.length === 0) {
+      void this.analytics.incrementCounter(options.sessionId, 'docs.citations.missing');
+      docsEvent.severity = 'warning';
+      if (!docsEvent.info.includes(' (no citations)')) {
+        docsEvent.info = `${docsEvent.info} (no citations)`;
+      }
+      if (process.env.DOCS_REQUIRE_CITATIONS === 'true') {
+        return [
+          {
+            type: 'text',
+            content: "Sorry, I couldn’t find cited documentation for that. Please rephrase.",
+            timestamp,
+          },
+        ];
+      }
+    } else {
+      void this.analytics.incrementCounter(options.sessionId, 'docs.rag.used');
     }
 
-    const chunks = Array.isArray(result) ? result : [];
-    return { type: 'docs', info: 'Relevant docs', chunks, citations: [], timestamp };
+    return [docsEvent];
   }
 
   private async processAgentInstruction(
@@ -720,42 +746,7 @@ export class AgentOrchestratorV2 {
     const timestamp = new Date().toISOString();
 
     if (tool === 'retrieveDocs') {
-      const docResult = result && typeof result === 'object' ? (result as any) : {};
-      const info = typeof docResult.info === 'string' ? docResult.info : 'Relevant docs';
-      const chunks = Array.isArray(docResult.chunks)
-        ? docResult.chunks
-        : Array.isArray(result)
-        ? result
-        : [];
-      const citations = Array.isArray(docResult.citations) ? docResult.citations : [];
-      const docsEvent: AgentEvent = {
-        type: 'docs',
-        info,
-        chunks,
-        citations,
-        timestamp,
-      };
-
-      if (citations.length === 0) {
-        void this.analytics.incrementCounter(context.sessionId, 'docs.citations.missing');
-        docsEvent.severity = 'warning';
-        if (!docsEvent.info.includes(' (no citations)')) {
-          docsEvent.info = `${docsEvent.info} (no citations)`;
-        }
-        if (process.env.DOCS_REQUIRE_CITATIONS === 'true') {
-          return [
-            {
-              type: 'text',
-              content: "Sorry, I couldn’t find cited documentation for that. Please rephrase.",
-              timestamp,
-            },
-          ];
-        }
-      } else {
-        void this.analytics.incrementCounter(context.sessionId, 'docs.rag.used');
-      }
-
-      return [docsEvent];
+      return this.buildDocsEvents(result, { sessionId: context.sessionId, timestamp });
     }
 
     if (this.isToolResultEnvelope(result)) {
