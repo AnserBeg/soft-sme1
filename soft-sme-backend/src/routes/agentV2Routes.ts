@@ -10,6 +10,9 @@ import { AgentSkillLibraryService, SkillWorkflowSummary } from '../services/agen
 import aiAssistantService from '../services/aiAssistantService';
 import ConversationSummarizer from '../services/conversationSummarizer';
 import { ConversationMessage } from '../services/aiConversationManager';
+import type { ZodError } from 'zod';
+import { toValidationProblem } from '../utils/schemaError';
+import { ChatIn, isChatInFailure } from './agentV2Schemas';
 
 const router = express.Router();
 const analyticsLogger = new AgentAnalyticsLogger(pool);
@@ -414,6 +417,20 @@ const buildToolRegistry = (
       requireId(args?.quote_id ?? args?.id, 'quote_id'),
       ensureIdempotencyKey(args?.patch ?? args, idempotencyKey)
     ),
+  closeQuote: async (args: any) => {
+    const quoteId = requireId(args?.quote_id ?? args?.id, 'quote_id');
+    const payload = { ...(args ?? {}) };
+    delete (payload as any).quote_id;
+    delete (payload as any).id;
+    return tools.closeQuote(sessionId, quoteId, ensureIdempotencyKey(payload, idempotencyKey));
+  },
+  'quote.close': async (args: any) => {
+    const quoteId = requireId(args?.quote_id ?? args?.id, 'quote_id');
+    const payload = { ...(args ?? {}) };
+    delete (payload as any).quote_id;
+    delete (payload as any).id;
+    return tools.closeQuote(sessionId, quoteId, ensureIdempotencyKey(payload, idempotencyKey));
+  },
   emailQuote: async (args: any) =>
     tools.emailQuote(sessionId, requireId(args?.quote_id ?? args?.id, 'quote_id'), args?.to, userId),
   email_search: async (args: any) => tools.emailSearch(sessionId, userId, args),
@@ -762,25 +779,27 @@ router.post('/skills/runs', authMiddleware, async (req: Request, res: Response) 
 
 router.post('/chat', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const { sessionId, message } = req.body || {};
-    if (!sessionId || !message) {
-      return res.status(400).json({ error: 'sessionId and message required' });
+    const parsed = ChatIn.safeParse(req.body);
+    if (isChatInFailure(parsed)) {
+      return res.status(422).json(toValidationProblem(parsed.error as ZodError));
     }
+
+    const {
+      sessionId,
+      message,
+      userId: bodyUserId,
+      companyId: bodyCompanyId,
+      idempotency_key: bodyIdempotencyKey,
+    } = parsed.data;
 
     const authContext = (req as any).auth;
     const isServiceRequest = authContext?.kind === 'service';
-    const sessionNumeric = parseNumeric(sessionId);
-
-    if (!sessionNumeric) {
-      return res.status(400).json({ error: 'Invalid sessionId' });
-    }
+    const sessionNumeric = sessionId;
 
     let userId = parseNumeric(req.user?.id);
     let companyId = parseNumeric(req.user?.company_id);
 
     if (isServiceRequest) {
-      const bodyUserId = parseNumeric(req.body?.userId ?? req.body?.user_id);
-      const bodyCompanyId = parseNumeric(req.body?.companyId ?? req.body?.company_id);
       const defaultContext = await loadDefaultServiceContext();
 
       userId = userId ?? bodyUserId ?? defaultContext.userId ?? null;
@@ -813,7 +832,7 @@ router.post('/chat', authMiddleware, async (req: Request, res: Response) => {
       userId,
       companyId,
       origin: isServiceRequest ? 'agent' : 'user',
-      messagePreview: typeof message === 'string' ? `${message.slice(0, 120)}${message.length > 120 ? '…' : ''}` : '',
+      messagePreview: `${message.slice(0, 120)}${message.length > 120 ? '…' : ''}`,
     });
 
     if (!isServiceRequest) {
@@ -832,10 +851,7 @@ router.post('/chat', authMiddleware, async (req: Request, res: Response) => {
     }
 
     const headerIdempotencyKey = sanitizeHeaderValue(req.headers['x-idempotency-key']);
-    const bodyIdempotencyKeyRaw =
-      typeof req.body?.idempotency_key === 'string' ? req.body.idempotency_key.trim() : undefined;
-    const normalizedBodyKey = bodyIdempotencyKeyRaw && bodyIdempotencyKeyRaw.length > 0 ? bodyIdempotencyKeyRaw : undefined;
-    const idempotencyKey = headerIdempotencyKey ?? normalizedBodyKey ?? uuidv4();
+    const idempotencyKey = headerIdempotencyKey ?? bodyIdempotencyKey ?? uuidv4();
 
     const tools = new AgentToolsV2(pool);
     const registry = buildToolRegistry(tools, Number(sessionId), companyId, userId, idempotencyKey);
@@ -852,7 +868,7 @@ router.post('/chat', authMiddleware, async (req: Request, res: Response) => {
       });
     } catch (error: any) {
       if (error instanceof Error && /is required/i.test(error.message)) {
-        return res.status(400).json({ error: error.message });
+        return res.status(422).json({ error: error.message });
       }
       console.error('agentV2: orchestrator error', error);
       throw error;

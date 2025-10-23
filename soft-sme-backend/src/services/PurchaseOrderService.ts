@@ -1,5 +1,9 @@
 import { Pool, PoolClient } from 'pg';
 import { PurchaseOrderCalculationService } from './PurchaseOrderCalculationService';
+import {
+  PurchaseOrderPatch as PurchaseOrderPatchSchema,
+  type PurchaseOrderPatch as PurchaseOrderPatchType,
+} from './agentV2/toolSchemas';
 
 export interface CreatePurchaseOrderInput {
   vendor_id: number | string;
@@ -29,6 +33,80 @@ export class PurchaseOrderService {
 
   constructor(private pool: Pool) {
     this.calculationService = new PurchaseOrderCalculationService(pool);
+  }
+
+  async applyPatch(
+    purchaseId: number,
+    patch: unknown,
+    clientArg?: PoolClient
+  ): Promise<{ updated: true }> {
+    const client = clientArg ?? (await this.pool.connect());
+    let startedTransaction = false;
+
+    try {
+      const validatedPatch = PurchaseOrderPatchSchema.parse(patch ?? {});
+      if (Object.keys(validatedPatch).length === 0) {
+        throw new Error('No valid fields provided for purchase order update');
+      }
+
+      if (!clientArg) {
+        await client.query('BEGIN');
+        startedTransaction = true;
+      }
+
+      const fields: string[] = [];
+      const values: any[] = [];
+      let idx = 1;
+
+      if (Object.prototype.hasOwnProperty.call(validatedPatch, 'status')) {
+        fields.push(`status = $${idx}`);
+        values.push(validatedPatch.status);
+        idx += 1;
+      }
+
+      const numericKeys: Array<keyof Pick<PurchaseOrderPatchType, 'subtotal' | 'total_gst_amount' | 'total_amount'>> = [
+        'subtotal',
+        'total_gst_amount',
+        'total_amount',
+      ];
+
+      for (const key of numericKeys) {
+        if (validatedPatch[key] !== undefined) {
+          fields.push(`${key} = $${idx}`);
+          values.push(Number(validatedPatch[key]));
+          idx += 1;
+        }
+      }
+
+      if (Object.prototype.hasOwnProperty.call(validatedPatch, 'notes')) {
+        fields.push(`notes = $${idx}`);
+        values.push(validatedPatch.notes ?? null);
+        idx += 1;
+      }
+
+      fields.push('updated_at = NOW()');
+      values.push(purchaseId);
+
+      await client.query(
+        `UPDATE purchasehistory SET ${fields.join(', ')} WHERE purchase_id = $${idx}`,
+        values
+      );
+
+      if (startedTransaction) {
+        await client.query('COMMIT');
+      }
+
+      return { updated: true };
+    } catch (error) {
+      if (startedTransaction) {
+        await client.query('ROLLBACK');
+      }
+      throw error;
+    } finally {
+      if (!clientArg) {
+        client.release();
+      }
+    }
   }
 
   async createPurchaseOrder(input: CreatePurchaseOrderInput, clientArg?: PoolClient): Promise<CreatePurchaseOrderResult> {

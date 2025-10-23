@@ -1,5 +1,6 @@
 import { Pool } from 'pg';
 import { randomUUID } from 'crypto';
+import { z, ZodError, type ZodSchema } from 'zod';
 import aiAssistantService from '../aiAssistantService';
 import { AIService } from '../aiService';
 import { AgentAnalyticsLogger } from './analyticsLogger';
@@ -11,6 +12,38 @@ import {
 } from './answerComposer';
 import type { SkillWorkflowSummary } from './skillLibrary';
 import { GeminiIntentRouter, StructuredIntent } from './geminiRouter';
+import {
+  Id,
+  LookupArgs,
+  PurchaseOrderPatch,
+  QuoteCreateArgs,
+  QuoteCloseArgs,
+  QuoteUpdateArgs,
+  SalesOrderPatch,
+  TaskCreateArgs,
+  TaskUpdateArgs,
+} from './toolSchemas';
+
+const TOOL_SCHEMAS: Record<string, ZodSchema<any>> = {
+  'quote.create': QuoteCreateArgs,
+  'quote.update': QuoteUpdateArgs,
+  'quote.close': QuoteCloseArgs,
+  'sales_order.update': z
+    .object({
+      id: Id,
+      patch: SalesOrderPatch,
+    })
+    .strict(),
+  'purchase_order.update': z
+    .object({
+      id: Id,
+      patch: PurchaseOrderPatch,
+    })
+    .strict(),
+  'task.create': TaskCreateArgs,
+  'task.update': TaskUpdateArgs,
+  lookup: LookupArgs,
+};
 
 export interface AgentToolRegistry {
   [name: string]: (args: any) => Promise<any>;
@@ -219,8 +252,31 @@ export class AgentOrchestratorV2 {
 
     if (intent && this.tools[intent.tool]) {
       const trace = this.analytics.startToolTrace(sessionId, intent.tool, intent.args);
+      const schema = TOOL_SCHEMAS[intent.tool];
+      let parsedArgs = intent.args;
+
+      if (schema) {
+        try {
+          parsedArgs = schema.parse(intent.args);
+        } catch (error) {
+          await this.analytics.finishToolTrace(trace, { status: 'failure', error });
+          const baseMessage = `Invalid arguments for tool "${intent.tool}".`;
+          const detail =
+            error instanceof ZodError && error.issues.length > 0
+              ? ` ${error.issues.map((issue) => issue.message).join('; ')}`
+              : '';
+          events.push({
+            type: 'text',
+            content: `${baseMessage}${detail}`,
+            severity: 'error',
+            timestamp: new Date().toISOString(),
+          });
+          return { events };
+        }
+      }
+
       try {
-        const result = await this.tools[intent.tool](intent.args);
+        const result = await this.tools[intent.tool](parsedArgs);
         await this.analytics.finishToolTrace(trace, { status: 'success', output: result });
         events.push(...this.normalizeToolResult(intent.tool, result, { userText: message, sessionId }));
       } catch (error: any) {
@@ -1083,7 +1139,19 @@ export class AgentOrchestratorV2 {
 
     const createKeywords = ['create', 'make', 'build', 'start', 'begin', 'open', 'set up', 'setup', 'generate', 'draft', 'issue', 'raise', 'new'];
     const updateKeywords = ['update', 'change', 'modify', 'edit', 'adjust', 'fix', 'tweak'];
-    const closeKeywords = ['close', 'complete', 'finish', 'wrap up', 'wrap-up', 'finalize', 'shut', 'cancel', 'done'];
+    const closeKeywords = [
+      'close',
+      'complete',
+      'finish',
+      'wrap up',
+      'wrap-up',
+      'finalize',
+      'shut',
+      'cancel',
+      'done',
+      'won',
+      'lost',
+    ];
     const emailKeywords = ['email', 'send', 'mail', 'forward', 'deliver'];
 
     const mentionsEmailSettings =
@@ -1149,6 +1217,18 @@ export class AgentOrchestratorV2 {
       if (includesAny(emailKeywords)) {
         return { tool: 'emailQuote', args: {} };
       }
+      if (includesAny(closeKeywords)) {
+        let status: 'Closed' | 'Won' | 'Lost' | undefined;
+        if (containsKeyword('won')) {
+          status = 'Won';
+        } else if (containsKeyword('lost')) {
+          status = 'Lost';
+        } else if (containsKeyword('close') || containsKeyword('complete') || containsKeyword('finish')) {
+          status = 'Closed';
+        }
+
+        return { tool: 'closeQuote', args: status ? { status } : {} };
+      }
       if (includesAny(createKeywords)) {
         return { tool: 'createQuote', args: {} };
       }
@@ -1210,6 +1290,7 @@ export class AgentOrchestratorV2 {
       { name: 'emailPurchaseOrder', description: 'Email a purchase order PDF to a vendor contact.' },
       { name: 'createQuote', description: 'Create a new quote for a customer.' },
       { name: 'updateQuote', description: 'Modify quote details, pricing, or line items.' },
+      { name: 'closeQuote', description: 'Close a quote by updating its status.' },
       { name: 'emailQuote', description: 'Email a quote PDF to a customer contact.' },
       { name: 'email_search', description: 'Search the connected Titan mailbox using IMAP filters.' },
       { name: 'email_read', description: 'Retrieve a Titan email message with headers, bodies, and attachments.' },
@@ -1289,6 +1370,8 @@ export class AgentOrchestratorV2 {
         return output?.quote_number ? `Created quote ${output.quote_number}.` : 'Quote created successfully.';
       case 'updateQuote':
         return 'Updated the quote successfully.';
+      case 'closeQuote':
+        return 'Closed the quote successfully.';
       case 'emailQuote':
         return 'Sent the quote email successfully.';
       case 'email_search':
@@ -1370,6 +1453,8 @@ export class AgentOrchestratorV2 {
         return 'create a quote';
       case 'updateQuote':
         return 'update the quote';
+      case 'closeQuote':
+        return 'close the quote';
       case 'emailQuote':
         return 'email the quote';
       case 'email_search':

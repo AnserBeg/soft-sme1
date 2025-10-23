@@ -1,5 +1,6 @@
 import axios, { AxiosRequestConfig } from 'axios';
 import { spawn, spawnSync, ChildProcess } from 'child_process';
+import { Readable } from 'stream';
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
@@ -7,7 +8,10 @@ import { pool } from '../db';
 import { AIService } from './aiService';
 import { ConversationManager, ConversationMessage } from './aiConversationManager';
 import { AITaskQueueService } from './aiTaskQueueService';
-import { getFuzzyConfig } from '../config';
+import { getDocsConfig, getFuzzyConfig } from '../config';
+import { ChatOut, StreamEvent } from '../schema';
+import type { StreamEvent as StreamEventPayload } from '../schema';
+import type { Response as ExpressResponse } from 'express';
 
 const sanitizeEnvValue = (value?: string | null): string | undefined => {
   if (!value) {
@@ -979,6 +983,215 @@ class AIAssistantService {
       action_message: null,
       action_catalog: []
     };
+  }
+
+  private enforceDocsCitationPolicy(events: StreamEventPayload[]): void {
+    const { requireCitations } = getDocsConfig();
+    if (!requireCitations) {
+      return;
+    }
+
+    for (const event of events) {
+      if (event.type !== 'docs') {
+        continue;
+      }
+
+      if (event.items.length === 0) {
+        throw new Error('Documentation events must include at least one item when DOCS_REQUIRE_CITATIONS is true.');
+      }
+
+      for (const item of event.items) {
+        const citationTitle = item.citation?.title?.trim();
+        if (!citationTitle) {
+          throw new Error('Documentation items must include a citation title when DOCS_REQUIRE_CITATIONS is true.');
+        }
+      }
+    }
+  }
+
+  protected async parseChatOutResponse(res: globalThis.Response): Promise<ReturnType<(typeof ChatOut)['parse']>> {
+    const json = await res.json();
+    const parsed = ChatOut.parse(json);
+    this.enforceDocsCitationPolicy(parsed.events);
+    return parsed;
+  }
+
+  protected async forwardAgentStreamWithValidation(
+    sourceResponse: globalThis.Response,
+    clientResponse: ExpressResponse,
+    options: { signal?: AbortSignal } = {}
+  ): Promise<void> {
+    const { signal } = options;
+    const body = sourceResponse.body;
+
+    if (!body) {
+      throw new Error('Agent stream response did not include a body.');
+    }
+
+    const webStream: any = body;
+    const nodeStream = Readable.fromWeb(webStream);
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let streamClosed = false;
+    let cancelled = false;
+
+    const cancelSource = async () => {
+      if (cancelled) {
+        return;
+      }
+      cancelled = true;
+      try {
+        nodeStream.destroy();
+      } catch (error) {
+        if (process.env.NODE_ENV !== 'production') {
+          console.debug('[AI Assistant] Failed to destroy agent stream', error);
+        }
+      }
+      if (typeof webStream.cancel === 'function') {
+        try {
+          await webStream.cancel();
+        } catch (error) {
+          if (process.env.NODE_ENV !== 'production') {
+            console.debug('[AI Assistant] Failed to cancel agent stream body', error);
+          }
+        }
+      }
+    };
+
+    const closeWithError = async (message: string, error?: unknown) => {
+      if (streamClosed) {
+        return;
+      }
+      streamClosed = true;
+      console.error('[AI Assistant] Agent stream validation error:', message, error);
+      if (!clientResponse.writableEnded) {
+        clientResponse.write(`event: error\ndata: ${JSON.stringify({ message })}\n\n`);
+        clientResponse.flush?.();
+        clientResponse.end();
+      }
+      await cancelSource();
+    };
+
+    const emitEvent = (eventType: string, event: StreamEventPayload) => {
+      if (clientResponse.writableEnded) {
+        return;
+      }
+      clientResponse.write(`event: ${eventType}\ndata: ${JSON.stringify(event)}\n\n`);
+      clientResponse.flush?.();
+    };
+
+    const handleFrame = async (frame: string): Promise<boolean> => {
+      const lines = frame.split(/\r?\n/);
+      let eventType = 'message';
+      const dataLines: string[] = [];
+
+      for (const rawLine of lines) {
+        const line = rawLine.trimEnd();
+        if (line.startsWith('event:')) {
+          const value = line.slice(6).trim();
+          if (value) {
+            eventType = value;
+          }
+        } else if (line.startsWith('data:')) {
+          dataLines.push(line.slice(5).trimStart());
+        }
+      }
+
+      if (dataLines.length === 0) {
+        return true;
+      }
+
+      const rawPayload = dataLines.join('\n');
+      let parsedPayload: unknown;
+      try {
+        parsedPayload = rawPayload.length > 0 ? JSON.parse(rawPayload) : null;
+      } catch (error) {
+        await closeWithError('Invalid JSON payload from agent stream', error);
+        return false;
+      }
+
+      const validation = StreamEvent.safeParse(parsedPayload);
+      if (!validation.success) {
+        await closeWithError('Invalid event payload from agent stream', validation.error);
+        return false;
+      }
+
+      try {
+        this.enforceDocsCitationPolicy([validation.data]);
+      } catch (error) {
+        await closeWithError(
+          error instanceof Error ? error.message : 'Agent stream missing documentation citations',
+          error
+        );
+        return false;
+      }
+
+      emitEvent(eventType, validation.data);
+      return true;
+    };
+
+    const processBuffer = async (flushRemainder = false): Promise<boolean> => {
+      while (true) {
+        const delimiterIndex = buffer.indexOf('\n\n');
+        if (delimiterIndex === -1) {
+          break;
+        }
+
+        const frame = buffer.slice(0, delimiterIndex);
+        buffer = buffer.slice(delimiterIndex + 2);
+        const ok = await handleFrame(frame);
+        if (!ok) {
+          return false;
+        }
+      }
+
+      if (flushRemainder && buffer.trim().length > 0) {
+        const ok = await handleFrame(buffer);
+        buffer = '';
+        if (!ok) {
+          return false;
+        }
+      }
+
+      return true;
+    };
+
+    try {
+      for await (const chunk of nodeStream) {
+        if (streamClosed) {
+          break;
+        }
+
+        if (signal?.aborted) {
+          break;
+        }
+
+        buffer += decoder.decode(chunk as Uint8Array, { stream: true });
+        const ok = await processBuffer();
+        if (!ok) {
+          return;
+        }
+      }
+
+      if (streamClosed) {
+        return;
+      }
+
+      buffer += decoder.decode();
+      const finalOk = await processBuffer(true);
+      if (!finalOk) {
+        return;
+      }
+    } catch (error) {
+      if (!streamClosed) {
+        await closeWithError('Agent stream terminated unexpectedly', error);
+      }
+    } finally {
+      await cancelSource();
+      if (!clientResponse.writableEnded && !streamClosed) {
+        clientResponse.end();
+      }
+    }
   }
 
   async refreshSchema(reason?: string): Promise<{ schema_version: string; schema_hash: string; refreshed_at: string }> {

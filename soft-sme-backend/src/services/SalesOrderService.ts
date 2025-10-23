@@ -1,6 +1,10 @@
 import { Pool, PoolClient } from 'pg';
 import { getNextSalesOrderSequenceNumberForYear } from '../utils/sequence';
 import { InventoryService } from './InventoryService';
+import {
+  SalesOrderPatch as SalesOrderPatchSchema,
+  type SalesOrderPatch as SalesOrderPatchType,
+} from './agentV2/toolSchemas';
 
 export interface CreateSalesOrderInput {
   header?: any;
@@ -13,6 +17,104 @@ export class SalesOrderService {
   constructor(pool: Pool) {
     this.pool = pool;
     this.inventoryService = new InventoryService(pool);
+  }
+
+  private mapInvoiceStatusFromSchema(value: SalesOrderPatchType['invoice_status'] | undefined) {
+    if (value === undefined || value === null) {
+      return null;
+    }
+
+    const trimmed = typeof value === 'string' ? value.trim() : '';
+    if (!trimmed) {
+      return null;
+    }
+
+    const canonical = SalesOrderService.normalizeInvoiceStatus(trimmed);
+    if (canonical) {
+      if (trimmed.toLowerCase() === 'sent' && canonical === 'done') {
+        return 'needed';
+      }
+      return canonical;
+    }
+
+    const lowered = trimmed.toLowerCase();
+    if (lowered === 'sent') {
+      return 'needed';
+    }
+
+    return null;
+  }
+
+  async applyPatch(
+    orderId: number,
+    patch: unknown,
+    clientArg?: PoolClient
+  ): Promise<{ updated: true }> {
+    const client = clientArg ?? (await this.pool.connect());
+    let startedTransaction = false;
+
+    try {
+      const validatedPatch = SalesOrderPatchSchema.parse(patch ?? {});
+      if (Object.keys(validatedPatch).length === 0) {
+        throw new Error('No valid fields provided for sales order update');
+      }
+
+      if (!clientArg) {
+        await client.query('BEGIN');
+        startedTransaction = true;
+      }
+
+      const fields: string[] = [];
+      const values: any[] = [];
+      let idx = 1;
+
+      if (Object.prototype.hasOwnProperty.call(validatedPatch, 'invoice_status')) {
+        const mapped = this.mapInvoiceStatusFromSchema(validatedPatch.invoice_status);
+        fields.push(`invoice_status = $${idx}`);
+        values.push(mapped);
+        idx += 1;
+      }
+
+      if (Object.prototype.hasOwnProperty.call(validatedPatch, 'due_date')) {
+        const dueDate = validatedPatch.due_date;
+        if (dueDate === undefined || dueDate === null) {
+          fields.push('due_date = NULL');
+        } else {
+          fields.push(`due_date = $${idx}`);
+          values.push(new Date(dueDate));
+          idx += 1;
+        }
+      }
+
+      if (Object.prototype.hasOwnProperty.call(validatedPatch, 'notes')) {
+        fields.push(`notes = $${idx}`);
+        values.push(validatedPatch.notes ?? null);
+        idx += 1;
+      }
+
+      fields.push('updated_at = NOW()');
+      values.push(orderId);
+
+      await client.query(
+        `UPDATE salesorderhistory SET ${fields.join(', ')} WHERE sales_order_id = $${idx}`,
+        values
+      );
+
+      if (startedTransaction) {
+        await client.query('COMMIT');
+      }
+
+      return { updated: true };
+    } catch (error) {
+      if (startedTransaction) {
+        await client.query('ROLLBACK');
+      }
+      throw error;
+    } finally {
+      if (!clientArg) {
+        client.release();
+      }
+    }
   }
 
   static normalizeInvoiceStatus(value: any): 'needed' | 'done' | null {
@@ -297,7 +399,12 @@ export class SalesOrderService {
   }
 
   // Update sales order with simple inventory validation
-  async updateSalesOrder(orderId: number, newLineItems: any[], clientArg?: PoolClient, user?: any): Promise<null> {
+  async updateSalesOrder(
+    orderId: number,
+    newLineItems: any[],
+    clientArg?: PoolClient,
+    user?: any
+  ): Promise<{ updated: true }> {
     const client = clientArg || await this.pool.connect();
     let startedTransaction = false;
     
@@ -515,9 +622,8 @@ export class SalesOrderService {
       }
       
       if (startedTransaction) await client.query('COMMIT');
-      
-      // Return null to indicate no adjustments were made (since we don't do auto-adjustments anymore)
-      return null;
+
+      return { updated: true };
     } catch (err) {
       if (startedTransaction) await client.query('ROLLBACK');
       throw err;

@@ -73,6 +73,13 @@ export const QuoteUpdateArgs = z
   })
   .passthrough();
 
+export const QuoteCloseArgs = z
+  .object({
+    quote_id: Id,
+    status: z.enum(['Closed', 'Won', 'Lost']).optional(),
+  })
+  .strict();
+
 export const SalesOrderPatch = z
   .object({
     header: z
@@ -210,7 +217,7 @@ export const TaskUpdateArgs = z
 
 export const LookupArgs = z
   .object({
-    entity_type: z.enum(['vendor', 'customer', 'part']),
+    entity_type: z.enum(['vendor', 'customer', 'part', 'purchase_order', 'sales_order', 'quote']),
     term: z.string().min(1),
     limit: z
       .number()
@@ -223,6 +230,7 @@ export const LookupArgs = z
 
 export type QuoteCreateArgs = z.infer<typeof QuoteCreateArgs>;
 export type QuoteUpdateArgs = z.infer<typeof QuoteUpdateArgs>;
+export type QuoteCloseArgs = z.infer<typeof QuoteCloseArgs>;
 export type SalesOrderPatch = z.infer<typeof SalesOrderPatch>;
 export type PurchaseOrderPatch = z.infer<typeof PurchaseOrderPatch>;
 export type TaskCreateArgs = z.infer<typeof TaskCreateArgs>;
