@@ -18,6 +18,7 @@ type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
 
 export interface IdempotentWriteArgs<TWorkResult, TDeterministicResult> {
   db: Pool;
+  client?: PoolClient;
   toolName: string;
   tenantId?: string | null;
   targetId?: string | null;
@@ -241,7 +242,7 @@ async function pollForResult<T>(
 }
 
 async function updateStatus(
-  pool: Pool,
+  runner: Pool | PoolClient,
   toolName: string,
   idempotencyKey: string,
   status: string,
@@ -265,9 +266,7 @@ async function updateStatus(
 
   params.push(toolName, idempotencyKey);
 
-  await withTransaction(pool, async (client) => {
-    await client.query(updateQuery, params);
-  });
+  await runner.query(updateQuery, params);
 }
 
 export async function idempotentWrite<TWorkResult, TDeterministicResult>(
@@ -275,6 +274,7 @@ export async function idempotentWrite<TWorkResult, TDeterministicResult>(
 ): Promise<IdempotentWriteResult<TDeterministicResult>> {
   const {
     db,
+    client,
     toolName,
     tenantId = null,
     targetId,
@@ -288,7 +288,9 @@ export async function idempotentWrite<TWorkResult, TDeterministicResult>(
   const canonicalPayload = canonicalizePayload(requestPayload);
   const requestHash = hashCanonicalPayload(canonicalPayload);
 
-  const insertResult = await db.query<IdempotencyRow>(
+  const runner = client ?? db;
+
+  const insertResult = await runner.query<IdempotencyRow>(
     `INSERT INTO idempotency_keys (tenant_id, tool_name, target_id, idempotency_key, request_hash, status, result_json)
      VALUES ($1, $2, $3, $4, $5, $6, $7)
      ON CONFLICT (tool_name, idempotency_key) DO NOTHING
@@ -336,7 +338,7 @@ export async function idempotentWrite<TWorkResult, TDeterministicResult>(
     const workResult = await work();
     const deterministic = await buildDeterministicResult(workResult);
 
-    await updateStatus(db, toolName, idempotencyKey, IDEMPOTENCY_STATUS.SUCCEEDED, deterministic, targetId);
+    await updateStatus(runner, toolName, idempotencyKey, IDEMPOTENCY_STATUS.SUCCEEDED, deterministic, targetId);
 
     return deterministic;
   } catch (error) {
@@ -352,7 +354,7 @@ export async function idempotentWrite<TWorkResult, TDeterministicResult>(
     const payload = { error: { message, statusCode } };
 
     await updateStatus(
-      db,
+      runner,
       toolName,
       idempotencyKey,
       IDEMPOTENCY_STATUS.FAILED_PERMANENT,

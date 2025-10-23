@@ -976,6 +976,7 @@ export class AgentToolsV2 {
         let lastWorkResult: any | null = null;
         const deterministicResult = await idempotentWrite({
           db: this.pool,
+          client,
           toolName: 'sales_order.create',
           idempotencyKey,
           requestPayload: payload,
@@ -1011,6 +1012,7 @@ export class AgentToolsV2 {
         let lastWorkResult: any | null = null;
         const deterministicResult = await idempotentWrite({
           db: this.pool,
+          client,
           toolName: 'sales_order.update',
           targetId: String(salesOrderId),
           idempotencyKey,
@@ -1239,6 +1241,7 @@ export class AgentToolsV2 {
           let lastWorkResult: any | null = null;
           const deterministicResult = await idempotentWrite({
             db: this.pool,
+            client,
             toolName: 'quote.create',
             idempotencyKey,
             requestPayload: quoteInput,
@@ -1277,6 +1280,7 @@ export class AgentToolsV2 {
           let lastWorkResult: any | null = null;
           const deterministicResult = await idempotentWrite({
             db: this.pool,
+            client,
             toolName: 'quote.update',
             targetId: String(quoteId),
             idempotencyKey,
@@ -1888,6 +1892,7 @@ export class AgentToolsV2 {
           let lastWorkResult: any | null = null;
           const deterministicResult = await idempotentWrite({
             db: this.pool,
+            client,
             toolName: 'quote.convert_to_so',
             targetId: String(quoteId),
             idempotencyKey,
