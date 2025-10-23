@@ -20,27 +20,28 @@ RETURNS TEXT
 LANGUAGE SQL
 IMMUTABLE
 AS $$
-    SELECT CASE
-        WHEN input IS NULL OR input = '' THEN ''
-        ELSE UPPER(
+    SELECT COALESCE(
+        NULLIF(
             REGEXP_REPLACE(
                 REGEXP_REPLACE(
                     REGEXP_REPLACE(
-                        unaccent(normalize(input, NFKD)),
-                        '[^0-9A-Za-z]+',
+                        UPPER(unaccent(input)),
+                        '[^0-9A-Z]+',
                         ' ',
                         'g'
                     ),
-                    '\s+',
+                    '\\s+',
                     ' ',
                     'g'
                 ),
-                '^\s+|\s+$',
+                '^\\s+|\\s+$',
                 '',
                 'g'
-            )
-        )
-    END;
+            ),
+            ''
+        ),
+        ''
+    );
 $$;
 
 -- Canonicalization helper specialized for part numbers
@@ -49,27 +50,23 @@ RETURNS TEXT
 LANGUAGE SQL
 IMMUTABLE
 AS $$
-    SELECT CASE
-        WHEN input IS NULL OR input = '' THEN ''
-        ELSE UPPER(
+    SELECT COALESCE(
+        NULLIF(
             REGEXP_REPLACE(
                 REGEXP_REPLACE(
-                    REGEXP_REPLACE(
-                        unaccent(normalize(input, NFKD)),
-                        '[-\s\./]+',
-                        '',
-                        'g'
-                    ),
-                    '[^0-9A-Za-z]+',
+                    UPPER(unaccent(input)),
+                    '[-\\s\\./]+',
                     '',
                     'g'
                 ),
-                '\s+',
+                '[^0-9A-Z]+',
                 '',
                 'g'
-            )
-        )
-    END;
+            ),
+            ''
+        ),
+        ''
+    );
 $$;
 
 -- Backfill canonical values using the helper functions
@@ -90,7 +87,7 @@ WITH blank_part_numbers AS (
     WHERE canonical_part_number = ''
 )
 UPDATE inventory i
-SET canonical_part_number = 'NOPARTNUMBER' || UPPER(MD5(blank_part_numbers.part_number))
+SET canonical_part_number = 'NOPARTNUMBER' || UPPER(MD5(blank_part_numbers.part_number::TEXT))
 FROM blank_part_numbers
 WHERE i.part_number = blank_part_numbers.part_number;
 
@@ -106,7 +103,7 @@ WITH duplicate_part_numbers AS (
     WHERE canonical_part_number <> ''
 )
 UPDATE inventory i
-SET canonical_part_number = duplicate_part_numbers.canonical_part_number || 'DUP' || UPPER(MD5(duplicate_part_numbers.part_number))
+SET canonical_part_number = duplicate_part_numbers.canonical_part_number || 'DUP' || UPPER(MD5(duplicate_part_numbers.part_number::TEXT))
 FROM duplicate_part_numbers
 WHERE i.part_number = duplicate_part_numbers.part_number
   AND duplicate_part_numbers.rn > 1;
