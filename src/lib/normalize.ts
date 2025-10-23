@@ -24,7 +24,8 @@ export function canonicalizeName(input: unknown): string {
     return '';
   }
 
-  const lettersNumbersSpaces = prepared.replace(/[^0-9A-Za-z/ ]+/g, ' ');
+  const withoutInnerApostrophes = prepared.replace(/([0-9A-Za-z])['’`]+([0-9A-Za-z])/g, '$1$2');
+  const lettersNumbersSpaces = withoutInnerApostrophes.replace(/[^0-9A-Za-z/ ]+/g, ' ');
   const collapsedSpaces = lettersNumbersSpaces.trim().replace(/\s+/g, ' ');
 
   return collapsedSpaces.toUpperCase();
