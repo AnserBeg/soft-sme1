@@ -10,5 +10,5 @@ CREATE TABLE IF NOT EXISTS idempotency_keys (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-CREATE UNIQUE INDEX IF NOT EXISTS idx_idem_unique ON idempotency_keys(tool_name,idempotency_key);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_idem_unique ON idempotency_keys(tenant_id,tool_name,idempotency_key);
 CREATE INDEX IF NOT EXISTS idx_idem_status ON idempotency_keys(status);
