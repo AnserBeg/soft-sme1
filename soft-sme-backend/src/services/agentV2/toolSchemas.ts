@@ -92,7 +92,7 @@ export const TaskUpdateArgs = z
 
 export const LookupArgs = z
   .object({
-    entity_type: z.enum(['vendor', 'customer', 'part']),
+    entity_type: z.enum(['vendor', 'customer', 'part', 'purchase_order', 'sales_order', 'quote']),
     term: z.string().min(1),
     limit: z
       .number()
