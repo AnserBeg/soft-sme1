@@ -503,6 +503,101 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
     return calculateLineAmount(parseNumericInput(item.quantity), parseNumericInput(item.unit_cost));
   };
 
+  const applyPartSelectionToLineItems = (
+    idx: number,
+    selectedLabel: string,
+    option: { canonical?: string | null; description?: string | null; unit?: string | null } = {}
+  ) => {
+    const label = selectedLabel?.trim();
+    if (!label) {
+      return;
+    }
+
+    const canonicalFromOption = option.canonical ?? null;
+    const inv = findInventory(label, canonicalFromOption);
+    const quantityKey = option.canonical ?? label;
+    const quantityToOrder =
+      aggregateQuantities[quantityKey] ||
+      aggregateQuantities[quantityKey?.toUpperCase?.() || ''] ||
+      aggregateQuantities[quantityKey?.toLowerCase?.() || ''] ||
+      0;
+    const numericQuantityToOrder =
+      typeof quantityToOrder === 'string' ? parseFloat(quantityToOrder) : quantityToOrder;
+
+    setLineItems((prev) => {
+      const updated = [...prev];
+      const current =
+        updated[idx] ||
+        ({
+          part_number: '',
+          part_description: '',
+          quantity: '',
+          unit: UNIT_OPTIONS[0],
+          unit_cost: '',
+          line_amount: 0,
+          quantity_to_order: 0,
+        } as PurchaseOrderLineItem);
+
+      let nextItem: PurchaseOrderLineItem = { ...current };
+
+      if (inv) {
+        const currentUnitCost = current.unit_cost;
+        const shouldUseInventoryCost = !currentUnitCost || currentUnitCost === '' || currentUnitCost === '0';
+
+        nextItem = {
+          ...nextItem,
+          part_number: label,
+          part_description: inv.part_description,
+          unit: inv.unit,
+          unit_cost: shouldUseInventoryCost ? String(inv.last_unit_cost) : currentUnitCost,
+          quantity_to_order: numericQuantityToOrder,
+        };
+
+        void ensureVendorMappings(inv.part_number);
+
+        if (vendor?.id) {
+          const links = vendorPartMap[inv.part_number.toUpperCase()] || [];
+          if (links.length > 0) {
+            const chosen = (() => {
+              const forVendor = links.filter((l) => l.vendor_id === vendor.id);
+              if (forVendor.length > 0) {
+                const pref = forVendor.find((l) => l.preferred);
+                if (pref) return pref.vendor_part_number;
+                const mostUsed = [...forVendor].sort((a, b) => (b.usage_count || 0) - (a.usage_count || 0))[0];
+                if (mostUsed) return mostUsed.vendor_part_number;
+              }
+              const prefAny = links.find((l) => l.preferred);
+              if (prefAny) return prefAny.vendor_part_number;
+              const mostUsedAny = [...links].sort((a, b) => (b.usage_count || 0) - (a.usage_count || 0))[0];
+              return mostUsedAny ? mostUsedAny.vendor_part_number : null;
+            })();
+            if (chosen) {
+              nextItem.part_number = chosen;
+            }
+          }
+        }
+      } else {
+        nextItem = {
+          ...nextItem,
+          part_number: label,
+          quantity_to_order: numericQuantityToOrder,
+        };
+
+        if (option.description) {
+          nextItem.part_description = option.description;
+        }
+
+        if (option.unit) {
+          nextItem.unit = option.unit;
+        }
+      }
+
+      nextItem.line_amount = calculateLineItemAmount(nextItem);
+      updated[idx] = nextItem;
+      return updated;
+    });
+  };
+
   // Memoized robust line items for calculation
   const robustLineItems: RobustLineItem[] = useMemo(() => (
     debouncedLineItems.map(item => ({
@@ -2916,54 +3011,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
                       onChange={(_, newValue) => {
                         if (typeof newValue === 'string') {
                           const selected = newValue;
-                          // Update both UI state and calc state immediately
-                          const inv = inventoryItems.find(inv => inv.part_number === selected);
-                          const quantityToOrder = aggregateQuantities[selected] ||
-                                                  aggregateQuantities[selected?.toUpperCase?.() || ''] ||
-                                                  aggregateQuantities[selected?.toLowerCase?.() || ''] || 0;
-                          const numericQto = typeof quantityToOrder === 'string' ? parseFloat(quantityToOrder) : quantityToOrder;
-                          setLineItems(prev => {
-                            const updated = [...prev];
-                            const current = updated[idx];
-                             if (inv) {
-                              const currentUnitCost = (current as any).unit_cost;
-                              const shouldUseInventoryCost = !currentUnitCost || currentUnitCost === '' || currentUnitCost === '0';
-                              const unitCost = shouldUseInventoryCost ? String(inv.last_unit_cost) : String(currentUnitCost);
-                              const item = {
-                                ...current,
-                                 part_number: selected,
-                                part_description: inv.part_description,
-                                unit: inv.unit,
-                                unit_cost: unitCost,
-                                quantity_to_order: numericQto,
-                              } as any;
-                              item.line_amount = calculateLineItemAmount(item);
-                               updated[idx] = item;
-                               // Ensure vendor mappings loaded and swap PN if vendor selected
-                               ensureVendorMappings(inv.part_number);
-                               if (vendor?.id) {
-                                 const chosen = (() => {
-                                   const links = (vendorPartMap[inv.part_number.toUpperCase()] || []);
-                                   if (links.length === 0) return null;
-                                   const forVendor = links.filter(l => l.vendor_id === vendor.id);
-                                   if (forVendor.length > 0) {
-                                     const pref = forVendor.find(l => l.preferred);
-                                     if (pref) return pref.vendor_part_number;
-                                     const mu = [...forVendor].sort((a,b) => (b.usage_count||0)-(a.usage_count||0))[0];
-                                     if (mu) return mu.vendor_part_number;
-                                   }
-                                   const prefAny = links.find(l => l.preferred);
-                                   if (prefAny) return prefAny.vendor_part_number;
-                                   const muAny = [...links].sort((a,b) => (b.usage_count||0)-(a.usage_count||0))[0];
-                                   return muAny ? muAny.vendor_part_number : null;
-                                 })();
-                                 if (chosen) updated[idx].part_number = chosen;
-                               }
-                            } else {
-                              updated[idx] = { ...current, part_number: selected } as any;
-                            }
-                            return updated;
-                          });
+                          applyPartSelectionToLineItems(idx, selected);
                           handlePartNumberChange(idx, selected);
                           setPartOpenIndex(null);
                           setPartInputs(prev => ({ ...prev, [idx]: '' }));
@@ -2988,7 +3036,14 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
                           setPartOpenIndex(null);
                           setPartInputs(prev => ({ ...prev, [idx]: '' }));
                         } else if (newValue && typeof newValue === 'object') {
-                          handlePartNumberChange(idx, newValue);
+                          const option = newValue as any;
+                          const label = option.label || '';
+                          applyPartSelectionToLineItems(idx, label, {
+                            canonical: typeof option.canonical === 'string' ? option.canonical : null,
+                            description: typeof option.description === 'string' ? option.description : null,
+                            unit: typeof option.unit === 'string' ? option.unit : null,
+                          });
+                          handlePartNumberChange(idx, option);
                           setPartOpenIndex(null);
                           setPartInputs(prev => ({ ...prev, [idx]: '' }));
                           const existingTimer = partSearchTimerRefs.current[idx];
@@ -2996,6 +3051,17 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
                             window.clearTimeout(existingTimer);
                             delete partSearchTimerRefs.current[idx];
                           }
+                          const canonicalApplied =
+                            (typeof option.canonical === 'string' && option.canonical) ||
+                            canonicalizePartNumber(label);
+                          if (canonicalApplied) {
+                            partExactAppliedRef.current[idx] = canonicalApplied;
+                          }
+                          setPartSearchResults((prev) => {
+                            const next = { ...prev };
+                            delete next[idx];
+                            return next;
+                          });
                         }
                       }}
                       freeSolo
