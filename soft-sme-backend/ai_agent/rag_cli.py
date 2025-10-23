@@ -1,125 +1,101 @@
 #!/usr/bin/env python3
-"""Lightweight CLI for documentation RAG queries."""
+"""Simple CLI entry point for querying the documentation RAG tool.
+
+The script is intentionally lightweight so the Node backend can shell out to it
+when the HTTP RAG service is unavailable. It accepts a query and desired top-k
+value, performs retrieval using the existing ``DocumentationRAGTool`` and prints
+JSON compatible with the ``RagResponse`` interface consumed by the backend.
+"""
 
 from __future__ import annotations
 
 import argparse
-import asyncio
 import json
-import os
+import logging
 import sys
-from typing import Any, Dict, List, Optional
+from pathlib import Path
+from typing import Any, Dict, List
+
+# Ensure the backend root is on the Python path so ``ai_agent`` can be imported
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
+if str(BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(BACKEND_ROOT))
+
+try:  # pragma: no cover - executed as a standalone script
+    from ai_agent.rag_tool import DocumentationRAGTool, EmbeddingModelLoadError
+except ImportError:  # pragma: no cover - fallback when executed as a script
+    from rag_tool import DocumentationRAGTool, EmbeddingModelLoadError
+
+LOGGER = logging.getLogger(__name__)
+
+DEFAULT_RESPONSE: Dict[str, Any] = {
+    "answer": None,
+    "chunks": [],
+    "citations": [],
+}
 
 
-def _load_env() -> None:
-    try:  # pragma: no cover - optional dependency
-        from dotenv import load_dotenv
-    except Exception:  # pragma: no cover - best-effort only
-        return
-
-    load_dotenv()
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Query the documentation RAG tool")
+    parser.add_argument("--query", required=True, help="Question to query the documentation with")
+    parser.add_argument("--top_k", type=int, default=5, help="Number of chunks to return")
+    return parser
 
 
-def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Query the documentation RAG index")
-    parser.add_argument("--query", required=True, help="Natural language query")
-    parser.add_argument("--top_k", type=int, default=5, help="Number of chunks to retrieve")
-    return parser.parse_args(argv)
-
-
-def _format_chunks(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    chunks: List[Dict[str, Any]] = []
-    for item in results:
-        metadata = item.get("metadata", {}) or {}
-        chunks.append(
-            {
-                "title": metadata.get("title"),
-                "path": metadata.get("file_path"),
-                "text": item.get("text"),
-                "score": item.get("score"),
-            }
-        )
-    return chunks
-
-
-def _maybe_run_qa(
-    query: str,
-    rag_tool: Any,
-    *,
-    top_k: int,
-) -> Optional[Dict[str, Any]]:
-    try:
-        from ai_agent.subagents.documentation_qa import DocumentationQASubagent
-        from langchain_google_genai import ChatGoogleGenerativeAI
-    except Exception:  # pragma: no cover - QA module optional
-        return None
-
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        return None
-
-    try:
-        llm = ChatGoogleGenerativeAI(
-            model=os.getenv("AI_MODEL", "gemini-2.5-flash"),
-            temperature=float(os.getenv("AI_TEMPERATURE", "0.7")),
-            google_api_key=api_key,
-        )
-
-        subagent = DocumentationQASubagent(
-            rag_tool=rag_tool,
-            llm=llm,
-            max_queries=max(1, top_k),
-        )
-        result = asyncio.run(subagent.execute(step_id="rag-cli", question=query))
-    except Exception:  # pragma: no cover - fall back to raw retrieval
-        return None
-
+def serialize_chunk(raw: Dict[str, Any]) -> Dict[str, Any]:
+    metadata = raw.get("metadata") or {}
     return {
-        "answer": result.answer,
-        "citations": [
-            {
-                "title": citation.get("title"),
-                "path": citation.get("path"),
-                "score": citation.get("score"),
-            }
-            for citation in result.citations
-        ],
+        "title": metadata.get("title") or metadata.get("sections") or metadata.get("filename") or "",
+        "path": metadata.get("file_path") or metadata.get("filename") or "",
+        "text": raw.get("text") or raw.get("content") or "",
+        "score": raw.get("score") or 0.0,
     }
 
 
-def main(argv: Optional[List[str]] = None) -> int:
-    args = _parse_args(argv)
-    _load_env()
+def serialize_citation(raw: Dict[str, Any]) -> Dict[str, Any]:
+    metadata = raw.get("metadata") or {}
+    return {
+        "title": metadata.get("title") or metadata.get("sections") or metadata.get("filename") or "",
+        "path": metadata.get("file_path") or metadata.get("filename") or "",
+        "score": raw.get("score") or 0.0,
+    }
+
+
+def main(argv: List[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
 
     try:
-        from ai_agent.rag_tool import DocumentationRAGTool
-    except ModuleNotFoundError:  # pragma: no cover - script execution fallback
-        from rag_tool import DocumentationRAGTool
+        tool = DocumentationRAGTool()
+    except EmbeddingModelLoadError as exc:
+        LOGGER.error("Failed to initialize embeddings: %s", exc)
+        print(json.dumps(DEFAULT_RESPONSE))
+        return 0
+    except Exception as exc:  # pragma: no cover - unexpected import/initialization errors
+        LOGGER.error("Unexpected failure while bootstrapping RAG tool: %s", exc)
+        print(json.dumps(DEFAULT_RESPONSE))
+        return 0
 
-    rag_tool = DocumentationRAGTool()
-    top_k = max(1, args.top_k)
-    search_results = rag_tool.search_with_metadata(args.query, top_k=top_k)
-    chunks = _format_chunks(search_results)
+    try:
+        results = tool.search_with_metadata(args.query, max(1, args.top_k))
+    except Exception as exc:  # pragma: no cover - safeguard against retrieval errors
+        LOGGER.error("Documentation search failed: %s", exc)
+        print(json.dumps(DEFAULT_RESPONSE))
+        return 0
 
-    qa_payload = _maybe_run_qa(args.query, rag_tool, top_k=top_k)
-    citations = qa_payload["citations"] if qa_payload else [
-        {"title": chunk["title"], "path": chunk["path"], "score": chunk["score"]}
-        for chunk in chunks
-    ]
+    chunks = [serialize_chunk(item) for item in results or []]
+    citations = [serialize_citation(item) for item in results or []]
+    answer = chunks[0]["text"] if chunks else None
 
-    output = {
-        "answer": qa_payload["answer"] if qa_payload else None,
+    payload = {
+        "answer": answer,
         "chunks": chunks,
         "citations": citations,
     }
 
-    print(json.dumps(output, ensure_ascii=False))
+    print(json.dumps(payload))
     return 0
 
 
-if __name__ == "__main__":  # pragma: no cover - CLI entry point
-    try:
-        sys.exit(main())
-    except Exception as exc:  # pragma: no cover - fail fast with minimal message
-        print(str(exc), file=sys.stderr)
-        sys.exit(1)
+if __name__ == "__main__":  # pragma: no cover - script entry point
+    sys.exit(main())
