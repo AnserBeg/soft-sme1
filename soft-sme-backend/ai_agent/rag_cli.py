@@ -91,7 +91,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = _parse_args(argv)
     _load_env()
 
-    from ai_agent.rag_tool import DocumentationRAGTool
+    try:
+        from ai_agent.rag_tool import DocumentationRAGTool
+    except ModuleNotFoundError:  # pragma: no cover - script execution fallback
+        from rag_tool import DocumentationRAGTool
 
     rag_tool = DocumentationRAGTool()
     top_k = max(1, args.top_k)
