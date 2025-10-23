@@ -1205,10 +1205,16 @@ export class AgentToolsV2 {
               return created;
             },
             buildDeterministicResult: (result) => ({
+              quote_id: result.quote_id,
+              quote_number: result.quote_number,
+              status: (result as any)?.status ?? 'Open',
+              total: (result as any)?.total ?? null,
+              // Maintain the newer identifier aliases to avoid breaking
+              // any interim usage that may have been introduced while
+              // keeping backwards compatibility with the original
+              // shape returned by `createQuote`.
               id: result.quote_id,
               number: result.quote_number,
-              status: 'Open',
-              total: (result as any)?.total ?? null,
             }),
           });
 
