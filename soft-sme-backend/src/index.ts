@@ -578,11 +578,15 @@ if (process.env.ENABLE_VENDOR_CALLING !== 'false') {
 let server: any = null;
 
 const startServer = async () => {
-  try {
-    await runSchemaDriftGuard();
-  } catch (error) {
-    console.error('[bootstrap] Schema drift guard failed:', error);
-    throw error;
+  if (shouldSkipDbStartupCheck) {
+    console.warn('[bootstrap] Schema drift guard skipped via DB_SKIP_STARTUP_CHECK');
+  } else {
+    try {
+      await runSchemaDriftGuard();
+    } catch (error) {
+      console.error('[bootstrap] Schema drift guard failed:', error);
+      throw error;
+    }
   }
 
   server = app.listen(PORT, HOST, async () => {
