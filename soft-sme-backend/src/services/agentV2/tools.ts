@@ -975,7 +975,7 @@ export class AgentToolsV2 {
       const { deterministicResult, workResult } = await withTransaction(this.pool, async (client) => {
         let lastWorkResult: any | null = null;
         const deterministicResult = await idempotentWrite({
-          db: this.pool,
+          db: client,
           toolName: 'sales_order.create',
           idempotencyKey,
           requestPayload: payload,
@@ -1010,7 +1010,7 @@ export class AgentToolsV2 {
       const { deterministicResult, workResult } = await withTransaction(this.pool, async (client) => {
         let lastWorkResult: any | null = null;
         const deterministicResult = await idempotentWrite({
-          db: this.pool,
+          db: client,
           toolName: 'sales_order.update',
           targetId: String(salesOrderId),
           idempotencyKey,
@@ -1082,7 +1082,7 @@ export class AgentToolsV2 {
       const { deterministicResult, workResult } = await withTransaction(this.pool, async (client) => {
         let lastWorkResult: any | null = null;
         const deterministicResult = await idempotentWrite({
-          db: this.pool,
+          db: client,
           toolName: 'purchase_order.create',
           idempotencyKey,
           requestPayload: payload,
@@ -1121,7 +1121,7 @@ export class AgentToolsV2 {
       const { deterministicResult, workResult } = await withTransaction(this.pool, async (client) => {
         let lastWorkResult: any | null = null;
         const deterministicResult = await idempotentWrite({
-          db: this.pool,
+          db: client,
           toolName: 'purchase_order.update',
           targetId: String(purchaseOrderId),
           idempotencyKey,
@@ -1229,7 +1229,7 @@ export class AgentToolsV2 {
       const { deterministicResult, workResult } = await withTransaction(this.pool, async (client) => {
         let lastWorkResult: any | null = null;
         const deterministicResult = await idempotentWrite({
-          db: this.pool,
+          db: client,
           toolName: 'purchase_order.close',
           targetId: String(purchaseId),
           idempotencyKey,
@@ -1336,7 +1336,7 @@ export class AgentToolsV2 {
         async (client) => {
           let lastWorkResult: any | null = null;
           const deterministicResult = await idempotentWrite({
-            db: this.pool,
+            db: client,
             toolName: 'quote.create',
             idempotencyKey,
             requestPayload: quoteInput,
@@ -1374,7 +1374,7 @@ export class AgentToolsV2 {
         async (client) => {
           let lastWorkResult: any | null = null;
           const deterministicResult = await idempotentWrite({
-            db: this.pool,
+            db: client,
             toolName: 'quote.update',
             targetId: String(quoteId),
             idempotencyKey,
@@ -1985,7 +1985,7 @@ export class AgentToolsV2 {
         async (client) => {
           let lastWorkResult: any | null = null;
           const deterministicResult = await idempotentWrite({
-            db: this.pool,
+            db: client,
             toolName: 'quote.convert_to_so',
             targetId: String(quoteId),
             idempotencyKey,
