@@ -2020,12 +2020,6 @@ Produce a corrected answer that resolves the critic findings, stays concise, and
                 or payload.get("purchase_id")
                 or payload.get("purchaseId")
             )
-            agent_session_hint = (
-                arguments.get("agentSessionId")
-                or payload.get("agent_session_id")
-                or payload.get("agentSessionId")
-                or session_id
-            )
             goals_raw = arguments.get("goals") or payload.get("goals")
             if isinstance(goals_raw, list):
                 goals_normalized = goals_raw
@@ -2056,7 +2050,6 @@ Produce a corrected answer that resolves the critic findings, stays concise, and
                 result = await self.voice_call_subagent.execute(
                     step_id=step_identifier,
                     purchase_id=purchase_id,
-                    agent_session_id=agent_session_hint,
                     goals=goals_normalized,
                     metadata=metadata_normalized,
                     planner_payload=planner_payload,

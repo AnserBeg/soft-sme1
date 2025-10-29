@@ -145,7 +145,6 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
             <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
               {type === 'task_created' ? 'Task created' : type === 'task_updated' ? 'Task updated' : 'Task note'}
             </Typography>
-            {message.task.createdByAgent && <Chip label="AI" color="primary" size="small" />}
           </Stack>
           <Box>
             <Typography variant="h6">{message.task.title}</Typography>

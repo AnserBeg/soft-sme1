@@ -493,7 +493,6 @@ class MultiAgentGraphRunner:
             result: VoiceCallResult = await self._voice_subagent.execute(
                 step_id=f"voice-{branch_id}",
                 purchase_id=voice_spec.get("purchase_id") or voice_spec.get("order_id"),
-                agent_session_id=voice_spec.get("agent_session_id"),
                 goals=voice_spec.get("goals"),
                 metadata=voice_spec.get("metadata"),
                 planner_payload=voice_spec,
