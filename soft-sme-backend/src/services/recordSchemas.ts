@@ -1,5 +1,7 @@
 import { z, type ZodString, type ZodTypeAny } from 'zod';
 
+// Shared helpers used across business services for validating inbound payloads
+
 type MaybeDatetime = ZodString & {
   datetime?: () => ZodTypeAny;
 };
@@ -180,26 +182,6 @@ export const PurchaseOrderPatch = z
   })
   .passthrough();
 
-export const TaskCreateArgs = z
-  .object({
-    title: z.string().min(1),
-    status: z.string().optional(),
-    dueDate: z.union([dateLike, z.null()]).optional(),
-    due_date: z.union([dateLike, z.null()]).optional(),
-    assigneeIds: z
-      .array(z.union([Id, numericString]))
-      .optional(),
-    assignee_ids: z
-      .array(z.union([Id, numericString]))
-      .optional(),
-    assignees: z
-      .array(z.union([Id, numericString]))
-      .optional(),
-    initialNote: limitedNote.optional(),
-    followUp: limitedNote.optional(),
-  })
-  .passthrough();
-
 export const TaskUpdateArgs = z
   .object({
     id: z.union([Id, numericString]).optional(),
@@ -215,25 +197,9 @@ export const TaskUpdateArgs = z
     path: ['taskId'],
   });
 
-export const LookupArgs = z
-  .object({
-    entity_type: z.enum(['vendor', 'customer', 'part', 'purchase_order', 'sales_order', 'quote']),
-    term: z.string().min(1),
-    limit: z
-      .number()
-      .int()
-      .min(1)
-      .max(50)
-      .default(10),
-  })
-  .strict();
-
 export type QuoteCreateArgs = z.infer<typeof QuoteCreateArgs>;
 export type QuoteUpdateArgs = z.infer<typeof QuoteUpdateArgs>;
 export type QuoteCloseArgs = z.infer<typeof QuoteCloseArgs>;
 export type SalesOrderPatch = z.infer<typeof SalesOrderPatch>;
 export type PurchaseOrderPatch = z.infer<typeof PurchaseOrderPatch>;
-export type TaskCreateArgs = z.infer<typeof TaskCreateArgs>;
 export type TaskUpdateArgs = z.infer<typeof TaskUpdateArgs>;
-export type LookupArgs = z.infer<typeof LookupArgs>;
-export type Id = z.infer<typeof Id>;

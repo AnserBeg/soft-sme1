@@ -3,7 +3,7 @@ import { getNextQuoteSequenceNumberForYear } from '../utils/sequence';
 import {
   QuoteUpdateArgs as QuoteUpdateArgsSchema,
   type QuoteUpdateArgs as QuoteUpdateArgsType,
-} from './agentV2/toolSchemas';
+} from './recordSchemas';
 
 export interface CreateQuoteInput {
   customer_id: number | string;

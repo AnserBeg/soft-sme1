@@ -2,7 +2,7 @@ import { Pool, PoolClient, QueryResult } from 'pg';
 import {
   TaskUpdateArgs as TaskUpdateArgsSchema,
   type TaskUpdateArgs as TaskUpdateArgsType,
-} from './agentV2/toolSchemas';
+} from './recordSchemas';
 
 export type TaskStatus = 'pending' | 'in_progress' | 'completed' | 'archived';
 
