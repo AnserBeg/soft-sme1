@@ -4,7 +4,7 @@ import { InventoryService } from './InventoryService';
 import {
   SalesOrderPatch as SalesOrderPatchSchema,
   type SalesOrderPatch as SalesOrderPatchType,
-} from './agentV2/toolSchemas';
+} from './recordSchemas';
 
 export interface CreateSalesOrderInput {
   header?: any;

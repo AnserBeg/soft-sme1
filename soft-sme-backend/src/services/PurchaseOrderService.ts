@@ -3,7 +3,7 @@ import { PurchaseOrderCalculationService } from './PurchaseOrderCalculationServi
 import {
   PurchaseOrderPatch as PurchaseOrderPatchSchema,
   type PurchaseOrderPatch as PurchaseOrderPatchType,
-} from './agentV2/toolSchemas';
+} from './recordSchemas';
 
 export interface CreatePurchaseOrderInput {
   vendor_id: number | string;
