@@ -27,7 +27,6 @@ export interface VoiceCallSessionRecord {
   transcript: string | null;
   created_at: Date;
   updated_at: Date;
-  agent_session_id: number | null;
   purchase_number?: string | null;
   pickup_time?: string | null;
   pickup_notes?: string | null;
@@ -45,10 +44,6 @@ export interface VoiceCallEventRecord {
   created_at: Date;
 }
 
-interface InitiateOptions {
-  agentSessionId?: number | null;
-}
-
 interface GetSessionOptions {
   includeEvents?: boolean;
 }
@@ -56,7 +51,7 @@ interface GetSessionOptions {
 export class VoiceService {
   constructor(private pool: Pool, private httpClient: AxiosInstance = axios) {}
 
-  async initiateVendorCall(purchaseId: number, options: InitiateOptions = {}) {
+  async initiateVendorCall(purchaseId: number) {
     if (!purchaseId || Number.isNaN(Number(purchaseId))) {
       throw new Error('purchase_id required');
     }
@@ -80,10 +75,10 @@ export class VoiceService {
     const vendor = vendorRes.rows[0];
 
     const insertRes = await this.pool.query(
-      `INSERT INTO vendor_call_sessions (purchase_id, vendor_id, vendor_phone, status, agent_session_id)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO vendor_call_sessions (purchase_id, vendor_id, vendor_phone, status)
+       VALUES ($1, $2, $3, $4)
        RETURNING id`,
-      [purchase.purchase_id, vendor.vendor_id, vendor.telephone_number || null, 'initiated', options.agentSessionId ?? null]
+      [purchase.purchase_id, vendor.vendor_id, vendor.telephone_number || null, 'initiated']
     );
     const sessionId = insertRes.rows[0].id as number;
 
@@ -256,7 +251,6 @@ export class VoiceService {
       transcript: row.transcript,
       created_at: row.created_at,
       updated_at: row.updated_at,
-      agent_session_id: row.agent_session_id ?? null,
       purchase_number: row.purchase_number,
       pickup_time: row.pickup_time,
       pickup_notes: row.pickup_notes,
@@ -284,13 +278,11 @@ export class VoiceService {
       );
     }
 
-    if (session.agent_session_id) {
-      const summaryText = this.buildSummaryMessage(session, structured, status);
-      await this.pool.query(
-        'INSERT INTO agent_messages (session_id, role, content) VALUES ($1, $2, $3)',
-        [session.agent_session_id, 'assistant', summaryText]
-      );
-    }
+    const summaryText = this.buildSummaryMessage(session, structured, status);
+    await this.pool.query(
+      'INSERT INTO vendor_call_events (session_id, event_type, payload) VALUES ($1,$2,$3)',
+      [session.id, 'summary', { summary: summaryText }]
+    );
   }
 
   private async ensureStructuredNotes(session: VoiceCallSessionRecord): Promise<VoiceStructuredNotes | null> {

@@ -115,7 +115,6 @@ class VoiceCallSubagentTests(unittest.IsolatedAsyncioTestCase):
         result = await subagent.execute(
             step_id="voice-step-1",
             purchase_id=123,
-            agent_session_id=7,
             goals=["capture_vendor_email"],
             metadata={"priority": "normal"},
             planner_payload={
@@ -168,7 +167,6 @@ class VoiceCallSubagentTests(unittest.IsolatedAsyncioTestCase):
         result = await subagent.execute(
             step_id="voice-step-2",
             purchase_id=456,
-            agent_session_id=None,
             planner_payload={},
         )
 

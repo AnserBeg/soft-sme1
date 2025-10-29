@@ -11,7 +11,6 @@ import {
   Tooltip,
   Badge,
   Chip,
-  Alert,
 } from '@mui/material';
 import SendIcon from '@mui/icons-material/Send';
 import RefreshIcon from '@mui/icons-material/Refresh';
@@ -28,7 +27,6 @@ interface TaskChatProps {
   taskId: number;
   pollIntervalMs?: number;
   onUnreadChange?: (count: number) => void;
-  createdByAgent?: boolean;
 }
 
 interface MergeResult {
@@ -63,7 +61,7 @@ const mergeMessages = (existing: TaskMessage[], incoming: TaskMessage[]): MergeR
   return { merged, appended };
 };
 
-const TaskChat: React.FC<TaskChatProps> = ({ taskId, pollIntervalMs = 15000, onUnreadChange, createdByAgent }) => {
+const TaskChat: React.FC<TaskChatProps> = ({ taskId, pollIntervalMs = 15000, onUnreadChange }) => {
   const { user } = useAuth();
   const currentUserId = useMemo(() => {
     if (!user?.id) return null;
@@ -355,13 +353,6 @@ const TaskChat: React.FC<TaskChatProps> = ({ taskId, pollIntervalMs = 15000, onU
           </Tooltip>
         </Box>
       </Box>
-      {createdByAgent && (
-        <Box px={2} pb={1}>
-          <Alert severity="info" variant="outlined" sx={{ borderRadius: 2 }}>
-            Workspace Copilot created this task and will keep the conversation updated.
-          </Alert>
-        </Box>
-      )}
       <Divider />
       <Box ref={chatBodyRef} flex={1} overflow="auto" px={2} py={2}>
         {loading ? (

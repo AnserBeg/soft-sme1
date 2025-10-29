@@ -23,7 +23,6 @@ export interface Task {
   dueDate: string | null;
   completedAt: string | null;
   createdBy: number;
-  createdByAgent: boolean;
   createdAt: string;
   updatedAt: string;
   assignees: TaskAssignee[];
