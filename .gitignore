@@ -132,6 +132,10 @@ soft-sme-backend/analytics_exports/
 *.bak
 *.backup
 
+# Backend backups directory
+soft-sme-backend/backups/*
+!soft-sme-backend/backups/.gitkeep
+
 # Electron
 release/
 dist-electron/
