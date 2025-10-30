@@ -128,6 +128,7 @@ interface VendorOption {
   id?: number;
   isNew?: true;
   email?: string;
+  score?: number;
 }
 
 interface InventoryItem {
