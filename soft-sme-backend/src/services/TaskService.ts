@@ -431,7 +431,10 @@ export class TaskService {
     patch: unknown,
     clientArg?: PoolClient
   ): Promise<TaskWithRelations> {
-    const parsed = TaskUpdateArgsSchema.parse({ id: taskId, ...(patch ?? {}) });
+    const patchObject =
+      patch && typeof patch === 'object' ? (patch as Record<string, unknown>) : {};
+
+    const parsed = TaskUpdateArgsSchema.parse({ id: taskId, ...patchObject });
     const { id: _ignoredId, taskId: _ignoredTaskId, ...validatedPatch } = parsed;
 
     if (Object.keys(validatedPatch ?? {}).length === 0) {
@@ -446,8 +449,28 @@ export class TaskService {
       }
     }
 
+    const normalizePatchDate = (value: unknown): string | null => {
+      if (value === null || typeof value === 'undefined') {
+        return null;
+      }
+
+      if (value instanceof Date) {
+        return value.toISOString();
+      }
+
+      if (typeof value === 'string') {
+        return value;
+      }
+
+      return null;
+    };
+
     if (Object.prototype.hasOwnProperty.call(validatedPatch, 'due_date')) {
-      mappedUpdates.dueDate = validatedPatch.due_date ?? null;
+      mappedUpdates.dueDate = normalizePatchDate(validatedPatch.due_date);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(validatedPatch, 'dueDate')) {
+      mappedUpdates.dueDate = normalizePatchDate(validatedPatch.dueDate);
     }
 
     const hasMappedUpdates = Object.keys(mappedUpdates).length > 0;
