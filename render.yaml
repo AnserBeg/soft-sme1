@@ -58,6 +58,8 @@ services:
         value: "/var/lib/render/ai-cache/pip"
       - key: UV_CACHE_DIR
         value: "/var/lib/render/ai-cache/uv"
+      - key: ENABLE_AI_AGENT
+        value: "0"
 
 databases:
   - name: soft-sme-db
