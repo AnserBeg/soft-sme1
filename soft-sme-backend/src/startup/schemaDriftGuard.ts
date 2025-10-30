@@ -88,30 +88,58 @@ async function ensureInvoiceStatusEnum(client: PoolClient): Promise<void> {
   }
 
   const { data_type, udt_name } = columnResult.rows[0];
-  if (data_type !== 'USER-DEFINED') {
-    throw new Error(
-      `salesorderhistory.invoice_status is expected to be an enum but is ${data_type}`
+  if (data_type === 'USER-DEFINED') {
+    const enumValuesResult = await client.query<{ enumlabel: string }>(
+      `SELECT enumlabel
+         FROM pg_enum e
+         JOIN pg_type t ON e.enumtypid = t.oid
+        WHERE t.typname = $1`,
+      [udt_name]
     );
+
+    const enumValues = new Set(enumValuesResult.rows.map(row => row.enumlabel));
+    const missingValues = EXPECTED_INVOICE_STATUS_VALUES.filter(
+      value => !enumValues.has(value)
+    );
+
+    if (missingValues.length > 0) {
+      throw new Error(
+        `salesorderhistory.invoice_status enum is missing expected values: ${missingValues.join(', ')}`
+      );
+    }
+
+    return;
   }
 
-  const enumValuesResult = await client.query<{ enumlabel: string }>(
-    `SELECT enumlabel
-       FROM pg_enum e
-       JOIN pg_type t ON e.enumtypid = t.oid
-      WHERE t.typname = $1`,
-    [udt_name]
-  );
-
-  const enumValues = new Set(enumValuesResult.rows.map(row => row.enumlabel));
-  const missingValues = EXPECTED_INVOICE_STATUS_VALUES.filter(
-    value => !enumValues.has(value)
-  );
-
-  if (missingValues.length > 0) {
-    throw new Error(
-      `salesorderhistory.invoice_status enum is missing expected values: ${missingValues.join(', ')}`
+  if (data_type === 'text' || data_type === 'character varying') {
+    const valueResult = await client.query<{ invoice_status: string }>(
+      `SELECT DISTINCT invoice_status
+         FROM salesorderhistory
+        WHERE invoice_status IS NOT NULL`
     );
+
+    const invalidValues = valueResult.rows
+      .map(row => row.invoice_status)
+      .filter(value => !EXPECTED_INVOICE_STATUS_VALUES.includes(value));
+
+    if (invalidValues.length > 0) {
+      throw new Error(
+        `salesorderhistory.invoice_status contains unexpected values: ${[
+          ...new Set(invalidValues),
+        ].join(', ')}`
+      );
+    }
+
+    console.warn(
+      '[SchemaDriftGuard] Warning: salesorderhistory.invoice_status is stored as text. Consider migrating to an enum for stricter validation.'
+    );
+
+    return;
   }
+
+  throw new Error(
+    `salesorderhistory.invoice_status has unsupported data type ${data_type}`
+  );
 }
 
 async function ensureTableColumns(client: PoolClient, table: string, columns: string[]): Promise<void> {
