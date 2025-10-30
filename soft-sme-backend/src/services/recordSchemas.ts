@@ -108,6 +108,9 @@ export const SalesOrderPatch = z
       })
       .passthrough()
       .optional(),
+    invoice_status: z.union([z.string(), z.boolean(), z.number()]).optional(),
+    invoice_required: z.union([z.string(), z.boolean(), z.number()]).optional(),
+    due_date: z.union([dateLike, z.null()]).optional(),
     lineItems: z
       .array(
         z
