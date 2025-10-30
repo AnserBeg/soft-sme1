@@ -30,8 +30,7 @@ export class QuoteService {
   constructor(private pool: Pool) {}
 
   private parseQuotePatch(quoteId: number, patch: unknown) {
-    const parsed = QuoteUpdateArgsSchema.parse({ quote_id: quoteId, patch: patch ?? {} });
-    const validatedPatch = parsed.patch as QuoteUpdateArgsType['patch'];
+    const validatedPatch = QuoteUpdateArgsSchema.parse(patch ?? {}) as QuoteUpdateArgsType;
     if (Object.keys(validatedPatch ?? {}).length === 0) {
       throw new Error('No valid fields provided for quote update');
     }

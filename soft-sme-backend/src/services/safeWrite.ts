@@ -70,13 +70,15 @@ function canonicalize(value: Canonicalizable, seen: WeakSet<object>): unknown {
   const sortedEntries = Object.entries(candidate)
     .filter(([key]) => Object.prototype.hasOwnProperty.call(candidate, key))
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([key, val]) => [key, canonicalize(val as Canonicalizable, seen)]);
+    .map(([key, val]) => [key, canonicalize(val as Canonicalizable, seen)] as const);
   seen.delete(candidate);
 
-  return sortedEntries.reduce<Record<string, unknown>>((acc, [key, val]) => {
-    acc[key] = val;
-    return acc;
-  }, {});
+  const normalized: Record<string, unknown> = {};
+  for (const [key, val] of sortedEntries) {
+    normalized[key] = val;
+  }
+
+  return normalized;
 }
 
 export function canonicalStringify(value: unknown): string {

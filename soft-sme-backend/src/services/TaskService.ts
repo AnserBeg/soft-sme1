@@ -94,7 +94,7 @@ const ALLOWED_STATUSES: TaskStatus[] = ['pending', 'in_progress', 'completed', '
 export class TaskService {
   constructor(private readonly pool: Pool) {}
 
-  private mapStatusFromSchema(status: TaskUpdateArgsType['patch']['status'] | undefined): TaskStatus | undefined {
+  private mapStatusFromSchema(status: TaskUpdateArgsType['status'] | undefined): TaskStatus | undefined {
     if (!status) {
       return undefined;
     }
@@ -431,8 +431,8 @@ export class TaskService {
     patch: unknown,
     clientArg?: PoolClient
   ): Promise<TaskWithRelations> {
-    const parsed = TaskUpdateArgsSchema.parse({ id: taskId, patch: patch ?? {} });
-    const validatedPatch = parsed.patch;
+    const parsed = TaskUpdateArgsSchema.parse({ id: taskId, ...(patch ?? {}) });
+    const { id: _ignoredId, taskId: _ignoredTaskId, ...validatedPatch } = parsed;
 
     if (Object.keys(validatedPatch ?? {}).length === 0) {
       throw new ServiceError('No valid updates provided');
