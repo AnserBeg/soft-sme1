@@ -1,0 +1,1409 @@
+import { Pool } from 'pg';
+import { randomUUID } from 'crypto';
+import aiAssistantService from '../aiAssistantService';
+import { AIService } from '../aiService';
+import { AgentAnalyticsLogger } from './analyticsLogger';
+import {
+  composeFinalMessage,
+  ToolResultEnvelope,
+  AgentCapabilitiesConfig,
+  ComposeFinalMessageOutput,
+} from './answerComposer';
+import type { SkillWorkflowSummary } from './skillLibrary';
+import { GeminiIntentRouter, StructuredIntent } from './geminiRouter';
+
+export interface AgentToolRegistry {
+  [name: string]: (args: any) => Promise<any>;
+}
+
+interface VoiceVendorInfo {
+  id?: number;
+  name?: string | null;
+  phone?: string | null;
+}
+
+interface VoiceCallArtifact {
+  type: 'vendor_call_summary';
+  sessionId: number;
+  status: string;
+  purchaseId?: number;
+  purchaseNumber?: string | null;
+  vendor?: VoiceVendorInfo;
+  capturedEmail?: string | null;
+  pickupTime?: string | null;
+  parts?: Array<{ part_number: string; quantity: number; notes?: string | null }>;
+  summary?: string | null;
+  nextSteps?: string[];
+  transcriptPreview?: string | null;
+}
+
+interface AgentEventBase {
+  timestamp?: string;
+  content?: string;
+  uiHints?: Record<string, unknown>;
+  severity?: 'info' | 'warning' | 'error';
+}
+
+export type AgentEvent =
+  |
+      ({
+        type: 'text';
+        content: string;
+        callArtifacts?: VoiceCallArtifact[];
+        uiHints?: Record<string, unknown>;
+        severity?: 'info' | 'warning' | 'error';
+      } & AgentEventBase)
+  | ({ type: 'docs'; info: string; chunks: any[]; citations?: any[] } & AgentEventBase)
+  | ({ type: 'task_created' | 'task_updated' | 'task_message'; summary: string; task: any; link: string } & AgentEventBase);
+
+export interface AgentResponse {
+  events: AgentEvent[];
+  reply?: AgentReply;
+}
+
+interface AgentReplyActionTrace {
+  tool?: string;
+  success?: boolean;
+  message?: string;
+  input?: any;
+  output?: any;
+  error?: string;
+  link?: string;
+  link_label?: string;
+  summary?: string;
+}
+
+interface AgentReply {
+  type: string;
+  message: string;
+  catalog?: ToolCatalogEntry[];
+  traces?: AgentReplyActionTrace[];
+  docs?: any[];
+}
+
+type AgentInvocationOrigin = 'user' | 'agent';
+
+interface HandleMessageOptions {
+  origin?: AgentInvocationOrigin;
+  conversationId?: string;
+  userId?: number | null;
+  companyId?: number | null;
+}
+
+interface AgentInstruction {
+  tool: string;
+  args: any;
+  message?: string;
+}
+
+interface AssistantLLMResponse {
+  response: string;
+  sources: string[];
+  confidence: number;
+  tool_used: string;
+  actions?: any[];
+  action_message?: string | null;
+  action_catalog?: any[];
+  documentation_subagent?: any;
+  planner_plan?: any;
+  documentation_results?: any[];
+  processing_time?: number;
+  critic_feedback?: Record<string, any> | null;
+  row_selection_candidates?: any[];
+  safety_results?: any[];
+}
+
+export interface ToolCatalogEntry {
+  name: string;
+  description: string;
+  example?: string;
+}
+
+export class AgentOrchestratorV2 {
+  private readonly toolCatalog: ToolCatalogEntry[];
+  private readonly analytics: AgentAnalyticsLogger;
+  private readonly geminiRouter: GeminiIntentRouter | null;
+  private readonly useLLMRouter: boolean;
+  private readonly routerConfidenceThreshold: number;
+  private readonly composerCapabilities: AgentCapabilitiesConfig;
+  private readonly disambiguationLimit: number;
+  private readonly tablePreviewLimit: number;
+
+  constructor(private pool: Pool, private tools: AgentToolRegistry, private skillCatalog: SkillWorkflowSummary[] = []) {
+    this.toolCatalog = this.buildToolCatalog();
+    this.analytics = new AgentAnalyticsLogger(pool);
+    const threshold = Number(process.env.GEMINI_ROUTER_CONFIDENCE ?? 0.7);
+    this.routerConfidenceThreshold = Number.isFinite(threshold) ? threshold : 0.7;
+
+    const routerEnabled = process.env.USE_LLM_ROUTER === 'true';
+    const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+    if (routerEnabled && apiKey) {
+      this.geminiRouter = new GeminiIntentRouter({
+        apiKey,
+        model: process.env.GEMINI_ROUTER_MODEL || 'gemini-1.5-flash',
+        temperature: 0.1,
+        logger: (event, metadata) => this.logGeminiRouterEvent(event, metadata),
+      });
+      this.useLLMRouter = true;
+    } else {
+      if (routerEnabled && !apiKey) {
+        this.logGeminiRouterEvent('gemini_router_disabled', { reason: 'missing_api_key' });
+      }
+      this.geminiRouter = null;
+      this.useLLMRouter = false;
+    }
+
+    this.composerCapabilities = this.buildComposerCapabilitiesFromEnv();
+    this.disambiguationLimit = this.parseIntegerEnv(process.env.AI_RESPONSE_DISAMBIG_LIMIT, 5);
+    this.tablePreviewLimit = this.parseIntegerEnv(process.env.AI_RESPONSE_TABLE_PREVIEW_LIMIT, 5);
+  }
+
+  getToolCatalog(): ToolCatalogEntry[] {
+    return this.toolCatalog;
+  }
+
+  async handleMessage(
+    sessionId: number,
+    message: string,
+    context?: { companyId?: number | null; userId?: number | null },
+    options: HandleMessageOptions = {}
+  ): Promise<AgentResponse> {
+    const origin: AgentInvocationOrigin = options.origin ?? 'user';
+    const normalizedContext = {
+      userId: options.userId ?? context?.userId ?? null,
+      companyId: options.companyId ?? context?.companyId ?? null,
+    };
+
+    if (origin === 'agent') {
+      return this.processAgentInstruction(sessionId, message, normalizedContext);
+    }
+
+    const conversationId = options.conversationId ?? this.buildConversationId(sessionId);
+    const events: AgentEvent[] = [];
+    let assistantResponse: AssistantLLMResponse | null = null;
+
+    try {
+      assistantResponse = (await aiAssistantService.sendMessage(
+        message,
+        normalizedContext.userId ?? undefined,
+        conversationId
+      )) as AssistantLLMResponse;
+    } catch (error) {
+      console.error('agentV2: aiAssistantService error', error);
+    }
+
+    if (assistantResponse && typeof assistantResponse.response === 'string') {
+      const trimmed = assistantResponse.response.trim();
+      if (trimmed.length > 0) {
+        events.push({
+          type: 'text',
+          content: trimmed,
+          timestamp: new Date().toISOString(),
+        });
+        return { events };
+      }
+    }
+
+    return this.legacyHandleMessage(sessionId, message, normalizedContext);
+  }
+
+  private async legacyHandleMessage(
+    sessionId: number,
+    message: string,
+    context: { companyId?: number | null; userId?: number | null }
+  ): Promise<AgentResponse> {
+    const events: AgentEvent[] = [];
+    const intent = await this.classifyIntent(message);
+
+    const matchedIntent = intent?.tool ?? null;
+
+    if (intent && this.tools[intent.tool]) {
+      const trace = this.analytics.startToolTrace(sessionId, intent.tool, intent.args);
+      try {
+        const result = await this.tools[intent.tool](intent.args);
+        await this.analytics.finishToolTrace(trace, { status: 'success', output: result });
+        events.push(...this.normalizeToolResult(intent.tool, result, { userText: message, sessionId }));
+      } catch (error: any) {
+        await this.analytics.finishToolTrace(trace, { status: 'failure', error });
+        events.push({
+          type: 'text',
+          content: this.describeActionOutcome(intent.tool, false, undefined, error),
+          timestamp: new Date().toISOString(),
+        });
+      }
+    } else if (this.tools['retrieveDocs']) {
+      const trace = this.analytics.startToolTrace(sessionId, 'retrieveDocs', {
+        query: message,
+        matched_intent: matchedIntent,
+      });
+      try {
+        const result = await this.tools['retrieveDocs']({ query: message });
+        if (trace.metadata && result && typeof result === 'object' && 'citations' in result) {
+          const citations = Array.isArray((result as any).citations) ? (result as any).citations : [];
+          trace.metadata.citations_count = citations.length;
+        }
+        await this.analytics.finishToolTrace(trace, { status: 'success', output: result });
+        await this.analytics.logFallback(sessionId, 'documentation', {
+          reason: intent ? 'tool_not_available' : 'no_intent_match',
+          matched_intent: matchedIntent,
+        });
+        events.push(this.buildDocsEvent(result));
+      } catch (error: any) {
+        await this.analytics.finishToolTrace(trace, { status: 'failure', error });
+        await this.analytics.logFallback(sessionId, 'documentation', {
+          reason: 'docs_error',
+          matched_intent: matchedIntent,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        events.push({
+          type: 'text',
+          content: 'Unable to search documentation at the moment.',
+          timestamp: new Date().toISOString(),
+        });
+      }
+    }
+
+    const hasTextEvent = events.some((event) => event.type === 'text');
+
+    if (!hasTextEvent) {
+      try {
+        const fallbackTraceId = randomUUID();
+        const aiReply = await AIService.sendMessage(message, context?.userId ?? undefined);
+        await this.analytics.logEvent({
+          source: 'orchestrator',
+          sessionId,
+          eventType: 'fallback',
+          status: 'llm_fallback',
+          traceId: fallbackTraceId,
+          metadata: {
+            reason: events.length === 0 ? 'no_tool_match' : 'no_text_event',
+          },
+        });
+        events.push({
+          type: 'text',
+          content: aiReply,
+          timestamp: new Date().toISOString(),
+        });
+      } catch (error) {
+        console.error('agentV2: AIService fallback error', error);
+        await this.analytics.logEvent({
+          source: 'orchestrator',
+          sessionId,
+          eventType: 'fallback',
+          status: 'llm_fallback_error',
+          errorMessage: error instanceof Error ? error.message : String(error),
+        });
+        events.push({
+          type: 'text',
+          content:
+            'I can help with sales orders, purchase orders, quotes, vendor calls, and tasks. What would you like to do?',
+          timestamp: new Date().toISOString(),
+        });
+      }
+    }
+
+    if (!intent) {
+      await this.analytics.logRoutingMiss(sessionId, message, {
+        fallback: this.tools['retrieveDocs'] ? 'documentation' : 'llm',
+      });
+    } else if (!this.tools[intent.tool]) {
+      await this.analytics.logEvent({
+        source: 'orchestrator',
+        sessionId,
+        tool: intent.tool,
+        eventType: 'tool_unavailable',
+        status: 'missing',
+        metadata: {
+          reason: 'tool_not_registered',
+        },
+      });
+    }
+
+    return { events };
+  }
+
+  private buildDocsEvent(result: unknown): AgentEvent {
+    const timestamp = new Date().toISOString();
+    if (result && typeof result === 'object' && (result as any).type === 'docs') {
+      const info = typeof (result as any).info === 'string' ? (result as any).info : 'Relevant docs';
+      const chunks = Array.isArray((result as any).chunks) ? (result as any).chunks : [];
+      const citations = Array.isArray((result as any).citations) ? (result as any).citations : undefined;
+      return { type: 'docs', info, chunks, citations, timestamp };
+    }
+
+    const chunks = Array.isArray(result) ? result : [];
+    return { type: 'docs', info: 'Relevant docs', chunks, citations: [], timestamp };
+  }
+
+  private async processAgentInstruction(
+    sessionId: number,
+    message: string,
+    _context: { companyId?: number | null; userId?: number | null }
+  ): Promise<AgentResponse> {
+    const events: AgentEvent[] = [];
+    const instruction = this.parseAgentInstruction(message) ?? (await this.classifyIntent(message));
+
+    if (!instruction) {
+      await this.analytics.logEvent({
+        source: 'orchestrator',
+        sessionId,
+        eventType: 'agent_instruction_unmatched',
+        status: 'skipped',
+        metadata: { message: message.slice(0, 200) },
+      });
+
+      return {
+        events,
+        reply: {
+          type: 'actions',
+          message: 'No matching tool found for the requested action.',
+          catalog: this.toolCatalog,
+          traces: [],
+          docs: [],
+        },
+      };
+    }
+
+    const toolName = instruction.tool;
+    const handler = this.tools[toolName];
+    const traces: AgentReplyActionTrace[] = [];
+
+    if (!handler) {
+      await this.analytics.logEvent({
+        source: 'orchestrator',
+        sessionId,
+        tool: toolName,
+        eventType: 'tool_unavailable',
+        status: 'missing',
+        metadata: { reason: 'tool_not_registered', origin: 'agent_instruction' },
+      });
+
+      return {
+        events,
+        reply: {
+          type: 'actions',
+          message: `Tool ${toolName} is not available for agent execution.`,
+          catalog: this.toolCatalog,
+          traces: [],
+          docs: [],
+        },
+      };
+    }
+
+    const trace = this.analytics.startToolTrace(sessionId, toolName, instruction.args);
+    let replyMessage: string;
+
+    try {
+      const result = await handler(instruction.args);
+      await this.analytics.finishToolTrace(trace, { status: 'success', output: result });
+      const normalizedEvents = this.normalizeToolResult(toolName, result, {
+        userText: instruction.message ?? '',
+        sessionId,
+      });
+      events.push(...normalizedEvents);
+      replyMessage = this.describeActionOutcome(toolName, true, result);
+
+      traces.push({
+        tool: toolName,
+        success: true,
+        message: replyMessage,
+        input: instruction.args ?? null,
+        output: result ?? null,
+        summary: replyMessage,
+      });
+    } catch (error: any) {
+      await this.analytics.finishToolTrace(trace, { status: 'failure', error });
+      replyMessage = this.describeActionOutcome(toolName, false, undefined, error);
+
+      events.push({
+        type: 'text',
+        content: replyMessage,
+        timestamp: new Date().toISOString(),
+      });
+
+      traces.push({
+        tool: toolName,
+        success: false,
+        message: replyMessage,
+        input: instruction.args ?? null,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    return {
+      events,
+      reply: {
+        type: 'actions',
+        message: replyMessage,
+        catalog: this.toolCatalog,
+        traces,
+        docs: [],
+      },
+    };
+  }
+
+  private logGeminiRouterEvent(event: string, metadata?: Record<string, unknown>): void {
+    if (metadata) {
+      console.warn('agentV2: gemini_router', event, metadata);
+    } else {
+      console.warn('agentV2: gemini_router', event);
+    }
+  }
+
+  private buildConversationId(sessionId: number): string {
+    return `agent-v2-session-${sessionId}`;
+  }
+
+  private parseBooleanEnv(value: string | undefined, fallback = false): boolean {
+    if (typeof value !== 'string') {
+      return fallback;
+    }
+    const normalized = value.trim().toLowerCase();
+    if (!normalized) {
+      return fallback;
+    }
+    if (['true', '1', 'yes', 'y', 'on'].includes(normalized)) {
+      return true;
+    }
+    if (['false', '0', 'no', 'n', 'off'].includes(normalized)) {
+      return false;
+    }
+    return fallback;
+  }
+
+  private parseIntegerEnv(value: string | undefined, fallback: number, minimum = 1): number {
+    const parsed = typeof value === 'string' ? Number.parseInt(value, 10) : Number.NaN;
+    if (!Number.isFinite(parsed)) {
+      return fallback;
+    }
+    return Math.max(minimum, parsed);
+  }
+
+  private buildComposerCapabilitiesFromEnv(): AgentCapabilitiesConfig {
+    return {
+      canCreateVendor: this.parseBooleanEnv(process.env.AGENT_CAN_CREATE_VENDOR),
+      canCreateCustomer: this.parseBooleanEnv(process.env.AGENT_CAN_CREATE_CUSTOMER),
+      canCreatePart: this.parseBooleanEnv(process.env.AGENT_CAN_CREATE_PART),
+    };
+  }
+
+  private parseAgentInstruction(message: string): AgentInstruction | null {
+    if (typeof message !== 'string') {
+      return null;
+    }
+
+    const trimmed = message.trim();
+    if (!trimmed) {
+      return null;
+    }
+
+    const jsonCandidate = this.tryParseJson(trimmed);
+    if (jsonCandidate && typeof jsonCandidate === 'object') {
+      const directToolCandidate =
+        this.resolveToolName(
+          (jsonCandidate as any).tool ||
+            (jsonCandidate as any).action ||
+            (jsonCandidate as any).entrypoint ||
+            (jsonCandidate as any).name
+        );
+
+      if (directToolCandidate) {
+        return {
+          tool: directToolCandidate,
+          args: this.extractInstructionArguments(jsonCandidate),
+          message: trimmed,
+        };
+      }
+
+      const toolFromObject = this.findToolInObject(jsonCandidate as Record<string, any>);
+      if (toolFromObject) {
+        const argsSource = (jsonCandidate as Record<string, any>)[toolFromObject.key];
+        return {
+          tool: toolFromObject.tool,
+          args: this.ensureRecord(argsSource),
+          message: trimmed,
+        };
+      }
+    }
+
+    const toolFromKeyValue = this.extractToolFromKeyValue(trimmed);
+    if (toolFromKeyValue) {
+      const argsObject = this.parseJsonSubstring(trimmed);
+      return {
+        tool: toolFromKeyValue,
+        args: this.extractInstructionArguments(argsObject),
+        message: trimmed,
+      };
+    }
+
+    const directTool = this.resolveToolName(trimmed);
+    if (directTool) {
+      return { tool: directTool, args: {}, message: trimmed };
+    }
+
+    const canonicalMessage = this.canonicalize(trimmed);
+    for (const name of Object.keys(this.tools)) {
+      const canonicalTool = this.canonicalize(name);
+      if (canonicalTool && canonicalMessage.includes(canonicalTool)) {
+        return { tool: name, args: {}, message: trimmed };
+      }
+    }
+
+    return null;
+  }
+
+  private extractInstructionArguments(source: any): any {
+    if (!source || typeof source !== 'object') {
+      return {};
+    }
+
+    const record = this.ensureRecord(source);
+    const candidateKeys = ['args', 'parameters', 'payload', 'input', 'data'];
+
+    for (const key of candidateKeys) {
+      if (record[key] && typeof record[key] === 'object') {
+        return this.ensureRecord(record[key]);
+      }
+    }
+
+    const nestedTool = this.findToolInObject(record);
+    if (nestedTool) {
+      return this.ensureRecord(record[nestedTool.key]);
+    }
+
+    return {};
+  }
+
+  private ensureRecord(value: any): Record<string, any> {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      return value as Record<string, any>;
+    }
+    return {};
+  }
+
+  private findToolInObject(source: Record<string, any>): { key: string; tool: string } | null {
+    for (const key of Object.keys(source)) {
+      const resolved = this.resolveToolName(key);
+      if (resolved) {
+        return { key, tool: resolved };
+      }
+    }
+    return null;
+  }
+
+  private extractToolFromKeyValue(message: string): string | null {
+    const match = message.match(/(?:tool|action|entrypoint)\s*[:=]\s*([\w:-]+)/i);
+    if (!match) {
+      return null;
+    }
+    return this.resolveToolName(match[1]);
+  }
+
+  private parseJsonSubstring(value: string): any {
+    const start = value.indexOf('{');
+    if (start === -1) {
+      return {};
+    }
+
+    let depth = 0;
+    for (let i = start; i < value.length; i += 1) {
+      const char = value[i];
+      if (char === '{') {
+        depth += 1;
+      } else if (char === '}') {
+        depth -= 1;
+        if (depth === 0) {
+          const candidate = value.slice(start, i + 1);
+          const parsed = this.tryParseJson(candidate);
+          if (parsed && typeof parsed === 'object') {
+            return parsed;
+          }
+        }
+      }
+    }
+
+    return {};
+  }
+
+  private tryParseJson(value: string): any | null {
+    try {
+      return JSON.parse(value);
+    } catch (error) {
+      return null;
+    }
+  }
+
+  private resolveToolName(candidate?: string | null): string | null {
+    if (!candidate || typeof candidate !== 'string') {
+      return null;
+    }
+
+    const normalized = this.canonicalize(candidate);
+    if (!normalized) {
+      return null;
+    }
+
+    for (const name of Object.keys(this.tools)) {
+      if (this.canonicalize(name) === normalized) {
+        return name;
+      }
+    }
+
+    return null;
+  }
+
+  private canonicalize(value: string): string {
+    return value.toLowerCase().replace(/[^a-z0-9]+/g, '');
+  }
+
+  private normalizeToolResult(
+    tool: string,
+    result: any,
+    context: { userText?: string; sessionId?: number } = {}
+  ): AgentEvent[] {
+    const timestamp = new Date().toISOString();
+
+    if (tool === 'retrieveDocs') {
+      const docResult = result && typeof result === 'object' ? (result as any) : {};
+      const info = typeof docResult.info === 'string' ? docResult.info : 'Relevant docs';
+      const chunks = Array.isArray(docResult.chunks)
+        ? docResult.chunks
+        : Array.isArray(result)
+        ? result
+        : [];
+      const citations = Array.isArray(docResult.citations) ? docResult.citations : [];
+      const docsEvent: AgentEvent = {
+        type: 'docs',
+        info,
+        chunks,
+        citations,
+        timestamp,
+      };
+
+      if (citations.length === 0) {
+        void this.analytics.incrementCounter(context.sessionId, 'docs.citations.missing');
+        docsEvent.severity = 'warning';
+        if (!docsEvent.info.includes(' (no citations)')) {
+          docsEvent.info = `${docsEvent.info} (no citations)`;
+        }
+        if (process.env.DOCS_REQUIRE_CITATIONS === 'true') {
+          return [
+            {
+              type: 'text',
+              content: "Sorry, I couldn’t find cited documentation for that. Please rephrase.",
+              timestamp,
+            },
+          ];
+        }
+      } else {
+        void this.analytics.incrementCounter(context.sessionId, 'docs.rag.used');
+      }
+
+      return [docsEvent];
+    }
+
+    if (this.isToolResultEnvelope(result)) {
+      const limitedEnvelope = this.applyEnvelopeLimits(result);
+      const composed = composeFinalMessage({
+        userText: context.userText ?? '',
+        tool,
+        resultEnvelope: limitedEnvelope,
+        capabilities: this.composerCapabilities,
+      });
+
+      this.logResponseTelemetry(context.sessionId, tool, limitedEnvelope, composed);
+
+      return [
+        {
+          type: 'text',
+          content: composed.text,
+          timestamp,
+          ...(composed.uiHints ? { uiHints: composed.uiHints } : {}),
+          ...(composed.severity ? { severity: composed.severity } : {}),
+        },
+      ];
+    }
+
+    if (result && typeof result === 'object' && result.task && result.summary) {
+      const type = result.type ?? 'task_updated';
+      const link = result.link ?? (result.task?.id ? `/tasks/${result.task.id}` : '');
+      return [
+        {
+          type,
+          summary: result.summary,
+          task: result.task,
+          link,
+          timestamp,
+        },
+      ];
+    }
+
+    const titanTools = new Set(['email_search', 'email_read', 'email_compose_draft', 'email_send', 'email_reply']);
+    if (result && typeof result === 'object' && result.provider === 'titan' && titanTools.has(tool)) {
+      const uiHints: Record<string, unknown> = {
+        provider: 'titan',
+        webLinks: [
+          {
+            label: 'Open in Titan webmail',
+            href: 'https://app.titan.email/',
+          },
+        ],
+      };
+      if (Array.isArray(result.results)) {
+        uiHints.results = result.results;
+      }
+      if (result.preview) {
+        uiHints.preview = result.preview;
+      }
+      if (result.result) {
+        uiHints.delivery = result.result;
+      }
+
+      return [
+        {
+          type: 'text',
+          content: this.describeActionOutcome(tool, true, result),
+          timestamp,
+          uiHints,
+        },
+      ];
+    }
+
+    const artifact = result && typeof result === 'object' ? this.buildVoiceArtifact(result.session) : null;
+
+    return [
+      {
+        type: 'text',
+        content: this.extractMessage(tool, result),
+        timestamp,
+        ...(artifact ? { callArtifacts: [artifact] } : {}),
+      },
+    ];
+  }
+
+  private isToolResultEnvelope(result: any): result is ToolResultEnvelope {
+    if (!result || typeof result !== 'object') {
+      return false;
+    }
+    const type = (result as ToolResultEnvelope).type;
+    const source = (result as ToolResultEnvelope).source;
+    return (
+      typeof type === 'string' &&
+      typeof source === 'string' &&
+      ['success', 'disambiguation', 'empty', 'error'].includes(type as string)
+    );
+  }
+
+  private applyEnvelopeLimits(envelope: ToolResultEnvelope): ToolResultEnvelope {
+    const limited: ToolResultEnvelope = {
+      ...envelope,
+      attempts: envelope.attempts ? { ...envelope.attempts } : envelope.attempts,
+    };
+
+    if (Array.isArray(envelope.rows)) {
+      limited.rows = envelope.rows.slice(0, this.tablePreviewLimit);
+      limited.total_rows = envelope.total_rows ?? envelope.rows.length;
+    }
+
+    if (Array.isArray(envelope.candidates)) {
+      limited.candidates = envelope.candidates.slice(0, this.disambiguationLimit);
+    }
+
+    return limited;
+  }
+
+  private logResponseTelemetry(
+    sessionId: number | undefined,
+    tool: string,
+    envelope: ToolResultEnvelope,
+    composed: ComposeFinalMessageOutput
+  ): void {
+    const providedNextSteps = Array.isArray((composed.uiHints as any)?.nextSteps)
+      ? ((composed.uiHints as any).nextSteps as unknown[]).length > 0
+      : false;
+
+    void this.analytics.logResponseSummary(sessionId, tool, {
+      response_mode: envelope.type,
+      attempts: envelope.attempts ?? { exact: false, fuzzy: false, schema_refreshed: false },
+      candidates_count: envelope.candidates ? envelope.candidates.length : 0,
+      provided_next_steps: providedNextSteps,
+    });
+
+    if (envelope.type === 'empty' && envelope.attempts?.fuzzy) {
+      void this.analytics.incrementCounter(sessionId, 'empty_with_fuzzy_attempted');
+    }
+  }
+
+  private extractMessage(tool: string, result: any): string {
+    if (result && typeof result.message === 'string' && result.message.trim().length > 0) {
+      return result.message;
+    }
+    return this.describeActionOutcome(tool, true, result);
+  }
+
+  private buildVoiceArtifact(session: any): VoiceCallArtifact | null {
+    if (!session || typeof session !== 'object') {
+      return null;
+    }
+
+    const structured = session.structured_notes ?? {};
+    const partsSource = Array.isArray(structured.parts) ? structured.parts : [];
+    const parts = partsSource
+      .map((part: any) => ({
+        part_number: String(part?.part_number ?? '').trim(),
+        quantity: Number(part?.quantity ?? 0) || 0,
+        notes: part?.notes ?? null,
+      }))
+      .filter((part: any) => part.part_number.length > 0);
+
+    const artifact: VoiceCallArtifact = {
+      type: 'vendor_call_summary',
+      sessionId: Number(session.id),
+      status: String(session.status ?? 'unknown'),
+      purchaseId: session.purchase_id != null ? Number(session.purchase_id) : undefined,
+      purchaseNumber: session.purchase_number ?? null,
+      vendor:
+        session.vendor_id || session.vendor_name || session.vendor_phone
+          ? {
+              id: session.vendor_id != null ? Number(session.vendor_id) : undefined,
+              name: session.vendor_name ?? null,
+              phone: session.vendor_phone ?? null,
+            }
+          : undefined,
+      capturedEmail: session.captured_email ?? structured.email ?? null,
+      pickupTime: session.pickup_time ?? structured.pickup_time ?? null,
+      parts: parts.length ? parts : undefined,
+      summary: structured.summary ?? null,
+      nextSteps: Array.isArray(structured.next_steps) ? structured.next_steps : undefined,
+      transcriptPreview:
+        typeof session.transcript === 'string' && session.transcript.length > 0
+          ? session.transcript.slice(0, 600)
+          : undefined,
+    };
+
+    return artifact;
+  }
+
+  private async classifyIntent(message: string): Promise<AgentInstruction | null> {
+    if (!this.useLLMRouter || !this.geminiRouter) {
+      return this.classifyIntentWithKeywords(message);
+    }
+
+    const trimmed = typeof message === 'string' ? message.trim() : '';
+    if (!trimmed) {
+      return null;
+    }
+
+    let structured: StructuredIntent | null = null;
+    try {
+      structured = await this.geminiRouter.classify(trimmed);
+    } catch (error) {
+      this.logGeminiRouterEvent('gemini_router_failure', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    if (!structured) {
+      return this.classifyIntentWithKeywords(message);
+    }
+
+    if (structured.intent === 'doc_help') {
+      const topic = structured.slots.topic && structured.slots.topic.length > 0 ? structured.slots.topic : trimmed;
+      return { tool: 'retrieveDocs', args: { query: topic } };
+    }
+
+    if (structured.intent === 'smalltalk' || structured.intent === 'none') {
+      return null;
+    }
+
+    const mapped = this.mapStructuredIntent(trimmed, structured);
+    const meetsThreshold = structured.confidence >= this.routerConfidenceThreshold;
+
+    if (mapped && meetsThreshold) {
+      return mapped;
+    }
+
+    const fallback = this.classifyIntentWithKeywords(message);
+    if (fallback) {
+      return fallback;
+    }
+
+    if (mapped && structured.intent === 'inventory_lookup') {
+      return mapped;
+    }
+
+    return mapped ?? null;
+  }
+
+  private mapStructuredIntent(message: string, structured: StructuredIntent): AgentInstruction | null {
+    const slots = structured.slots || {};
+    const requiresConfirmation = structured.needs_confirmation;
+    if (
+      requiresConfirmation &&
+      (structured.intent === 'create_purchase_order' ||
+        structured.intent === 'create_sales_order' ||
+        structured.intent === 'create_quote' ||
+        structured.intent === 'update_pickup_details')
+    ) {
+      return null;
+    }
+
+    switch (structured.intent) {
+      case 'inventory_lookup': {
+        const args: Record<string, unknown> = {};
+        if (slots.entity_type) {
+          args.entity_type = slots.entity_type;
+        }
+        if (slots.entity_name) {
+          args.entity_name = slots.entity_name;
+        }
+        if (slots.order_number) {
+          args.order_number = slots.order_number;
+        }
+        if (slots.part_identifier) {
+          args.part_identifier = slots.part_identifier;
+        }
+        if (Array.isArray(slots.filters) && slots.filters.length) {
+          args.filters = slots.filters;
+        }
+
+        if (Object.keys(args).length === 0) {
+          args.entity_name = message;
+        }
+
+        return { tool: 'inventoryLookup', args };
+      }
+      case 'create_purchase_order': {
+        const vendorName = slots.vendor_name;
+        const lineItems = Array.isArray(slots.line_items) ? slots.line_items : [];
+        if (!vendorName || !lineItems.length) {
+          return null;
+        }
+        const args: Record<string, unknown> = {
+          vendor_name: vendorName,
+          line_items: lineItems,
+        };
+        if (slots.notes) {
+          args.notes = slots.notes;
+        }
+        return { tool: 'createPurchaseOrder', args };
+      }
+      case 'create_sales_order': {
+        const customerName = slots.customer_name;
+        const lineItems = Array.isArray(slots.line_items) ? slots.line_items : [];
+        if (!customerName || !lineItems.length) {
+          return null;
+        }
+        const args: Record<string, unknown> = {
+          customer_name: customerName,
+          line_items: lineItems,
+        };
+        if (slots.notes) {
+          args.notes = slots.notes;
+        }
+        return { tool: 'createSalesOrder', args };
+      }
+      case 'create_quote': {
+        const customerName = slots.customer_name;
+        const lineItems = Array.isArray(slots.line_items) ? slots.line_items : [];
+        if (!customerName || !lineItems.length) {
+          return null;
+        }
+        const args: Record<string, unknown> = {
+          customer_name: customerName,
+          line_items: lineItems,
+        };
+        if (slots.notes) {
+          args.notes = slots.notes;
+        }
+        return { tool: 'createQuote', args };
+      }
+      default:
+        return null;
+    }
+  }
+
+  private classifyIntentWithKeywords(message: string): { tool: string; args: any } | null {
+    const normalized = message.toLowerCase();
+
+    const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+    const containsKeyword = (keyword: string): boolean => {
+      const trimmed = keyword.trim().toLowerCase();
+      if (!trimmed) {
+        return false;
+      }
+      if (trimmed.includes(' ')) {
+        return normalized.includes(trimmed);
+      }
+      const pattern = new RegExp(`\\b${escapeRegExp(trimmed)}\\b`);
+      return pattern.test(normalized);
+    };
+
+    const includesAny = (keywords: string[]): boolean => keywords.some((keyword) => containsKeyword(keyword));
+
+    const howToPhrases = [
+      'how do i',
+      'how do we',
+      'how to',
+      'steps to',
+      'instructions',
+      'process to',
+      'guide me',
+      'can you guide',
+      'walk me through',
+      'help me',
+      'help us',
+      'help with',
+      'help to',
+      'assist me',
+      'assist us',
+      'assist with',
+      'assist to',
+      'can you help',
+    ];
+
+    if (normalized.includes('doc') || normalized.includes('documentation') || includesAny(howToPhrases)) {
+      return { tool: 'retrieveDocs', args: { query: message } };
+    }
+
+    const mentionsPurchaseOrder =
+      containsKeyword('purchase order') ||
+      normalized.includes('purchase-order') ||
+      containsKeyword('po') ||
+      normalized.includes('p/o') ||
+      normalized.includes('p.o.');
+    const mentionsSalesOrder =
+      containsKeyword('sales order') ||
+      normalized.includes('sales-order') ||
+      normalized.includes('s/o') ||
+      normalized.includes('s.o.') ||
+      /\bso\s*(?:#|no\.?|number)?\s*\d+\b/.test(normalized);
+    const mentionsQuote = containsKeyword('quote') || containsKeyword('quotes');
+
+    const createKeywords = ['create', 'make', 'build', 'start', 'begin', 'open', 'set up', 'setup', 'generate', 'draft', 'issue', 'raise', 'new'];
+    const updateKeywords = ['update', 'change', 'modify', 'edit', 'adjust', 'fix', 'tweak'];
+    const closeKeywords = ['close', 'complete', 'finish', 'wrap up', 'wrap-up', 'finalize', 'shut', 'cancel', 'done'];
+    const emailKeywords = ['email', 'send', 'mail', 'forward', 'deliver'];
+
+    const mentionsEmailSettings =
+      normalized.includes('email settings') ||
+      normalized.includes('email setup') ||
+      normalized.includes('configure email') ||
+      normalized.includes('email configuration');
+
+    if (mentionsEmailSettings) {
+      if (normalized.includes('test') || normalized.includes('verify') || normalized.includes('check connection')) {
+        return { tool: 'testEmailConnection', args: {} };
+      }
+
+      if (includesAny(updateKeywords) || includesAny(createKeywords) || normalized.includes('save') || normalized.includes('set up') || normalized.includes('configure')) {
+        return { tool: 'saveEmailSettings', args: {} };
+      }
+
+      return { tool: 'getEmailSettings', args: {} };
+    }
+
+    const mentionsEmailTemplates = normalized.includes('email template');
+    if (mentionsEmailTemplates) {
+      if (normalized.includes('delete') || normalized.includes('remove')) {
+        return { tool: 'deleteEmailTemplate', args: {} };
+      }
+
+      if (includesAny(updateKeywords) || includesAny(createKeywords) || normalized.includes('save') || normalized.includes('write')) {
+        return { tool: 'saveEmailTemplate', args: {} };
+      }
+
+      if (normalized.includes('view') || normalized.includes('show') || normalized.includes('get')) {
+        return { tool: 'listEmailTemplates', args: {} };
+      }
+
+      return { tool: 'listEmailTemplates', args: {} };
+    }
+
+    if (mentionsSalesOrder) {
+      if (includesAny(createKeywords)) {
+        return { tool: 'createSalesOrder', args: {} };
+      }
+      if (includesAny(updateKeywords)) {
+        return { tool: 'updateSalesOrder', args: {} };
+      }
+    }
+
+    if (mentionsPurchaseOrder) {
+      if (includesAny(emailKeywords)) {
+        return { tool: 'emailPurchaseOrder', args: {} };
+      }
+      if (includesAny(closeKeywords)) {
+        return { tool: 'closePurchaseOrder', args: {} };
+      }
+      if (includesAny(updateKeywords)) {
+        return { tool: 'updatePurchaseOrder', args: {} };
+      }
+      if (includesAny(createKeywords) || /need\s+(?:a|to create|to make)\s+(purchase order|po)\b/.test(normalized)) {
+        return { tool: 'createPurchaseOrder', args: {} };
+      }
+    }
+
+    if (mentionsQuote) {
+      if (includesAny(emailKeywords)) {
+        return { tool: 'emailQuote', args: {} };
+      }
+      if (includesAny(createKeywords)) {
+        return { tool: 'createQuote', args: {} };
+      }
+      if (includesAny(updateKeywords)) {
+        return { tool: 'updateQuote', args: {} };
+      }
+      const referencesSalesOrder =
+        mentionsSalesOrder ||
+        /\bto\s+so\b/.test(normalized) ||
+        normalized.includes('to s/o') ||
+        normalized.includes('to s.o.');
+      if (containsKeyword('convert') && referencesSalesOrder) {
+        return { tool: 'convertQuoteToSO', args: {} };
+      }
+    }
+
+    if (containsKeyword('call') && containsKeyword('vendor')) {
+      if (containsKeyword('status') || normalized.includes('call update')) {
+        return { tool: 'pollVendorCall', args: {} };
+      }
+      if (includesAny(emailKeywords)) {
+        return { tool: 'sendVendorCallEmail', args: {} };
+      }
+      return { tool: 'initiateVendorCall', args: {} };
+    }
+
+    if (containsKeyword('pickup')) {
+      if (containsKeyword('time')) return { tool: 'updatePickupDetails', args: { pickup_time: message } };
+      if (containsKeyword('location')) return { tool: 'updatePickupDetails', args: { pickup_location: message } };
+      if (containsKeyword('contact')) return { tool: 'updatePickupDetails', args: { pickup_contact_person: message } };
+      if (containsKeyword('phone')) return { tool: 'updatePickupDetails', args: { pickup_phone: message } };
+      if (containsKeyword('instructions')) return { tool: 'updatePickupDetails', args: { pickup_instructions: message } };
+      if (containsKeyword('notes')) return { tool: 'updatePickupDetails', args: { pickup_notes: message } };
+      if (containsKeyword('get')) return { tool: 'getPickupDetails', args: {} };
+    }
+
+    const reminderKeywords = ['remind', 'reminder', 'follow up', 'follow-up', 'todo', 'to-do', 'task for me', 'keep an eye'];
+    if (reminderKeywords.some((keyword) => normalized.includes(keyword))) {
+      return {
+        tool: 'createTask',
+        args: {
+          title: message,
+          description: message,
+        },
+      };
+    }
+
+    return null;
+  }
+
+  private buildToolCatalog(): ToolCatalogEntry[] {
+    const catalog: ToolCatalogEntry[] = [
+      { name: 'inventoryLookup', description: 'Look up vendors, customers, parts, purchase orders, sales orders, or quotes.' },
+      { name: 'createSalesOrder', description: 'Create a new sales order from customer information and line items.' },
+      { name: 'updateSalesOrder', description: 'Update an existing sales order header, line items, or related details.' },
+      { name: 'createPurchaseOrder', description: 'Create a purchase order for a vendor including pickup details and items.' },
+      { name: 'updatePurchaseOrder', description: 'Update purchase order fields, pickup instructions, or line items.' },
+      { name: 'closePurchaseOrder', description: 'Mark a purchase order as complete and close it out.' },
+      { name: 'emailPurchaseOrder', description: 'Email a purchase order PDF to a vendor contact.' },
+      { name: 'createQuote', description: 'Create a new quote for a customer.' },
+      { name: 'updateQuote', description: 'Modify quote details, pricing, or line items.' },
+      { name: 'emailQuote', description: 'Email a quote PDF to a customer contact.' },
+      { name: 'email_search', description: 'Search the connected Titan mailbox using IMAP filters.' },
+      { name: 'email_read', description: 'Retrieve a Titan email message with headers, bodies, and attachments.' },
+      { name: 'email_compose_draft', description: 'Compose a Titan email draft and receive a confirmation token before sending.' },
+      { name: 'email_send', description: 'Send a Titan email after confirmation, supporting drafts and attachments.' },
+      { name: 'email_reply', description: 'Reply to a Titan email thread with optional reply-all and attachments.' },
+      { name: 'convertQuoteToSO', description: 'Convert an existing quote into a sales order.' },
+      { name: 'updatePickupDetails', description: 'Update pickup instructions such as time, location, or contact details.' },
+      { name: 'getPickupDetails', description: 'Retrieve the current pickup instructions for a purchase order.' },
+      { name: 'initiateVendorCall', description: 'Start an outbound vendor call to confirm parts or pickup details.' },
+      { name: 'pollVendorCall', description: 'Check the latest status for an active vendor call session.' },
+      { name: 'sendVendorCallEmail', description: 'Email the purchase order to the vendor after a call completes.' },
+      { name: 'createTask', description: 'Create a Workspace Copilot task and subscribe the current session to updates.' },
+      { name: 'updateTask', description: 'Update the status or due date of an existing task.' },
+      { name: 'postTaskMessage', description: 'Post an update in the related task conversation.' },
+      { name: 'retrieveDocs', description: 'Search internal documentation for workflows and UI guidance.' },
+      { name: 'getEmailSettings', description: 'Retrieve the current email settings for the authenticated user.' },
+      { name: 'saveEmailSettings', description: 'Update the authenticated user\'s outbound email settings.' },
+      { name: 'testEmailConnection', description: 'Test the configured outbound email connection for the user.' },
+      { name: 'listEmailTemplates', description: 'List saved email templates for the current user.' },
+      { name: 'getEmailTemplate', description: 'Fetch a specific email template by identifier.' },
+      { name: 'saveEmailTemplate', description: 'Create or update a reusable email template.' },
+      { name: 'deleteEmailTemplate', description: 'Delete an existing email template.' },
+    ];
+
+    const skillEntries = this.skillCatalog
+      .map((skill) => {
+        const name = typeof skill.name === 'string' ? skill.name.trim() : '';
+        if (!name) {
+          return null;
+        }
+        const description =
+          typeof skill.description === 'string' && skill.description.trim().length > 0
+            ? skill.description.trim()
+            : `Reusable workflow built on ${skill.entrypoint}`;
+        const example =
+          skill.parameters && typeof skill.parameters === 'object' && !Array.isArray(skill.parameters)
+            ? String((skill.parameters as any).example ?? '')
+            : '';
+
+        return {
+          name: `skill:${name}`,
+          description,
+          example: example || undefined,
+        } as ToolCatalogEntry;
+      })
+      .filter((entry): entry is ToolCatalogEntry => Boolean(entry));
+
+    return catalog.concat(skillEntries);
+  }
+
+  private describeActionOutcome(tool: string, success: boolean, output?: any, error?: any): string {
+    if (!success) {
+      const errorMsg = error instanceof Error ? error.message : String(error || 'Unknown error');
+      return `Failed to ${this.describeTool(tool)}: ${errorMsg}`;
+    }
+
+    switch (tool) {
+      case 'inventoryLookup':
+        return output?.message ? String(output.message) : 'Lookup completed successfully.';
+      case 'createPurchaseOrder':
+        return output?.purchase_number ? `Created purchase order ${output.purchase_number}.` : 'Purchase order created successfully.';
+      case 'updatePurchaseOrder':
+        return 'Updated the purchase order successfully.';
+      case 'closePurchaseOrder':
+        return 'Closed the purchase order successfully.';
+      case 'emailPurchaseOrder':
+        if (output?.emailed_to && output?.purchase_number) {
+          return `Sent purchase order ${output.purchase_number} to ${output.emailed_to}.`;
+        }
+        return 'Sent the purchase order email successfully.';
+      case 'createSalesOrder':
+        return output?.sales_order_number ? `Created sales order ${output.sales_order_number}.` : 'Sales order created successfully.';
+      case 'updateSalesOrder':
+        return 'Updated the sales order successfully.';
+      case 'createQuote':
+        return output?.quote_number ? `Created quote ${output.quote_number}.` : 'Quote created successfully.';
+      case 'updateQuote':
+        return 'Updated the quote successfully.';
+      case 'emailQuote':
+        return 'Sent the quote email successfully.';
+      case 'email_search':
+        return 'Retrieved Titan email search results successfully.';
+      case 'email_read':
+        return 'Retrieved the Titan email message successfully.';
+      case 'email_compose_draft':
+        return 'Prepared a Titan email draft. Awaiting confirmation before send.';
+      case 'email_send':
+        return 'Sent the Titan email successfully.';
+      case 'email_reply':
+        return 'Sent the Titan email reply successfully.';
+      case 'convertQuoteToSO':
+        return 'Converted the quote into a sales order successfully.';
+      case 'updatePickupDetails':
+        return 'Updated pickup details successfully.';
+      case 'getPickupDetails':
+        return 'Retrieved pickup details successfully.';
+      case 'getEmailSettings':
+        return 'Retrieved email settings successfully.';
+      case 'saveEmailSettings':
+        return 'Saved the email settings successfully.';
+      case 'testEmailConnection':
+        return 'Tested the email connection successfully.';
+      case 'listEmailTemplates':
+        return 'Retrieved the list of email templates successfully.';
+      case 'getEmailTemplate':
+        return 'Retrieved the email template successfully.';
+      case 'saveEmailTemplate':
+        return 'Saved the email template successfully.';
+      case 'deleteEmailTemplate':
+        return 'Deleted the email template successfully.';
+      case 'initiateVendorCall':
+        if (output?.session?.purchase_number) {
+          return `Started a vendor call for purchase order ${output.session.purchase_number}.`;
+        }
+        return 'Started a vendor call.';
+      case 'pollVendorCall':
+        if (output?.session?.status) {
+          return `Vendor call status: ${output.session.status}.`;
+        }
+        return 'Checked vendor call status.';
+      case 'sendVendorCallEmail':
+        return output?.emailed_to ? `Email sent to ${output.emailed_to}.` : 'Sent the vendor call follow-up email.';
+      default:
+        return `Completed ${this.describeTool(tool)} successfully.`;
+    }
+  }
+
+  private describeTool(tool: string): string {
+    switch (tool) {
+      case 'createPurchaseOrder':
+        return 'create a purchase order';
+      case 'updatePurchaseOrder':
+        return 'update the purchase order';
+      case 'closePurchaseOrder':
+        return 'close the purchase order';
+      case 'emailPurchaseOrder':
+        return 'email the purchase order';
+      case 'createSalesOrder':
+        return 'create a sales order';
+      case 'updateSalesOrder':
+        return 'update the sales order';
+      case 'getEmailSettings':
+        return 'retrieve email settings';
+      case 'saveEmailSettings':
+        return 'update email settings';
+      case 'testEmailConnection':
+        return 'test the email connection';
+      case 'listEmailTemplates':
+        return 'list email templates';
+      case 'getEmailTemplate':
+        return 'get the email template';
+      case 'saveEmailTemplate':
+        return 'save the email template';
+      case 'deleteEmailTemplate':
+        return 'delete the email template';
+      case 'createQuote':
+        return 'create a quote';
+      case 'updateQuote':
+        return 'update the quote';
+      case 'emailQuote':
+        return 'email the quote';
+      case 'email_search':
+        return 'search Titan email';
+      case 'email_read':
+        return 'read the Titan email message';
+      case 'email_compose_draft':
+        return 'compose a Titan email draft';
+      case 'email_send':
+        return 'send the Titan email';
+      case 'email_reply':
+        return 'reply to the Titan email thread';
+      case 'convertQuoteToSO':
+        return 'convert the quote into a sales order';
+      case 'updatePickupDetails':
+        return 'update pickup details';
+      case 'getPickupDetails':
+        return 'retrieve pickup details';
+      case 'initiateVendorCall':
+        return 'start a vendor call';
+      case 'pollVendorCall':
+        return 'check the vendor call status';
+      case 'sendVendorCallEmail':
+        return 'send the vendor call email';
+      case 'createTask':
+        return 'create a task';
+      case 'updateTask':
+        return 'update the task';
+      case 'postTaskMessage':
+        return 'post a task update';
+      case 'retrieveDocs':
+        return 'search the documentation';
+      default:
+        return tool;
+    }
+  }
+}

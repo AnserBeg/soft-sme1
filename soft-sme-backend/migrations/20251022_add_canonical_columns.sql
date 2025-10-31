@@ -3,21 +3,6 @@ CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE EXTENSION IF NOT EXISTS unaccent;
 CREATE EXTENSION IF NOT EXISTS fuzzystrmatch;
 
--- Drop the canonical uniqueness constraint if it already exists so the
--- backfill statements below can run without immediate uniqueness checks.
-DO $$
-BEGIN
-    IF EXISTS (
-        SELECT 1 FROM pg_constraint
-        WHERE conname = 'inventory_canonical_part_number_key'
-          AND conrelid = 'inventory'::regclass
-    ) THEN
-        ALTER TABLE inventory
-            DROP CONSTRAINT inventory_canonical_part_number_key;
-    END IF;
-END;
-$$;
-
 -- Ensure canonical columns exist with a non-null default
 ALTER TABLE vendormaster
     ADD COLUMN IF NOT EXISTS canonical_name TEXT NOT NULL DEFAULT '';
@@ -35,28 +20,27 @@ RETURNS TEXT
 LANGUAGE SQL
 IMMUTABLE
 AS $$
-    SELECT COALESCE(
-        NULLIF(
+    SELECT CASE
+        WHEN input IS NULL OR input = '' THEN ''
+        ELSE UPPER(
             REGEXP_REPLACE(
                 REGEXP_REPLACE(
                     REGEXP_REPLACE(
-                        UPPER(unaccent(input)),
-                        '[^0-9A-Z]+',
+                        unaccent(normalize(input, NFKD)),
+                        '[^0-9A-Za-z]+',
                         ' ',
                         'g'
                     ),
-                    '\\s+',
+                    '\s+',
                     ' ',
                     'g'
                 ),
-                '^\\s+|\\s+$',
+                '^\s+|\s+$',
                 '',
                 'g'
-            ),
-            ''
-        ),
-        ''
-    );
+            )
+        )
+    END;
 $$;
 
 -- Canonicalization helper specialized for part numbers
@@ -65,23 +49,27 @@ RETURNS TEXT
 LANGUAGE SQL
 IMMUTABLE
 AS $$
-    SELECT COALESCE(
-        NULLIF(
+    SELECT CASE
+        WHEN input IS NULL OR input = '' THEN ''
+        ELSE UPPER(
             REGEXP_REPLACE(
                 REGEXP_REPLACE(
-                    UPPER(unaccent(input)),
-                    '[-\\s\\./]+',
+                    REGEXP_REPLACE(
+                        unaccent(normalize(input, NFKD)),
+                        '[-\s\./]+',
+                        '',
+                        'g'
+                    ),
+                    '[^0-9A-Za-z]+',
                     '',
                     'g'
                 ),
-                '[^0-9A-Z]+',
+                '\s+',
                 '',
                 'g'
-            ),
-            ''
-        ),
-        ''
-    );
+            )
+        )
+    END;
 $$;
 
 -- Backfill canonical values using the helper functions
@@ -102,7 +90,7 @@ WITH blank_part_numbers AS (
     WHERE canonical_part_number = ''
 )
 UPDATE inventory i
-SET canonical_part_number = 'NOPARTNUMBER' || UPPER(MD5(blank_part_numbers.part_number::TEXT))
+SET canonical_part_number = 'NOPARTNUMBER' || UPPER(MD5(blank_part_numbers.part_number))
 FROM blank_part_numbers
 WHERE i.part_number = blank_part_numbers.part_number;
 
@@ -118,7 +106,7 @@ WITH duplicate_part_numbers AS (
     WHERE canonical_part_number <> ''
 )
 UPDATE inventory i
-SET canonical_part_number = duplicate_part_numbers.canonical_part_number || 'DUP' || LPAD(duplicate_part_numbers.rn::TEXT, 6, '0')
+SET canonical_part_number = duplicate_part_numbers.canonical_part_number || 'DUP' || UPPER(MD5(duplicate_part_numbers.part_number))
 FROM duplicate_part_numbers
 WHERE i.part_number = duplicate_part_numbers.part_number
   AND duplicate_part_numbers.rn > 1;
@@ -142,7 +130,7 @@ BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM pg_constraint
         WHERE conname = 'inventory_canonical_part_number_key'
-          AND conrelid = 'inventory'::regclass
+            AND conrelid = 'inventory'::regclass
     ) THEN
         ALTER TABLE inventory
             ADD CONSTRAINT inventory_canonical_part_number_key

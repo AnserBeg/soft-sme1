@@ -227,14 +227,9 @@ fi
 log "Building TypeScript sources"
 npm run build
 
-ENABLE_AI_AGENT="${ENABLE_AI_AGENT:-0}"
-if [[ "${ENABLE_AI_AGENT}" == "1" ]]; then
-  log "Preparing AI agent Python environment"
-  python3 -m venv ai_agent/.venv
-  ai_agent/.venv/bin/pip install --upgrade pip setuptools wheel
-  ai_agent/.venv/bin/pip install -r ai_agent/requirements.txt
-else
-  log "AI agent disabled; skipping Python environment setup"
-fi
+log "Preparing AI agent Python environment"
+python3 -m venv ai_agent/.venv
+ai_agent/.venv/bin/pip install --upgrade pip setuptools wheel
+ai_agent/.venv/bin/pip install -r ai_agent/requirements.txt
 
 log "Render build script completed successfully"

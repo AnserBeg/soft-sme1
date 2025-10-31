@@ -11,8 +11,10 @@ const voiceService = new VoiceService(pool);
 // Initiate a vendor call session via LiveKit + Telnyx
 router.post('/call-vendor', async (req: Request, res: Response) => {
   try {
-    const { purchase_id } = req.body || {};
-    const session = await voiceService.initiateVendorCall(Number(purchase_id));
+    const { purchase_id, agent_session_id } = req.body || {};
+    const session = await voiceService.initiateVendorCall(Number(purchase_id), {
+      agentSessionId: agent_session_id ? Number(agent_session_id) : undefined,
+    });
     const roomName = `po-${session.id}`;
     res.json({
       session_id: session.id,

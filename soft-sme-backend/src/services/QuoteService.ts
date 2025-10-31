@@ -1,9 +1,5 @@
 import { Pool, PoolClient } from 'pg';
 import { getNextQuoteSequenceNumberForYear } from '../utils/sequence';
-import {
-  QuoteUpdateArgs as QuoteUpdateArgsSchema,
-  type QuoteUpdateArgs as QuoteUpdateArgsType,
-} from './recordSchemas';
 
 export interface CreateQuoteInput {
   customer_id: number | string;
@@ -28,82 +24,6 @@ export interface CreateQuoteResult {
 
 export class QuoteService {
   constructor(private pool: Pool) {}
-
-  private parseQuotePatch(quoteId: number, patch: unknown) {
-    const validatedPatch = QuoteUpdateArgsSchema.parse(patch ?? {}) as QuoteUpdateArgsType;
-    if (Object.keys(validatedPatch ?? {}).length === 0) {
-      throw new Error('No valid fields provided for quote update');
-    }
-    return validatedPatch;
-  }
-
-  async applyPatch(
-    quoteId: number,
-    patch: unknown,
-    clientArg?: PoolClient
-  ): Promise<{ updated: true }> {
-    const client = clientArg ?? (await this.pool.connect());
-    let startedTransaction = false;
-
-    try {
-      const validatedPatch = this.parseQuotePatch(quoteId, patch);
-
-      if (!clientArg) {
-        await client.query('BEGIN');
-        startedTransaction = true;
-      }
-
-      const fields: string[] = [];
-      const values: any[] = [];
-      let idx = 1;
-
-      if (Object.prototype.hasOwnProperty.call(validatedPatch, 'valid_until')) {
-        const value = validatedPatch.valid_until;
-        if (value === undefined) {
-          fields.push(`valid_until = NULL`);
-        } else {
-          fields.push(`valid_until = $${idx}`);
-          values.push(new Date(value));
-          idx += 1;
-        }
-      }
-
-      if (validatedPatch.status !== undefined) {
-        fields.push(`status = $${idx}`);
-        values.push(validatedPatch.status);
-        idx += 1;
-      }
-
-      if (validatedPatch.notes !== undefined) {
-        fields.push(`notes = $${idx}`);
-        values.push(validatedPatch.notes ?? null);
-        idx += 1;
-      }
-
-      fields.push('updated_at = NOW()');
-      values.push(quoteId);
-
-      await client.query(
-        `UPDATE quotes SET ${fields.join(', ')} WHERE quote_id = $${idx}`,
-        values
-      );
-
-      if (startedTransaction) {
-        await client.query('COMMIT');
-      }
-
-      return { updated: true };
-    } catch (error) {
-      if (startedTransaction) {
-        await client.query('ROLLBACK');
-      }
-      throw error;
-    } finally {
-      if (!clientArg) {
-        client.release();
-      }
-    }
-  }
 
   async createQuote(input: CreateQuoteInput, clientArg?: PoolClient): Promise<CreateQuoteResult> {
     const client = clientArg ?? (await this.pool.connect());

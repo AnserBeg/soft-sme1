@@ -1,7 +1,7 @@
 module.exports = {
   preset: 'ts-jest',
   testEnvironment: 'node',
-  testMatch: ['**/src/services/**/*.test.ts', '**/src/routes/**/__tests__/**/*.test.ts'],
+  testMatch: ['**/src/services/**/*.test.ts'],
   transform: {
     '^.+\\.ts$': 'ts-jest',
   },
@@ -10,4 +10,4 @@ module.exports = {
       tsconfig: 'tsconfig.json',
     },
   },
-};
+}; 

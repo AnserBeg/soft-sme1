@@ -33,14 +33,12 @@ import UnifiedCustomerDialog, { CustomerFormValues } from '../components/Unified
 import UnifiedProductDialog, { ProductFormValues } from '../components/UnifiedProductDialog';
 import UnsavedChangesGuard from '../components/UnsavedChangesGuard';
 import { normalizeQuoteStatus, QuoteStatus } from '../utils/quoteStatus';
-import { fuzzySearch } from '../services/searchService';
 import QuoteTemplatesDialog, { QuoteDescriptionTemplate } from '../components/QuoteTemplatesDialog';
 
 interface CustomerOption {
   label: string;
   id?: number;
   email?: string;
-  score?: number;
   isNew?: boolean;
 }
 
@@ -107,6 +105,23 @@ const getStatusChipStyles = (status: QuoteStatus) => {
   }
 };
 
+const rankAndFilterCustomers = (options: CustomerOption[], query: string): CustomerOption[] => {
+  const q = normalizeString(query);
+  if (!q) return options.slice(0, 8);
+  const scored = options
+    .map((opt) => {
+      const labelNorm = normalizeString(opt.label);
+      let score = -1;
+      if (labelNorm.startsWith(q)) score = 3;
+      else if (labelNorm.split(' ').some((w) => w.startsWith(q))) score = 2;
+      else if (labelNorm.includes(q)) score = 1;
+      return { opt, score };
+    })
+    .filter((x) => x.score >= 0)
+    .sort((a, b) => b.score - a.score || a.opt.label.localeCompare(b.opt.label));
+  return scored.slice(0, 8).map((x) => x.opt);
+};
+
 const QuoteEditorPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -114,6 +129,7 @@ const QuoteEditorPage: React.FC = () => {
   const isEditMode = Boolean(id) && !isCreationMode;
 
   // lists & data
+  const [customers, setCustomers] = useState<CustomerOption[]>([]);
   const [products, setProducts] = useState<ProductOption[]>([]);
   const [quote, setQuote] = useState<Quote | null>(null);
 
@@ -138,11 +154,8 @@ const QuoteEditorPage: React.FC = () => {
   // autocomplete state (customer)
   const [customerOpen, setCustomerOpen] = useState(false);
   const [customerInput, setCustomerInput] = useState('');
+  const [customerTypingTimer, setCustomerTypingTimer] = useState<number | null>(null);
   const [customerEnterPressed, setCustomerEnterPressed] = useState(false);
-  const customerSearchAbortRef = useRef<AbortController | null>(null);
-  const customerSearchTimerRef = useRef<number | null>(null);
-  const [customerOptions, setCustomerOptions] = useState<CustomerOption[]>([]);
-  const [customerSearchLoading, setCustomerSearchLoading] = useState(false);
   const customerInputRef = useRef<HTMLInputElement | null>(null);
   const productDescriptionRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -225,7 +238,9 @@ const QuoteEditorPage: React.FC = () => {
 
   // load lists
   useEffect(() => {
+    fetchCustomers();
     fetchProducts();
+    // For creation mode, mark as loaded after lists are fetched
     if (!isEditMode) {
       setIsDataLoaded(true);
     }
@@ -244,7 +259,7 @@ const QuoteEditorPage: React.FC = () => {
         setQuote(q);
 
         // prefill
-        setSelectedCustomer(q.customer_id ? { id: q.customer_id, label: q.customer_name } : null);
+        setSelectedCustomer(null); // set after customers load
         setSelectedProduct({ label: q.product_name });
         setQuoteDate(dayjs(q.quote_date));
         setValidUntil(dayjs(q.valid_until));
@@ -266,13 +281,36 @@ const QuoteEditorPage: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, isEditMode]);
 
+  // after customers arrive, map selectedCustomer with email
+  useEffect(() => {
+    if (quote && customers.length > 0) {
+      const customerWithEmail = customers.find((c) => c.id === quote.customer_id);
+      if (customerWithEmail) {
+        setSelectedCustomer(customerWithEmail);
+      }
+    }
+  }, [customers, quote]);
+
   useEffect(() => {
     return () => {
+      if (customerTypingTimer) window.clearTimeout(customerTypingTimer);
       if (productTypingTimer) window.clearTimeout(productTypingTimer);
-      if (customerSearchTimerRef.current) window.clearTimeout(customerSearchTimerRef.current);
-      if (customerSearchAbortRef.current) customerSearchAbortRef.current.abort();
     };
-  }, [productTypingTimer]);
+  }, [customerTypingTimer, productTypingTimer]);
+
+  const fetchCustomers = async () => {
+    try {
+      const res = await api.get('/api/customers');
+      const mapped = (res.data || []).map((c: any) => ({
+        label: c.customer_name,
+        id: c.customer_id,
+        email: c.email,
+      }));
+      setCustomers(mapped);
+    } catch {
+      setError('Failed to load customers');
+    }
+  };
 
   const fetchProducts = async () => {
     try {
@@ -289,89 +327,10 @@ const QuoteEditorPage: React.FC = () => {
     }
   };
 
-  const runCustomerSearch = useCallback(async (query: string) => {
-    const trimmed = query.trim();
-    if (!trimmed) {
-      setCustomerOptions([]);
-      setCustomerSearchLoading(false);
-      if (customerSearchAbortRef.current) {
-        customerSearchAbortRef.current.abort();
-        customerSearchAbortRef.current = null;
-      }
-      return;
-    }
-
-    if (customerSearchAbortRef.current) {
-      customerSearchAbortRef.current.abort();
-    }
-
-    const controller = new AbortController();
-    customerSearchAbortRef.current = controller;
-    setCustomerSearchLoading(true);
-
-    try {
-      const matches = await fuzzySearch('customer', trimmed, {
-        limit: 8,
-        signal: controller.signal,
-      });
-
-      if (controller.signal.aborted) {
-        return;
-      }
-
-      setCustomerOptions(
-        matches.map((match) => ({
-          label: match.label,
-          id: match.id,
-          score: match.score,
-          email: typeof (match.extra as any)?.email === 'string' ? (match.extra as any).email : undefined,
-        }))
-      );
-    } catch (err) {
-      if (!controller.signal.aborted) {
-        console.error('Customer fuzzy search failed:', err);
-      }
-    } finally {
-      if (!controller.signal.aborted) {
-        setCustomerSearchLoading(false);
-        customerSearchAbortRef.current = null;
-      }
-    }
-  }, []);
-
-  const customerAutocompleteOptions = useMemo(() => {
-    const base: CustomerOption[] = [...customerOptions];
-    if (selectedCustomer && selectedCustomer.id && !base.some((opt) => opt.id === selectedCustomer.id)) {
-      base.unshift(selectedCustomer);
-    }
-
-    const trimmed = customerInput.trim();
-    const hasExact = trimmed
-      ? base.some((opt) => normalizeString(opt.label) === normalizeString(trimmed))
-      : false;
-
-    if (trimmed && !hasExact) {
-      base.push({ label: `Add "${trimmed}" as New Customer`, isNew: true });
-    }
-
-    return base;
-  }, [customerOptions, customerInput, selectedCustomer]);
-
-  const exactCustomerMatch = useCallback(
-    (query: string): CustomerOption | null => {
-      const nq = normalizeString(query);
-      if (!nq) {
-        return null;
-      }
-
-      if (selectedCustomer && normalizeString(selectedCustomer.label) === nq) {
-        return selectedCustomer;
-      }
-
-      return customerOptions.find((c) => normalizeString(c.label) === nq) || null;
-    },
-    [customerOptions, selectedCustomer]
-  );
+  const exactCustomerMatch = (query: string): CustomerOption | null => {
+    const nq = normalizeString(query);
+    return customers.find((c) => normalizeString(c.label) === nq) || null;
+  };
 
   const resetForm = () => {
     setSelectedCustomer(null);
@@ -605,8 +564,6 @@ const QuoteEditorPage: React.FC = () => {
       if (match) {
         setSelectedCustomer(match);
         setCustomerInput(match.label);
-        setCustomerOptions([]);
-        setCustomerOpen(false);
       } else {
         setCustomerEnterPressed(true);
         setNewCustomerName(inputValue);
@@ -746,123 +703,90 @@ const QuoteEditorPage: React.FC = () => {
             <Grid container spacing={2}>
               {/* Customer */}
               <Grid item xs={12} md={4}>
-                {selectedCustomer ? (
-                  <Stack spacing={0.5} alignItems="flex-start">
-                    <Typography variant="caption" sx={{ fontWeight: 500, color: 'text.secondary' }}>
-                      Customer
-                    </Typography>
-                    <Stack direction="row" spacing={1} alignItems="center">
-                      <Chip
-                        color="primary"
-                        variant="outlined"
-                        label={selectedCustomer.label}
-                        onDelete={() => {
-                          setSelectedCustomer(null);
-                          setCustomerInput('');
-                          setCustomerOptions([]);
-                          setTimeout(() => {
-                            setCustomerOpen(true);
-                            customerInputRef.current?.focus();
-                          }, 0);
-                        }}
-                      />
-                      <Button
-                        size="small"
-                        variant="outlined"
-                        onClick={() => {
-                          setSelectedCustomer(null);
-                          setCustomerOpen(true);
-                          setTimeout(() => customerInputRef.current?.focus(), 0);
-                        }}
-                      >
-                        Change
-                      </Button>
-                    </Stack>
-                  </Stack>
-                ) : (
-                  <Autocomplete<CustomerOption>
-                    open={customerOpen}
-                    onOpen={() => {
-                      setCustomerOpen(true);
-                      if (customerInput.trim() && customerOptions.length === 0) {
-                        runCustomerSearch(customerInput);
-                      }
-                    }}
-                    onClose={() => setCustomerOpen(false)}
-                    autoHighlight
-                    loading={customerSearchLoading}
-                    options={customerAutocompleteOptions}
-                    value={selectedCustomer}
-                    filterOptions={(options) => options}
-                    onChange={(_, newValue) => {
-                      if (customerEnterPressed) {
-                        setCustomerEnterPressed(false);
-                        return;
-                      }
-                      if (newValue && (newValue as CustomerOption).isNew) {
-                        setIsAddCustomerModalOpen(true);
-                        setNewCustomerName(customerInput.trim());
-                        setSelectedCustomer(null);
-                        setCustomerInput('');
-                      } else {
-                        setSelectedCustomer(newValue as CustomerOption);
-                        setCustomerInput((newValue as CustomerOption | null)?.label ?? '');
-                        setCustomerOptions([]);
-                        setCustomerOpen(false);
-                      }
-                    }}
-                    inputValue={customerInput}
-                    onInputChange={(_, newInputValue, reason) => {
-                      if (reason === 'reset') {
-                        setCustomerInput(newInputValue);
-                        return;
-                      }
-                      setCustomerInput(newInputValue);
-                      if (customerSearchTimerRef.current) {
-                        window.clearTimeout(customerSearchTimerRef.current);
-                      }
-                      const timer = window.setTimeout(() => {
-                        runCustomerSearch(newInputValue);
-                      }, 250);
-                      customerSearchTimerRef.current = timer as unknown as number;
-                      setCustomerOpen(Boolean(newInputValue.trim()));
-                    }}
-                    getOptionLabel={(option) => (typeof option === 'string' ? option : option.label)}
-                    isOptionEqualToValue={(option, value) => option.id === value?.id}
-                    renderOption={(props, option) => {
-                      const opt = option as CustomerOption;
-                      const { key, ...otherProps } = props;
-                      const score = typeof opt.score === 'number' ? Math.round(opt.score * 100) : null;
-                      return (
-                        <li key={key} {...otherProps} style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
-                          <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                            {opt.isNew && <AddCircleOutlineIcon fontSize="small" style={{ marginRight: 8, color: '#666' }} />}
-                            <Typography variant="body2">{opt.label}</Typography>
-                          </Box>
-                          {!opt.isNew && score !== null && (
-                            <Typography variant="caption" color="text.secondary">
-                              Score: {score}%
-                            </Typography>
-                          )}
-                        </li>
-                      );
-                    }}
-                    renderInput={(params) => (
+                <Autocomplete<CustomerOption>
+                  open={customerOpen}
+                  onOpen={() => setCustomerOpen(true)}
+                  onClose={() => setCustomerOpen(false)}
+                  autoHighlight
+                  options={customers}
+                  value={selectedCustomer}
+                  onChange={(_, newValue) => {
+                    if (customerEnterPressed) { setCustomerEnterPressed(false); return; }
+                    if (newValue && (newValue as CustomerOption).isNew) {
+                      setIsAddCustomerModalOpen(true);
+                      setNewCustomerName(customerInput);
+                      setSelectedCustomer(null);
+                      setCustomerInput('');
+                    } else {
+                      setSelectedCustomer(newValue as CustomerOption);
+                    }
+                  }}
+                  filterOptions={(options, params) => {
+                    const ranked = rankAndFilterCustomers(options as CustomerOption[], params.inputValue || '');
+                    const hasExact = !!(params.inputValue && customers.some(c => normalizeString(c.label) === normalizeString(params.inputValue)));
+                    const result: any[] = [...ranked];
+                    if ((params.inputValue || '').trim() !== '' && !hasExact) {
+                      result.push({ label: `Add "${params.inputValue}" as New Customer`, isNew: true });
+                    }
+                    if (ranked.length === 0 && (params.inputValue || '').trim() !== '' && !hasExact) {
+                      return result;
+                    }
+                    return result;
+                  }}
+                  inputValue={customerInput}
+                  onInputChange={(_, newInputValue, reason) => {
+                    setCustomerInput(newInputValue);
+                    if (customerTypingTimer) window.clearTimeout(customerTypingTimer);
+                    if (reason === 'reset') return;
+                    const text = newInputValue.trim();
+                    if (text.length > 0) {
+                      const t = window.setTimeout(() => setCustomerOpen(true), 180);
+                      setCustomerTypingTimer(t as unknown as number);
+                    } else {
+                      setCustomerOpen(false);
+                    }
+                  }}
+                  getOptionLabel={(option) => (typeof option === 'string' ? option : option.label)}
+                  isOptionEqualToValue={(option, value) => option.id === value?.id}
+                  renderOption={(props, option) => {
+                    const isNew = (option as CustomerOption).isNew;
+                    const { key, ...otherProps } = props;
+                    return (
+                      <li key={key} {...otherProps} style={{ display: 'flex', alignItems: 'center', opacity: isNew ? 0.9 : 1 }}>
+                        {isNew && <AddCircleOutlineIcon fontSize="small" style={{ marginRight: 8, color: '#666' }} />}
+                        <span>{(option as CustomerOption).label}</span>
+                      </li>
+                    );
+                  }}
+                  renderInput={(params) => {
+                    const hasText = Boolean((params.inputProps as any)?.value);
+                    const shrink = Boolean(selectedCustomer) || hasText;
+                    return (
                       <TextField
                         {...params}
                         label="Customer"
                         fullWidth
                         required
                         onKeyDown={handleCustomerKeyDown}
-                        inputRef={(el) => {
-                          customerInputRef.current = el;
+                        onBlur={() => {
+                          if (!selectedCustomer) {
+                            const inputValue = customerInput.trim();
+                            if (inputValue) {
+                              const match = exactCustomerMatch(inputValue);
+                              if (match) {
+                                setSelectedCustomer(match);
+                                setCustomerInput(match.label);
+                              }
+                            }
+                          }
                         }}
+                        inputRef={(el) => { customerInputRef.current = el; }}
                         sx={input56Sx}
-                        InputLabelProps={{ ...params.InputLabelProps, sx: labelSx }}
+                        InputLabelProps={{ ...params.InputLabelProps, sx: labelSx, shrink }}
                       />
-                    )}
-                  />
-                )}
+                    );
+                  }}
+                />
               </Grid>
 
               {/* Customer PO # */}
@@ -1114,14 +1038,10 @@ const QuoteEditorPage: React.FC = () => {
               const response = await api.post('/api/customers', customer);
               const newCustomer = response.data;
               const opt = { label: newCustomer.customer_name, id: newCustomer.customer_id, email: newCustomer.email || (customer as any).email };
-              setCustomerOptions((prev) => {
-                const others = prev.filter((c) => c.id !== opt.id);
-                return [opt, ...others];
-              });
+              setCustomers((prev) => [...prev, opt]);
               setSelectedCustomer(opt);
               setIsAddCustomerModalOpen(false);
               setCustomerInput(opt.label);
-              setCustomerOpen(false);
             } catch {
               setError('Failed to add customer');
             }

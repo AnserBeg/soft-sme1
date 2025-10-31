@@ -18,16 +18,9 @@ export interface ChatMessageItem {
   link?: string;
   info?: string;
   chunks?: any[];
-  citations?: Citation[];
   timestamp?: string;
   createdAt?: string;
   callArtifacts?: VoiceCallArtifact[];
-}
-
-interface Citation {
-  title?: string;
-  path?: string;
-  score?: number;
 }
 
 interface ChatMessageProps {
@@ -43,85 +36,6 @@ const formatTimestamp = (value?: string) => {
 const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
   const isUser = message.role === 'user';
   const timestamp = formatTimestamp(message.timestamp || message.createdAt);
-  const citations = Array.isArray(message.citations) ? message.citations : [];
-
-  const renderCitations = () => {
-    if (!citations.length) {
-      return null;
-    }
-
-    return (
-      <Box sx={{ mt: 1.75 }}>
-        <Typography
-          variant="caption"
-          sx={{
-            display: 'block',
-            fontWeight: 600,
-            color: 'text.secondary',
-            mb: 0.5,
-          }}
-        >
-          Sources:
-        </Typography>
-        <Stack spacing={0.75}>
-          {citations.map((citation, index) => {
-            const path = citation.path ?? '';
-            const isLink = /^https?:\/\//i.test(path);
-            const label = isLink
-              ? citation.title || path || `Source ${index + 1}`
-              : path || citation.title || `Source ${index + 1}`;
-            const scoreLabel =
-              typeof citation.score === 'number' && Number.isFinite(citation.score)
-                ? citation.score.toFixed(1)
-                : null;
-
-            return (
-              <Stack
-                key={`${path || citation.title || 'citation'}-${index}`}
-                direction="row"
-                spacing={1}
-                alignItems="center"
-                sx={{ flexWrap: 'wrap', rowGap: 0.25 }}
-              >
-                {isLink ? (
-                  <Typography
-                    component="a"
-                    href={path}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    variant="caption"
-                    sx={{
-                      color: 'primary.main',
-                      textDecoration: 'none',
-                      '&:hover': { textDecoration: 'underline' },
-                      maxWidth: '100%',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                    }}
-                  >
-                    {label}
-                  </Typography>
-                ) : (
-                  <Typography
-                    variant="caption"
-                    color="text.secondary"
-                    sx={{ maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis' }}
-                  >
-                    {label}
-                  </Typography>
-                )}
-                {scoreLabel && (
-                  <Typography variant="caption" color="text.disabled">
-                    {scoreLabel}
-                  </Typography>
-                )}
-              </Stack>
-            );
-          })}
-        </Stack>
-      </Box>
-    );
-  };
 
   const renderTaskCard = (type: string) => {
     if (!message.task) {
@@ -145,6 +59,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
             <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
               {type === 'task_created' ? 'Task created' : type === 'task_updated' ? 'Task updated' : 'Task note'}
             </Typography>
+            {message.task.createdByAgent && <Chip label="AI" color="primary" size="small" />}
           </Stack>
           <Box>
             <Typography variant="h6">{message.task.title}</Typography>
@@ -214,20 +129,12 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
       return renderTaskCard(message.type);
     }
     if (message.type === 'docs') {
-      return (
-        <>
-          {renderDocs()}
-          {!isUser && citations.length > 0 ? renderCitations() : null}
-        </>
-      );
+      return renderDocs();
     }
     return (
-      <>
-        <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.7 }}>
-          {message.content || message.summary}
-        </Typography>
-        {!isUser && message.type === 'text' && citations.length > 0 ? renderCitations() : null}
-      </>
+      <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.7 }}>
+        {message.content || message.summary}
+      </Typography>
     );
   };
 

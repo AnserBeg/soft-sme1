@@ -13,6 +13,12 @@ const normalizeFlagValue = (value: unknown): string => {
 
 const truthyValues = new Set(['1', 'true', 'yes', 'on']);
 
+export const isPlannerStreamingEnabled = (): boolean => {
+  const raw = import.meta.env.VITE_AI_ENABLE_AGGREGATOR_STREAMING ?? (window as any)?.__AI_ENABLE_AGGREGATOR_STREAMING;
+  const normalized = normalizeFlagValue(raw);
+  return truthyValues.has(normalized);
+};
+
 export const isFeatureFlagEnabled = (value: unknown): boolean => {
   const normalized = normalizeFlagValue(value);
   if (!normalized) {
@@ -28,5 +34,6 @@ export const isFeatureFlagEnabled = (value: unknown): boolean => {
 };
 
 export default {
+  isPlannerStreamingEnabled,
   isFeatureFlagEnabled,
 };

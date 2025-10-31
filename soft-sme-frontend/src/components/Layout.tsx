@@ -43,9 +43,12 @@ import {
   Chat as ChatIcon,
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
+import ChatBubble from './ChatBubble';
+import ChatWindow from './ChatWindow';
+import { useChat } from '../hooks/useChat';
 import { Tooltip } from '@mui/material';
 import { useEffect, useMemo, useState } from 'react';
-import { getPendingCount } from '../services/offlineSync';
+import { getPendingCount, syncPending } from '../services/offlineSync';
 import { useMessaging } from '../contexts/MessagingContext';
 
 const drawerWidth = 240;
@@ -55,6 +58,7 @@ const Layout: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { logout, user } = useAuth();
+  const { isOpen, toggleChat, closeChat, unreadCount } = useChat();
   const { unreadConversationCount } = useMessaging();
   const [pendingCount, setPendingCount] = useState<number>(0);
 
@@ -308,7 +312,9 @@ const Layout: React.FC = () => {
         <Outlet />
       </Box>
       
-      {/* AI assistant disabled */}
+      {/* Chat Components */}
+      <ChatBubble onClick={toggleChat} isOpen={isOpen} unreadCount={unreadCount} />
+      <ChatWindow isOpen={isOpen} onClose={closeChat} />
     </Box>
   );
 };

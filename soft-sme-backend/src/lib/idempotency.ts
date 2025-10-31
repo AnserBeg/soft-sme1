@@ -16,10 +16,8 @@ const EXCLUDED_KEYS = new Set(
 type JsonPrimitive = string | number | boolean | null;
 type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
 
-type Queryable = Pool | PoolClient;
-
 export interface IdempotentWriteArgs<TWorkResult, TDeterministicResult> {
-  db: Queryable;
+  db: Pool;
   toolName: string;
   tenantId?: string | null;
   targetId?: string | null;
@@ -163,7 +161,7 @@ function parseResultJson(value: unknown): any {
 }
 
 async function fetchIdempotencyRow(
-  pool: Queryable,
+  pool: Pool,
   toolName: string,
   idempotencyKey: string
 ): Promise<IdempotencyRow | null> {
@@ -203,7 +201,7 @@ function ensureMatchingHash(existing: IdempotencyRow, requestHash: string): void
 }
 
 async function pollForResult<T>(
-  pool: Queryable,
+  pool: Pool,
   toolName: string,
   idempotencyKey: string,
   requestHash: string,
@@ -242,12 +240,8 @@ async function pollForResult<T>(
   return { status: 'processing' };
 }
 
-function isPool(db: Queryable): db is Pool {
-  return typeof (db as Pool).connect === 'function';
-}
-
 async function updateStatus(
-  pool: Queryable,
+  pool: Pool,
   toolName: string,
   idempotencyKey: string,
   status: string,
@@ -271,14 +265,9 @@ async function updateStatus(
 
   params.push(toolName, idempotencyKey);
 
-  if (isPool(pool)) {
-    await withTransaction(pool, async (client) => {
-      await client.query(updateQuery, params);
-    });
-    return;
-  }
-
-  await pool.query(updateQuery, params);
+  await withTransaction(pool, async (client) => {
+    await client.query(updateQuery, params);
+  });
 }
 
 export async function idempotentWrite<TWorkResult, TDeterministicResult>(

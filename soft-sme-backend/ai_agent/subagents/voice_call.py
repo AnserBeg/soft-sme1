@@ -123,6 +123,7 @@ class VoiceCallSubagent:
         *,
         step_id: str,
         purchase_id: Union[int, str],
+        agent_session_id: Optional[Union[int, str]] = None,
         goals: Optional[IterableType[str]] = None,
         metadata: Optional[MappingType[str, Any]] = None,
         planner_payload: Optional[MappingType[str, Any]] = None,
@@ -139,6 +140,7 @@ class VoiceCallSubagent:
             "session_id": session_id,
             "conversation_id": conversation_id,
             "purchase_id": None,
+            "agent_session_id": None,
         }
 
         start_time = time.perf_counter()
@@ -152,7 +154,11 @@ class VoiceCallSubagent:
             if normalized_purchase_id is None:
                 raise ValueError("purchase_id is required for voice call subagent")
 
+            normalized_agent_session = self._to_int(agent_session_id)
+
             request_body: Dict[str, Any] = {"purchase_id": normalized_purchase_id}
+            if normalized_agent_session is not None:
+                request_body["agent_session_id"] = normalized_agent_session
             if goals:
                 request_body["goals"] = [str(goal) for goal in goals]
             if metadata:
@@ -161,6 +167,7 @@ class VoiceCallSubagent:
             analytics_metadata.update(
                 {
                     "purchase_id": normalized_purchase_id,
+                    "agent_session_id": normalized_agent_session,
                 }
             )
 

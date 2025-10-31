@@ -8,10 +8,6 @@ export interface CanonicalConfig {
   enforceUniquePart: boolean;
 }
 
-export interface DocsConfig {
-  requireCitations: boolean;
-}
-
 type NumberBounds = {
   min?: number;
   max?: number;
@@ -92,11 +88,5 @@ export function getFuzzyConfig(): FuzzyConfig {
 export function getCanonicalConfig(): CanonicalConfig {
   return {
     enforceUniquePart: parseBooleanSetting('CANON_ENFORCE_UNIQUE_PART', true),
-  };
-}
-
-export function getDocsConfig(): DocsConfig {
-  return {
-    requireCitations: parseBooleanSetting('DOCS_REQUIRE_CITATIONS', false),
   };
 }
