@@ -23,8 +23,6 @@ export interface Task {
   dueDate: string | null;
   completedAt: string | null;
   createdBy: number;
-  createdByAgent: boolean;
-  agentSessionId: number | null;
   createdAt: string;
   updatedAt: string;
   assignees: TaskAssignee[];

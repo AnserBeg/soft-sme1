@@ -40,7 +40,6 @@ import { useAuth } from '../contexts/AuthContext';
 import TaskSummaryWidget from '../components/tasks/TaskSummaryWidget';
 import { getTaskSummary } from '../services/taskService';
 import { TaskSummary } from '../types/task';
-import { SmartToy as SmartToyIcon } from '@mui/icons-material';
 
 const sectionIcons: Record<string, React.ReactNode> = {
   'Purchasing': <AssignmentIcon sx={{ color: 'primary.main' }} />,
@@ -203,33 +202,6 @@ const LandingPage: React.FC = () => {
           onViewTasks={() => navigate('/tasks')}
         />
       </Box>
-
-      <Paper
-        elevation={0}
-        sx={{
-          mb: 6,
-          px: { xs: 3, md: 4 },
-          py: { xs: 3, md: 4 },
-          borderRadius: 3,
-          border: '1px solid',
-          borderColor: 'divider',
-          backgroundColor: 'background.paper',
-        }}
-      >
-        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={3} alignItems="center">
-          <Avatar sx={{ bgcolor: 'primary.main', width: 56, height: 56 }}>
-            <SmartToyIcon fontSize="medium" />
-          </Avatar>
-          <Box sx={{ textAlign: { xs: 'center', sm: 'left' } }}>
-            <Typography variant="h5" component="h2" sx={{ fontWeight: 600 }}>
-              Workspace Copilot
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              Need a hand? Click the Copilot bubble in the lower-right corner to open the AI assistant without leaving your work.
-            </Typography>
-          </Box>
-        </Stack>
-      </Paper>
 
       {filteredSections.map((section, sectionIndex) => (
         <Fade in timeout={700 + sectionIndex * 200} key={section.title}>

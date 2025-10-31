@@ -136,7 +136,7 @@ const TaskList: React.FC<TaskListProps> = ({ tasks, onSelect, onToggleComplete, 
               borderColor: 'divider',
               overflow: 'hidden',
               transition: 'all 0.2s ease-in-out',
-              backgroundColor: task.createdByAgent ? 'rgba(25, 118, 210, 0.06)' : 'background.paper',
+              backgroundColor: 'background.paper',
               '&:hover': {
                 boxShadow: 8,
                 transform: 'translateY(-2px)',
@@ -170,9 +170,6 @@ const TaskList: React.FC<TaskListProps> = ({ tasks, onSelect, onToggleComplete, 
                         color={STATUS_COLOR[task.status]}
                         size="small"
                       />
-                      {task.createdByAgent && (
-                        <Chip label="AI" size="small" color="info" variant="outlined" />
-                      )}
                       {isOverdue && task.status !== 'completed' && (
                         <Chip label="Overdue" color="error" size="small" variant="outlined" />
                       )}

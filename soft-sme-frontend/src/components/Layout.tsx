@@ -43,9 +43,6 @@ import {
   Chat as ChatIcon,
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
-import ChatBubble from './ChatBubble';
-import ChatWindow from './ChatWindow';
-import { useChat } from '../hooks/useChat';
 import { Tooltip } from '@mui/material';
 import { useEffect, useMemo, useState } from 'react';
 import { getPendingCount, syncPending } from '../services/offlineSync';
@@ -58,7 +55,6 @@ const Layout: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { logout, user } = useAuth();
-  const { isOpen, toggleChat, closeChat, unreadCount } = useChat();
   const { unreadConversationCount } = useMessaging();
   const [pendingCount, setPendingCount] = useState<number>(0);
 
@@ -311,10 +307,6 @@ const Layout: React.FC = () => {
         <Toolbar />
         <Outlet />
       </Box>
-      
-      {/* Chat Components */}
-      <ChatBubble onClick={toggleChat} isOpen={isOpen} unreadCount={unreadCount} />
-      <ChatWindow isOpen={isOpen} onClose={closeChat} />
     </Box>
   );
 };
