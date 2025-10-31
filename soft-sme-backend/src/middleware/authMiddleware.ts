@@ -18,22 +18,6 @@ declare global {
   }
 }
 
-const sanitizeEnvValue = (value?: string | null): string | undefined => {
-  if (!value) {
-    return undefined;
-  }
-
-  const trimmed = value.trim();
-
-  if (trimmed.length === 0) {
-    return undefined;
-  }
-
-  const withoutQuotes = trimmed.replace(/^['"](.+)['"]$/s, '$1').trim();
-
-  return withoutQuotes.length > 0 ? withoutQuotes : undefined;
-};
-
 export const authMiddleware = async (
   req: Request,
   res: Response,
@@ -41,22 +25,6 @@ export const authMiddleware = async (
 ) => {
   try {
     const authHeader = req.headers.authorization;
-    const configuredServiceToken = sanitizeEnvValue(process.env.AI_AGENT_SERVICE_TOKEN);
-    const configuredServiceApiKey = sanitizeEnvValue(process.env.AI_AGENT_SERVICE_API_KEY);
-    const incomingApiKeyHeader = req.headers['x-api-key'];
-    const incomingApiKey = Array.isArray(incomingApiKeyHeader)
-      ? incomingApiKeyHeader[0]
-      : incomingApiKeyHeader;
-
-    if (configuredServiceToken && authHeader && authHeader === configuredServiceToken) {
-      (req as any).auth = { kind: 'service', via: 'bearer' };
-      return next();
-    }
-
-    if (configuredServiceApiKey && incomingApiKey && incomingApiKey === configuredServiceApiKey) {
-      (req as any).auth = { kind: 'service', via: 'api-key' };
-      return next();
-    }
 
     if (!authHeader) {
       return res.status(401).json({ message: 'No authorization header' });

@@ -53,22 +53,15 @@ import qboAuthRoutes from './routes/qboAuthRoutes';
 import qboAccountRoutes from './routes/qboAccountRoutes';
 import qboExportRoutes from './routes/qboExportRoutes';
 import overheadRoutes from './routes/overheadRoutes';
-import aiAssistantRoutes from './routes/aiAssistantRoutes';
 import emailRoutes from './routes/emailRoutes';
 import profileDocumentRoutes from './routes/profileDocumentRoutes';
 import messagingRoutes from './routes/messagingRoutes';
-import agentV2Routes from './routes/agentV2Routes';
 import voiceRoutes from './routes/voiceRoutes';
 import voiceStreamRoutes from './routes/voiceStreamRoutes';
 import voiceSearchRoutes from './routes/voiceSearchRoutes';
 import taskRoutes from './routes/taskRoutes';
-import aiAssistantService from './services/aiAssistantService';
 import partFinderRoutes from './routes/partFinderRoutes';
 import inventoryVendorRoutes from './routes/inventoryVendorRoutes';
-import plannerRoutes from './routes/plannerRoutes';
-
-const enableAiAssistantEnv = process.env.ENABLE_AI_ASSISTANT?.toLowerCase();
-const shouldAutoStartAiAssistant = enableAiAssistantEnv === 'true';
 
 // Add error handling around chatRouter import
 let chatRouter: any;
@@ -261,14 +254,6 @@ console.log('Registered QBO export routes');
 app.use('/api/overhead', authMiddleware, overheadRoutes);
 console.log('Registered overhead routes');
 
-// AI Assistant routes
-app.use('/api/ai-assistant', aiAssistantRoutes);
-console.log('Registered AI assistant routes');
-
-// Planner streaming routes
-app.use('/api/planner', plannerRoutes);
-console.log('Registered planner routes');
-
 // Part Finder (SO-specific stats)
 app.use('/api/part-finder', authMiddleware, partFinderRoutes);
 console.log('Registered part finder routes');
@@ -290,12 +275,6 @@ console.log('Registered messaging routes');
 
 app.use('/api/tasks', taskRoutes);
 console.log('Registered task routes');
-
-// Agent V2 routes (feature-flagged)
-if (process.env.AI_ASSISTANT_V2 !== 'false') {
-  app.use('/api/agent/v2', authMiddleware, agentV2Routes);
-  console.log('Registered Agent V2 routes');
-}
 
 // Voice/calling routes (feature flag optional)
 if (process.env.ENABLE_VENDOR_CALLING !== 'false') {
@@ -578,28 +557,11 @@ const server = app.listen(PORT, HOST, async () => {
   console.log(`Server is running on port ${PORT}`);
 
   await verifyDatabaseConnection();
-
-  if (shouldAutoStartAiAssistant) {
-    // Start AI agent automatically
-    try {
-      console.log('Starting AI Assistant...');
-      await aiAssistantService.startAIAgent();
-      console.log('AI Assistant started successfully');
-    } catch (error) {
-      console.error('Failed to start AI Assistant:', error);
-      console.log('Server will continue without AI Assistant');
-    }
-  } else {
-    console.log(
-      'AI Assistant auto-start is disabled. Set ENABLE_AI_ASSISTANT=true to enable automatic startup.'
-    );
-  }
 });
 
 // Graceful shutdown
 process.on('SIGTERM', async () => {
   console.log('SIGTERM received, shutting down gracefully...');
-  await aiAssistantService.stopAIAgent();
   server.close(() => {
     console.log('Server closed');
     process.exit(0);
@@ -608,9 +570,8 @@ process.on('SIGTERM', async () => {
 
 process.on('SIGINT', async () => {
   console.log('SIGINT received, shutting down gracefully...');
-  await aiAssistantService.stopAIAgent();
   server.close(() => {
     console.log('Server closed');
     process.exit(0);
   });
-}); 
+});
