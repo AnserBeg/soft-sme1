@@ -65,19 +65,12 @@ export interface TaskWithRelations {
   dueDate: string | null;
   completedAt: string | null;
   createdBy: number;
-  createdByAgent: boolean;
-  agentSessionId: number | null;
   createdAt: string;
   updatedAt: string;
   assignees: TaskAssignee[];
   noteCount: number;
   lastNoteAt: string | null;
   notes?: TaskNote[];
-}
-
-export interface CreateTaskOptions {
-  createdByAgent?: boolean;
-  agentSessionId?: number | null;
 }
 
 export class ServiceError extends Error {
@@ -157,8 +150,6 @@ export class TaskService {
         t.due_date,
         t.completed_at,
         t.created_by,
-        t.created_by_agent,
-        t.agent_session_id,
         t.created_at,
         t.updated_at,
         COALESCE(
@@ -197,8 +188,6 @@ export class TaskService {
           t.due_date,
           t.completed_at,
           t.created_by,
-          t.created_by_agent,
-          t.agent_session_id,
           t.created_at,
           t.updated_at,
           COALESCE(
@@ -255,7 +244,6 @@ export class TaskService {
     companyId: number,
     creatorId: number,
     input: TaskInput,
-    options: CreateTaskOptions = {},
     clientArg?: PoolClient
   ): Promise<TaskWithRelations> {
     if (!input.title || !input.title.trim()) {
@@ -264,8 +252,6 @@ export class TaskService {
 
     const status = input.status ? this.ensureValidStatus(input.status) : 'pending';
     const dueDate = input.dueDate ? this.normalizeDate(input.dueDate, 'dueDate') : null;
-    const createdByAgent = Boolean(options.createdByAgent);
-    const agentSessionId = options.agentSessionId ?? null;
     const client = clientArg ?? (await this.pool.connect());
     const manageTransaction = !clientArg;
 
@@ -283,11 +269,9 @@ export class TaskService {
             status,
             due_date,
             created_by,
-            completed_at,
-            created_by_agent,
-            agent_session_id
+            completed_at
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+          VALUES ($1, $2, $3, $4, $5, $6, $7)
           RETURNING id
         `,
         [
@@ -298,8 +282,6 @@ export class TaskService {
           dueDate,
           creatorId,
           completedAt,
-          createdByAgent,
-          agentSessionId,
         ]
       );
 
@@ -365,8 +347,6 @@ export class TaskService {
       throw new ServiceError('Task not found', 404);
     }
 
-    const previousStatus = existingResult.rows[0]?.status as TaskStatus | null;
-
     if (updates.title !== undefined) {
       const title = updates.title.trim();
       if (!title) {
@@ -418,9 +398,7 @@ export class TaskService {
       throw new ServiceError('Task not found', 404);
     }
 
-    const task = await this.getTask(companyId, taskId, executor);
-    await this.emitAgentStatusUpdate(executor, task, previousStatus);
-    return task;
+    return this.getTask(companyId, taskId, executor);
   }
 
   async updateAssignments(companyId: number, taskId: number, assigneeIds: number[], actingUserId: number): Promise<TaskWithRelations> {
@@ -509,9 +487,7 @@ export class TaskService {
       [nextStatus, completed ? new Date().toISOString() : null, companyId, taskId]
     );
 
-    const task = await this.getTask(companyId, taskId);
-    await this.emitAgentStatusUpdate(this.pool, task, currentStatus);
-    return task;
+    return this.getTask(companyId, taskId);
   }
 
   async deleteTask(companyId: number, taskId: number): Promise<void> {
@@ -710,85 +686,12 @@ export class TaskService {
       dueDate: row.due_date ? new Date(row.due_date).toISOString() : null,
       completedAt: row.completed_at ? new Date(row.completed_at).toISOString() : null,
       createdBy: row.created_by,
-      createdByAgent: Boolean(row.created_by_agent),
-      agentSessionId: row.agent_session_id != null ? Number(row.agent_session_id) : null,
       createdAt: new Date(row.created_at).toISOString(),
       updatedAt: new Date(row.updated_at).toISOString(),
       assignees,
       noteCount: Number(row.note_count || 0),
       lastNoteAt: row.last_note_at ? new Date(row.last_note_at).toISOString() : null,
     };
-  }
-
-  private async emitAgentStatusUpdate(
-    db: DbExecutor,
-    task: TaskWithRelations,
-    previousStatus?: TaskStatus | null
-  ): Promise<void> {
-    if (previousStatus && previousStatus === task.status) {
-      return;
-    }
-
-    const subscriptionResult = await db.query(
-      `SELECT id, session_id, last_notified_status FROM agent_task_subscriptions WHERE task_id = $1 AND active = TRUE`,
-      [task.id]
-    );
-
-    if (subscriptionResult.rowCount === 0) {
-      return;
-    }
-
-    const statusLabel = this.formatStatusLabel(task.status);
-    const summary = `Task "${task.title}" is now ${statusLabel}.`;
-
-    for (const row of subscriptionResult.rows) {
-      if (row.last_notified_status === task.status) {
-        continue;
-      }
-
-      const payload = {
-        type: 'task_update',
-        taskId: task.id,
-        title: task.title,
-        status: task.status,
-        statusLabel,
-        summary,
-        link: `/tasks/${task.id}`,
-      };
-
-      const insertResult = await db.query(
-        `INSERT INTO agent_messages (session_id, role, content) VALUES ($1, 'assistant', $2) RETURNING id`,
-        [row.session_id, JSON.stringify(payload)]
-      );
-
-      const messageId = insertResult.rows[0]?.id ?? null;
-
-      await db.query(
-        `
-          UPDATE agent_task_subscriptions
-          SET last_notified_status = $1,
-              last_notified_at = CURRENT_TIMESTAMP,
-              last_notified_message_id = $2
-          WHERE id = $3
-        `,
-        [task.status, messageId, row.id]
-      );
-    }
-  }
-
-  private formatStatusLabel(status: TaskStatus): string {
-    switch (status) {
-      case 'pending':
-        return 'Pending';
-      case 'in_progress':
-        return 'In progress';
-      case 'completed':
-        return 'Completed';
-      case 'archived':
-        return 'Archived';
-      default:
-        return status;
-    }
   }
 
   private ensureValidStatus(status: string): TaskStatus {
