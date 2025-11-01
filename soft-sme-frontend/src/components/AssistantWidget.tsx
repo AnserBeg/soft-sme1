@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Box, Fab, Paper, IconButton, TextField, Typography, CircularProgress, Tooltip } from '@mui/material';
 import ChatIcon from '@mui/icons-material/Chat';
 import CloseIcon from '@mui/icons-material/Close';
@@ -10,9 +10,24 @@ type Msg = { id: string; role: 'user' | 'assistant'; text: string; rows?: any[] 
 
 const uid = () => Math.random().toString(36).slice(2);
 
-const AssistantWidget: React.FC = () => {
+type AssistantWidgetProps = {
+  open: boolean;
+  onOpen: () => void;
+  onClose: () => void;
+  panelWidth?: number;
+  rightOffset?: number;
+  desktopTopOffset?: number;
+};
+
+const AssistantWidget: React.FC<AssistantWidgetProps> = ({
+  open,
+  onOpen,
+  onClose,
+  panelWidth = 360,
+  rightOffset = 24,
+  desktopTopOffset = 72,
+}) => {
   const { user } = useAuth();
-  const [open, setOpen] = useState(false);
   const [sending, setSending] = useState(false);
   const [input, setInput] = useState('');
   const [msgs, setMsgs] = useState<Msg[]>([]);
@@ -63,7 +78,7 @@ const AssistantWidget: React.FC = () => {
         <Tooltip title="Ask Aiven Assistant">
           <Fab
             color="primary"
-            onClick={() => setOpen(true)}
+            onClick={onOpen}
             sx={{ position: 'fixed', bottom: 24, right: 24, zIndex: 1400 }}
           >
             <ChatIcon />
@@ -77,20 +92,20 @@ const AssistantWidget: React.FC = () => {
           elevation={8}
           sx={{
             position: 'fixed',
-            bottom: 24,
-            right: 24,
-            width: { xs: 320, sm: 360 },
-            height: 440,
+            top: { xs: 0, sm: `${desktopTopOffset}px` },
+            bottom: 0,
+            right: { xs: 0, sm: `${rightOffset}px` },
+            width: { xs: '100%', sm: `${panelWidth}px` },
             display: 'flex',
             flexDirection: 'column',
-            borderRadius: 2,
+            borderRadius: { xs: 0, sm: '16px 0 0 0' },
             overflow: 'hidden',
             zIndex: 1500,
           }}
         >
           <Box sx={{ display: 'flex', alignItems: 'center', p: 1, bgcolor: 'primary.main', color: 'primary.contrastText' }}>
             <Typography sx={{ fontWeight: 600, flex: 1 }}>Aiven Assistant</Typography>
-            <IconButton size="small" onClick={() => setOpen(false)} sx={{ color: 'primary.contrastText' }}>
+            <IconButton size="small" onClick={onClose} sx={{ color: 'primary.contrastText' }}>
               <CloseIcon fontSize="small" />
             </IconButton>
           </Box>
