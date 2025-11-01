@@ -451,7 +451,14 @@ const TimeTrackingReportsPage: React.FC = () => {
       }
       const inTime = new Date(shift.clock_in).getTime();
       const outTime = new Date(shift.clock_out).getTime();
-      const dur = Math.max(0, (outTime - inTime) / (1000 * 60 * 60));
+      const storedDuration = typeof shift.duration === 'number'
+        ? shift.duration
+        : shift.duration !== null && shift.duration !== undefined
+          ? Number(shift.duration)
+          : null;
+      const dur = storedDuration !== null && !Number.isNaN(storedDuration)
+        ? storedDuration
+        : Math.max(0, (outTime - inTime) / (1000 * 60 * 60));
       // Find all entries for this shift
       const entries = shiftEntries[shiftId] || [];
       let booked = 0;
