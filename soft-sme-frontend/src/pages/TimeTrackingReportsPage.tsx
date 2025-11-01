@@ -118,6 +118,11 @@ function parseDurationHours(value: unknown): number | null {
   return null;
 }
 
+function formatDurationDisplay(value: unknown, fractionDigits = 3): string {
+  const parsed = parseDurationHours(value);
+  return parsed !== null && !Number.isNaN(parsed) ? `${parsed.toFixed(fractionDigits)} hrs` : '-';
+}
+
 const TimeTrackingReportsPage: React.FC = () => {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [salesOrders, setSalesOrders] = useState<SalesOrder[]>([]);
@@ -694,11 +699,7 @@ const TimeTrackingReportsPage: React.FC = () => {
                           <TableCell sx={{ fontSize: '1.1rem' }}>{new Date(report.date).toLocaleDateString()}</TableCell>
                           <TableCell sx={{ fontSize: '1.1rem' }}>{new Date(report.clock_in).toLocaleTimeString()}</TableCell>
                           <TableCell sx={{ fontSize: '1.1rem' }}>{report.clock_out ? new Date(report.clock_out).toLocaleTimeString() : '-'}</TableCell>
-                          <TableCell sx={{ fontSize: '1.1rem' }}>
-                            {report.duration !== null && report.duration !== undefined && !isNaN(Number(report.duration))
-                              ? `${Number(report.duration).toFixed(3)} hrs`
-                              : '-'}
-                          </TableCell>
+                          <TableCell sx={{ fontSize: '1.1rem' }}>{formatDurationDisplay(report.duration)}</TableCell>
                           <TableCell sx={{ fontSize: '1.1rem' }}>
                             {report.clock_out && (
                               <Button
@@ -1191,7 +1192,7 @@ function TimeEntriesTable({ entries, setEditEntry, setEditClockIn, setEditClockO
               <TableCell>{entry.sales_order_number}</TableCell>
               <TableCell>{new Date(entry.clock_in).toLocaleTimeString()}</TableCell>
               <TableCell>{entry.clock_out ? new Date(entry.clock_out).toLocaleTimeString() : '-'}</TableCell>
-              <TableCell>{entry.duration !== null && entry.duration !== undefined && !isNaN(Number(entry.duration)) ? `${Number(entry.duration).toFixed(3)} hrs` : '-'}</TableCell>
+              <TableCell>{formatDurationDisplay(entry.duration)}</TableCell>
               <TableCell>
                 {entry.clock_out && (
                   <Button
