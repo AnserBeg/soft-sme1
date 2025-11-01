@@ -71,12 +71,30 @@ fi
 # If Python packages were installed with --user, include user site-packages
 USER_SITE="$(python3 - <<'PY'
 import site, sys
-sys.stdout.write(site.getusersitepackages() or '')
+try:
+    sys.stdout.write(site.getusersitepackages() or '')
+except Exception:
+    sys.stdout.write('')
 PY
 )"
+added_path=""
 if [[ -n "${USER_SITE}" && -d "${USER_SITE}" ]]; then
-  export PYTHONPATH="${USER_SITE}:${PYTHONPATH:-}"
-  log "Using user site-packages at ${USER_SITE}"
+  added_path="${USER_SITE}"
+else
+  # Fallback to common user site locations on Render
+  for p in \
+    "/opt/render/.local/lib/python"*/site-packages \
+    "${HOME}/.local/lib/python"*/site-packages; do
+    if [[ -d "$p" ]]; then
+      added_path="$p"
+      break
+    fi
+  done
+fi
+
+if [[ -n "${added_path}" ]]; then
+  export PYTHONPATH="${added_path}:${PYTHONPATH:-}"
+  log "Using Python site-packages at ${added_path}"
 fi
 
 if [[ "${ENABLE_AI_AGENT_FLAG}" != "0" && -f "${ASSISTANT_SCRIPT}" ]]; then
