@@ -68,6 +68,17 @@ if [[ -f "${ASSISTANT_SCRIPT}" ]]; then
   ASSISTANT_SCRIPT_PRESENT="yes"
 fi
 
+# If Python packages were installed with --user, include user site-packages
+USER_SITE="$(python3 - <<'PY'
+import site, sys
+sys.stdout.write(site.getusersitepackages() or '')
+PY
+)"
+if [[ -n "${USER_SITE}" && -d "${USER_SITE}" ]]; then
+  export PYTHONPATH="${USER_SITE}:${PYTHONPATH:-}"
+  log "Using user site-packages at ${USER_SITE}"
+fi
+
 if [[ "${ENABLE_AI_AGENT_FLAG}" != "0" && -f "${ASSISTANT_SCRIPT}" ]]; then
   if command -v python3 >/dev/null 2>&1; then
     export ASSISTANT_PORT="${ASSISTANT_PORT:-5001}"
