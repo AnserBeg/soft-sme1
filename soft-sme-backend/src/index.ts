@@ -1,6 +1,8 @@
 import dotenv from 'dotenv';
 import path from 'path';
 import express from 'express';
+import fs from 'fs';
+import { spawn } from 'child_process';
 import cors from 'cors';
 import bodyParser from 'body-parser';
 import expressWs from 'express-ws';
@@ -112,6 +114,75 @@ const isAllowedOrigin = (originHeader?: string | null) => {
 
   return allowedOrigins.includes(normalizedOrigin);
 };
+
+// Best-effort local assistant launcher to avoid 503s when the platform
+// start command doesn't run the helper script. This is a no-op if the
+// assistant is already healthy or disabled via ENABLE_AI_AGENT=0/false.
+async function ensureLocalAssistant(): Promise<void> {
+  const flag = (process.env.ENABLE_AI_AGENT ?? '1').toString().trim().toLowerCase();
+  if (['0', 'false', 'off', 'no', 'disabled'].includes(flag)) {
+    return;
+  }
+
+  const host = process.env.AI_AGENT_HOST || '127.0.0.1';
+  const port = parseInt(process.env.ASSISTANT_PORT || process.env.AI_AGENT_PORT || '5001', 10);
+  const healthUrl = process.env.AI_AGENT_HEALTH_URL || `http://${host}:${port}/health`;
+
+  try {
+    const r = await fetch(healthUrl);
+    if (r.ok) {
+      return; // already running
+    }
+  } catch {
+    // fall through and try to start
+  }
+
+  const scriptCandidates = [
+    path.resolve(__dirname, '../../Aiven.ai/assistant_server.py'),
+    path.resolve(__dirname, '../Aiven.ai/assistant_server.py'),
+  ];
+
+  const scriptPath = scriptCandidates.find(p => fs.existsSync(p));
+  if (!scriptPath) {
+    console.warn('[assistant] assistant_server.py not found; skipping local launch');
+    return;
+  }
+
+  const userSitePaths = [
+    '/opt/render/.local/lib/python3.11/site-packages',
+    '/opt/render/.local/lib/python3.12/site-packages',
+    '/opt/render/.local/lib/python3.13/site-packages',
+    process.env.PYTHONPATH || '',
+  ].filter(Boolean);
+
+  const child = spawn('python3', ['-u', scriptPath], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: {
+      ...process.env,
+      ASSISTANT_PORT: String(port),
+      PYTHONPATH: userSitePaths.join(':'),
+    },
+    detached: false,
+  });
+
+  child.stdout.on('data', chunk => {
+    try {
+      process.stdout.write(`[assistant] ${chunk.toString()}`);
+    } catch {
+      /* ignore */
+    }
+  });
+  child.stderr.on('data', chunk => {
+    try {
+      process.stderr.write(`[assistant] ${chunk.toString()}`);
+    } catch {
+      /* ignore */
+    }
+  });
+  child.on('exit', code => {
+    console.warn(`[assistant] process exited with code ${code}`);
+  });
+}
 
 const corsOptions: cors.CorsOptions = {
   origin: (origin, callback) => {
@@ -560,6 +631,11 @@ if (process.env.ENABLE_VENDOR_CALLING !== 'false') {
 // Use the regular app for all functionality
 const server = app.listen(PORT, HOST, async () => {
   console.log(`Server is running on port ${PORT}`);
+
+  // Try to start the local assistant in the background if not healthy
+  ensureLocalAssistant().catch(err => {
+    console.warn('[assistant] failed to launch:', err instanceof Error ? err.message : String(err));
+  });
 
   await verifyDatabaseConnection();
 });
