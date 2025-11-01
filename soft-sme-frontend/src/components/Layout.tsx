@@ -50,6 +50,9 @@ import { useMessaging } from '../contexts/MessagingContext';
 import AssistantWidget from './AssistantWidget';
 
 const drawerWidth = 240;
+const assistantPanelWidth = 360;
+const assistantPanelRightOffset = 24;
+const assistantDesktopTopOffset = 72;
 
 const Layout: React.FC = () => {
   const [mobileOpen, setMobileOpen] = React.useState(false);
@@ -58,6 +61,10 @@ const Layout: React.FC = () => {
   const { logout, user } = useAuth();
   const { unreadConversationCount } = useMessaging();
   const [pendingCount, setPendingCount] = useState<number>(0);
+  const [assistantOpen, setAssistantOpen] = useState(false);
+
+  const assistantInset = assistantPanelWidth + assistantPanelRightOffset;
+  const assistantInsetPx = `${assistantInset}px`;
 
   useEffect(() => {
     let mounted = true;
@@ -236,8 +243,10 @@ const Layout: React.FC = () => {
       <AppBar
         position="fixed"
         sx={{
-          width: { sm: `calc(100% - ${drawerWidth}px)` },
-          ml: { sm: `${drawerWidth}px` },
+          left: { xs: 0, sm: `${drawerWidth}px` },
+          right: { xs: 0, sm: assistantOpen ? assistantInsetPx : 0 },
+          width: { xs: '100%', sm: 'auto' },
+          transition: 'right 0.3s ease',
         }}
       >
         <Toolbar>
@@ -302,14 +311,27 @@ const Layout: React.FC = () => {
         sx={{
           flexGrow: 1,
           p: 3,
-          width: { sm: `calc(100% - ${drawerWidth}px)` },
+          width: {
+            xs: '100%',
+            sm: assistantOpen
+              ? `calc(100% - ${drawerWidth}px - ${assistantInset}px)`
+              : `calc(100% - ${drawerWidth}px)`,
+          },
+          transition: 'width 0.3s ease',
         }}
       >
         <Toolbar />
         <Outlet />
       </Box>
       {/* Floating AI Assistant bubble/panel */}
-      <AssistantWidget />
+      <AssistantWidget
+        open={assistantOpen}
+        onOpen={() => setAssistantOpen(true)}
+        onClose={() => setAssistantOpen(false)}
+        panelWidth={assistantPanelWidth}
+        rightOffset={assistantPanelRightOffset}
+        desktopTopOffset={assistantDesktopTopOffset}
+      />
     </Box>
   );
 };
