@@ -47,6 +47,7 @@ import { Tooltip } from '@mui/material';
 import { useEffect, useMemo, useState } from 'react';
 import { getPendingCount, syncPending } from '../services/offlineSync';
 import { useMessaging } from '../contexts/MessagingContext';
+import AssistantWidget from './AssistantWidget';
 
 const drawerWidth = 240;
 
@@ -307,6 +308,8 @@ const Layout: React.FC = () => {
         <Toolbar />
         <Outlet />
       </Box>
+      {/* Floating AI Assistant bubble/panel */}
+      <AssistantWidget />
     </Box>
   );
 };

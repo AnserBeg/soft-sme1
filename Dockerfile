@@ -1,46 +1,38 @@
-# ---------- build stage ----------
-FROM node:22-bookworm-slim AS build
+# Multi-runtime container: Node 20 + Python 3 to run backend (Node) and assistant (Python)
+FROM node:20-bullseye
 
-# System packages you might need during build (keep minimal)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates git \
- && rm -rf /var/lib/apt/lists/*
+# Install Python 3 + pip
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3 python3-pip \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Install deps first (better layer caching)
-COPY soft-sme-backend/package*.json ./
-RUN npm ci --include=dev
+# Copy package manifests first for better caching
+COPY soft-sme-backend/package*.json ./soft-sme-backend/
+COPY soft-sme-backend/tsconfig*.json ./soft-sme-backend/
 
-# Copy source and build
-COPY soft-sme-backend/ ./
+# Install Node deps and build
+WORKDIR /app/soft-sme-backend
+RUN npm ci
+
+# Copy the rest of the backend and agent code
+WORKDIR /app
+COPY . .
+
+# Build TypeScript
+WORKDIR /app/soft-sme-backend
 RUN npm run build
 
-# ---------- runtime stage ----------
-FROM node:22-bookworm-slim AS runtime
-
-# Install Tesseract + English data (and Poppler if you convert PDFs -> images)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    tesseract-ocr \
-    tesseract-ocr-eng \
-    poppler-utils \
- && rm -rf /var/lib/apt/lists/*
-
-ENV NODE_ENV=production \
-    PORT=10000
-
+# Install Python requirements for assistant
 WORKDIR /app
+RUN pip3 install -r Aiven.ai/requirements.txt
 
-# Only runtime files
-COPY --from=build /app/package*.json ./
-RUN npm ci --omit=dev
+# Expose no extra ports; Python listens on 127.0.0.1:5001 internally
 
-# Built JS
-COPY --from=build /app/dist ./dist
+# Render will run the default command; ensure script is executable
+WORKDIR /app/soft-sme-backend
+RUN chmod +x /app/start.sh
 
-# (Optional) If your app reads TESSERACT_PATH explicitly:
-ENV TESSERACT_PATH=/usr/bin/tesseract
+CMD ["/bin/bash", "/app/start.sh"]
 
-EXPOSE 10000
-# Bind to the port Render injects (we default to 10000 here)
-CMD ["node", "dist/index.js"]

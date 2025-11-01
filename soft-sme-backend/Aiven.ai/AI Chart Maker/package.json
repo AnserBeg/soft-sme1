@@ -1,0 +1,26 @@
+{
+  "name": "ai-chart-maker",
+  "version": "0.1.0",
+  "description": "AI chat bot that generates bar, pie, and line charts via Gemini function calling",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "demo": "node src/index.js --demo"
+  },
+  "keywords": [
+    "gemini",
+    "function-calling",
+    "charts",
+    "chartjs",
+    "cli"
+  ],
+  "author": "",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@google/genai": "^1.27.0",
+    "chart.js": "^4.5.1",
+    "chartjs-node-canvas": "^5.0.0",
+    "colorette": "^2.0.20"
+  }
+}

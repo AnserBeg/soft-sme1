@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Postgres AI Assistant</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body { font-family: system-ui, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; }
+      h1 { margin: 0 0 16px; font-size: 20px; }
+      .row { display: flex; gap: 16px; align-items: flex-start; }
+      .col { flex: 1; min-width: 300px; }
+      textarea, input, button { font: inherit; }
+      textarea { width: 100%; height: 90px; padding: 8px; }
+      button { padding: 10px 14px; cursor: pointer; }
+      .card { border: 1px solid #ccc; border-radius: 8px; padding: 12px; }
+      pre { white-space: pre-wrap; border: 1px dashed #999; padding: 8px; border-radius: 6px; overflow: auto; }
+      .muted { opacity: 0.75; font-size: 12px; }
+      .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+      @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+    </style>
+  </head>
+  <body>
+    <h1>Postgres AI Assistant</h1>
+    <div class="card">
+      <label for="prompt">Ask a question</label>
+      <textarea id="prompt" placeholder="e.g. sum of total_amount by customer for the last 30 days"></textarea>
+      <div class="row" style="margin-top:8px;">
+        <button id="runBtn">Run</button>
+        <span id="status" class="muted"></span>
+      </div>
+    </div>
+
+    <div class="grid" style="margin-top:16px;">
+      <div class="col">
+        <div class="card">
+          <strong>Summary</strong>
+          <pre id="summary"></pre>
+        </div>
+        <!-- SQL panel hidden to avoid exposing queries to end users -->
+        <div class="card" style="margin-top:16px; display:none;">
+          <strong>SQL</strong>
+          <pre id="sql"></pre>
+        </div>
+      </div>
+      <div class="col">
+        <div class="card">
+          <strong>Results (JSON)</strong>
+          <pre id="results"></pre>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const promptEl = document.getElementById('prompt');
+      const runBtn = document.getElementById('runBtn');
+      const statusEl = document.getElementById('status');
+      const summaryEl = document.getElementById('summary');
+      const sqlEl = document.getElementById('sql');
+      const resultsEl = document.getElementById('results');
+
+      async function callAPI(prompt) {
+        const res = await fetch('/prompt', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt })
+        });
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(text || `HTTP ${res.status}`);
+        }
+        return res.json();
+      }
+
+      async function onRun() {
+        const q = promptEl.value.trim();
+        if (!q) return;
+        summaryEl.textContent = '';
+        sqlEl.textContent = '';
+        resultsEl.textContent = '';
+        statusEl.textContent = 'Running...';
+        runBtn.disabled = true;
+        try {
+          const data = await callAPI(q);
+          summaryEl.textContent = data.summary || '';
+          sqlEl.textContent = data.sql || '';
+          // Pretty-print JSON results if parsable
+          try {
+            const parsed = JSON.parse(data.results || '[]');
+            resultsEl.textContent = JSON.stringify(parsed, null, 2);
+          } catch (_) {
+            resultsEl.textContent = data.results || '';
+          }
+          statusEl.textContent = 'Done';
+        } catch (err) {
+          statusEl.textContent = 'Error';
+          summaryEl.textContent = String(err.message || err);
+        } finally {
+          runBtn.disabled = false;
+        }
+      }
+
+      runBtn.addEventListener('click', onRun);
+      promptEl.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+          onRun();
+        }
+      });
+    </script>
+  </body>
+  </html>

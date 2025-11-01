@@ -62,6 +62,7 @@ import voiceSearchRoutes from './routes/voiceSearchRoutes';
 import taskRoutes from './routes/taskRoutes';
 import partFinderRoutes from './routes/partFinderRoutes';
 import inventoryVendorRoutes from './routes/inventoryVendorRoutes';
+import assistantRoutes from './routes/assistantRoutes';
 
 // Add error handling around chatRouter import
 let chatRouter: any;
@@ -247,6 +248,10 @@ console.log('Registered QBO auth routes');
 
 app.use('/api/qbo-accounts', authMiddleware, qboAccountRoutes);
 console.log('Registered QBO account routes');
+
+// AI Assistant (routes to local Python sidecar)
+app.use('/api/assistant', authMiddleware, assistantRoutes);
+console.log('Registered AI assistant routes');
 
 app.use('/api/qbo-export', authMiddleware, qboExportRoutes);
 console.log('Registered QBO export routes');
