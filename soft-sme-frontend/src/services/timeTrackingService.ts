@@ -24,7 +24,7 @@ export interface TimeEntry {
   sales_order_number: string;
   clock_in: string;
   clock_out: string | null;
-  duration: number | null;
+  duration: number | string | null;
   unit_price: number;
 }
 
@@ -35,7 +35,7 @@ export interface TimeEntryReport {
   sales_order_number: string;
   clock_in: string;
   clock_out: string | null;
-  duration: number | null;
+  duration: number | string | null;
   unit_price: number;
   total: number;
 }
