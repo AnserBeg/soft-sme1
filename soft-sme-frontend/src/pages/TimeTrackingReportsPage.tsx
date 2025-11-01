@@ -72,6 +72,52 @@ function formatDateAtLocalMidnight(date: Date) {
   return `${year}-${month}-${day}`;
 }
 
+function parseDurationHours(value: unknown): number | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value === 'number') {
+    return Number.isNaN(value) ? null : value;
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return null;
+    }
+
+    const numeric = Number(trimmed);
+    if (!Number.isNaN(numeric)) {
+      return numeric;
+    }
+
+    const hhmmssMatch = trimmed.match(/^(-?)(\d+):(\d{2})(?::(\d{2})(?:\.\d+)?)?$/);
+    if (hhmmssMatch) {
+      const sign = hhmmssMatch[1] === '-' ? -1 : 1;
+      const hours = parseInt(hhmmssMatch[2], 10);
+      const minutes = parseInt(hhmmssMatch[3], 10);
+      const seconds = hhmmssMatch[4] ? parseInt(hhmmssMatch[4], 10) : 0;
+      if (Number.isNaN(hours) || Number.isNaN(minutes) || Number.isNaN(seconds)) {
+        return null;
+      }
+      return sign * (hours + minutes / 60 + seconds / 3600);
+    }
+
+    const isoDurationMatch = trimmed.match(/^(-)?P?T?(?:(\d+(?:\.\d+)?)H)?(?:(\d+(?:\.\d+)?)M)?(?:(\d+(?:\.\d+)?)S)?$/i);
+    if (isoDurationMatch) {
+      const sign = isoDurationMatch[1] === '-' ? -1 : 1;
+      const hours = isoDurationMatch[2] ? parseFloat(isoDurationMatch[2]) : 0;
+      const minutes = isoDurationMatch[3] ? parseFloat(isoDurationMatch[3]) : 0;
+      const seconds = isoDurationMatch[4] ? parseFloat(isoDurationMatch[4]) : 0;
+      if ([hours, minutes, seconds].some(part => Number.isNaN(part))) {
+        return null;
+      }
+      return sign * (hours + minutes / 60 + seconds / 3600);
+    }
+  }
+
+  return null;
+}
+
 const TimeTrackingReportsPage: React.FC = () => {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [salesOrders, setSalesOrders] = useState<SalesOrder[]>([]);
@@ -451,11 +497,7 @@ const TimeTrackingReportsPage: React.FC = () => {
       }
       const inTime = new Date(shift.clock_in).getTime();
       const outTime = new Date(shift.clock_out).getTime();
-      const storedDuration = typeof shift.duration === 'number'
-        ? shift.duration
-        : shift.duration !== null && shift.duration !== undefined
-          ? Number(shift.duration)
-          : null;
+      const storedDuration = parseDurationHours(shift.duration);
       const dur = storedDuration !== null && !Number.isNaN(storedDuration)
         ? storedDuration
         : Math.max(0, (outTime - inTime) / (1000 * 60 * 60));
@@ -463,7 +505,8 @@ const TimeTrackingReportsPage: React.FC = () => {
       const entries = shiftEntries[shiftId] || [];
       let booked = 0;
       entries.forEach(e => {
-        const entryDur = typeof e.duration === 'number' ? e.duration : Number(e.duration) || 0;
+        const parsedEntryDuration = parseDurationHours(e.duration);
+        const entryDur = parsedEntryDuration !== null ? parsedEntryDuration : 0;
         booked += entryDur;
       });
       const idle = Math.max(0, dur - booked);
@@ -487,7 +530,8 @@ const TimeTrackingReportsPage: React.FC = () => {
     // When a sales order is selected, all reports are already filtered for that sales order
     reports.forEach(entry => {
       const pname = entry.profile_name || 'Unknown';
-      const dur = typeof entry.duration === 'number' ? entry.duration : Number(entry.duration) || 0;
+      const parsedDuration = parseDurationHours(entry.duration);
+      const dur = parsedDuration !== null ? parsedDuration : 0;
       soProfileTotals[pname] = (soProfileTotals[pname] || 0) + dur;
       if (!soProfileEntries[pname]) soProfileEntries[pname] = [];
       soProfileEntries[pname].push({ date: entry.date, duration: dur });
@@ -1066,13 +1110,15 @@ function ShiftSummaryCard({ shift, entries, expanded, onExpand, onAddEntry, setE
   const shiftIn = new Date(shift.clock_in);
   const shiftOut = shift.clock_out ? new Date(shift.clock_out) : null;
   // Use stored duration from database (which includes break deductions) instead of calculating raw duration
-  const shiftDuration = shift.duration !== null && shift.duration !== undefined ? Number(shift.duration) : 0;
+  const parsedShiftDuration = parseDurationHours(shift.duration);
+  const shiftDuration = parsedShiftDuration !== null ? parsedShiftDuration : 0;
   // Use profile name from shift data, fallback to lookup in profiles array
   const profileName = shift.profile_name || profiles.find(p => p.id === shift.profile_id)?.name || `Profile ${shift.profile_id}`;
   // Calculate total booked time from individual entries
   let booked = 0;
   entries.forEach(e => {
-    const dur = typeof e.duration === 'number' ? e.duration : Number(e.duration) || 0;
+    const parsed = parseDurationHours(e.duration);
+    const dur = parsed !== null ? parsed : 0;
     booked += dur;
   });
   const idle = Math.max(0, shiftDuration - booked);
@@ -1103,15 +1149,16 @@ function ShiftSummaryCard({ shift, entries, expanded, onExpand, onAddEntry, setE
         <Typography variant="body1" sx={{ mt: 1, fontSize: '1.1rem' }}>
           Shift: {shiftIn.toLocaleTimeString()} → {shiftOut ? shiftOut.toLocaleTimeString() : '-'} ({shiftDuration.toFixed(2)} hrs)
         </Typography>
-        {showBreakdown && (
-          <Box sx={{ mt: 1, ml: 2 }}>
-            {entries.map((entry, index) => {
-              const dur = typeof entry.duration === 'number' ? entry.duration : Number(entry.duration) || 0;
-              const clockIn = new Date(entry.clock_in);
-              const clockOut = entry.clock_out ? new Date(entry.clock_out) : null;
-              return (
-                <Typography key={entry.id || index} variant="body2" sx={{ fontSize: '1.1rem' }}>
-                  • {entry.sales_order_number}: {clockIn.toLocaleTimeString()} → {clockOut ? clockOut.toLocaleTimeString() : '-'} ({dur.toFixed(3)} hrs)
+          {showBreakdown && (
+            <Box sx={{ mt: 1, ml: 2 }}>
+              {entries.map((entry, index) => {
+                const parsedDuration = parseDurationHours(entry.duration);
+                const dur = parsedDuration !== null ? parsedDuration : 0;
+                const clockIn = new Date(entry.clock_in);
+                const clockOut = entry.clock_out ? new Date(entry.clock_out) : null;
+                return (
+                  <Typography key={entry.id || index} variant="body2" sx={{ fontSize: '1.1rem' }}>
+                    • {entry.sales_order_number}: {clockIn.toLocaleTimeString()} → {clockOut ? clockOut.toLocaleTimeString() : '-'} ({dur.toFixed(3)} hrs)
                 </Typography>
               );
             })}
