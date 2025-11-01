@@ -8,9 +8,20 @@ import pathlib
 
 # Dynamically load router.py from this directory so we don't require a package
 HERE = pathlib.Path(__file__).resolve().parent
-ROUTER_PATH = HERE / "router.py"
+
+# Prefer a router.py colocated with this file; fall back to the backend copy
+primary_router = HERE / "router.py"
+fallback_router = HERE.parent / "soft-sme-backend" / "Aiven.ai" / "router.py"
+
+ROUTER_PATH = primary_router if primary_router.exists() else fallback_router
+
+if not ROUTER_PATH.exists():
+    raise RuntimeError(
+        f"router.py not found. Checked: {primary_router} and {fallback_router}"
+    )
+
 spec = importlib.util.spec_from_file_location("aiven_router", str(ROUTER_PATH))
-assert spec and spec.loader, "Failed to load router module"
+assert spec and spec.loader, f"Failed to load router module from {ROUTER_PATH}"
 router_mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(router_mod)  # type: ignore
 
