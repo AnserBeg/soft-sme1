@@ -14,6 +14,31 @@ type AssistantEndpoints = {
 const CHAT_SUFFIXES = ['/assistant', '/chat', '/chat/completions'];
 const HEALTH_SUFFIXES = ['/healthz', '/health', '/status'];
 
+function parseDisabledFlag(raw?: string | null): boolean {
+  if (!raw) {
+    return false;
+  }
+
+  const normalized = raw.trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  return ['0', 'false', 'no', 'off', 'disable', 'disabled'].includes(normalized);
+}
+
+function assistantDisabledState(): { disabled: boolean; reason?: string } {
+  if (parseDisabledFlag(process.env.ENABLE_AI_AGENT)) {
+    return { disabled: true, reason: 'Assistant disabled via ENABLE_AI_AGENT flag' };
+  }
+
+  if (parseDisabledFlag(process.env.ASSISTANT_DISABLED)) {
+    return { disabled: true, reason: 'Assistant disabled via ASSISTANT_DISABLED flag' };
+  }
+
+  return { disabled: false };
+}
+
 function parseAbsoluteUrl(raw?: string | null): URL | undefined {
   if (!raw) {
     return undefined;
@@ -78,6 +103,7 @@ function joinRelativePath(base: URL, relativePath: string): string {
 function resolveAssistantEndpoints(): AssistantEndpoints {
   const explicitCandidates = [
     process.env.ASSISTANT_API_URL,
+    process.env.AI_AGENT_CHAT_URL,
     process.env.AI_AGENT_REMOTE_URL,
     process.env.AI_AGENT_ENDPOINT,
   ];
@@ -203,12 +229,51 @@ const assistantHeaders = buildAuthHeaders();
 
 function mapAssistantError(err: unknown) {
   if (err instanceof Error) {
-    return err.message;
+    const parts = [err.message];
+    const cause = (err as any)?.cause;
+    if (cause && typeof cause === 'object') {
+      const code = (cause as any)?.code;
+      const address = (cause as any)?.address;
+      const port = (cause as any)?.port;
+      const causeParts: string[] = [];
+      if (code) {
+        causeParts.push(String(code));
+      }
+      if (address) {
+        causeParts.push(String(address));
+      }
+      if (port) {
+        causeParts.push(`port ${port}`);
+      }
+      if (causeParts.length) {
+        parts.push(`(${causeParts.join(' ')})`);
+      }
+    }
+    return parts.join(' ');
   }
   return String(err);
 }
 
+function isConnectionRefused(err: unknown): boolean {
+  const cause = (err as any)?.cause;
+  const code = (cause as any)?.code || (err as any)?.code;
+  if (typeof code === 'string' && code.toUpperCase() === 'ECONNREFUSED') {
+    return true;
+  }
+  const message = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase();
+  return message.includes('econnrefused') || message.includes('connection refused');
+}
+
 router.get('/health', async (_req: Request, res: Response) => {
+  const disabled = assistantDisabledState();
+  if (disabled.disabled) {
+    return res.status(503).json({
+      status: 'disabled',
+      reason: disabled.reason,
+      endpoint: assistantEndpoints.healthUrl,
+    });
+  }
+
   try {
     const r = await _fetch(assistantEndpoints.healthUrl, {
       headers: assistantHeaders,
@@ -223,6 +288,14 @@ router.get('/health', async (_req: Request, res: Response) => {
 });
 
 router.post('/', async (req: Request, res: Response) => {
+  const disabled = assistantDisabledState();
+  if (disabled.disabled) {
+    return res.status(503).json({
+      message: 'Assistant service is disabled',
+      reason: disabled.reason,
+    });
+  }
+
   try {
     const { prompt, mode } = req.body || {};
     if (!prompt || typeof prompt !== 'string') {
@@ -243,10 +316,14 @@ router.post('/', async (req: Request, res: Response) => {
     const j = await r.json();
     res.json(j);
   } catch (err) {
-    res.status(500).json({
-      message: 'Failed to call assistant',
+    const unreachable = isConnectionRefused(err);
+    res.status(unreachable ? 503 : 500).json({
+      message: unreachable ? 'Assistant service is unreachable' : 'Failed to call assistant',
       error: mapAssistantError(err),
       endpoint: assistantEndpoints.chatUrl,
+      hint: unreachable
+        ? 'Verify the AI agent service is running or configure ENABLE_AI_AGENT=1 / AI_AGENT_REMOTE_URL.'
+        : undefined,
     });
   }
 });
