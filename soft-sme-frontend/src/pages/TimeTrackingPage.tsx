@@ -35,7 +35,8 @@ import {
   clockOut,
   Profile,
   SalesOrder,
-  TimeEntry
+  TimeEntry,
+  formatDurationDisplay
 } from '../services/timeTrackingService';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -361,11 +362,7 @@ const TimeTrackingPage: React.FC = () => {
                             ? new Date(entry.clock_out).toLocaleTimeString()
                             : '-'}
                         </TableCell>
-                        <TableCell sx={{ fontSize: '1.1rem' }}>
-                          {entry.duration !== null && entry.duration !== undefined && !isNaN(Number(entry.duration))
-                            ? `${Number(entry.duration).toFixed(3)} hrs`
-                            : '-'}
-                        </TableCell>
+                        <TableCell sx={{ fontSize: '1.1rem' }}>{formatDurationDisplay(entry.duration)}</TableCell>
                         <TableCell sx={{ fontSize: '1.1rem' }}>
                           {!entry.clock_out && (
                             <Button

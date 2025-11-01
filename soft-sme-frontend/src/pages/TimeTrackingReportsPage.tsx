@@ -39,7 +39,9 @@ import {
   TimeEntryReport,
   updateTimeEntry,
   createTimeEntry,
-  deleteTimeEntry
+  deleteTimeEntry,
+  parseDurationHours,
+  formatDurationDisplay
 } from '../services/timeTrackingService';
 import { getShiftsInRange, updateShift, createShift, deleteShift as deleteShiftRecord } from '../services/attendanceService';
 import api from '../api/axios';
@@ -70,57 +72,6 @@ function formatDateAtLocalMidnight(date: Date) {
   const month = String(normalized.getMonth() + 1).padStart(2, '0');
   const day = String(normalized.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
-}
-
-function parseDurationHours(value: unknown): number | null {
-  if (value === null || value === undefined) {
-    return null;
-  }
-  if (typeof value === 'number') {
-    return Number.isNaN(value) ? null : value;
-  }
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    if (!trimmed) {
-      return null;
-    }
-
-    const numeric = Number(trimmed);
-    if (!Number.isNaN(numeric)) {
-      return numeric;
-    }
-
-    const hhmmssMatch = trimmed.match(/^(-?)(\d+):(\d{2})(?::(\d{2})(?:\.\d+)?)?$/);
-    if (hhmmssMatch) {
-      const sign = hhmmssMatch[1] === '-' ? -1 : 1;
-      const hours = parseInt(hhmmssMatch[2], 10);
-      const minutes = parseInt(hhmmssMatch[3], 10);
-      const seconds = hhmmssMatch[4] ? parseInt(hhmmssMatch[4], 10) : 0;
-      if (Number.isNaN(hours) || Number.isNaN(minutes) || Number.isNaN(seconds)) {
-        return null;
-      }
-      return sign * (hours + minutes / 60 + seconds / 3600);
-    }
-
-    const isoDurationMatch = trimmed.match(/^(-)?P?T?(?:(\d+(?:\.\d+)?)H)?(?:(\d+(?:\.\d+)?)M)?(?:(\d+(?:\.\d+)?)S)?$/i);
-    if (isoDurationMatch) {
-      const sign = isoDurationMatch[1] === '-' ? -1 : 1;
-      const hours = isoDurationMatch[2] ? parseFloat(isoDurationMatch[2]) : 0;
-      const minutes = isoDurationMatch[3] ? parseFloat(isoDurationMatch[3]) : 0;
-      const seconds = isoDurationMatch[4] ? parseFloat(isoDurationMatch[4]) : 0;
-      if ([hours, minutes, seconds].some(part => Number.isNaN(part))) {
-        return null;
-      }
-      return sign * (hours + minutes / 60 + seconds / 3600);
-    }
-  }
-
-  return null;
-}
-
-function formatDurationDisplay(value: unknown, fractionDigits = 3): string {
-  const parsed = parseDurationHours(value);
-  return parsed !== null && !Number.isNaN(parsed) ? `${parsed.toFixed(fractionDigits)} hrs` : '-';
 }
 
 const TimeTrackingReportsPage: React.FC = () => {
