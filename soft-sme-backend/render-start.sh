@@ -61,7 +61,7 @@ if [[ -d "${APT_ROOT}/usr/share/tesseract-ocr/4.00/tessdata" ]]; then
 fi
 
 ASSISTANT_PID=""
-ASSISTANT_SCRIPT="${SCRIPT_DIR}/Aiven.ai/assistant_server.py"
+ASSISTANT_SCRIPT="${SCRIPT_DIR}/../Aiven.ai/assistant_server.py"
 ENABLE_AI_AGENT_FLAG="${ENABLE_AI_AGENT:-1}"
 ASSISTANT_SCRIPT_PRESENT="no"
 if [[ -f "${ASSISTANT_SCRIPT}" ]]; then
