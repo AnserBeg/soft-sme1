@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Box,
   Container,
@@ -120,6 +120,17 @@ const TimeTrackingReportsPage: React.FC = () => {
   const [shiftToDelete, setShiftToDelete] = useState<any | null>(null);
   const [deletingShift, setDeletingShift] = useState(false);
   const [deleteShiftError, setDeleteShiftError] = useState<string | null>(null);
+  const [dailyBreakStart, setDailyBreakStart] = useState<string | null>(null);
+  const [dailyBreakEnd, setDailyBreakEnd] = useState<string | null>(null);
+  const browserTimeZone = useMemo(() => {
+    try {
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      return tz || 'UTC';
+    } catch (err) {
+      console.warn('Unable to determine browser timezone, defaulting to UTC.', err);
+      return 'UTC';
+    }
+  }, []);
 
   useEffect(() => {
     fetchData();
@@ -134,6 +145,12 @@ const TimeTrackingReportsPage: React.FC = () => {
       ]);
       setProfiles(profilesData);
       setSalesOrders(salesOrdersData);
+      const [breakStartResponse, breakEndResponse] = await Promise.all([
+        api.get('/api/settings/daily-break-start').catch(() => null),
+        api.get('/api/settings/daily-break-end').catch(() => null)
+      ]);
+      setDailyBreakStart(breakStartResponse?.data?.daily_break_start ?? null);
+      setDailyBreakEnd(breakEndResponse?.data?.daily_break_end ?? null);
       setError(null);
     } catch (err) {
       setError('Failed to fetch data. Please try again.');
@@ -453,10 +470,14 @@ const TimeTrackingReportsPage: React.FC = () => {
       }
       const inTime = new Date(shift.clock_in).getTime();
       const outTime = new Date(shift.clock_out).getTime();
-      const storedDuration = parseDurationHours(shift.duration);
-      const dur = storedDuration !== null && !Number.isNaN(storedDuration)
-        ? storedDuration
-        : Math.max(0, (outTime - inTime) / (1000 * 60 * 60));
+      const dur = resolveShiftDurationHours(
+        shift.duration,
+        shift.clock_in,
+        shift.clock_out,
+        dailyBreakStart,
+        dailyBreakEnd,
+        browserTimeZone
+      );
       // Find all entries for this shift
       const entries = shiftEntries[shiftId] || [];
       let booked = 0;
@@ -751,6 +772,9 @@ const TimeTrackingReportsPage: React.FC = () => {
                     setError={setError}
                     onDeleteShift={handleRequestDeleteShift}
                     onDeleteEntry={handleRequestDeleteEntry}
+                    dailyBreakStart={dailyBreakStart}
+                    dailyBreakEnd={dailyBreakEnd}
+                    timeZone={browserTimeZone}
                   />
                 );
               })}
@@ -1058,12 +1082,214 @@ function triggerDownload(blob: Blob, filename: string) {
   document.body.removeChild(a);
 }
 
-function ShiftSummaryCard({ shift, entries, expanded, onExpand, onAddEntry, setEditEntry, setEditClockIn, setEditClockOut, profiles, setEditShift, showBreakdown, setEditEntryError, setError, onDeleteShift, onDeleteEntry }: { shift: any, entries: any[], expanded: boolean, onExpand: () => void, onAddEntry: (shift: any) => void, setEditEntry: any, setEditClockIn: any, setEditClockOut: any, profiles: any[], setEditShift: any, showBreakdown: boolean, setEditEntryError: any, setError: any, onDeleteShift: (shift: any) => void, onDeleteEntry: (entry: any) => void }) {
+function resolveShiftDurationHours(
+  durationValue: unknown,
+  clockIn: string | null,
+  clockOut: string | null,
+  breakStart: string | null,
+  breakEnd: string | null,
+  timeZone: string,
+): number {
+  const parsed = parseDurationHours(durationValue);
+  if (parsed !== null && !Number.isNaN(parsed)) {
+    return parsed;
+  }
+
+  if (!clockIn || !clockOut) {
+    return 0;
+  }
+
+  const clockInDate = new Date(clockIn);
+  const clockOutDate = new Date(clockOut);
+  if (
+    Number.isNaN(clockInDate.getTime()) ||
+    Number.isNaN(clockOutDate.getTime()) ||
+    clockOutDate.getTime() <= clockInDate.getTime()
+  ) {
+    return 0;
+  }
+
+  return calculateEffectiveDurationClient(clockInDate, clockOutDate, breakStart, breakEnd, timeZone);
+}
+
+function calculateEffectiveDurationClient(
+  clockIn: Date,
+  clockOut: Date,
+  breakStart: string | null,
+  breakEnd: string | null,
+  timeZone: string,
+): number {
+  let durationMs = clockOut.getTime() - clockIn.getTime();
+
+  if (breakStart && breakEnd) {
+    const normalizedTimeZone = normalizeTimeZoneClient(timeZone);
+    const breakMs = calculateBreakOverlapMs(clockIn, clockOut, breakStart, breakEnd, normalizedTimeZone);
+    durationMs -= breakMs;
+  }
+
+  const durationHours = Math.max(0, durationMs / (1000 * 60 * 60));
+  return Math.round(durationHours * 100) / 100;
+}
+
+function normalizeTimeZoneClient(timeZone?: string | null): string {
+  const candidate = (timeZone || '').trim();
+  if (!candidate) {
+    return 'UTC';
+  }
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: candidate });
+    return candidate;
+  } catch {
+    console.warn(`Invalid timezone "${candidate}" supplied. Falling back to UTC.`);
+    return 'UTC';
+  }
+}
+
+function calculateBreakOverlapMs(
+  clockIn: Date,
+  clockOut: Date,
+  breakStartStr: string,
+  breakEndStr: string,
+  timeZone: string,
+): number {
+  let totalBreakMs = 0;
+
+  const isMultiDayShift =
+    clockOut.getUTCDate() !== clockIn.getUTCDate() ||
+    clockOut.getUTCMonth() !== clockIn.getUTCMonth() ||
+    clockOut.getUTCFullYear() !== clockIn.getUTCFullYear();
+
+  if (isMultiDayShift) {
+    const daysDiff = Math.round(
+      (Date.UTC(clockOut.getUTCFullYear(), clockOut.getUTCMonth(), clockOut.getUTCDate()) -
+        Date.UTC(clockIn.getUTCFullYear(), clockIn.getUTCMonth(), clockIn.getUTCDate())) /
+        (1000 * 60 * 60 * 24),
+    );
+
+    for (let i = 0; i <= daysDiff; i++) {
+      const baseDay = addDaysClient(clockIn, i);
+      const { start, end } = getBreakWindow(baseDay, breakStartStr, breakEndStr, timeZone);
+      const overlapStart = Math.max(clockIn.getTime(), start.getTime());
+      const overlapEnd = Math.min(clockOut.getTime(), end.getTime());
+      if (overlapEnd > overlapStart) {
+        totalBreakMs += overlapEnd - overlapStart;
+      }
+    }
+  } else {
+    const { start, end } = getBreakWindow(clockIn, breakStartStr, breakEndStr, timeZone);
+    const overlapStart = Math.max(clockIn.getTime(), start.getTime());
+    const overlapEnd = Math.min(clockOut.getTime(), end.getTime());
+    if (overlapEnd > overlapStart) {
+      totalBreakMs += overlapEnd - overlapStart;
+    }
+  }
+
+  return Math.max(0, totalBreakMs);
+}
+
+function getBreakWindow(
+  baseDate: Date,
+  breakStartStr: string,
+  breakEndStr: string,
+  timeZone: string,
+): { start: Date; end: Date } {
+  const start = makeZonedDateClient(baseDate, breakStartStr, timeZone);
+  let end = makeZonedDateClient(baseDate, breakEndStr, timeZone);
+
+  if (end.getTime() <= start.getTime()) {
+    end = makeZonedDateClient(addDaysClient(baseDate, 1), breakEndStr, timeZone);
+  }
+
+  return { start, end };
+}
+
+function makeZonedDateClient(baseDate: Date, timeStr: string, timeZone: string): Date {
+  const [rawHour = '0', rawMinute = '0'] = timeStr.split(':');
+  const hours = Number(rawHour);
+  const minutes = Number(rawMinute);
+
+  if (Number.isNaN(hours) || Number.isNaN(minutes)) {
+    return new Date(baseDate.getTime());
+  }
+
+  const { year, month, day } = getDatePartsInZoneClient(baseDate, timeZone);
+  const candidateUtc = new Date(Date.UTC(year, month - 1, day, hours, minutes, 0, 0));
+  const offsetMinutes = getTimeZoneOffsetClient(candidateUtc, timeZone);
+  return new Date(candidateUtc.getTime() - offsetMinutes * 60 * 1000);
+}
+
+function getDatePartsInZoneClient(date: Date, timeZone: string): { year: number; month: number; day: number } {
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+
+  const parts = formatter.formatToParts(date);
+  const lookup = parts.reduce<Record<string, string>>((acc, part) => {
+    if (part.type !== 'literal') {
+      acc[part.type] = part.value;
+    }
+    return acc;
+  }, {});
+
+  return {
+    year: Number(lookup.year),
+    month: Number(lookup.month),
+    day: Number(lookup.day),
+  };
+}
+
+function getTimeZoneOffsetClient(date: Date, timeZone: string): number {
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hour12: false,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+
+  const parts = formatter.formatToParts(date);
+  const lookup = parts.reduce<Record<string, string>>((acc, part) => {
+    if (part.type !== 'literal') {
+      acc[part.type] = part.value;
+    }
+    return acc;
+  }, {});
+
+  const utcEquivalent = Date.UTC(
+    Number(lookup.year),
+    Number(lookup.month) - 1,
+    Number(lookup.day),
+    Number(lookup.hour),
+    Number(lookup.minute),
+    Number(lookup.second),
+  );
+
+  return (utcEquivalent - date.getTime()) / (1000 * 60);
+}
+
+function addDaysClient(date: Date, days: number): Date {
+  const result = new Date(date.getTime());
+  result.setUTCDate(result.getUTCDate() + days);
+  return result;
+}
+
+function ShiftSummaryCard({ shift, entries, expanded, onExpand, onAddEntry, setEditEntry, setEditClockIn, setEditClockOut, profiles, setEditShift, showBreakdown, setEditEntryError, setError, onDeleteShift, onDeleteEntry, dailyBreakStart, dailyBreakEnd, timeZone }: { shift: any, entries: any[], expanded: boolean, onExpand: () => void, onAddEntry: (shift: any) => void, setEditEntry: any, setEditClockIn: any, setEditClockOut: any, profiles: any[], setEditShift: any, showBreakdown: boolean, setEditEntryError: any, setError: any, onDeleteShift: (shift: any) => void, onDeleteEntry: (entry: any) => void, dailyBreakStart: string | null, dailyBreakEnd: string | null, timeZone: string }) {
   const shiftIn = new Date(shift.clock_in);
   const shiftOut = shift.clock_out ? new Date(shift.clock_out) : null;
-  // Use stored duration from database (which includes break deductions) instead of calculating raw duration
-  const parsedShiftDuration = parseDurationHours(shift.duration);
-  const shiftDuration = parsedShiftDuration !== null ? parsedShiftDuration : 0;
+  const shiftDuration = resolveShiftDurationHours(
+    shift.duration,
+    shift.clock_in,
+    shift.clock_out,
+    dailyBreakStart,
+    dailyBreakEnd,
+    timeZone,
+  );
   // Use profile name from shift data, fallback to lookup in profiles array
   const profileName = shift.profile_name || profiles.find(p => p.id === shift.profile_id)?.name || `Profile ${shift.profile_id}`;
   // Calculate total booked time from individual entries
