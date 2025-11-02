@@ -1,10 +1,53 @@
 import os
+import sys
 import json
 from typing import Optional, Tuple
 
-from flask import Flask, request, jsonify
 import importlib.util
 import pathlib
+
+# Ensure user site-packages are importable on managed runtimes (Render native)
+def _ensure_python_paths():
+    try:
+        import site  # noqa: F401
+        user_site = None
+        try:
+            # May fail on some stripped builds
+            user_site = site.getusersitepackages()  # type: ignore[attr-defined]
+        except Exception:
+            user_site = None
+        candidates = []
+        if user_site:
+            candidates.append(user_site)
+        # Also respect PYTHONPATH entries
+        env_pp = os.getenv("PYTHONPATH", "")
+        if env_pp:
+            candidates.extend([p for p in env_pp.split(":") if p])
+        # Common Render user-site locations
+        candidates.extend([
+            "/opt/render/.local/lib/python3.13/site-packages",
+            "/opt/render/.local/lib/python3.12/site-packages",
+            "/opt/render/.local/lib/python3.11/site-packages",
+        ])
+
+        added = 0
+        for p in candidates:
+            if p and os.path.isdir(p) and p not in sys.path:
+                sys.path.append(p)
+                added += 1
+        if added:
+            print(f"[assistant] Added {added} site-packages paths for import")
+    except Exception as e:
+        print(f"[assistant] Failed to adjust PYTHONPATH: {e}")
+
+_ensure_python_paths()
+
+try:
+    from flask import Flask, request, jsonify
+except Exception as e:
+    # Last resort: print diagnostic and exit clearly
+    print("[assistant] Unable to import Flask. sys.path=\n" + "\n".join(sys.path))
+    raise
 
 # Dynamically load router.py from this directory so we don't require a package
 HERE = pathlib.Path(__file__).resolve().parent
