@@ -178,6 +178,18 @@ def health():
     })
 
 
+@app.get("/healthz")
+def healthz():
+    # Alias for platforms expecting /healthz
+    return health()
+
+
+@app.get("/")
+def root():
+    # Basic root endpoint to avoid 404s on HEAD/GET /
+    return jsonify({"service": "assistant", "status": "ok"})
+
+
 @app.post("/assistant")
 def assistant():
     try:

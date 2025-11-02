@@ -98,15 +98,38 @@ if [[ -n "${added_path}" ]]; then
 fi
 
 if [[ "${ENABLE_AI_AGENT_FLAG}" != "0" && -f "${ASSISTANT_SCRIPT}" ]]; then
-  if command -v python3 >/dev/null 2>&1; then
+  # Prefer project-local virtualenv python if present
+  PY_BIN="python3"
+  if [[ -x "${SCRIPT_DIR}/../.venv/bin/python3" ]]; then
+    PY_BIN="${SCRIPT_DIR}/../.venv/bin/python3"
+  fi
+
+  if command -v "${PY_BIN}" >/dev/null 2>&1 || [[ -x "${PY_BIN}" ]]; then
     export ASSISTANT_PORT="${ASSISTANT_PORT:-5001}"
     export ASSISTANT_API_URL="${ASSISTANT_API_URL:-http://127.0.0.1:${ASSISTANT_PORT}}"
-    log "Starting local assistant service on ${ASSISTANT_API_URL}"
-    python3 -u "${ASSISTANT_SCRIPT}" &
+
+    # Ensure Python deps are in place (idempotent, uses pip cache if configured)
+    if [[ -f "${SCRIPT_DIR}/../Aiven.ai/requirements.txt" ]]; then
+      log "Ensuring assistant Python deps are installed"
+      "${PY_BIN}" -m pip install --disable-pip-version-check -r "${SCRIPT_DIR}/../Aiven.ai/requirements.txt" >/dev/null 2>&1 || true
+    fi
+
+    # Run via gunicorn if available; fallback to Flask dev server otherwise
+    if "${PY_BIN}" -m gunicorn --version >/dev/null 2>&1; then
+      log "Starting local assistant with gunicorn on ${ASSISTANT_API_URL}"
+      (
+        cd "${SCRIPT_DIR}/../Aiven.ai" && \
+        "${PY_BIN}" -m gunicorn -w 1 -b "127.0.0.1:${ASSISTANT_PORT}" "assistant_server:app"
+      ) &
+    else
+      log "Starting local assistant service on ${ASSISTANT_API_URL}"
+      "${PY_BIN}" -u "${ASSISTANT_SCRIPT}" &
+    fi
+
     ASSISTANT_PID=$!
     trap 'if [[ -n "${ASSISTANT_PID}" ]]; then kill "${ASSISTANT_PID}" 2>/dev/null || true; fi' EXIT
   else
-    log "python3 not available; skipping assistant service startup"
+    log "python not available; skipping assistant service startup"
   fi
 else
   log "Assistant service start skipped (ENABLE_AI_AGENT=${ENABLE_AI_AGENT_FLAG}, script present: ${ASSISTANT_SCRIPT_PRESENT})"
