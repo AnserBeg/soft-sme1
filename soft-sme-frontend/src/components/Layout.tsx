@@ -50,9 +50,9 @@ import { useMessaging } from '../contexts/MessagingContext';
 import AssistantWidget from './AssistantWidget';
 
 const drawerWidth = 240;
-const assistantPanelWidth = 360;
-const assistantPanelRightOffset = 24;
-const assistantDesktopTopOffset = 72;
+const defaultAssistantWidth = 360;
+const minAssistantWidth = 280;
+const maxAssistantWidth = 640;
 
 const Layout: React.FC = () => {
   const [mobileOpen, setMobileOpen] = React.useState(false);
@@ -62,9 +62,7 @@ const Layout: React.FC = () => {
   const { unreadConversationCount } = useMessaging();
   const [pendingCount, setPendingCount] = useState<number>(0);
   const [assistantOpen, setAssistantOpen] = useState(false);
-
-  const assistantInset = assistantPanelWidth + assistantPanelRightOffset;
-  const assistantInsetPx = `${assistantInset}px`;
+  const [assistantWidth, setAssistantWidth] = useState(defaultAssistantWidth);
 
   useEffect(() => {
     let mounted = true;
@@ -244,9 +242,7 @@ const Layout: React.FC = () => {
         position="fixed"
         sx={{
           left: { xs: 0, sm: `${drawerWidth}px` },
-          right: { xs: 0, sm: assistantOpen ? assistantInsetPx : 0 },
-          width: { xs: '100%', sm: 'auto' },
-          transition: 'right 0.3s ease',
+          width: { xs: '100%', sm: `calc(100% - ${drawerWidth}px)` },
         }}
       >
         <Toolbar>
@@ -306,32 +302,31 @@ const Layout: React.FC = () => {
           {drawer}
         </Drawer>
       </Box>
-      <Box
-        component="main"
-        sx={{
-          flexGrow: 1,
-          p: 3,
-          width: {
-            xs: '100%',
-            sm: assistantOpen
-              ? `calc(100% - ${drawerWidth}px - ${assistantInset}px)`
-              : `calc(100% - ${drawerWidth}px)`,
-          },
-          transition: 'width 0.3s ease',
-        }}
-      >
-        <Toolbar />
-        <Outlet />
+      <Box sx={{ flexGrow: 1, display: 'flex', minHeight: '100vh' }}>
+        <Box
+          component="main"
+          sx={{
+            flexGrow: 1,
+            p: 3,
+            width: '100%',
+            minWidth: 0,
+          }}
+        >
+          <Toolbar />
+          <Outlet />
+        </Box>
+        {/* Desktop assistant panel */}
+        <AssistantWidget
+          open={assistantOpen}
+          onOpen={() => setAssistantOpen(true)}
+          onClose={() => setAssistantOpen(false)}
+          panelWidth={defaultAssistantWidth}
+          desktopWidth={assistantWidth}
+          onDesktopResize={(width) => setAssistantWidth(Math.min(Math.max(width, minAssistantWidth), maxAssistantWidth))}
+          desktopMinWidth={minAssistantWidth}
+          desktopMaxWidth={maxAssistantWidth}
+        />
       </Box>
-      {/* Floating AI Assistant bubble/panel */}
-      <AssistantWidget
-        open={assistantOpen}
-        onOpen={() => setAssistantOpen(true)}
-        onClose={() => setAssistantOpen(false)}
-        panelWidth={assistantPanelWidth}
-        rightOffset={assistantPanelRightOffset}
-        desktopTopOffset={assistantDesktopTopOffset}
-      />
     </Box>
   );
 };
