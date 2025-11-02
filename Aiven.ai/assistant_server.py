@@ -43,6 +43,30 @@ def _ensure_python_paths():
 
 _ensure_python_paths()
 
+def _in_virtualenv() -> bool:
+    try:
+        # Strong heuristics: path contains a typical venv folder or prefixes differ
+        if any(p and '/.venv/' in p for p in [sys.prefix, sys.executable]):
+            return True
+        base_prefix = getattr(sys, 'base_prefix', sys.prefix)
+        real_prefix = getattr(sys, 'real_prefix', None)
+        if real_prefix is not None:
+            return True
+        if sys.prefix != base_prefix:
+            return True
+        # site.getsitepackages() may include the venv path
+        try:
+            import site  # noqa: F401
+            for sp in getattr(site, 'getsitepackages', lambda: [])():
+                if '/.venv/' in sp:
+                    return True
+        except Exception:
+            pass
+        return bool(os.getenv('VIRTUAL_ENV'))
+    except Exception:
+        return bool(os.getenv('VIRTUAL_ENV'))
+
+
 def _bootstrap_deps() -> bool:
     try:
         here = pathlib.Path(__file__).resolve().parent
@@ -54,7 +78,11 @@ def _bootstrap_deps() -> bool:
         if not req:
             print("[assistant] No requirements.txt found to bootstrap deps")
             return False
-        cmd = [sys.executable, "-m", "pip", "install", "--user", "--break-system-packages", "-r", str(req)]
+        install_args = ["-r", str(req)]
+        if not _in_virtualenv():
+            # Installing into system or user site; allow breaking managed envs and use --user
+            install_args = ["--break-system-packages", "--user"] + install_args
+        cmd = [sys.executable, "-m", "pip", "install", *install_args]
         print(f"[assistant] Bootstrapping Python deps via: {' '.join(cmd)}")
         res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         print(res.stdout)
