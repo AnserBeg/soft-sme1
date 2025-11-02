@@ -4,6 +4,7 @@ import json
 from typing import Optional, Tuple
 
 import importlib.util
+import subprocess
 import pathlib
 
 # Ensure user site-packages are importable on managed runtimes (Render native)
@@ -42,12 +43,35 @@ def _ensure_python_paths():
 
 _ensure_python_paths()
 
+def _bootstrap_deps() -> bool:
+    try:
+        here = pathlib.Path(__file__).resolve().parent
+        candidates = [
+            here / "requirements.txt",
+            here.parent / "soft-sme-backend" / "Aiven.ai" / "requirements.txt",
+        ]
+        req = next((p for p in candidates if p.exists()), None)
+        if not req:
+            print("[assistant] No requirements.txt found to bootstrap deps")
+            return False
+        cmd = [sys.executable, "-m", "pip", "install", "--user", "--break-system-packages", "-r", str(req)]
+        print(f"[assistant] Bootstrapping Python deps via: {' '.join(cmd)}")
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        print(res.stdout)
+        return res.returncode == 0
+    except Exception as ex:
+        print(f"[assistant] Failed to bootstrap deps: {ex}")
+        return False
+
 try:
     from flask import Flask, request, jsonify
-except Exception as e:
-    # Last resort: print diagnostic and exit clearly
+except Exception:
     print("[assistant] Unable to import Flask. sys.path=\n" + "\n".join(sys.path))
-    raise
+    if _bootstrap_deps():
+        _ensure_python_paths()
+        from flask import Flask, request, jsonify  # type: ignore
+    else:
+        raise
 
 # Dynamically load router.py from this directory so we don't require a package
 HERE = pathlib.Path(__file__).resolve().parent
