@@ -45,14 +45,18 @@ import {
 import { useAuth } from '../contexts/AuthContext';
 import { Tooltip } from '@mui/material';
 import { useEffect, useMemo, useState } from 'react';
-import { getPendingCount, syncPending } from '../services/offlineSync';
+import { getPendingCount } from '../services/offlineSync';
 import { useMessaging } from '../contexts/MessagingContext';
 import AssistantWidget from './AssistantWidget';
 
 const drawerWidth = 240;
-const assistantPanelWidth = 360;
+const defaultAssistantWidth = 360;
 const assistantPanelRightOffset = 24;
 const assistantDesktopTopOffset = 72;
+const assistantDesktopBottomOffset = 32;
+const assistantResizeHandleWidth = 12;
+const minAssistantWidth = 280;
+const maxAssistantWidth = 640;
 
 const Layout: React.FC = () => {
   const [mobileOpen, setMobileOpen] = React.useState(false);
@@ -62,9 +66,7 @@ const Layout: React.FC = () => {
   const { unreadConversationCount } = useMessaging();
   const [pendingCount, setPendingCount] = useState<number>(0);
   const [assistantOpen, setAssistantOpen] = useState(false);
-
-  const assistantInset = assistantPanelWidth + assistantPanelRightOffset;
-  const assistantInsetPx = `${assistantInset}px`;
+  const [assistantWidth, setAssistantWidth] = useState(defaultAssistantWidth);
 
   useEffect(() => {
     let mounted = true;
@@ -72,11 +74,16 @@ const Layout: React.FC = () => {
       try {
         const count = await getPendingCount();
         if (mounted) setPendingCount(count);
-      } catch { /* noop */ }
+      } catch {
+        /* noop */
+      }
     };
     const id = setInterval(poll, 15000);
     poll();
-    return () => { mounted = false; clearInterval(id); };
+    return () => {
+      mounted = false;
+      clearInterval(id);
+    };
   }, []);
 
   const handleDrawerToggle = () => {
@@ -102,7 +109,7 @@ const Layout: React.FC = () => {
       path: '/messaging',
       showUnreadDot: unreadConversationCount > 0,
     }),
-    [unreadConversationCount]
+    [unreadConversationCount],
   );
 
   const resolveNavigationPath = (targetPath: string): string => targetPath;
@@ -149,7 +156,7 @@ const Layout: React.FC = () => {
       { text: 'Email Settings', icon: <EmailIcon />, path: '/email-settings' },
       { text: 'Backup Management', icon: <BackupIcon />, path: '/backup-management' },
     ],
-    [messageMenuItem]
+    [messageMenuItem],
   );
 
   // Filter menu items for Time Tracking users
@@ -238,6 +245,12 @@ const Layout: React.FC = () => {
     </div>
   );
 
+  const assistantInset = assistantWidth + assistantPanelRightOffset + assistantResizeHandleWidth;
+  const assistantInsetPx = `${assistantInset}px`;
+  const mainWidth = assistantOpen
+    ? `calc(100% - ${drawerWidth}px - ${assistantInset}px)`
+    : `calc(100% - ${drawerWidth}px)`;
+
   return (
     <Box sx={{ display: 'flex' }}>
       <AppBar
@@ -246,7 +259,7 @@ const Layout: React.FC = () => {
           left: { xs: 0, sm: `${drawerWidth}px` },
           right: { xs: 0, sm: assistantOpen ? assistantInsetPx : 0 },
           width: { xs: '100%', sm: 'auto' },
-          transition: 'right 0.3s ease',
+          transition: 'right 0.2s ease',
         }}
       >
         <Toolbar>
@@ -271,9 +284,7 @@ const Layout: React.FC = () => {
               </Tooltip>
             )}
             {/* Autosync handled globally; no manual button */}
-            <Button color="inherit" onClick={handleLogout} startIcon={<LogoutIcon />}>
-            Logout
-            </Button>
+            <Button color="inherit" onClick={handleLogout} startIcon={<LogoutIcon />}>Logout</Button>
           </Box>
         </Toolbar>
       </AppBar>
@@ -311,29 +322,29 @@ const Layout: React.FC = () => {
         sx={{
           flexGrow: 1,
           p: 3,
-          width: {
-            xs: '100%',
-            sm: assistantOpen
-              ? `calc(100% - ${drawerWidth}px - ${assistantInset}px)`
-              : `calc(100% - ${drawerWidth}px)`,
-          },
-          transition: 'width 0.3s ease',
+          width: { xs: '100%', sm: mainWidth },
+          transition: 'width 0.2s ease',
         }}
       >
         <Toolbar />
         <Outlet />
       </Box>
-      {/* Floating AI Assistant bubble/panel */}
       <AssistantWidget
         open={assistantOpen}
         onOpen={() => setAssistantOpen(true)}
         onClose={() => setAssistantOpen(false)}
-        panelWidth={assistantPanelWidth}
+        panelWidth={defaultAssistantWidth}
         rightOffset={assistantPanelRightOffset}
         desktopTopOffset={assistantDesktopTopOffset}
+        desktopWidth={assistantWidth}
+        onDesktopResize={(width) => setAssistantWidth(Math.min(Math.max(width, minAssistantWidth), maxAssistantWidth))}
+        desktopMinWidth={minAssistantWidth}
+        desktopMaxWidth={maxAssistantWidth}
+        desktopHandleWidth={assistantResizeHandleWidth}
+        desktopBottomOffset={assistantDesktopBottomOffset}
       />
     </Box>
   );
 };
 
-export default Layout; 
+export default Layout;
