@@ -76,6 +76,8 @@ const AssistantWidget: React.FC<AssistantWidgetProps> = ({
     [desktopBottomOffset, desktopTopOffset],
   );
 
+  const closedToggleTop = desktopTopOffset + 72;
+
   // Reset per user/session: clear conversation when user changes
   useEffect(() => {
     setMsgs([]);
@@ -468,14 +470,13 @@ const AssistantWidget: React.FC<AssistantWidgetProps> = ({
       {!open && (
         <Box
           sx={{
-            position: 'sticky',
-            top: `${desktopTopOffset}px`,
-            mr: `${rightOffset}px`,
+            position: 'fixed',
+            top: `${closedToggleTop}px`,
+            right: `${rightOffset}px`,
             zIndex: 1400,
             display: 'flex',
             justifyContent: 'flex-end',
             alignItems: 'flex-start',
-            alignSelf: 'flex-start',
           }}
         >
           <Box
@@ -522,9 +523,9 @@ const AssistantWidget: React.FC<AssistantWidgetProps> = ({
       {open && (
         <Box
           sx={{
-            position: 'sticky',
+            position: 'fixed',
             top: `${desktopTopOffset}px`,
-            mr: `${rightOffset}px`,
+            right: `${rightOffset}px`,
             zIndex: 1500,
             display: 'flex',
             flexDirection: 'row-reverse',
@@ -532,21 +533,23 @@ const AssistantWidget: React.FC<AssistantWidgetProps> = ({
             height: desktopMaxHeight,
             maxHeight: desktopMaxHeight,
             minWidth: `${effectiveDesktopWidth + desktopHandleWidth}px`,
-            alignSelf: 'flex-start',
           }}
         >
           <Paper
-            elevation={12}
+            elevation={0}
             sx={{
               width: `${effectiveDesktopWidth}px`,
               height: '100%',
               display: 'flex',
               flexDirection: 'column',
               overflow: 'hidden',
-              borderRadius: 3,
-              border: `1px solid ${alpha(theme.palette.primary.main, 0.2)}`,
-              backgroundColor: alpha(theme.palette.background.paper, 0.96),
-              backdropFilter: 'blur(10px)',
+              borderRadius: 0,
+              borderLeft: `1px solid ${alpha(theme.palette.divider, 0.7)}`,
+              borderRight: 'none',
+              borderTop: 'none',
+              borderBottom: 'none',
+              boxShadow: 'none',
+              backgroundColor: theme.palette.background.paper,
             }}
           >
             {header}
