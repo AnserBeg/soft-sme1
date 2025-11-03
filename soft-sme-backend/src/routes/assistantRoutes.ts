@@ -1,9 +1,210 @@
 import express, { Request, Response } from 'express';
+import { promises as fs } from 'fs';
+import path from 'path';
 
 // Node 20+ has global fetch; fallback import only if needed
 const _fetch: typeof fetch = (global as any).fetch ?? require('node-fetch');
 
 const router = express.Router();
+
+const PROMPT_PREVIEW_LENGTH = 160;
+const RESPONSE_PREVIEW_LENGTH = 200;
+const ROW_SAMPLE_LIMIT = 3;
+const RAW_ROWS_PREVIEW_CHARS = 1000;
+
+const agentResultsBaseDir = process.env.AI_AGENT_RESULTS_DIR
+  ? path.resolve(process.env.AI_AGENT_RESULTS_DIR)
+  : path.resolve(process.cwd(), 'Aiven.ai', 'agent_results');
+
+const agentSessionSubdir = (process.env.AI_AGENT_SESSION_DIR ?? 'prompt-endpoint').trim() || 'prompt-endpoint';
+const agentSqlFilename = (process.env.AI_AGENT_SQL_FILENAME ?? 'sql_query.sql').trim() || 'sql_query.sql';
+const agentSqlResultsFilename = (process.env.AI_AGENT_SQL_RESULTS_FILENAME ?? 'run_sql_results.json').trim() || 'run_sql_results.json';
+
+type SqlArtifacts = {
+  sessionPath: string;
+  sqlFilePath: string;
+  sqlFileExists: boolean;
+  sql?: string;
+  rowsFilePath: string;
+  rowsFileExists: boolean;
+  totalRows?: number;
+  sampleRows?: unknown[];
+  rawRowsPreview?: string;
+};
+
+let missingArtifactsLogged = false;
+
+function previewText(value: string, limit: number): string {
+  if (!value) {
+    return '';
+  }
+  if (value.length <= limit) {
+    return value;
+  }
+  return `${value.slice(0, limit)}…`;
+}
+
+async function readFileIfExists(filePath: string): Promise<string | undefined> {
+  try {
+    const data = await fs.readFile(filePath, 'utf8');
+    return data;
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException;
+    if (err.code && err.code !== 'ENOENT') {
+      console.warn(`[assistant] Failed to read ${filePath}: ${err.message}`);
+    }
+    return undefined;
+  }
+}
+
+async function loadSqlArtifacts(): Promise<SqlArtifacts | null> {
+  const sessionPath = path.join(agentResultsBaseDir, agentSessionSubdir);
+
+  try {
+    await fs.access(sessionPath);
+    missingArtifactsLogged = false;
+  } catch (error) {
+    if (!missingArtifactsLogged) {
+      const err = error as NodeJS.ErrnoException;
+      const reason = err.code === 'ENOENT' ? 'not found' : err.message;
+      console.log(
+        `[assistant][sql] SQL artifacts directory unavailable at ${sessionPath} (${reason}). ` +
+          'Set AI_AGENT_RESULTS_DIR/AI_AGENT_SESSION_DIR if using a custom deployment.'
+      );
+      missingArtifactsLogged = true;
+    }
+    return null;
+  }
+
+  const sqlFilePath = path.join(sessionPath, agentSqlFilename);
+  const rowsFilePath = path.join(sessionPath, agentSqlResultsFilename);
+
+  const [sqlRaw, rowsRaw] = await Promise.all([readFileIfExists(sqlFilePath), readFileIfExists(rowsFilePath)]);
+
+  const artifacts: SqlArtifacts = {
+    sessionPath,
+    sqlFilePath,
+    sqlFileExists: typeof sqlRaw === 'string',
+    rowsFilePath,
+    rowsFileExists: typeof rowsRaw === 'string',
+  };
+
+  if (sqlRaw) {
+    const trimmed = sqlRaw.trim();
+    if (trimmed) {
+      artifacts.sql = trimmed;
+    }
+  }
+
+  if (rowsRaw) {
+    const trimmed = rowsRaw.trim();
+    if (trimmed) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) {
+          artifacts.totalRows = parsed.length;
+          artifacts.sampleRows = parsed.slice(0, ROW_SAMPLE_LIMIT);
+        } else {
+          artifacts.rawRowsPreview = previewText(trimmed, RAW_ROWS_PREVIEW_CHARS);
+        }
+      } catch {
+        artifacts.rawRowsPreview = previewText(trimmed, RAW_ROWS_PREVIEW_CHARS);
+      }
+    }
+  }
+
+  return artifacts;
+}
+
+function extractSqlFromResponse(payload: unknown): string | undefined {
+  if (!payload || typeof payload !== 'object') {
+    return undefined;
+  }
+
+  const direct = (payload as Record<string, unknown>).sql;
+  if (typeof direct === 'string' && direct.trim()) {
+    return direct.trim();
+  }
+
+  const candidatePaths: string[][] = [
+    ['debug', 'sql'],
+    ['details', 'sql'],
+    ['metadata', 'sql'],
+    ['data', 'sql'],
+  ];
+
+  for (const pathParts of candidatePaths) {
+    let current: any = payload;
+    for (const part of pathParts) {
+      if (!current || typeof current !== 'object') {
+        current = undefined;
+        break;
+      }
+      current = current[part];
+    }
+    if (typeof current === 'string' && current.trim()) {
+      return current.trim();
+    }
+  }
+
+  return undefined;
+}
+
+async function logAssistantActivity(prompt: string, mode: unknown, responsePayload: any): Promise<void> {
+  const promptPreview = previewText(prompt, PROMPT_PREVIEW_LENGTH);
+  const source = typeof responsePayload?.source === 'string' ? responsePayload.source : undefined;
+  const textPreview = typeof responsePayload?.text === 'string' ? previewText(responsePayload.text, RESPONSE_PREVIEW_LENGTH) : undefined;
+  const rows = Array.isArray(responsePayload?.rows) ? responsePayload.rows : undefined;
+
+  console.log('[assistant] Agent response received', {
+    mode: typeof mode === 'string' ? mode : undefined,
+    source,
+    promptPreview,
+    textPreview,
+    rowsCount: rows?.length,
+    error: responsePayload?.error,
+  });
+
+  if (rows && rows.length > 0) {
+    console.log('[assistant] Sample rows from agent response', rows.slice(0, ROW_SAMPLE_LIMIT));
+  }
+
+  const sqlFromPayload = extractSqlFromResponse(responsePayload);
+  if (sqlFromPayload) {
+    console.log('[assistant][sql] Query from agent payload:\n' + sqlFromPayload);
+    return;
+  }
+
+  if ((source ?? '').toUpperCase() !== 'SQL') {
+    return;
+  }
+
+  const artifacts = await loadSqlArtifacts();
+  if (!artifacts) {
+    return;
+  }
+
+  if (artifacts.sql) {
+    console.log('[assistant][sql] Query from local artifacts:\n' + artifacts.sql);
+  } else if (artifacts.sqlFileExists) {
+    console.log(`[assistant][sql] SQL query file at ${artifacts.sqlFilePath} was empty.`);
+  } else {
+    console.log(`[assistant][sql] SQL query file not found at ${artifacts.sqlFilePath}.`);
+  }
+
+  if (artifacts.sampleRows && artifacts.sampleRows.length > 0) {
+    console.log(
+      `[assistant][sql] Row sample from ${artifacts.rowsFilePath} (${artifacts.totalRows ?? artifacts.sampleRows.length} total rows reported)`,
+      artifacts.sampleRows
+    );
+  } else if (artifacts.rawRowsPreview) {
+    console.log('[assistant][sql] Raw rows preview:', artifacts.rawRowsPreview);
+  } else if (artifacts.rowsFileExists) {
+    console.log(`[assistant][sql] Rows file at ${artifacts.rowsFilePath} was empty.`);
+  } else {
+    console.log(`[assistant][sql] Rows file not found at ${artifacts.rowsFilePath}.`);
+  }
+}
 
 type AssistantEndpoints = {
   baseUrl: string;
@@ -302,6 +503,11 @@ router.post('/', async (req: Request, res: Response) => {
       return res.status(400).json({ message: 'prompt is required' });
     }
 
+    console.log('[assistant] Forwarding prompt to agent', {
+      mode: typeof mode === 'string' ? mode : undefined,
+      promptPreview: previewText(prompt, PROMPT_PREVIEW_LENGTH),
+    });
+
     const r = await _fetch(assistantEndpoints.chatUrl, {
       method: 'POST',
       headers: assistantHeaders,
@@ -314,6 +520,13 @@ router.post('/', async (req: Request, res: Response) => {
     }
 
     const j = await r.json();
+    try {
+      await logAssistantActivity(prompt, mode, j);
+    } catch (logError) {
+      const err = logError as Error;
+      console.warn('[assistant] Failed to log agent activity:', err.message);
+    }
+
     res.json(j);
   } catch (err) {
     const unreachable = isConnectionRefused(err);
