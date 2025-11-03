@@ -51,9 +51,9 @@ import AssistantWidget from './AssistantWidget';
 
 const drawerWidth = 240;
 const defaultAssistantWidth = 360;
-const assistantPanelRightOffset = 24;
-const assistantDesktopTopOffset = 72;
-const assistantDesktopBottomOffset = 32;
+const assistantPanelRightOffset = 0;
+const assistantDesktopTopOffset = 0;
+const assistantDesktopBottomOffset = 0;
 const assistantResizeHandleWidth = 12;
 const minAssistantWidth = 280;
 const maxAssistantWidth = 640;
