@@ -95,6 +95,9 @@ const allowedOrigins = (
     'https://softsme.phoenixtrailers.ca',
     'https://soft-sme1.onrender.com',
     'https://soft-sme-frontend.onrender.com',
+    // allow test/staging Render apps
+    'https://soft-smetest.onrender.com',
+    'https://soft-smetest-front.onrender.com',
     process.env.CORS_ORIGIN,
   ] as (string | undefined)[]
 )
