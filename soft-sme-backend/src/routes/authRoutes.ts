@@ -250,15 +250,17 @@ router.post('/refresh', async (req: Request, res: Response) => {
   const refreshToken = req.cookies?.refreshToken || req.body.refreshToken;
 
   if (!refreshToken) {
-    return res.status(400).json({ message: 'Refresh token is required' });
+    // Explicit signal for clients to stop retrying
+    return res.status(401).json({ message: 'Refresh token missing' });
   }
 
   try {
     const result = await SessionManager.refreshSession(refreshToken);
 
     if (!result) {
-      // Log failed refresh
+      // Log failed refresh (single line, do not loop spam handling here)
       console.log(`[SESSION] Invalid or expired refresh token used at ${new Date().toISOString()}`);
+      // 401 so the client clears state and does not retry refresh
       return res.status(401).json({ message: 'Invalid or expired refresh token' });
     }
 
@@ -278,8 +280,9 @@ router.post('/refresh', async (req: Request, res: Response) => {
       sessionToken: result.sessionToken,
     });
   } catch (error) {
+    // Likely transient DB/network issue; advise client to try once later, not loop
     console.error('Refresh token error:', error);
-    res.status(500).json({ message: 'Server error during token refresh' });
+    res.status(503).json({ message: 'Service unavailable during token refresh' });
   }
 });
 

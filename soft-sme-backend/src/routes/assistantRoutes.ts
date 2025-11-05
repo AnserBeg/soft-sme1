@@ -392,6 +392,11 @@ function resolveAssistantEndpoints(): AssistantEndpoints {
 }
 
 const assistantEndpoints = resolveAssistantEndpoints();
+console.log('[assistant] Resolved endpoints', {
+  baseUrl: assistantEndpoints.baseUrl,
+  chatUrl: assistantEndpoints.chatUrl,
+  healthUrl: assistantEndpoints.healthUrl,
+});
 
 function buildAuthHeaders(): Record<string, string> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -482,9 +487,11 @@ router.get('/health', async (_req: Request, res: Response) => {
     const j = await r.json();
     res.json(j);
   } catch (err) {
-    res
-      .status(500)
-      .json({ status: 'error', error: mapAssistantError(err), endpoint: assistantEndpoints.healthUrl });
+    res.status(500).json({
+      status: 'error',
+      error: mapAssistantError(err),
+      endpoint: assistantEndpoints.healthUrl,
+    });
   }
 });
 
@@ -516,7 +523,13 @@ router.post('/', async (req: Request, res: Response) => {
 
     if (!r.ok) {
       const txt = await r.text();
-      return res.status(502).json({ message: 'Assistant service error', detail: txt });
+      console.warn('[assistant] Upstream non-OK', { status: r.status, bodyPreview: txt.slice(0, 500) });
+      return res.status(502).json({
+        message: 'Assistant service error',
+        status: r.status,
+        endpoint: assistantEndpoints.chatUrl,
+        detail: txt,
+      });
     }
 
     const j = await r.json();

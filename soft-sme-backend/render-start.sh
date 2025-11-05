@@ -111,7 +111,14 @@ if [[ "${ENABLE_AI_AGENT_FLAG}" != "0" && -f "${ASSISTANT_SCRIPT}" ]]; then
     # Ensure Python deps are in place (idempotent, uses pip cache if configured)
     if [[ -f "${SCRIPT_DIR}/../Aiven.ai/requirements.txt" ]]; then
       log "Ensuring assistant Python deps are installed"
-      "${PY_BIN}" -m pip install --disable-pip-version-check -r "${SCRIPT_DIR}/../Aiven.ai/requirements.txt" >/dev/null 2>&1 || true
+      set +e
+      "${PY_BIN}" -m pip install --disable-pip-version-check -r "${SCRIPT_DIR}/../Aiven.ai/requirements.txt"
+      rc=$?
+      set -e
+      if [[ ${rc} -ne 0 ]]; then
+        log "Assistant dependency installation failed (exit ${rc}). Aborting startup to avoid 500s."
+        exit ${rc}
+      fi
     fi
 
     # Run via gunicorn if available; fallback to Flask dev server otherwise
