@@ -29,7 +29,6 @@ import profileDocumentRouter from './routes/profileDocumentRoutes';
 import taskRouter from './routes/taskRoutes';
 import messagingRouter from './routes/messagingRoutes';
 import searchRoutes from './routes/searchRoutes';
-import assistantRouter from './routes/assistantRoutes';
 
 import chatRouter from './routes/chatRoutes';
 
@@ -215,10 +214,6 @@ console.log('Registered email routes');
 
 app.use('/api/tasks', taskRouter);
 console.log('Registered task routes');
-
-// AI Assistant routes
-app.use('/api/assistant', assistantRouter);
-console.log('Registered assistant routes');
 
 // Health check endpoint
 app.get('/health', (req, res) => {
