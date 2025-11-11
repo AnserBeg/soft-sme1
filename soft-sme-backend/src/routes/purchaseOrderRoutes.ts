@@ -1274,7 +1274,61 @@ router.put('/:id', async (req, res) => {
       // Don't fail the entire operation, but log the error
     }
     
-    // If PO is being closed, update inventory and trigger allocation
+    // If editing an already Closed PO, propagate unit and last_unit_cost updates to inventory (no qty changes)
+    if (oldStatus === 'Closed' && status === 'Closed') {
+      try {
+        for (const item of lineItems) {
+          const normalizedPart = (item?.part_number || '').toString().trim().toUpperCase();
+          if (!normalizedPart) continue;
+          const unit = (item?.unit || '').toString().trim();
+          const unitCost = Number.isFinite(item?.unit_cost) ? Number(item.unit_cost) : 0;
+
+          // Prefer part_id when present
+          if (item?.part_id) {
+            await client.query(
+              `UPDATE inventory 
+                 SET unit = COALESCE(NULLIF($1, ''), unit),
+                     last_unit_cost = $2,
+                     updated_at = NOW()
+               WHERE part_id = $3`,
+              [unit, unitCost, item.part_id]
+            );
+          } else {
+            // Fallback by normalized part number matching approach used elsewhere
+            const invRes = await client.query(
+              `SELECT part_id FROM inventory 
+                WHERE REPLACE(REPLACE(REPLACE(UPPER(part_number), '-', ''), ' ', ''), '"', '') = 
+                      REPLACE(REPLACE(REPLACE(UPPER($1), '-', ''), ' ', ''), '"', '')`,
+              [normalizedPart]
+            );
+            if (invRes.rows.length > 0) {
+              const pid = invRes.rows[0].part_id;
+              await client.query(
+                `UPDATE inventory 
+                   SET unit = COALESCE(NULLIF($1, ''), unit),
+                       last_unit_cost = $2,
+                       updated_at = NOW()
+                 WHERE part_id = $3`,
+                [unit, unitCost, pid]
+              );
+            } else {
+              // If part doesn't exist in inventory (edge case), insert without affecting quantity
+              await client.query(
+                `INSERT INTO inventory (part_number, part_description, unit, last_unit_cost, quantity_on_hand, part_type)
+                 VALUES ($1, $2, $3, $4, 0, 'stock')`,
+                [normalizedPart, item.part_description || '', unit || 'Each', unitCost]
+              );
+            }
+          }
+        }
+        console.log(`Propagated unit and last_unit_cost changes to inventory for closed PO ${id}.`);
+      } catch (invSyncErr) {
+        console.error(`Error syncing inventory fields from closed PO ${id}:`, invSyncErr);
+        // Do not fail the full request on inventory sync error
+      }
+    }
+    
+    // If PO is being newly closed, update inventory and trigger allocation
     if (status === 'Closed' && oldStatus !== 'Closed') {
       console.log(`PO ${id} transitioning to Closed. Starting inventory and allocation process...`);
 

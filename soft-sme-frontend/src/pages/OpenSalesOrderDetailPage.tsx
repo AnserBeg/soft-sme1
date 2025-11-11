@@ -612,6 +612,46 @@ const SalesOrderDetailPage: React.FC = () => {
   // SUPPLY amount calculation - REMOVED, backend handles this
 
   // ---------- Helpers ----------
+  // Ensure line item data reflects latest inventory on load/open
+  useEffect(() => {
+    if (!isDataFullyLoaded) return;
+    if (!inventoryItems || inventoryItems.length === 0) return;
+    if (!lineItems || lineItems.length === 0) return;
+
+    setLineItems(prev => {
+      let changed = false;
+      const updated = prev.map(li => {
+        if (['LABOUR','OVERHEAD','SUPPLY'].includes(li.part_number)) return li;
+        const inv = (inventoryItems || []).find((x:any) =>
+          String(x.part_number).trim().toUpperCase() === String(li.part_number).trim().toUpperCase()
+        );
+        if (!inv) return li;
+        const invUnit = String(inv.unit || '').trim();
+        const liUnit = String(li.unit || '').trim();
+        const invDesc = String(inv.part_description || '');
+        const lastUnitCost = parseFloat(String(inv.last_unit_cost)) || 0;
+        const marginFactor = findMarginFactor(lastUnitCost);
+        const desiredUnitPrice = lastUnitCost * marginFactor;
+
+        let next = li;
+        if (invUnit && invUnit !== liUnit) {
+          next = { ...next, unit: invUnit };
+          changed = true;
+        }
+        if (invDesc && invDesc !== li.part_description) {
+          next = { ...next, part_description: invDesc };
+          changed = true;
+        }
+        if (!isNaN(desiredUnitPrice) && desiredUnitPrice !== li.unit_price) {
+          next = { ...next, unit_price: desiredUnitPrice };
+          changed = true;
+        }
+        return next;
+      });
+      return changed ? updated : prev;
+    });
+  }, [isDataFullyLoaded, inventoryItems, lineItems, marginSchedule]);
+
   const findMarginFactor = (cost: number) => {
     const sorted = [...marginSchedule].sort((a, b) => a.cost_lower_bound - b.cost_lower_bound);
     for (const entry of sorted) {

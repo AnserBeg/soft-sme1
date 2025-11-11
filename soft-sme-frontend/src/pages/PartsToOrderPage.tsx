@@ -67,6 +67,7 @@ const PartsToOrderPage: React.FC = () => {
   const [selectedParts, setSelectedParts] = useState<Set<string>>(new Set());
   const [createPOModalOpen, setCreatePOModalOpen] = useState(false);
   const [selectedPartsForPO, setSelectedPartsForPO] = useState<AggregatedPart[]>([]);
+  const [inventoryItems, setInventoryItems] = useState<any[]>([]);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -88,16 +89,51 @@ const PartsToOrderPage: React.FC = () => {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const response = await api.get('/api/sales-orders/parts-to-order/all');
-      const { individualParts, aggregatedParts: backendAggregated } = response.data;
+      const [ptoRes, invRes] = await Promise.all([
+        api.get('/api/sales-orders/parts-to-order/all'),
+        api.get('/api/inventory')
+      ]);
+      const { individualParts, aggregatedParts: backendAggregated } = ptoRes.data;
+      const inventory = invRes.data || [];
+      setInventoryItems(inventory);
       
       // Use backend aggregated data if available, otherwise aggregate locally
+      const applyInventoryOverlay = (parts: AggregatedPart[]): AggregatedPart[] => {
+        const norm = (s: string) => (s || '').replace(/[\-\s"]/g, '').toUpperCase();
+        const invMap = new Map<string, any>(inventory.map((x:any) => [norm(String(x.part_number)), x]));
+        return parts.map(p => {
+          const inv = invMap.get(norm(p.part_number));
+          if (!inv) return p;
+          const unit = inv.unit || p.unit;
+          const desc = inv.part_description || p.part_description;
+          const unitPrice = Number(inv.last_unit_cost) || Number(p.unit_price) || 0;
+          const total = unitPrice * (Number(p.total_quantity_needed) || 0);
+          return {
+            ...p,
+            unit,
+            part_description: desc,
+            unit_price: unitPrice,
+            total_line_amount: total,
+            sales_orders: (p.sales_orders || []).map(so => {
+              const soUnitPrice = Number(inv.last_unit_cost) || Number(so.unit_price) || 0;
+              const soLineAmt = soUnitPrice * (Number(so.quantity_needed) || 0);
+              return {
+                ...so,
+                unit: inv.unit || so.unit,
+                unit_price: soUnitPrice,
+                line_amount: soLineAmt,
+              };
+            })
+          };
+        });
+      };
+
       if (backendAggregated && backendAggregated.length > 0) {
-        setAggregatedParts(backendAggregated);
+        setAggregatedParts(applyInventoryOverlay(backendAggregated));
       } else {
         // Fallback to local aggregation
         const aggregated = aggregatePartsToOrder(individualParts);
-        setAggregatedParts(aggregated);
+        setAggregatedParts(applyInventoryOverlay(aggregated));
       }
     } catch (error: any) {
       console.error('Error fetching parts to order:', error);

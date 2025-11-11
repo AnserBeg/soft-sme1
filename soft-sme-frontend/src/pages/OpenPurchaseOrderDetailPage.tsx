@@ -507,7 +507,55 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
         })
     );
   }, []);
-  
+
+  // Live refresh from Inventory: update unit, description; fill unit_cost only if empty/zero
+  useEffect(() => {
+    if (!isDataFullyLoaded) return;
+    if (!Array.isArray(inventoryItems) || inventoryItems.length === 0) return;
+
+    setLiveLineItems(prev => {
+      let changed = false;
+      const updated = prev.map(li => {
+        const partKey = String(li.part_number || '').trim().toUpperCase();
+        if (!partKey) return li;
+        const inv = (inventoryItems || []).find((x:any) => String(x.part_number).trim().toUpperCase() === partKey);
+        if (!inv) return li;
+
+        let next = li;
+        // Prefer keeping vendor-specific unit; only fill if empty
+        const invUnit = String(inv.unit || '').trim();
+        const liUnit = String(li.unit || '').trim();
+        if (invUnit && !liUnit) {
+          next = { ...next, unit: invUnit };
+          changed = true;
+        }
+        const invDesc = String(inv.part_description || '');
+        if (invDesc && invDesc !== String(li.part_description || '')) {
+          next = { ...next, part_description: invDesc };
+          changed = true;
+        }
+        // Only fill in unit_cost from inventory when it's blank/zero (respect manual vendor pricing)
+        const currentUnitCost = parseFloat(String(li.unit_cost));
+        const isBlankCost = !Number.isFinite(currentUnitCost) || currentUnitCost === 0;
+        if (isBlankCost) {
+          const invCost = parseFloat(String(inv.last_unit_cost)) || 0;
+          if (invCost > 0 && invCost !== currentUnitCost) {
+            next = { ...next, unit_cost: String(invCost) };
+            changed = true;
+          }
+        }
+
+        // Recompute line amount if we changed anything that affects it
+        if (next !== li) {
+          const amt = calculateLineItemAmount(next);
+          next = { ...next, line_amount: amt };
+        }
+        return next;
+      });
+      return changed ? updated : prev;
+    });
+  }, [isDataFullyLoaded, inventoryItems]);
+
   useEffect(() => {
     // Initialize baseline only once after data loads
     if (!isCreationMode && !isInitialLoad && purchaseOrder && initialSignature === '' && isDataFullyLoaded) {
