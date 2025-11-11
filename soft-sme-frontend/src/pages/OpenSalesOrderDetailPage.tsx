@@ -866,8 +866,10 @@ const SalesOrderDetailPage: React.FC = () => {
         acc[partNumber].line_amount = Number(item.line_amount || 0); // Use actual line_amount, don't sum
       } else {
         // Ensure quantity is a valid number, default to 0 if invalid
-        const quantity = parseFloat(String(item.quantity).replace(/[^\d.-]/g, '')) || 0;
-        acc[partNumber].quantity_sold += Math.round(quantity);
+        const rawQuantity = parseFloat(String(item.quantity).replace(/[^\d.-]/g, '')) || 0;
+        // Preserve fractional quantities to avoid introducing artificial inventory deltas
+        const quantity = Number.isFinite(rawQuantity) ? rawQuantity : 0;
+        acc[partNumber].quantity_sold += quantity;
         acc[partNumber].line_amount += quantity * (item.unit_price || 0);
       }
       
