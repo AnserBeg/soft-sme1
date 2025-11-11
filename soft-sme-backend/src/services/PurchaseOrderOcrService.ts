@@ -919,6 +919,11 @@ export class PurchaseOrderOcrService {
         } else {
           unit = rawUnit;
         }
+        break;
+      }
+    }
+
+    let partNumber: string | null = null;
     let partIndex = -1;
     for (let i = 0; i < tokens.length; i += 1) {
       const token = tokens[i];
@@ -1402,6 +1407,7 @@ export class PurchaseOrderOcrService {
     }
   }
 }
+
 
 
 
