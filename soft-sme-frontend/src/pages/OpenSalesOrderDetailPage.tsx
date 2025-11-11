@@ -26,7 +26,8 @@ import UnifiedPartDialog, { PartFormValues } from '../components/UnifiedPartDial
 import UnifiedCustomerDialog, { CustomerFormValues } from '../components/UnifiedCustomerDialog';
 import {
   parseNumericInput,
-  SalesOrderLineItem as RobustLineItem
+  SalesOrderLineItem as RobustLineItem,
+  calculateLineAmount,
 } from '../utils/salesOrderCalculations';
 import { formatCurrency } from '../utils/formatters';
 import UnsavedChangesGuard from '../components/UnsavedChangesGuard';
@@ -682,9 +683,12 @@ const SalesOrderDetailPage: React.FC = () => {
         if (inv) {
           const lastUnitCost = parseFloat(String(inv.last_unit_cost)) || 0;
           const marginFactor = findMarginFactor(lastUnitCost);
+          const price = lastUnitCost * marginFactor;
+          const existingQty = parseNumericInput(updated[idx]?.quantity as any);
+          const amount = calculateLineAmount(existingQty, price);
           updated[idx] = { ...updated[idx],
             part_number: newValue, part_description: inv.part_description || '',
-            unit: inv.unit, unit_price: lastUnitCost * marginFactor, line_amount: 0
+            unit: inv.unit, unit_price: price, line_amount: amount
           };
         } else {
           updated[idx] = { ...updated[idx], part_number: newValue, part_description: 'Part not found', unit_price: 0, line_amount: 0 };
@@ -717,11 +721,15 @@ const SalesOrderDetailPage: React.FC = () => {
         return updated;
       }
 
-      // For other items, only update unit_price - no line_amount calculations
+      // For other items, update and compute line_amount for better UX
       if (field === 'unit_price') {
         it.unit_price = parseNumericInput(value);
       }
-      // Keep existing line_amount - backend will recalculate on save
+      if (field === 'quantity' || field === 'unit_price') {
+        const qty = parseNumericInput(it.quantity as any);
+        const price = parseNumericInput(it.unit_price as any);
+        it.line_amount = calculateLineAmount(qty, price);
+      }
       updated[idx] = it;
       return updated;
     });
