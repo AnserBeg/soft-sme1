@@ -778,7 +778,7 @@ This section documents the modal dialogs and detail pages that are not directly 
 - **Part Number** (required, auto-uppercase, disabled in edit mode)
 - **Part Type** (required, stock/supply selection)
 - **Part Description** (required)
-- **Unit** (required, dropdown: Each, cm, ft, kg, pcs, L)
+- **Unit** (required, dropdown: Each, cm, ft, ft^2, kg, pcs, L)
 - **Last Unit Cost** (optional, numeric)
 - **Quantity on Hand** (required for stock, auto-set to "NA" for supply)
 - **Reorder Point** (optional, numeric)

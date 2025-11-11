@@ -8,7 +8,7 @@ import { promisify } from 'util';
 const MONEY_RE = /\$?-?\d{1,3}(?:,\d{3})*(?:\.\d{2})?/;
 const PART_RE = /[A-Z0-9][A-Z0-9\-_.\/]{1,24}/i;
 const UOM_RE =
-  /\b(ea|each|pc|pcs|pair|set|pkg|pack|box|bag|roll|sheet|panel|lb|lbs|kg|g|mg|l|liter|litre|ml|cm|mm|m|in|inch|ft|feet|hour|hrs?)\b/i;
+  /\b(ea|each|pc|pcs|pair|set|pkg|pack|box|bag|roll|sheet|panel|lb|lbs|kg|g|mg|l|liter|litre|ml|cm|mm|m|in|inch|ft\^?2|ft2|sq\s*ft|sqft|square\s*feet|ft|feet|hour|hrs?)\b/i;
 const STOP_BEFORE_TOTALS_RE = /(subtotal|total|gst|hst|pst|qst|vat|balance|amount due)/i;
 const COMPANY_KEYWORD_RE = /(inc|ltd|limited|llc|company|co\.?|corp|corporation|enterprises|solutions|systems|trading|services)/i;
 const EMAIL_RE = /\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b/i;
@@ -913,12 +913,12 @@ export class PurchaseOrderOcrService {
     for (const token of tokens) {
       const match = token.match(UOM_RE);
       if (match) {
-        unit = match[0].toLowerCase();
-        break;
-      }
-    }
-
-    let partNumber: string | null = null;
+        const rawUnit = match[0].toLowerCase();
+        if (rawUnit === 'ft^2' || rawUnit === 'ft2' || rawUnit === 'sq ft' || rawUnit === 'sqft' || rawUnit === 'square feet') {
+          unit = 'ft^2';
+        } else {
+          unit = rawUnit;
+        }
     let partIndex = -1;
     for (let i = 0; i < tokens.length; i += 1) {
       const token = tokens[i];
@@ -1402,3 +1402,6 @@ export class PurchaseOrderOcrService {
     }
   }
 }
+
+
+

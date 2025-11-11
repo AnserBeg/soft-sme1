@@ -88,7 +88,7 @@ Customers are created through the **UnifiedCustomerDialog** component with the f
 - Part Number (required)
 - Part Description (auto-filled, editable)
 - Quantity (required)
-- Unit (dropdown: Each, cm, ft, kg, pcs, hr, L)
+- Unit (dropdown: Each, cm, ft, ft^2, kg, pcs, hr, L)
 - Unit Price (required)
 - Line Amount (auto-calculated)
 

@@ -231,7 +231,7 @@ There are **multiple ways** to add new parts to the system:
 interface InventoryItem {
   part_number: string;           // Primary key
   part_description: string;
-  unit: string;                  // Each, cm, ft, kg, pcs, hr, L
+  unit: string;                  // Each, cm, ft, ft^2, kg, pcs, hr, L
   last_unit_cost: number;
   quantity_on_hand: number;
   reorder_point: number;

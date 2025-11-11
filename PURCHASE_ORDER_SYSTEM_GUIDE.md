@@ -79,7 +79,7 @@ Parts are created through the **UnifiedPartDialog** component:
 - **Part Type** (required) - Either "stock" or "supply"
 
 **Optional Fields:**
-- **Unit** - Measurement unit (Each, cm, ft, kg, pcs, L)
+- **Unit** - Measurement unit (Each, cm, ft, ft^2, kg, pcs, L)
 - **Last Unit Cost** - Most recent cost per unit
 - **Quantity on Hand** - Current inventory level (numeric for stock, "NA" for supply)
 - **Reorder Point** - Minimum quantity before reordering
@@ -113,7 +113,7 @@ Parts are created through the **UnifiedPartDialog** component:
 - **Part Number**: Select from existing inventory or create new part
 - **Part Description**: Auto-filled from inventory, can be edited
 - **Quantity**: Number of items to order
-- **Unit**: Measurement unit (Each, cm, ft, kg, pcs, L)
+- **Unit**: Measurement unit (Each, cm, ft, ft^2, kg, pcs, L)
 - **Unit Cost**: Cost per unit
 - **Line Amount**: Auto-calculated (Quantity × Unit Cost)
 

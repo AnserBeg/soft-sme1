@@ -11,7 +11,7 @@ The CSV upload system allows users to bulk upload supply and stock parts using C
 - All other fields are optional
 
 ### 2. Optional Fields
-- **unit**: Unit of measure (defaults to "Each"). Available options: Each, cm, ft, kg, pcs, hr, L
+- **unit**: Unit of measure (defaults to "Each"). Available options: Each, cm, ft, ft^2, kg, pcs, hr, L
 - **quantity**: Quantity on hand (defaults to 0)
 - **last_unit_cost**: Unit cost (defaults to 0)
 - **reorder_point**: Reorder threshold (defaults to 0)

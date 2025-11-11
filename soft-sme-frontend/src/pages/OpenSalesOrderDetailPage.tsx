@@ -32,7 +32,7 @@ import {
 import { formatCurrency } from '../utils/formatters';
 import UnsavedChangesGuard from '../components/UnsavedChangesGuard';
 
-const UNIT_OPTIONS = ['Each', 'cm', 'ft', 'kg', 'pcs', 'hr', 'L'];
+const UNIT_OPTIONS = ['Each', 'cm', 'ft', 'ft^2', 'kg', 'pcs', 'hr', 'L'];
 type PartOption = string | { label: string; isNew?: true; inputValue?: string };
 const DEFAULT_GST_RATE = 5.0;
 

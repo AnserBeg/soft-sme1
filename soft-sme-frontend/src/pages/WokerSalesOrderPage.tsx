@@ -17,7 +17,7 @@ import { calculateLineAmount, parseNumericInput, SalesOrderLineItem as RobustLin
 import { formatCurrency } from '../utils/formatters';
 
 type PartOption = string | { label: string; isNew?: true; inputValue?: string };
-const UNIT_OPTIONS = ['Each', 'cm', 'ft', 'kg', 'pcs', 'hr', 'L'];
+const UNIT_OPTIONS = ['Each', 'cm', 'ft', 'ft^2', 'kg', 'pcs', 'hr', 'L'];
 const DEFAULT_GST_RATE = 5.0;
 
 interface SalesOrderLineItem {

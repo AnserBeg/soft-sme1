@@ -49,7 +49,7 @@ import {
 import { useAuth } from '../contexts/AuthContext';
 import { useDebounce } from '../hooks/useDebounce';
 
-const UNIT_OPTIONS = ['Each', 'cm', 'ft', 'kg', 'pcs', 'L'];
+const UNIT_OPTIONS = ['Each', 'cm', 'ft', 'ft^2', 'kg', 'pcs', 'L'];
 const DEFAULT_GST_RATE = 5.0;
 const PART_TYPE_OPTIONS = ['stock', 'supply', 'service']; // Define PART_TYPE_OPTIONS
 

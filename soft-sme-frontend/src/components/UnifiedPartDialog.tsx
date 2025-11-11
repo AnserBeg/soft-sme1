@@ -41,7 +41,7 @@ interface UnifiedPartDialogProps {
   title?: string;
 }
 
-const UNIT_OPTIONS = ['Each', 'cm', 'ft', 'kg', 'pcs', 'L'];
+const UNIT_OPTIONS = ['Each', 'cm', 'ft', 'ft^2', 'kg', 'pcs', 'L'];
 const PART_TYPE_OPTIONS = ['stock', 'supply', 'service'];
 
 interface Category {
