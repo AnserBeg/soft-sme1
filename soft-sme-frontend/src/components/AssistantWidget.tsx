@@ -20,6 +20,16 @@ import SmartToyIcon from '@mui/icons-material/SmartToy';
 import { alpha, useTheme } from '@mui/material/styles';
 import { askAssistant, AssistantReply } from '../services/assistantService';
 import { useAuth } from '../contexts/AuthContext';
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Legend,
+  ResponsiveContainer,
+  Tooltip as RechartsTooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
 
 type Msg = { id: string; role: 'user' | 'assistant'; text: string; rows?: any[] | null };
 
@@ -65,6 +75,7 @@ const AssistantWidget: React.FC<AssistantWidgetProps> = ({
   const resizeStartXRef = useRef(0);
   const resizeStartWidthRef = useRef(panelWidth);
   const [isResizing, setIsResizing] = useState(false);
+  const [chartStateByMsg, setChartStateByMsg] = useState<Record<string, { open: boolean; xKey?: string; yKey?: string }>>({});
 
   const effectiveDesktopWidth = useMemo(() => {
     const target = typeof desktopWidth === 'number' ? desktopWidth : internalDesktopWidth;
@@ -186,6 +197,46 @@ const AssistantWidget: React.FC<AssistantWidgetProps> = ({
 
   if (!user) return null;
 
+  function inferDefaultKeys(rows: any[]): { xKey?: string; yKey?: string } {
+    if (!rows || rows.length === 0) return {};
+    const sample = rows[0];
+    const keys = Object.keys(sample);
+    let xKey: string | undefined;
+    let yKey: string | undefined;
+    for (const k of keys) {
+      const v = sample[k];
+      if (xKey === undefined && (typeof v === 'string' || v instanceof Date)) {
+        xKey = k;
+      }
+    }
+    for (const k of keys) {
+      const v = sample[k];
+      if (typeof v === 'number') {
+        yKey = k;
+        break;
+      }
+      if (yKey === undefined && typeof v === 'string' && !isNaN(Number(v))) {
+        yKey = k;
+      }
+    }
+    if (!xKey) xKey = keys.find((k) => !isNaN(Date.parse(String(sample[k])))) || keys.find((k) => typeof sample[k] === 'string');
+    if (!yKey) yKey = keys.find((k) => typeof sample[k] === 'number');
+    return { xKey, yKey };
+  }
+
+  function aggregateData(rows: any[], xKey: string, yKey: string): Array<Record<string, any>> {
+    const map = new Map<string, number>();
+    for (const r of rows) {
+      const xRaw = r?.[xKey];
+      const x = xRaw == null ? '' : String(xRaw);
+      const yRaw = r?.[yKey];
+      const y = typeof yRaw === 'number' ? yRaw : Number(yRaw);
+      if (!isFinite(y)) continue;
+      map.set(x, (map.get(x) || 0) + y);
+    }
+    return Array.from(map.entries()).map(([x, sum]) => ({ [xKey]: x, [yKey]: Number(sum.toFixed(2)) }));
+  }
+
   const header = (
     <Box
       sx={{
@@ -293,11 +344,43 @@ const AssistantWidget: React.FC<AssistantWidgetProps> = ({
                       py: 0.75,
                       borderBottom: `1px solid ${alpha(theme.palette.primary.main, 0.1)}`,
                       backgroundColor: alpha(theme.palette.primary.light, 0.1),
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: 1,
                     }}
                   >
                     <Typography variant="caption" sx={{ fontWeight: 600, letterSpacing: 0.5 }}>
                       Data preview
                     </Typography>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <Tooltip title="Visualize this data">
+                        <IconButton
+                          size="small"
+                          onClick={() => {
+                            setChartStateByMsg((prev) => {
+                              const prevState = prev[m.id] || { open: false };
+                              const nextOpen = !prevState.open;
+                              const defaults = inferDefaultKeys(m.rows!);
+                              return {
+                                ...prev,
+                                [m.id]: {
+                                  open: nextOpen,
+                                  xKey: prevState.xKey || defaults.xKey,
+                                  yKey: prevState.yKey || defaults.yKey,
+                                },
+                              };
+                            });
+                          }}
+                          sx={{
+                            border: `1px solid ${alpha(theme.palette.primary.main, 0.3)}`,
+                            bgcolor: alpha(theme.palette.primary.light, 0.06),
+                          }}
+                        >
+                          <SmartToyIcon fontSize="inherit" />
+                        </IconButton>
+                      </Tooltip>
+                    </Box>
                   </Box>
                   <Box sx={{ maxHeight: 160, overflow: 'auto' }}>
                     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
@@ -337,6 +420,91 @@ const AssistantWidget: React.FC<AssistantWidgetProps> = ({
                       </tbody>
                     </table>
                   </Box>
+
+                  {chartStateByMsg[m.id]?.open && (
+                    <Box sx={{ p: 1.25, borderTop: `1px solid ${alpha(theme.palette.primary.main, 0.1)}` }}>
+                      {(() => {
+                        const state = chartStateByMsg[m.id] || {};
+                        const sample = m.rows![0];
+                        const keys = Object.keys(sample);
+                        const numericKeys = keys.filter((k) => typeof sample[k] === 'number' || !isNaN(Number(sample[k])));
+                        const xKey = state.xKey && keys.includes(state.xKey) ? state.xKey : inferDefaultKeys(m.rows!).xKey;
+                        const yKey = state.yKey && keys.includes(state.yKey) ? state.yKey : inferDefaultKeys(m.rows!).yKey;
+                        const hasXY = xKey && yKey;
+                        const data = hasXY ? aggregateData(m.rows!, xKey!, yKey!) : [];
+                        return (
+                          <>
+                            <Box sx={{ display: 'flex', gap: 1.5, mb: 1 }}>
+                              <TextField
+                                select
+                                size="small"
+                                label="X axis"
+                                value={xKey || ''}
+                                onChange={(e) =>
+                                  setChartStateByMsg((prev) => ({
+                                    ...prev,
+                                    [m.id]: { ...prev[m.id], open: true, xKey: e.target.value, yKey },
+                                  }))
+                                }
+                                SelectProps={{ native: true }}
+                                sx={{ minWidth: 160 }}
+                              >
+                                <option value="" disabled>
+                                  Select field
+                                </option>
+                                {keys.map((k) => (
+                                  <option key={k} value={k}>
+                                    {k}
+                                  </option>
+                                ))}
+                              </TextField>
+                              <TextField
+                                select
+                                size="small"
+                                label="Y value"
+                                value={yKey || ''}
+                                onChange={(e) =>
+                                  setChartStateByMsg((prev) => ({
+                                    ...prev,
+                                    [m.id]: { ...prev[m.id], open: true, xKey, yKey: e.target.value },
+                                  }))
+                                }
+                                SelectProps={{ native: true }}
+                                sx={{ minWidth: 160 }}
+                              >
+                                <option value="" disabled>
+                                  Select field
+                                </option>
+                                {numericKeys.map((k) => (
+                                  <option key={k} value={k}>
+                                    {k}
+                                  </option>
+                                ))}
+                              </TextField>
+                            </Box>
+                            {hasXY ? (
+                              <Box sx={{ height: 260 }}>
+                                <ResponsiveContainer width="100%" height="100%">
+                                  <BarChart data={data}>
+                                    <CartesianGrid strokeDasharray="3 3" />
+                                    <XAxis dataKey={xKey!} interval={0} angle={0} tick={{ fontSize: 11 }} height={40} />
+                                    <YAxis />
+                                    <RechartsTooltip />
+                                    <Legend />
+                                    <Bar dataKey={yKey!} fill={theme.palette.primary.main} />
+                                  </BarChart>
+                                </ResponsiveContainer>
+                              </Box>
+                            ) : (
+                              <Typography variant="caption" color="text.secondary">
+                                Pick an x (category/date) and a numeric y field to chart.
+                              </Typography>
+                            )}
+                          </>
+                        );
+                      })()}
+                    </Box>
+                  )}
                 </Box>
               )}
             </Box>

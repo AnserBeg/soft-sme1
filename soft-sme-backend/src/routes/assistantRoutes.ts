@@ -543,3 +543,68 @@ router.post('/', async (req: Request, res: Response) => {
 
 export default router;
 
+// Lightweight chart preparation endpoint for building labels/datasets from rows
+// POST /api/assistant/chart/prepare
+// Body: { rows: Array<Record<string, any>>, xKey?: string, yKey?: string }
+router.post('/chart/prepare', async (req: Request, res: Response) => {
+  try {
+    const { rows, xKey: rawX, yKey: rawY } = req.body || {};
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return res.status(400).json({ message: 'rows is required and must be a non-empty array' });
+    }
+
+    // Infer keys when not provided
+    const sample = rows[0];
+    const keys = Object.keys(sample);
+    let xKey: string | undefined = typeof rawX === 'string' && rawX ? rawX : undefined;
+    let yKey: string | undefined = typeof rawY === 'string' && rawY ? rawY : undefined;
+
+    function isNumeric(v: any): boolean {
+      return typeof v === 'number' || (typeof v === 'string' && v.trim() !== '' && !isNaN(Number(v)));
+    }
+
+    if (!xKey) {
+      xKey = keys.find((k) => typeof sample[k] === 'string')
+        || keys.find((k) => !isNaN(Date.parse(String(sample[k]))))
+        || keys[0];
+    }
+    if (!yKey) {
+      yKey = keys.find((k) => typeof sample[k] === 'number') || keys.find((k) => isNumeric(sample[k])) || keys[0];
+    }
+
+    if (!xKey || !yKey || !keys.includes(xKey) || !keys.includes(yKey)) {
+      return res.status(400).json({ message: 'Failed to infer xKey/yKey from provided rows' });
+    }
+
+    // Aggregate by xKey (sum yKey values)
+    const acc = new Map<string, number>();
+    for (const r of rows) {
+      const xRaw = r?.[xKey];
+      const x = xRaw == null ? '' : String(xRaw);
+      const yRaw = r?.[yKey];
+      const y = typeof yRaw === 'number' ? yRaw : Number(yRaw);
+      if (!isFinite(y)) continue;
+      acc.set(x, (acc.get(x) || 0) + y);
+    }
+
+    const labels: string[] = [];
+    const data: number[] = [];
+    for (const [label, sum] of acc.entries()) {
+      labels.push(label);
+      data.push(Number(sum.toFixed(2)));
+    }
+
+    res.json({
+      xKey,
+      yKey,
+      labels,
+      datasets: [
+        { label: yKey, data },
+      ],
+      totalPoints: labels.length,
+    });
+  } catch (err) {
+    res.status(500).json({ message: 'Chart preparation failed', error: (err as Error).message });
+  }
+});
+
