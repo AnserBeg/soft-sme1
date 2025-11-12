@@ -14,11 +14,14 @@ import {
   useMediaQuery,
 } from '@mui/material';
 import Button from '@mui/material/Button';
+import Switch from '@mui/material/Switch';
+import FormControlLabel from '@mui/material/FormControlLabel';
 import ChatIcon from '@mui/icons-material/Chat';
 import CloseIcon from '@mui/icons-material/Close';
 import SendIcon from '@mui/icons-material/Send';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import InsertChartIcon from '@mui/icons-material/InsertChartOutlined';
+import DownloadIcon from '@mui/icons-material/DownloadOutlined';
 import { alpha, useTheme } from '@mui/material/styles';
 import { askAssistant, AssistantReply } from '../services/assistantService';
 import { useAuth } from '../contexts/AuthContext';
@@ -31,6 +34,7 @@ import {
   Pie,
   PieChart,
   Cell,
+  LabelList,
   Legend,
   ResponsiveContainer,
   Tooltip as RechartsTooltip,
@@ -82,7 +86,7 @@ const AssistantWidget: React.FC<AssistantWidgetProps> = ({
   const resizeStartXRef = useRef(0);
   const resizeStartWidthRef = useRef(panelWidth);
   const [isResizing, setIsResizing] = useState(false);
-  const [chartStateByMsg, setChartStateByMsg] = useState<Record<string, { open: boolean; xKey?: string; yKey?: string; chartType?: 'bar' | 'line' | 'pie' }>>({});
+  const [chartStateByMsg, setChartStateByMsg] = useState<Record<string, { open: boolean; xKey?: string; yKey?: string; chartType?: 'bar' | 'line' | 'pie'; showValues?: boolean }>>({});
 
   const effectiveDesktopWidth = useMemo(() => {
     const target = typeof desktopWidth === 'number' ? desktopWidth : internalDesktopWidth;
@@ -242,6 +246,29 @@ const AssistantWidget: React.FC<AssistantWidgetProps> = ({
       map.set(x, (map.get(x) || 0) + y);
     }
     return Array.from(map.entries()).map(([x, sum]) => ({ [xKey]: x, [yKey]: Number(sum.toFixed(2)) }));
+  }
+
+  function downloadCsv(data: Array<Record<string, any>>, xKey: string, yKey: string, baseName = 'chart_data') {
+    try {
+      const header = `${xKey},${yKey}`;
+      const lines = data.map((row) => {
+        const x = String(row[xKey]).replaceAll('"', '""');
+        const y = Number(row[yKey]);
+        return `"${x}",${isFinite(y) ? y.toFixed(2) : ''}`;
+      });
+      const csv = [header, ...lines].join('\n');
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${baseName}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch {
+      // ignore
+    }
   }
 
   const header = (
@@ -439,7 +466,7 @@ const AssistantWidget: React.FC<AssistantWidgetProps> = ({
                         const data = hasXY ? aggregateData(m.rows!, xKey!, yKey!) : [];
                         return (
                           <>
-                            <Box sx={{ display: 'flex', gap: 1.5, mb: 1, flexWrap: 'wrap' }}>
+                            <Box sx={{ display: 'flex', gap: 1.5, mb: 1, flexWrap: 'wrap', alignItems: 'center' }}>
                               <TextField
                                 select
                                 size="small"
@@ -504,41 +531,79 @@ const AssistantWidget: React.FC<AssistantWidgetProps> = ({
                                   </option>
                                 ))}
                               </TextField>
+                              <FormControlLabel
+                                sx={{ ml: 0.5 }}
+                                control={
+                                  <Switch
+                                    size="small"
+                                    checked={Boolean(state.showValues)}
+                                    onChange={(e) =>
+                                      setChartStateByMsg((prev) => ({
+                                        ...prev,
+                                        [m.id]: { ...(prev[m.id] ?? {}), open: true, showValues: e.target.checked },
+                                      }))
+                                    }
+                                  />
+                                }
+                                label="Values"
+                              />
+                              <Button
+                                size="small"
+                                variant="text"
+                                startIcon={<DownloadIcon fontSize="small" />}
+                                onClick={() => data && xKey && yKey && downloadCsv(data, xKey, yKey)}
+                              >
+                                Download CSV
+                              </Button>
                             </Box>
                             {hasXY ? (
                               <Box sx={{ height: 260 }}>
                                 <ResponsiveContainer width="100%" height="100%">
-                                  {chartType === 'bar' && (
-                                    <BarChart data={data} layout="vertical" margin={{ left: 12, right: 16, top: 8, bottom: 8 }}>
-                                      <CartesianGrid strokeDasharray="3 3" />
-                                      <XAxis type="number" tick={{ fontSize: 11 }} />
-                                      <YAxis type="category" dataKey={xKey!} width={160} tick={{ fontSize: 12 }} />
-                                      <RechartsTooltip />
-                                      <Legend />
-                                      <Bar dataKey={yKey!} fill={theme.palette.primary.main} />
+                                  {(() => {
+                                    if (chartType === 'bar') {
+                                      return (
+                                        <BarChart data={data} layout="vertical" margin={{ left: 12, right: 16, top: 8, bottom: 8 }}>
+                                          <CartesianGrid strokeDasharray="3 3" />
+                                          <XAxis type="number" tick={{ fontSize: 11 }} />
+                                          <YAxis type="category" dataKey={xKey!} width={160} tick={{ fontSize: 12 }} />
+                                          <RechartsTooltip />
+                                          <Legend />
+                                      <Bar dataKey={yKey!} fill={theme.palette.primary.main}>
+                                        {state.showValues && (
+                                          <LabelList dataKey={yKey!} position="right" formatter={(v: any) => (isFinite(Number(v)) ? Number(v).toFixed(2) : v)} />
+                                        )}
+                                      </Bar>
                                     </BarChart>
-                                  )}
-                                  {chartType === 'line' && (
+                                  );
+                                }
+                                if (chartType === 'line') {
+                                  return (
                                     <LineChart data={data} margin={{ left: 8, right: 16, top: 8, bottom: 8 }}>
                                       <CartesianGrid strokeDasharray="3 3" />
                                       <XAxis dataKey={xKey!} interval={0} tick={{ fontSize: 11 }} height={40} />
                                       <YAxis />
                                       <RechartsTooltip />
                                       <Legend />
-                                      <Line type="monotone" dataKey={yKey!} stroke={theme.palette.primary.main} strokeWidth={2} dot={{ r: 2 }} />
+                                      <Line type="monotone" dataKey={yKey!} stroke={theme.palette.primary.main} strokeWidth={2} dot={{ r: 2 }}>
+                                        {state.showValues && (
+                                          <LabelList dataKey={yKey!} position="top" formatter={(v: any) => (isFinite(Number(v)) ? Number(v).toFixed(2) : v)} />
+                                        )}
+                                      </Line>
                                     </LineChart>
-                                  )}
-                                  {chartType === 'pie' && (
-                                    <PieChart>
-                                      <RechartsTooltip />
-                                      <Legend />
-                                      <Pie data={data} dataKey={yKey!} nameKey={xKey!} outerRadius={90} label>
-                                        {data.map((_, idx) => (
-                                          <Cell key={`cell-${idx}`} fill={theme.palette.primary[idx % 2 === 0 ? 'main' : 'light']} />
-                                        ))}
-                                      </Pie>
-                                    </PieChart>
-                                  )}
+                                  );
+                                }
+                                    return (
+                                      <PieChart>
+                                        <RechartsTooltip />
+                                        <Legend />
+                                        <Pie data={data} dataKey={yKey!} nameKey={xKey!} outerRadius={90} label>
+                                          {data.map((_, idx) => (
+                                            <Cell key={`cell-${idx}`} fill={theme.palette.primary[idx % 2 === 0 ? 'main' : 'light']} />
+                                          ))}
+                                        </Pie>
+                                      </PieChart>
+                                    );
+                                  })()}
                                 </ResponsiveContainer>
                               </Box>
                             ) : (
