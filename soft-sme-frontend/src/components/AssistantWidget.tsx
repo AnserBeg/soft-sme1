@@ -424,7 +424,7 @@ const AssistantWidget: React.FC<AssistantWidgetProps> = ({
                   {chartStateByMsg[m.id]?.open && (
                     <Box sx={{ p: 1.25, borderTop: `1px solid ${alpha(theme.palette.primary.main, 0.1)}` }}>
                       {(() => {
-                        const state = chartStateByMsg[m.id] || {};
+                        const state: { open?: boolean; xKey?: string; yKey?: string } = chartStateByMsg[m.id] || {};
                         const sample = m.rows![0];
                         const keys = Object.keys(sample);
                         const numericKeys = keys.filter((k) => typeof sample[k] === 'number' || !isNaN(Number(sample[k])));
@@ -443,7 +443,7 @@ const AssistantWidget: React.FC<AssistantWidgetProps> = ({
                                 onChange={(e) =>
                                   setChartStateByMsg((prev) => ({
                                     ...prev,
-                                    [m.id]: { ...prev[m.id], open: true, xKey: e.target.value, yKey },
+                                    [m.id]: { ...(prev[m.id] ?? {}), open: true, xKey: e.target.value, yKey },
                                   }))
                                 }
                                 SelectProps={{ native: true }}
@@ -466,7 +466,7 @@ const AssistantWidget: React.FC<AssistantWidgetProps> = ({
                                 onChange={(e) =>
                                   setChartStateByMsg((prev) => ({
                                     ...prev,
-                                    [m.id]: { ...prev[m.id], open: true, xKey, yKey: e.target.value },
+                                    [m.id]: { ...(prev[m.id] ?? {}), open: true, xKey, yKey: e.target.value },
                                   }))
                                 }
                                 SelectProps={{ native: true }}
