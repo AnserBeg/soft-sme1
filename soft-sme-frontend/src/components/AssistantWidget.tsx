@@ -252,7 +252,7 @@ const AssistantWidget: React.FC<AssistantWidgetProps> = ({
     try {
       const header = `${xKey},${yKey}`;
       const lines = data.map((row) => {
-        const x = String(row[xKey]).replaceAll('"', '""');
+        const x = String(row[xKey]).replace(/"/g, '""');
         const y = Number(row[yKey]);
         return `"${x}",${isFinite(y) ? y.toFixed(2) : ''}`;
       });
@@ -455,7 +455,7 @@ const AssistantWidget: React.FC<AssistantWidgetProps> = ({
                   {chartStateByMsg[m.id]?.open && (
                     <Box sx={{ p: 1.25, borderTop: `1px solid ${alpha(theme.palette.primary.main, 0.1)}` }}>
                       {(() => {
-                        const state: { open?: boolean; xKey?: string; yKey?: string; chartType?: 'bar' | 'line' | 'pie' } = chartStateByMsg[m.id] || {};
+                        const state: { open?: boolean; xKey?: string; yKey?: string; chartType?: 'bar' | 'line' | 'pie'; showValues?: boolean } = chartStateByMsg[m.id] || {};
                         const sample = m.rows![0];
                         const keys = Object.keys(sample);
                         const numericKeys = keys.filter((k) => typeof sample[k] === 'number' || !isNaN(Number(sample[k])));
