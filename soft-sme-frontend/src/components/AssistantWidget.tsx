@@ -85,7 +85,7 @@ const AssistantWidget: React.FC<AssistantWidgetProps> = ({
   const resizeStartXRef = useRef(0);
   const resizeStartWidthRef = useRef(panelWidth);
   const [isResizing, setIsResizing] = useState(false);
-  const [chartStateByMsg, setChartStateByMsg] = useState<Record<string, { open: boolean; xKey?: string; yKey?: string; chartType?: 'bar' | 'line' | 'pie'; showXAxis?: boolean; showYAxis?: boolean }>>({});
+  const [chartStateByMsg, setChartStateByMsg] = useState<Record<string, { open: boolean; xKey?: string; yKey?: string; chartType?: 'bar' | 'line' | 'pie'; showLabels?: boolean }>>({});
 
   const effectiveDesktopWidth = useMemo(() => {
     const target = typeof desktopWidth === 'number' ? desktopWidth : internalDesktopWidth;
@@ -123,16 +123,28 @@ const AssistantWidget: React.FC<AssistantWidgetProps> = ({
       return;
     }
 
+    let rafId: number | null = null;
+    let pendingWidth: number | null = null;
+    const flush = () => {
+      if (pendingWidth == null) return;
+      const w = pendingWidth;
+      pendingWidth = null;
+      if (onDesktopResize) {
+        onDesktopResize(w);
+      } else {
+        setInternalDesktopWidth(w);
+      }
+      rafId = null;
+    };
     const handleMouseMove = (event: MouseEvent) => {
       const delta = resizeStartXRef.current - event.clientX;
       const nextWidth = Math.min(
         desktopMaxWidth,
         Math.max(desktopMinWidth, resizeStartWidthRef.current + delta),
       );
-      if (onDesktopResize) {
-        onDesktopResize(nextWidth);
-      } else {
-        setInternalDesktopWidth(nextWidth);
+      pendingWidth = nextWidth;
+      if (rafId == null) {
+        rafId = requestAnimationFrame(flush);
       }
     };
 
@@ -148,6 +160,7 @@ const AssistantWidget: React.FC<AssistantWidgetProps> = ({
     return () => {
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', stopResizing);
+      if (rafId != null) cancelAnimationFrame(rafId);
     };
   }, [desktopMaxWidth, desktopMinWidth, isResizing, onDesktopResize]);
 
@@ -270,6 +283,18 @@ const AssistantWidget: React.FC<AssistantWidgetProps> = ({
     }
   }
 
+  function cleanAssistantText(text: string, rows?: any[] | null): string {
+    if (rows && Array.isArray(rows) && rows.length > 0) {
+      const headlineMatch = text.match(/(^|\n)\s*Headline\s*:[^\n]*/i);
+      if (headlineMatch) {
+        return headlineMatch[0].replace(/^\s*/, '').trim();
+      }
+      const firstLine = text.split(/\r?\n/)[0]?.trim() ?? '';
+      return firstLine.length > 0 ? firstLine : '';
+    }
+    return text;
+  }
+
   const header = (
     <Box
       sx={{
@@ -333,6 +358,7 @@ const AssistantWidget: React.FC<AssistantWidgetProps> = ({
       )}
       {msgs.map((m) => {
         const isUser = m.role === 'user';
+        const displayText = cleanAssistantText(m.text, m.rows);
         return (
           <Box
             key={m.id}
@@ -360,7 +386,9 @@ const AssistantWidget: React.FC<AssistantWidgetProps> = ({
                 wordBreak: 'break-word',
               }}
             >
-              <Typography variant="body2">{m.text}</Typography>
+              {displayText ? (
+                <Typography variant="body2">{displayText}</Typography>
+              ) : null}
               {m.rows && Array.isArray(m.rows) && m.rows.length > 0 && (
                 <Box
                   sx={{
@@ -403,8 +431,7 @@ const AssistantWidget: React.FC<AssistantWidgetProps> = ({
                                 xKey: prevState.xKey || defaults.xKey,
                                 yKey: prevState.yKey || defaults.yKey,
                                 chartType: prevState.chartType || 'bar',
-                                showXAxis: prevState.showXAxis ?? true,
-                                showYAxis: prevState.showYAxis ?? true,
+                                showLabels: prevState.showLabels ?? true,
                               },
                             };
                           });
@@ -456,15 +483,14 @@ const AssistantWidget: React.FC<AssistantWidgetProps> = ({
                   {chartStateByMsg[m.id]?.open && (
                     <Box sx={{ p: 1.25, borderTop: `1px solid ${alpha(theme.palette.primary.main, 0.1)}` }}>
                       {(() => {
-                        const state: { open?: boolean; xKey?: string; yKey?: string; chartType?: 'bar' | 'line' | 'pie'; showXAxis?: boolean; showYAxis?: boolean } = chartStateByMsg[m.id] || {};
+                        const state: { open?: boolean; xKey?: string; yKey?: string; chartType?: 'bar' | 'line' | 'pie'; showLabels?: boolean } = chartStateByMsg[m.id] || {};
                         const sample = m.rows![0];
                         const keys = Object.keys(sample);
                         const numericKeys = keys.filter((k) => typeof sample[k] === 'number' || !isNaN(Number(sample[k])));
                         const xKey = state.xKey && keys.includes(state.xKey) ? state.xKey : inferDefaultKeys(m.rows!).xKey;
                         const yKey = state.yKey && keys.includes(state.yKey) ? state.yKey : inferDefaultKeys(m.rows!).yKey;
                         const chartType = state.chartType || 'bar';
-                        const showXAxis = state.showXAxis !== false;
-                        const showYAxis = state.showYAxis !== false;
+                        const showLabels = state.showLabels !== false;
                         const hasXY = xKey && yKey;
                         const data = hasXY ? aggregateData(m.rows!, xKey!, yKey!) : [];
                         return (
@@ -539,32 +565,16 @@ const AssistantWidget: React.FC<AssistantWidgetProps> = ({
                                 control={
                                   <Switch
                                     size="small"
-                                    checked={showXAxis}
+                                    checked={showLabels}
                                     onChange={(e) =>
                                       setChartStateByMsg((prev) => ({
                                         ...prev,
-                                        [m.id]: { ...(prev[m.id] ?? {}), open: true, showXAxis: e.target.checked },
+                                        [m.id]: { ...(prev[m.id] ?? {}), open: true, showLabels: e.target.checked },
                                       }))
                                     }
                                   />
                                 }
-                                label="X labels"
-                              />
-                              <FormControlLabel
-                                sx={{ ml: 0.5 }}
-                                control={
-                                  <Switch
-                                    size="small"
-                                    checked={showYAxis}
-                                    onChange={(e) =>
-                                      setChartStateByMsg((prev) => ({
-                                        ...prev,
-                                        [m.id]: { ...(prev[m.id] ?? {}), open: true, showYAxis: e.target.checked },
-                                      }))
-                                    }
-                                  />
-                                }
-                                label="Y labels"
+                                label="Labels"
                               />
                               <Button
                                 size="small"
@@ -583,10 +593,10 @@ const AssistantWidget: React.FC<AssistantWidgetProps> = ({
                                       return (
                                         <BarChart data={data} layout="vertical" margin={{ left: 12, right: 16, top: 8, bottom: 8 }}>
                                           <CartesianGrid strokeDasharray="3 3" />
-                                          <XAxis type="number" tick={showXAxis ? { fontSize: 11 } : false} />
-                                          <YAxis type="category" dataKey={xKey!} width={160} tick={showYAxis ? { fontSize: 12 } : false} />
+                                          <XAxis type="number" tick={showLabels ? { fontSize: 11 } : false} />
+                                          <YAxis type="category" dataKey={xKey!} width={160} tick={showLabels ? { fontSize: 12 } : false} />
                                           <RechartsTooltip />
-                                          <Legend />
+                                          {showLabels && <Legend />}
                                           <Bar dataKey={yKey!} fill={theme.palette.primary.main} />
                                         </BarChart>
                                       );
@@ -595,10 +605,10 @@ const AssistantWidget: React.FC<AssistantWidgetProps> = ({
                                       return (
                                         <LineChart data={data} margin={{ left: 8, right: 16, top: 8, bottom: 8 }}>
                                           <CartesianGrid strokeDasharray="3 3" />
-                                          <XAxis dataKey={xKey!} interval={0} tick={showXAxis ? { fontSize: 11 } : false} height={40} />
-                                          <YAxis tick={showYAxis ? undefined : false} />
+                                          <XAxis dataKey={xKey!} interval={0} tick={showLabels ? { fontSize: 11 } : false} height={40} />
+                                          <YAxis tick={showLabels ? undefined : false} />
                                           <RechartsTooltip />
-                                          <Legend />
+                                          {showLabels && <Legend />}
                                           <Line type="monotone" dataKey={yKey!} stroke={theme.palette.primary.main} strokeWidth={2} dot={{ r: 2 }} />
                                         </LineChart>
                                       );
@@ -606,7 +616,7 @@ const AssistantWidget: React.FC<AssistantWidgetProps> = ({
                                     return (
                                       <PieChart>
                                         <RechartsTooltip />
-                                        <Legend />
+                                        {showLabels && <Legend />}
                                         <Pie data={data} dataKey={yKey!} nameKey={xKey!} outerRadius={90}>
                                           {data.map((_, idx) => (
                                             <Cell key={`cell-${idx}`} fill={theme.palette.primary[idx % 2 === 0 ? 'main' : 'light']} />
