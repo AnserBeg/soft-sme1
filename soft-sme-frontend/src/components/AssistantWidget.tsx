@@ -13,10 +13,12 @@ import {
   Slide,
   useMediaQuery,
 } from '@mui/material';
+import Button from '@mui/material/Button';
 import ChatIcon from '@mui/icons-material/Chat';
 import CloseIcon from '@mui/icons-material/Close';
 import SendIcon from '@mui/icons-material/Send';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
+import InsertChartIcon from '@mui/icons-material/InsertChartOutlined';
 import { alpha, useTheme } from '@mui/material/styles';
 import { askAssistant, AssistantReply } from '../services/assistantService';
 import { useAuth } from '../contexts/AuthContext';
@@ -354,32 +356,28 @@ const AssistantWidget: React.FC<AssistantWidgetProps> = ({
                       Data preview
                     </Typography>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                      <Tooltip title="Visualize this data">
-                        <IconButton
-                          size="small"
-                          onClick={() => {
-                            setChartStateByMsg((prev) => {
-                              const prevState = prev[m.id] || { open: false };
-                              const nextOpen = !prevState.open;
-                              const defaults = inferDefaultKeys(m.rows!);
-                              return {
-                                ...prev,
-                                [m.id]: {
-                                  open: nextOpen,
-                                  xKey: prevState.xKey || defaults.xKey,
-                                  yKey: prevState.yKey || defaults.yKey,
-                                },
-                              };
-                            });
-                          }}
-                          sx={{
-                            border: `1px solid ${alpha(theme.palette.primary.main, 0.3)}`,
-                            bgcolor: alpha(theme.palette.primary.light, 0.06),
-                          }}
-                        >
-                          <SmartToyIcon fontSize="inherit" />
-                        </IconButton>
-                      </Tooltip>
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        startIcon={<InsertChartIcon fontSize="small" />}
+                        onClick={() => {
+                          setChartStateByMsg((prev) => {
+                            const prevState = prev[m.id] || { open: false };
+                            const nextOpen = !prevState.open;
+                            const defaults = inferDefaultKeys(m.rows!);
+                            return {
+                              ...prev,
+                              [m.id]: {
+                                open: nextOpen,
+                                xKey: prevState.xKey || defaults.xKey,
+                                yKey: prevState.yKey || defaults.yKey,
+                              },
+                            };
+                          });
+                        }}
+                      >
+                        {chartStateByMsg[m.id]?.open ? 'Hide chart' : 'Visualize'}
+                      </Button>
                     </Box>
                   </Box>
                   <Box sx={{ maxHeight: 160, overflow: 'auto' }}>
