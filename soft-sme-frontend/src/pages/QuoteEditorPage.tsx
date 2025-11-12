@@ -25,6 +25,9 @@ import EmailIcon from '@mui/icons-material/Email';
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
 import BlockIcon from '@mui/icons-material/Block';
 import TableChartIcon from '@mui/icons-material/TableChart';
+import CircularProgress from '@mui/material/CircularProgress';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import { useNavigate, useParams } from 'react-router-dom';
 import api from '../api/axios';
 import { AxiosError } from 'axios';
@@ -173,6 +176,7 @@ const QuoteEditorPage: React.FC = () => {
   // email modal
   const [isEmailModalOpen, setIsEmailModalOpen] = useState(false);
   const [isTemplateDialogOpen, setIsTemplateDialogOpen] = useState(false);
+  const [isEstimating, setIsEstimating] = useState(false);
 
   // Unsaved changes guard: normalized signature structure
   const [initialSignature, setInitialSignature] = useState<string>('');
@@ -476,6 +480,107 @@ const QuoteEditorPage: React.FC = () => {
     } catch {
       setError('Failed to download PDF. Please try again.');
     }
+  };
+
+  const generateEstimatePdf = () => {
+    const doc = new jsPDF({ unit: 'pt' });
+
+    const title = 'Estimate Cost';
+    doc.setFontSize(16);
+    doc.setFont('helvetica', 'bold');
+    doc.text(title, 40, 40);
+
+    // Optional: show quote/product context when available
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    if (quote?.quote_number) {
+      doc.text(`Quote: ${quote.quote_number}`, 40, 58);
+    }
+    if (selectedCustomer?.label) {
+      doc.text(`Customer: ${selectedCustomer.label}`, 40, 72);
+    }
+    if (selectedProduct?.label) {
+      doc.text(`Product: ${selectedProduct.label}`, 40, 86);
+    }
+
+    const head = [[
+      'SN',
+      'Item Code',
+      'Description',
+      'Qty',
+      'Unit',
+      'Unit Price',
+      'Line Total',
+    ]];
+
+    const body = [
+      ['1', 'LABOUR', 'Labour Hours', '52.41', 'hr', '40.00', '2096.40'],
+      ['2', '1705110', '48" ALUM UNDERBODY TOOLBOX', '2', 'Each', '1246.94', '2493.88'],
+      ['3', '3X(3/8)', 'Flatbar', '75', 'ft', '3.91', '293.25'],
+      ['4', '2X2X(3/16)AG L', 'Angle', '10', 'ft', '2.68', '26.80'],
+      ['5', '(3/4)(A36/44W)', 'HR ROUND - ASTM A36/44W', '10', 'ft', '1.67', '16.70'],
+      ['6', '5X3X(1/4)ANG LE3', 'HEAT # 52118708', '20', 'ft', '7.01', '140.20'],
+      ['7', '(4-1)(A36/44W)', 'CHANNEL ASTM A36/44W', '100', 'ft', '4.14', '414.00'],
+      ['8', '83021K05', 'CLOVAPRIME 21 EPOXY PRIM GREY 5 GAL KIT', '1', 'Each', '441.29', '441.29'],
+      ['9', '83904K05', 'GEMINI AMOURSHIELD BLACK 5G KIT', '2', 'Each', '639.73', '1279.46'],
+      ['10', 'CLS-AS2620C', 'CR ANTI SAIL BRACKET', '3', 'Each', '8.70', '26.10'],
+      ['11', 'AUP-IMXGT-2436CD', '1/4" RUBBER BLACK CHEVRO', '3', 'Each', '19.53', '58.59'],
+      ['12', 'SUPPLY', 'Supply', '1', 'Each', '209.64', '209.64'],
+      ['13', 'OVERHEAD', 'Overhead Hours', '52.41', 'hr', '30.00', '1572.30'],
+    ];
+
+    autoTable(doc, {
+      head,
+      body,
+      startY: 110,
+      styles: { fontSize: 9, cellPadding: 6, overflow: 'linebreak' },
+      headStyles: { fillColor: [33, 150, 243], halign: 'center' },
+      columnStyles: {
+        0: { cellWidth: 32, halign: 'right' },
+        1: { cellWidth: 100 },
+        2: { cellWidth: 230 },
+        3: { cellWidth: 48, halign: 'right' },
+        4: { cellWidth: 48 },
+        5: { cellWidth: 70, halign: 'right' },
+        6: { cellWidth: 80, halign: 'right' },
+      },
+      theme: 'striped',
+      didParseCell: (data) => {
+        if (data.section === 'body' && [0, 3, 5, 6].includes(data.column.index)) {
+          data.cell.styles.halign = 'right';
+        }
+      },
+    });
+
+    const afterTableY = (doc as any).lastAutoTable?.finalY || 110;
+    const subtotal = 'Sub Total: 9068.61';
+    const gst = 'Total GST: 453.43';
+    const total = 'Total: 9522.04';
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(11);
+    const rightX = doc.internal.pageSize.getWidth() - 40;
+    doc.text(subtotal, rightX, afterTableY + 24, { align: 'right' });
+    doc.text(gst, rightX, afterTableY + 44, { align: 'right' });
+    doc.setFontSize(12);
+    doc.text(total, rightX, afterTableY + 70, { align: 'right' });
+
+    const filenameBase = quote?.quote_number ? `Estimate_${quote.quote_number}` : 'Estimate_Cost';
+    doc.save(`${filenameBase}.pdf`);
+  };
+
+  const handleEstimateCost = () => {
+    if (isEstimating) return;
+    setIsEstimating(true);
+    window.setTimeout(() => {
+      setIsEstimating(false);
+      try {
+        generateEstimatePdf();
+        setSuccess('Estimate generated successfully.');
+      } catch {
+        setError('Failed to generate estimate PDF.');
+      }
+    }, 15000);
   };
 
   const handleEmailQuoteClick = () => {
@@ -992,6 +1097,22 @@ const QuoteEditorPage: React.FC = () => {
                     },
                   }}
                 />
+                <Box sx={{ mt: 1.5, display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                  <Button
+                    variant="contained"
+                    color="secondary"
+                    onClick={handleEstimateCost}
+                    disabled={isEstimating}
+                  >
+                    ESTIMATE COST
+                  </Button>
+                  {isEstimating && (
+                    <Stack direction="row" alignItems="center" spacing={1}>
+                      <CircularProgress size={22} />
+                      <Typography variant="body2" color="text.secondary">Generating estimate…</Typography>
+                    </Stack>
+                  )}
+                </Box>
               </Grid>
 
               {/* Terms */}
