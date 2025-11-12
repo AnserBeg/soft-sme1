@@ -485,22 +485,30 @@ const QuoteEditorPage: React.FC = () => {
   const generateEstimatePdf = () => {
     const doc = new jsPDF({ unit: 'pt' });
 
+    const margin = 40;
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const usableWidth = pageWidth - margin * 2;
+
     const title = 'Estimate Cost';
     doc.setFontSize(16);
     doc.setFont('helvetica', 'bold');
-    doc.text(title, 40, 40);
+    doc.text(title, margin, 40);
 
     // Optional: show quote/product context when available
     doc.setFontSize(10);
     doc.setFont('helvetica', 'normal');
+    let yMeta = 58;
     if (quote?.quote_number) {
-      doc.text(`Quote: ${quote.quote_number}`, 40, 58);
+      doc.text(`Quote: ${quote.quote_number}`, margin, yMeta);
+      yMeta += 14;
     }
     if (selectedCustomer?.label) {
-      doc.text(`Customer: ${selectedCustomer.label}`, 40, 72);
+      doc.text(`Customer: ${selectedCustomer.label}`, margin, yMeta);
+      yMeta += 14;
     }
     if (selectedProduct?.label) {
-      doc.text(`Product: ${selectedProduct.label}`, 40, 86);
+      doc.text(`Product: ${selectedProduct.label}`, margin, yMeta);
+      yMeta += 14;
     }
 
     const head = [[
@@ -529,20 +537,34 @@ const QuoteEditorPage: React.FC = () => {
       ['13', 'OVERHEAD', 'Overhead Hours', '52.41', 'hr', '30.00', '1572.30'],
     ];
 
+    // Define fixed widths for non-description cols; make description fill remaining space
+    const widths = {
+      sn: 26,
+      code: 80,
+      qty: 44,
+      unit: 40,
+      unitPrice: 72,
+      lineTotal: 80,
+    };
+    const nonDescTotal = widths.sn + widths.code + widths.qty + widths.unit + widths.unitPrice + widths.lineTotal;
+    const descWidth = Math.max(140, usableWidth - nonDescTotal);
+
     autoTable(doc, {
       head,
       body,
-      startY: 110,
-      styles: { fontSize: 9, cellPadding: 6, overflow: 'linebreak' },
+      startY: Math.max(110, yMeta + 10),
+      margin: { left: margin, right: margin },
+      tableWidth: usableWidth,
+      styles: { fontSize: 9, cellPadding: 4, overflow: 'linebreak' },
       headStyles: { fillColor: [33, 150, 243], halign: 'center' },
       columnStyles: {
-        0: { cellWidth: 32, halign: 'right' },
-        1: { cellWidth: 100 },
-        2: { cellWidth: 230 },
-        3: { cellWidth: 48, halign: 'right' },
-        4: { cellWidth: 48 },
-        5: { cellWidth: 70, halign: 'right' },
-        6: { cellWidth: 80, halign: 'right' },
+        0: { cellWidth: widths.sn, halign: 'right' },
+        1: { cellWidth: widths.code },
+        2: { cellWidth: descWidth },
+        3: { cellWidth: widths.qty, halign: 'right' },
+        4: { cellWidth: widths.unit },
+        5: { cellWidth: widths.unitPrice, halign: 'right' },
+        6: { cellWidth: widths.lineTotal, halign: 'right' },
       },
       theme: 'striped',
       didParseCell: (data) => {
@@ -559,7 +581,7 @@ const QuoteEditorPage: React.FC = () => {
 
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(11);
-    const rightX = doc.internal.pageSize.getWidth() - 40;
+    const rightX = pageWidth - margin;
     doc.text(subtotal, rightX, afterTableY + 24, { align: 'right' });
     doc.text(gst, rightX, afterTableY + 44, { align: 'right' });
     doc.setFontSize(12);
