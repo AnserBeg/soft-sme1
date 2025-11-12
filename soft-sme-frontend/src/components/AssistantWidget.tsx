@@ -26,6 +26,11 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  Line,
+  LineChart,
+  Pie,
+  PieChart,
+  Cell,
   Legend,
   ResponsiveContainer,
   Tooltip as RechartsTooltip,
@@ -77,7 +82,7 @@ const AssistantWidget: React.FC<AssistantWidgetProps> = ({
   const resizeStartXRef = useRef(0);
   const resizeStartWidthRef = useRef(panelWidth);
   const [isResizing, setIsResizing] = useState(false);
-  const [chartStateByMsg, setChartStateByMsg] = useState<Record<string, { open: boolean; xKey?: string; yKey?: string }>>({});
+  const [chartStateByMsg, setChartStateByMsg] = useState<Record<string, { open: boolean; xKey?: string; yKey?: string; chartType?: 'bar' | 'line' | 'pie' }>>({});
 
   const effectiveDesktopWidth = useMemo(() => {
     const target = typeof desktopWidth === 'number' ? desktopWidth : internalDesktopWidth;
@@ -371,6 +376,7 @@ const AssistantWidget: React.FC<AssistantWidgetProps> = ({
                                 open: nextOpen,
                                 xKey: prevState.xKey || defaults.xKey,
                                 yKey: prevState.yKey || defaults.yKey,
+                                chartType: prevState.chartType || 'bar',
                               },
                             };
                           });
@@ -422,17 +428,36 @@ const AssistantWidget: React.FC<AssistantWidgetProps> = ({
                   {chartStateByMsg[m.id]?.open && (
                     <Box sx={{ p: 1.25, borderTop: `1px solid ${alpha(theme.palette.primary.main, 0.1)}` }}>
                       {(() => {
-                        const state: { open?: boolean; xKey?: string; yKey?: string } = chartStateByMsg[m.id] || {};
+                        const state: { open?: boolean; xKey?: string; yKey?: string; chartType?: 'bar' | 'line' | 'pie' } = chartStateByMsg[m.id] || {};
                         const sample = m.rows![0];
                         const keys = Object.keys(sample);
                         const numericKeys = keys.filter((k) => typeof sample[k] === 'number' || !isNaN(Number(sample[k])));
                         const xKey = state.xKey && keys.includes(state.xKey) ? state.xKey : inferDefaultKeys(m.rows!).xKey;
                         const yKey = state.yKey && keys.includes(state.yKey) ? state.yKey : inferDefaultKeys(m.rows!).yKey;
+                        const chartType = state.chartType || 'bar';
                         const hasXY = xKey && yKey;
                         const data = hasXY ? aggregateData(m.rows!, xKey!, yKey!) : [];
                         return (
                           <>
-                            <Box sx={{ display: 'flex', gap: 1.5, mb: 1 }}>
+                            <Box sx={{ display: 'flex', gap: 1.5, mb: 1, flexWrap: 'wrap' }}>
+                              <TextField
+                                select
+                                size="small"
+                                label="Chart type"
+                                value={chartType}
+                                onChange={(e) =>
+                                  setChartStateByMsg((prev) => ({
+                                    ...prev,
+                                    [m.id]: { ...(prev[m.id] ?? {}), open: true, chartType: e.target.value as 'bar' | 'line' | 'pie', xKey, yKey },
+                                  }))
+                                }
+                                SelectProps={{ native: true }}
+                                sx={{ minWidth: 140 }}
+                              >
+                                <option value="bar">Bar</option>
+                                <option value="line">Line</option>
+                                <option value="pie">Pie</option>
+                              </TextField>
                               <TextField
                                 select
                                 size="small"
@@ -483,14 +508,37 @@ const AssistantWidget: React.FC<AssistantWidgetProps> = ({
                             {hasXY ? (
                               <Box sx={{ height: 260 }}>
                                 <ResponsiveContainer width="100%" height="100%">
-                                  <BarChart data={data}>
-                                    <CartesianGrid strokeDasharray="3 3" />
-                                    <XAxis dataKey={xKey!} interval={0} angle={0} tick={{ fontSize: 11 }} height={40} />
-                                    <YAxis />
-                                    <RechartsTooltip />
-                                    <Legend />
-                                    <Bar dataKey={yKey!} fill={theme.palette.primary.main} />
-                                  </BarChart>
+                                  {chartType === 'bar' && (
+                                    <BarChart data={data} layout="vertical" margin={{ left: 12, right: 16, top: 8, bottom: 8 }}>
+                                      <CartesianGrid strokeDasharray="3 3" />
+                                      <XAxis type="number" tick={{ fontSize: 11 }} />
+                                      <YAxis type="category" dataKey={xKey!} width={160} tick={{ fontSize: 12 }} />
+                                      <RechartsTooltip />
+                                      <Legend />
+                                      <Bar dataKey={yKey!} fill={theme.palette.primary.main} />
+                                    </BarChart>
+                                  )}
+                                  {chartType === 'line' && (
+                                    <LineChart data={data} margin={{ left: 8, right: 16, top: 8, bottom: 8 }}>
+                                      <CartesianGrid strokeDasharray="3 3" />
+                                      <XAxis dataKey={xKey!} interval={0} tick={{ fontSize: 11 }} height={40} />
+                                      <YAxis />
+                                      <RechartsTooltip />
+                                      <Legend />
+                                      <Line type="monotone" dataKey={yKey!} stroke={theme.palette.primary.main} strokeWidth={2} dot={{ r: 2 }} />
+                                    </LineChart>
+                                  )}
+                                  {chartType === 'pie' && (
+                                    <PieChart>
+                                      <RechartsTooltip />
+                                      <Legend />
+                                      <Pie data={data} dataKey={yKey!} nameKey={xKey!} outerRadius={90} label>
+                                        {data.map((_, idx) => (
+                                          <Cell key={`cell-${idx}`} fill={theme.palette.primary[idx % 2 === 0 ? 'main' : 'light']} />
+                                        ))}
+                                      </Pie>
+                                    </PieChart>
+                                  )}
                                 </ResponsiveContainer>
                               </Box>
                             ) : (
