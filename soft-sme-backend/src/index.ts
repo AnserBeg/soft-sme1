@@ -8,13 +8,17 @@ import bodyParser from 'body-parser';
 import expressWs from 'express-ws';
 import { pool } from './db';
 import { authMiddleware } from './middleware/authMiddleware';
+import { requestLogger } from './middleware/requestLogger';
+import { logger } from './utils/logger';
 
 // Load environment variables - only load from .env file in development
 if (process.env.NODE_ENV !== 'production') {
   dotenv.config({ path: path.resolve(__dirname, '../.env') });
 }
 
-const DEFAULT_TESSERACT_BINARY = '/usr/bin/tesseract';
+// Use PATH by default so environments like Render, Docker, macOS, or Windows resolve correctly.
+// Render's render-start.sh already prepends the portable apt path (e.g. .apt/usr/bin) to PATH.
+const DEFAULT_TESSERACT_BINARY = 'tesseract';
 
 if (!process.env.TESSERACT_CMD && process.env.TESSERACT_PATH) {
   process.env.TESSERACT_CMD = process.env.TESSERACT_PATH;
@@ -69,12 +73,12 @@ import assistantRoutes from './routes/assistantRoutes';
 // Add error handling around chatRouter import
 let chatRouter: any;
 try {
-  console.log('[Index] Attempting to import chatRouter...');
+  logger.info('[Index] Attempting to import chatRouter...');
   const chatModule = require('./routes/chatRoutes');
   chatRouter = chatModule.default;
-  console.log('[Index] chatRouter imported successfully');
+  logger.info('[Index] chatRouter imported successfully');
 } catch (error) {
-  console.error('[Index] Error importing chatRouter:', error);
+  logger.error('[Index] Error importing chatRouter', { err: logger.serializeError(error) });
   throw error;
 }
 
@@ -86,6 +90,9 @@ const HOST = process.env.HOST || '0.0.0.0';
 
 // Initialize express-ws for WebSocket support
 const wsInstance = expressWs(app);
+
+// Request logging with request IDs
+app.use(requestLogger());
 
 const allowedOrigins = (
   [
@@ -147,7 +154,7 @@ async function ensureLocalAssistant(): Promise<void> {
 
   const scriptPath = scriptCandidates.find(p => fs.existsSync(p));
   if (!scriptPath) {
-    console.warn('[assistant] assistant_server.py not found; skipping local launch');
+    logger.warn('[assistant] assistant_server.py not found; skipping local launch');
     return;
   }
 
@@ -533,9 +540,9 @@ console.log('Registered voice search routes');
 try {
   console.log('Attempting to register chat routes...');
   app.use('/api/chat', authMiddleware, chatRouter);
-  console.log('Registered chat routes');
+  logger.info('Registered chat routes');
 } catch (error) {
-  console.error('Error registering chat routes:', error);
+  logger.error('Error registering chat routes', { err: logger.serializeError(error) });
 }
 
 // Subagent analytics routes removed - simplified AI implementation
@@ -581,32 +588,32 @@ const dbStartupRetryDelayMs = parsePositiveInt(
 
 const verifyDatabaseConnection = async (): Promise<void> => {
   if (shouldSkipDbStartupCheck) {
-    console.warn('[db] Startup connectivity check skipped via DB_SKIP_STARTUP_CHECK');
+    logger.warn('[db] Startup connectivity check skipped via DB_SKIP_STARTUP_CHECK');
     return;
   }
 
   for (let attempt = 1; attempt <= dbStartupRetryAttempts; attempt += 1) {
     try {
       await pool.query('SELECT 1');
-      console.log(`[db] Database connection verified on attempt ${attempt}`);
+      logger.info(`[db] Database connection verified on attempt ${attempt}`);
       return;
     } catch (error) {
-      console.error(`[db] Database connection attempt ${attempt} failed`, error);
+      logger.error(`[db] Database connection attempt ${attempt} failed`, { err: logger.serializeError(error) });
 
       if (attempt === dbStartupRetryAttempts) {
-        console.error(
+        logger.error(
           '[db] Unable to verify database connectivity after retries. The server will continue to start, but database-dependent requests may fail until the connection is restored.'
         );
         if (process.env.DATABASE_URL) {
-          console.error('[db] DATABASE_URL is configured; verify the connection string.');
+          logger.error('[db] DATABASE_URL is configured; verify the connection string.');
         } else {
-          console.error('[db] Environment variables check:');
-          console.error('[db] DB_HOST:', process.env.DB_HOST);
-          console.error('[db] DB_PORT:', process.env.DB_PORT);
-          console.error('[db] DB_DATABASE:', process.env.DB_DATABASE);
-          console.error('[db] DB_USER:', process.env.DB_USER);
+          logger.error('[db] Environment variables check:');
+          logger.error('[db] DB_HOST', { value: process.env.DB_HOST });
+          logger.error('[db] DB_PORT', { value: process.env.DB_PORT });
+          logger.error('[db] DB_DATABASE', { value: process.env.DB_DATABASE });
+          logger.error('[db] DB_USER', { value: process.env.DB_USER });
         }
-        console.error('[db] NODE_ENV:', process.env.NODE_ENV);
+        logger.error('[db] NODE_ENV', { value: process.env.NODE_ENV });
         return;
       }
 
@@ -616,7 +623,7 @@ const verifyDatabaseConnection = async (): Promise<void> => {
 };
 
 pool.on('error', error => {
-  console.error('[db] Unexpected error on idle client', error);
+  logger.error('[db] Unexpected error on idle client', { err: logger.serializeError(error) });
 });
 
 app.get('/ping', (req, res) => res.send('pong'));
@@ -625,19 +632,19 @@ app.get('/ping', (req, res) => res.send('pong'));
 let httpServer: any = null;
 if (process.env.ENABLE_VENDOR_CALLING !== 'false') {
   try {
-    console.log('WebSocket support enabled via express-ws');
+    logger.info('WebSocket support enabled via express-ws');
   } catch (error) {
-    console.error('Failed to initialize WebSocket support:', error);
+    logger.error('Failed to initialize WebSocket support', { err: logger.serializeError(error) });
   }
 }
 
 // Use the regular app for all functionality
 const server = app.listen(PORT, HOST, async () => {
-  console.log(`Server is running on port ${PORT}`);
+  logger.info(`Server is running on port ${PORT}`);
 
   // Try to start the local assistant in the background if not healthy
   ensureLocalAssistant().catch(err => {
-    console.warn('[assistant] failed to launch:', err instanceof Error ? err.message : String(err));
+    logger.warn('[assistant] failed to launch', { error: err instanceof Error ? err.message : String(err) });
   });
 
   await verifyDatabaseConnection();
@@ -645,17 +652,25 @@ const server = app.listen(PORT, HOST, async () => {
 
 // Graceful shutdown
 process.on('SIGTERM', async () => {
-  console.log('SIGTERM received, shutting down gracefully...');
+  logger.info('SIGTERM received, shutting down gracefully...');
   server.close(() => {
-    console.log('Server closed');
+    logger.info('Server closed');
     process.exit(0);
   });
 });
 
 process.on('SIGINT', async () => {
-  console.log('SIGINT received, shutting down gracefully...');
+  logger.info('SIGINT received, shutting down gracefully...');
   server.close(() => {
-    console.log('Server closed');
+    logger.info('Server closed');
     process.exit(0);
   });
+});
+
+// Global error handlers
+process.on('uncaughtException', (err) => {
+  logger.fatal('uncaughtException', { err: logger.serializeError(err) });
+});
+process.on('unhandledRejection', (reason) => {
+  logger.fatal('unhandledRejection', { err: logger.serializeError(reason as any) });
 });

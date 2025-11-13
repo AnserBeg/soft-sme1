@@ -4,6 +4,8 @@ import path from 'path';
 import fs from 'fs';
 import { PurchaseOrderOcrService, PurchaseOrderOcrResponse } from '../services/PurchaseOrderOcrService';
 import { PurchaseOrderAiReviewService } from '../services/PurchaseOrderAiReviewService';
+import { logger } from '../utils/logger';
+import { dedupedError } from '../utils/logDeduper';
 
 const router = express.Router();
 
@@ -54,7 +56,7 @@ const ocrService = new PurchaseOrderOcrService(uploadDir);
 router.post('/upload', (req: Request, res: Response) => {
   upload.single('document')(req, res, async (err: any) => {
     if (err) {
-      console.error('purchaseOrderOcrRoutes: Upload error', err);
+      logger.error('purchaseOrderOcrRoutes: Upload error', { err: logger.serializeError(err) });
       if (err instanceof multer.MulterError) {
         if (err.code === 'LIMIT_FILE_SIZE') {
           return res.status(400).json({ error: 'File is too large. Maximum size is 25MB.' });
@@ -70,16 +72,32 @@ router.post('/upload', (req: Request, res: Response) => {
         return res.status(400).json({ error: 'No document uploaded.' });
       }
 
+      // Pre-flight check for Tesseract availability to avoid repeated noisy errors
+      const tessPath = process.env.TESSERACT_CMD || process.env.TESSERACT_PATH || '/usr/bin/tesseract';
+      const tessExists = fs.existsSync(tessPath);
+      if (!tessExists) {
+        const msg = `Tesseract binary not found at "${tessPath}". Install tesseract-ocr and ensure it is available in PATH.`;
+        dedupedError('ocr.tesseract.missing', 'purchaseOrderOcrRoutes: Tesseract not available', new Error(msg), {
+          tessPath,
+        });
+        return res.status(503).json({
+          error: 'OCR temporarily unavailable',
+          details: msg,
+          hint:
+            'Install tesseract-ocr (apk add tesseract-ocr tesseract-ocr-data-eng or apt-get install tesseract-ocr tesseract-ocr-eng) and set TESSERACT_CMD if needed.',
+        });
+      }
+
       const result = await ocrService.processDocument(file);
 
-      console.log(
-        'purchaseOrderOcrRoutes: AI review processed successfully',
-        JSON.stringify({ uploadId: result.uploadId, file: result.file }, null, 2)
-      );
+      logger.info('purchaseOrderOcrRoutes: AI review processed successfully', {
+        uploadId: result.uploadId,
+        file: result.file,
+      });
 
       return res.json(result);
     } catch (error: any) {
-      console.error('purchaseOrderOcrRoutes: Failed to process document with AI review', error);
+      dedupedError('ocr.process.error', 'purchaseOrderOcrRoutes: Failed to process document with AI review', error);
       return res.status(500).json({
         error: 'Failed to analyze the document with AI.',
         details: error?.message,
@@ -113,11 +131,11 @@ router.post('/ai-review', async (req: Request, res: Response) => {
       },
     };
 
-    console.log('purchaseOrderOcrRoutes: AI review completed');
+    logger.info('purchaseOrderOcrRoutes: AI review completed');
 
     return res.json(response);
   } catch (error: any) {
-    console.error('purchaseOrderOcrRoutes: AI review failed', error);
+    logger.error('purchaseOrderOcrRoutes: AI review failed', { err: logger.serializeError(error) });
     const status = error?.message === 'Gemini API key not configured' ? 500 : 502;
     const message = error?.message || 'Failed to analyze raw text with AI.';
     return res.status(status).json({

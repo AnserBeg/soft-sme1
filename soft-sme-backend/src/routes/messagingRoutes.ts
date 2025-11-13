@@ -1,5 +1,7 @@
 import express, { Request, Response } from 'express';
 import { messagingService } from '../services/messagingService';
+import { logger } from '../utils/logger';
+import { dedupedError } from '../utils/logDeduper';
 
 const router = express.Router();
 
@@ -36,7 +38,7 @@ router.post('/conversations', async (req: Request, res: Response) => {
     const status = result.created ? 201 : 200;
     return res.status(status).json({ conversation: result.conversation, created: result.created });
   } catch (error) {
-    console.error('Failed to create conversation', error);
+    logger.error('Failed to create conversation', { err: logger.serializeError(error) });
     const status = (error as any)?.status ?? 500;
     const message = (error as Error).message || 'Unable to create conversation';
     return res.status(status).json({ message });
@@ -59,7 +61,8 @@ router.get('/conversations', async (req: Request, res: Response) => {
     const conversations = await messagingService.getUserConversations(userId, companyId);
     return res.json({ conversations });
   } catch (error) {
-    console.error('Failed to list conversations', error);
+    // Deduplicate noisy DB errors (e.g., missing column during rollout)
+    dedupedError('messaging.list_conversations', 'Failed to list conversations', error);
     return res.status(500).json({ message: 'Unable to fetch conversations' });
   }
 });
@@ -89,7 +92,7 @@ router.post('/conversations/:conversationId/messages', async (req: Request, res:
     const message = await messagingService.appendMessage(conversationId, userId, content);
     return res.status(201).json({ message });
   } catch (error) {
-    console.error('Failed to send message', error);
+    logger.error('Failed to send message', { err: logger.serializeError(error) });
     const status = (error as any)?.status ?? 500;
     const message = (error as Error).message || 'Unable to send message';
     return res.status(status).json({ message });
@@ -119,7 +122,7 @@ router.get('/conversations/:conversationId/messages', async (req: Request, res: 
     const messages = await messagingService.getConversationMessages(conversationId, userId, { limit, before });
     return res.json({ messages });
   } catch (error) {
-    console.error('Failed to fetch messages', error);
+    logger.error('Failed to fetch messages', { err: logger.serializeError(error) });
     const status = (error as any)?.status ?? 500;
     const message = (error as Error).message || 'Unable to fetch messages';
     return res.status(status).json({ message });
@@ -147,7 +150,7 @@ router.delete('/conversations/:conversationId/messages/:messageId', async (req: 
     const message = await messagingService.deleteMessageForUser(conversationId, messageId, userId);
     return res.json({ message });
   } catch (error) {
-    console.error('Failed to delete message for user', error);
+    logger.error('Failed to delete message for user', { err: logger.serializeError(error) });
     const status = (error as any)?.status ?? 500;
     const message = (error as Error).message || 'Unable to delete message';
     return res.status(status).json({ message });
