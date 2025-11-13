@@ -6,6 +6,8 @@ import { PurchaseOrderOcrService, PurchaseOrderOcrResponse } from '../services/P
 import { PurchaseOrderAiReviewService } from '../services/PurchaseOrderAiReviewService';
 import { logger } from '../utils/logger';
 import { dedupedError } from '../utils/logDeduper';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 
 const router = express.Router();
 
@@ -52,6 +54,32 @@ const upload = multer({
 });
 
 const ocrService = new PurchaseOrderOcrService(uploadDir);
+const execFileAsync = promisify(execFile);
+let tessChecked = false;
+async function checkTesseractAvailability(): Promise<{ ok: boolean; message?: string }> {
+  if (tessChecked) return { ok: true };
+
+  const candidates: string[] = [];
+  const envCmd = process.env.TESSERACT_CMD || process.env.TESSERACT_PATH;
+  if (envCmd) candidates.push(envCmd);
+  candidates.push('tesseract');
+  // Common portable apt locations used by render-build.sh
+  candidates.push(path.join(__dirname, '../../.apt/usr/bin/tesseract'));
+  candidates.push(path.join(__dirname, '../.apt/usr/bin/tesseract'));
+  candidates.push(path.join(process.cwd(), '.apt', 'usr', 'bin', 'tesseract'));
+
+  for (const cmd of candidates) {
+    try {
+      await execFileAsync(cmd, ['--version']);
+      tessChecked = true;
+      return { ok: true };
+    } catch (err: any) {
+      // Try next candidate
+    }
+  }
+
+  return { ok: false, message: 'Tesseract not found on PATH and no explicit TESSERACT_CMD/TESSERACT_PATH works.' };
+}
 
 router.post('/upload', (req: Request, res: Response) => {
   upload.single('document')(req, res, async (err: any) => {
@@ -72,19 +100,18 @@ router.post('/upload', (req: Request, res: Response) => {
         return res.status(400).json({ error: 'No document uploaded.' });
       }
 
-      // Pre-flight check for Tesseract availability to avoid repeated noisy errors
-      const tessPath = process.env.TESSERACT_CMD || process.env.TESSERACT_PATH || '/usr/bin/tesseract';
-      const tessExists = fs.existsSync(tessPath);
-      if (!tessExists) {
-        const msg = `Tesseract binary not found at "${tessPath}". Install tesseract-ocr and ensure it is available in PATH.`;
+      // Pre-flight: verify Tesseract via PATH or env override once per process
+      const probe = await checkTesseractAvailability();
+      if (!probe.ok) {
+        const msg = probe.message || 'Tesseract not available';
         dedupedError('ocr.tesseract.missing', 'purchaseOrderOcrRoutes: Tesseract not available', new Error(msg), {
-          tessPath,
+          tessCmd: process.env.TESSERACT_CMD || process.env.TESSERACT_PATH || 'tesseract',
         });
         return res.status(503).json({
           error: 'OCR temporarily unavailable',
           details: msg,
           hint:
-            'Install tesseract-ocr (apk add tesseract-ocr tesseract-ocr-data-eng or apt-get install tesseract-ocr tesseract-ocr-eng) and set TESSERACT_CMD if needed.',
+            'Render: ensure render-build.sh ran and .apt/usr/bin is on PATH (render-start.sh). Locally: install tesseract-ocr and ensure tesseract is on PATH or set TESSERACT_CMD.',
         });
       }
 
