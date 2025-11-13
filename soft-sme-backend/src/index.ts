@@ -196,13 +196,12 @@ async function ensureLocalAssistant(): Promise<void> {
 
 const corsOptions: cors.CorsOptions = {
   origin: (origin, callback) => {
-    if (isAllowedOrigin(origin)) {
-      callback(null, true);
-      return;
+    // Allow if no origin (non-browser) or explicitly whitelisted
+    if (!origin || isAllowedOrigin(origin)) {
+      return callback(null, true);
     }
-
-    console.warn(`[CORS] Blocked origin: ${origin ?? 'unknown'}`);
-    callback(new Error('Not allowed by CORS'));
+    console.warn(`[CORS] Blocked origin: ${origin}`);
+    return callback(new Error('Not allowed by CORS'));
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
@@ -210,6 +209,8 @@ const corsOptions: cors.CorsOptions = {
     'Content-Type',
     'Authorization',
     'X-Requested-With',
+    'Accept',
+    'Origin',
     'x-device-id',
     'x-timezone',
     'X-Timezone',
@@ -217,33 +218,9 @@ const corsOptions: cors.CorsOptions = {
   optionsSuccessStatus: 204,
 };
 
-app.use((req, res, next) => {
-  const requestOrigin = req.headers.origin;
-
-  if (isAllowedOrigin(requestOrigin)) {
-    if (requestOrigin) {
-      res.header('Access-Control-Allow-Origin', requestOrigin);
-    }
-  }
-
-  res.header('Access-Control-Allow-Credentials', 'true');
-  res.header(
-    'Access-Control-Allow-Headers',
-    'Content-Type, Authorization, X-Requested-With, x-device-id, x-timezone, X-Timezone'
-  );
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
-  res.header('Vary', 'Origin');
-
-  if (req.method === 'OPTIONS') {
-    res.status(204).send('');
-    return;
-  }
-
-  next();
-});
-
-app.use(cors(corsOptions));
+// Apply CORS early and handle preflight globally
 app.options('*', cors(corsOptions));
+app.use(cors(corsOptions));
 app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
 app.use('/uploads', express.static('uploads'));
