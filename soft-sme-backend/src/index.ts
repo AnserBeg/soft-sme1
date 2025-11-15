@@ -16,22 +16,7 @@ if (process.env.NODE_ENV !== 'production') {
   dotenv.config({ path: path.resolve(__dirname, '../.env') });
 }
 
-// Use PATH by default so environments like Render, Docker, macOS, or Windows resolve correctly.
-// Render's render-start.sh already prepends the portable apt path (e.g. .apt/usr/bin) to PATH.
-const DEFAULT_TESSERACT_BINARY = 'tesseract';
-
-if (!process.env.TESSERACT_CMD && process.env.TESSERACT_PATH) {
-  process.env.TESSERACT_CMD = process.env.TESSERACT_PATH;
-}
-
-if (!process.env.TESSERACT_PATH && process.env.TESSERACT_CMD) {
-  process.env.TESSERACT_PATH = process.env.TESSERACT_CMD;
-}
-
-if (!process.env.TESSERACT_CMD && !process.env.TESSERACT_PATH) {
-  process.env.TESSERACT_CMD = DEFAULT_TESSERACT_BINARY;
-  process.env.TESSERACT_PATH = DEFAULT_TESSERACT_BINARY;
-}
+// OCR no longer depends on Tesseract; Gemini handles image transcription.
 
 // Import routes
 import authRoutes from './routes/authRoutes';

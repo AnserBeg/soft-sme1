@@ -1,10 +1,8 @@
 # Backend Dockerfile
 FROM node:20-alpine
 
-# Install system dependencies required for OCR (Tesseract and PDF utilities)
+# Install PDF utilities for page rendering (Gemini handles OCR)
 RUN apk add --no-cache \
-    tesseract-ocr \
-    tesseract-ocr-data-eng \
     poppler-utils
 
 # Set working directory

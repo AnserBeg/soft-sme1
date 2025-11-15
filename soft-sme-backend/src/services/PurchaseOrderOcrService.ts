@@ -4,6 +4,10 @@ import os from 'os';
 import path from 'path';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
+import dotenv from 'dotenv';
+
+// Ensure env is loaded when running locally
+dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
 const MONEY_RE = /\$?-?\d{1,3}(?:,\d{3})*(?:\.\d{2})?/;
 const PART_RE = /[A-Z0-9][A-Z0-9\-_.\/]{1,24}/i;
@@ -176,9 +180,8 @@ export class PurchaseOrderOcrService {
       this.tesseractCmd = resolvedTesseract;
     } else {
       this.tesseractCmd = preferredTesseract;
-      console.warn(
-        'PurchaseOrderOcrService: Tesseract command not found in PATH or fallback locations. '
-          + 'OCR requests will fail until it is installed.'
+      console.info(
+        'PurchaseOrderOcrService: Tesseract not found; image OCR will be handled by Gemini.'
       );
     }
 
@@ -269,7 +272,7 @@ export class PurchaseOrderOcrService {
       }
     }
 
-    const direct = await this.performOcr(filePath);
+    const direct = await this.performOcr(filePath, mimeType);
     return { text: direct.text, rows: direct.rows, warnings };
   }
 
@@ -322,10 +325,11 @@ export class PurchaseOrderOcrService {
     return { text: texts.join('\n'), rows, warnings };
   }
 
-  private async performOcr(filePath: string): Promise<{ text: string; rows: OcrRow[] }> {
-    const [text, tsv] = await Promise.all([this.runTesseractInternal(filePath, 'plain'), this.runTesseractInternal(filePath, 'tsv')]);
-    const rows = this.parseTsv(tsv);
-    return { text, rows };
+  private async performOcr(filePath: string, mimeTypeHint?: string): Promise<{ text: string; rows: OcrRow[] }> {
+    // Use Gemini to extract text from image. Rows are currently not produced.
+    const mimeType = mimeTypeHint || this.inferMimeTypeFromPath(filePath) || 'image/png';
+    const text = await this.geminiExtractTextFromImage(filePath, mimeType);
+    return { text, rows: [] };
   }
 
   private async runTesseract(filePath: string): Promise<string> {
@@ -1407,6 +1411,97 @@ export class PurchaseOrderOcrService {
     }
   }
 }
+
+  private inferMimeTypeFromPath(filePath: string): string | null {
+    const ext = path.extname(filePath).toLowerCase();
+    switch (ext) {
+      case '.png':
+        return 'image/png';
+      case '.jpg':
+      case '.jpeg':
+        return 'image/jpeg';
+      case '.webp':
+        return 'image/webp';
+      case '.tif':
+      case '.tiff':
+        return 'image/tiff';
+      case '.bmp':
+        return 'image/bmp';
+      case '.gif':
+        return 'image/gif';
+      default:
+        return null;
+    }
+  }
+
+  private async geminiExtractTextFromImage(filePath: string, mimeType: string): Promise<string> {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      throw new Error('Gemini API key not configured');
+    }
+
+    const model = process.env.AI_OCR_MODEL || process.env.AI_MODEL || 'gemini-2.5-flash';
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+
+    const fileBytes = await fs.promises.readFile(filePath);
+    const base64 = fileBytes.toString('base64');
+
+    const prompt = [
+      'Transcribe all visible text from this document image.',
+      'Output plain UTF-8 text only, in natural reading order, one line per line.',
+      'Do not include any commentary, labels, bounding boxes, or markdown fences.',
+    ].join(' ');
+
+    const body = {
+      contents: [
+        {
+          parts: [
+            {
+              inline_data: {
+                mime_type: mimeType,
+                data: base64,
+              },
+            },
+            { text: prompt },
+          ],
+        },
+      ],
+      generationConfig: {
+        temperature: 0.0,
+        responseMimeType: 'text/plain',
+        // For OCR use cases, small outputs are fine; allow growth if needed
+        maxOutputTokens: 8192,
+      },
+    } as any;
+
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    if (!resp.ok) {
+      const errText = await resp.text();
+      throw new Error(`Gemini OCR request failed: ${resp.status} ${resp.statusText} - ${errText}`);
+    }
+
+    const data = await resp.json();
+    const textParts: string[] = [];
+    const candidates = Array.isArray(data?.candidates) ? data.candidates : [];
+    for (const cand of candidates) {
+      const parts = cand?.content?.parts || [];
+      for (const part of parts) {
+        if (typeof part?.text === 'string') {
+          textParts.push(part.text);
+        }
+      }
+      if (textParts.length > 0) break;
+    }
+
+    const combined = textParts.join('');
+    const cleaned = combined.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    return cleaned.trim();
+  }
 
 
 

@@ -6,7 +6,6 @@ import { PurchaseOrderOcrService, PurchaseOrderOcrResponse } from '../services/P
 import { PurchaseOrderAiReviewService } from '../services/PurchaseOrderAiReviewService';
 import { logger } from '../utils/logger';
 import { dedupedError } from '../utils/logDeduper';
-import { execFile } from 'child_process';
 import { promisify } from 'util';
 
 const router = express.Router();
@@ -54,31 +53,12 @@ const upload = multer({
 });
 
 const ocrService = new PurchaseOrderOcrService(uploadDir);
-const execFileAsync = promisify(execFile);
-let tessChecked = false;
-async function checkTesseractAvailability(): Promise<{ ok: boolean; message?: string }> {
-  if (tessChecked) return { ok: true };
-
-  const candidates: string[] = [];
-  const envCmd = process.env.TESSERACT_CMD || process.env.TESSERACT_PATH;
-  if (envCmd) candidates.push(envCmd);
-  candidates.push('tesseract');
-  // Common portable apt locations used by render-build.sh
-  candidates.push(path.join(__dirname, '../../.apt/usr/bin/tesseract'));
-  candidates.push(path.join(__dirname, '../.apt/usr/bin/tesseract'));
-  candidates.push(path.join(process.cwd(), '.apt', 'usr', 'bin', 'tesseract'));
-
-  for (const cmd of candidates) {
-    try {
-      await execFileAsync(cmd, ['--version']);
-      tessChecked = true;
-      return { ok: true };
-    } catch (err: any) {
-      // Try next candidate
-    }
+function checkGeminiAvailability(): { ok: boolean; message?: string } {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey || apiKey.trim().length === 0) {
+    return { ok: false, message: 'GEMINI_API_KEY is not configured.' };
   }
-
-  return { ok: false, message: 'Tesseract not found on PATH and no explicit TESSERACT_CMD/TESSERACT_PATH works.' };
+  return { ok: true };
 }
 
 router.post('/upload', (req: Request, res: Response) => {
@@ -100,18 +80,16 @@ router.post('/upload', (req: Request, res: Response) => {
         return res.status(400).json({ error: 'No document uploaded.' });
       }
 
-      // Pre-flight: verify Tesseract via PATH or env override once per process
-      const probe = await checkTesseractAvailability();
+      // Pre-flight: verify Gemini API key is present
+      const probe = checkGeminiAvailability();
       if (!probe.ok) {
-        const msg = probe.message || 'Tesseract not available';
-        dedupedError('ocr.tesseract.missing', 'purchaseOrderOcrRoutes: Tesseract not available', new Error(msg), {
-          tessCmd: process.env.TESSERACT_CMD || process.env.TESSERACT_PATH || 'tesseract',
-        });
+        const msg = probe.message || 'Gemini API key missing';
+        dedupedError('ocr.gemini.missing_key', 'purchaseOrderOcrRoutes: Gemini API key missing', new Error(msg));
         return res.status(503).json({
           error: 'OCR temporarily unavailable',
           details: msg,
           hint:
-            'Render: ensure render-build.sh ran and .apt/usr/bin is on PATH (render-start.sh). Locally: install tesseract-ocr and ensure tesseract is on PATH or set TESSERACT_CMD.',
+            'Set GEMINI_API_KEY in your environment. For Render, configure it as a secret env var; locally, add it to .env or your shell env.',
         });
       }
 
