@@ -1,4 +1,4 @@
-import crypto from 'crypto';
+﻿import crypto from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -158,7 +158,8 @@ export class PurchaseOrderOcrService {
       '/opt/render/project/src/.apt/usr/lib/x86_64-linux-gnu',
       '/opt/render/.apt/usr/lib',
       '/opt/render/.apt/usr/lib/x86_64-linux-gnu',
-    ]);\n\n    const preferredPdftoppm = options.pdftoppmCmd || process.env.PDFTOPPM_CMD || 'pdftoppm';
+    ]);
+    const preferredPdftoppm = options.pdftoppmCmd || process.env.PDFTOPPM_CMD || 'pdftoppm';
     const resolvedPdftoppm = this.resolveCommand(preferredPdftoppm, [
       preferredPdftoppm,
       ...localAptBinDirs.map((dir) => path.join(dir, 'pdftoppm')),
@@ -303,7 +304,9 @@ export class PurchaseOrderOcrService {
     const mimeType = mimeTypeHint || this.inferMimeTypeFromPath(filePath) || 'image/png';
     const text = await this.geminiExtractTextFromImage(filePath, mimeType);
     return { text, rows: [] };
-  }\n\n  // Removed Tesseract execution; OCR handled by Gemini\n\n  private parseTsv(tsv: string): OcrRow[] {
+  }
+  // Removed Tesseract execution; OCR handled by Gemini
+  private parseTsv(tsv: string): OcrRow[] {
     if (!tsv || tsv.trim().length === 0) {
       return [];
     }
@@ -1061,9 +1064,9 @@ export class PurchaseOrderOcrService {
     switch (normalized) {
       case 'O':
       case 'o':
-      case 'Ø':
-      case 'º':
-      case '°':
+      case 'Ã˜':
+      case 'Âº':
+      case 'Â°':
       case 'D':
       case 'Q':
         return '0';
@@ -1072,8 +1075,8 @@ export class PurchaseOrderOcrService {
       case 'L':
       case '|':
       case '!':
-      case 'ï':
-      case 'ì':
+      case 'Ã¯':
+      case 'Ã¬':
         return '1';
       case 'S':
       case 's':
@@ -1087,12 +1090,12 @@ export class PurchaseOrderOcrService {
       case 'Z':
       case 'z':
         return '2';
-      case '—':
-      case '–':
-      case '−':
-      case '﹘':
-      case '﹣':
-      case '‑':
+      case 'â€”':
+      case 'â€“':
+      case 'âˆ’':
+      case 'ï¹˜':
+      case 'ï¹£':
+      case 'â€‘':
         return '-';
       default:
         return null;
@@ -1103,10 +1106,10 @@ export class PurchaseOrderOcrService {
     const normalized = value.normalize('NFKD').replace(/[\u0300-\u036f]/g, '');
     const lower = normalized.toLowerCase();
 
-    if (['o', 'ø', 'º', '°', 'd', 'q'].includes(lower)) {
+    if (['o', 'Ã¸', 'Âº', 'Â°', 'd', 'q'].includes(lower)) {
       return '0';
     }
-    if (['i', 'l', '|', '!', 'ï', 'ì', '₁'].includes(lower)) {
+    if (['i', 'l', '|', '!', 'Ã¯', 'Ã¬', 'â‚'].includes(lower)) {
       return '1';
     }
     if (lower === 'a') {
@@ -1124,7 +1127,7 @@ export class PurchaseOrderOcrService {
     if (lower === 'z') {
       return '2';
     }
-    if (['—', '–', '−', '﹘', '﹣', '‑', '-'].includes(normalized)) {
+    if (['â€”', 'â€“', 'âˆ’', 'ï¹˜', 'ï¹£', 'â€‘', '-'].includes(normalized)) {
       return '-';
     }
 
@@ -1323,7 +1326,7 @@ export class PurchaseOrderOcrService {
     }
 
     return resolved;
-  }\n}\n
+  }
 
   private inferMimeTypeFromPath(filePath: string): string | null {
     const ext = path.extname(filePath).toLowerCase();
@@ -1420,3 +1423,4 @@ export class PurchaseOrderOcrService {
 
 
 
+}
