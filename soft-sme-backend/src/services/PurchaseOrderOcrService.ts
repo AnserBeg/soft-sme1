@@ -126,13 +126,11 @@ interface NormalizationResult {
 }
 
 interface PurchaseOrderOcrServiceOptions {
-  tesseractCmd?: string;
   pdftoppmCmd?: string;
 }
 
 export class PurchaseOrderOcrService {
   private readonly uploadDir: string;
-  private readonly tesseractCmd: string;
   private readonly pdftoppmCmd: string;
 
   constructor(uploadDir: string, options: PurchaseOrderOcrServiceOptions = {}) {
@@ -160,32 +158,7 @@ export class PurchaseOrderOcrService {
       '/opt/render/project/src/.apt/usr/lib/x86_64-linux-gnu',
       '/opt/render/.apt/usr/lib',
       '/opt/render/.apt/usr/lib/x86_64-linux-gnu',
-    ]);
-
-    this.ensureTessdataPrefix(localAptRoots);
-
-    const envTesseractBinary = process.env.TESSERACT_CMD || process.env.TESSERACT_PATH;
-    const preferredTesseract = options.tesseractCmd || envTesseractBinary || 'tesseract';
-    const resolvedTesseract = this.resolveCommand(preferredTesseract, [
-      preferredTesseract,
-      ...localAptBinDirs.map((dir) => path.join(dir, 'tesseract')),
-      '/opt/render/project/.apt/usr/bin/tesseract',
-      '/opt/render/project/src/.apt/usr/bin/tesseract',
-      '/opt/render/.apt/usr/bin/tesseract',
-      '/usr/bin/tesseract',
-      '/usr/local/bin/tesseract',
-    ]);
-
-    if (resolvedTesseract) {
-      this.tesseractCmd = resolvedTesseract;
-    } else {
-      this.tesseractCmd = preferredTesseract;
-      console.info(
-        'PurchaseOrderOcrService: Tesseract not found; image OCR will be handled by Gemini.'
-      );
-    }
-
-    const preferredPdftoppm = options.pdftoppmCmd || process.env.PDFTOPPM_CMD || 'pdftoppm';
+    ]);\n\n    const preferredPdftoppm = options.pdftoppmCmd || process.env.PDFTOPPM_CMD || 'pdftoppm';
     const resolvedPdftoppm = this.resolveCommand(preferredPdftoppm, [
       preferredPdftoppm,
       ...localAptBinDirs.map((dir) => path.join(dir, 'pdftoppm')),
@@ -330,37 +303,7 @@ export class PurchaseOrderOcrService {
     const mimeType = mimeTypeHint || this.inferMimeTypeFromPath(filePath) || 'image/png';
     const text = await this.geminiExtractTextFromImage(filePath, mimeType);
     return { text, rows: [] };
-  }
-
-  private async runTesseract(filePath: string): Promise<string> {
-    return this.runTesseractInternal(filePath, 'plain');
-  }
-
-  private async runTesseractInternal(filePath: string, format: 'plain' | 'tsv'): Promise<string> {
-    const args = [filePath, 'stdout', '--psm', '6', '--oem', '1', '-l', 'eng', '-c', 'preserve_interword_spaces=1'] as string[];
-    if (format === 'tsv') {
-      args.push('tsv');
-    }
-
-    try {
-      const { stdout } = await execFileAsync(this.tesseractCmd, args, {
-        maxBuffer: 1024 * 1024 * 20,
-      });
-      return stdout;
-    } catch (error: any) {
-      if (error?.code === 'ENOENT') {
-        throw new Error(
-          `Tesseract binary not found at "${this.tesseractCmd}". Install tesseract-ocr (apk add tesseract-ocr tesseract-ocr-data-eng or apt-get install tesseract-ocr tesseract-ocr-eng) on the server and ensure it is available in PATH.`
-        );
-      }
-      if (error?.stderr) {
-        throw new Error(`Tesseract OCR failed: ${String(error.stderr).trim()}`);
-      }
-      throw new Error('Tesseract OCR failed to process the document.');
-    }
-  }
-
-  private parseTsv(tsv: string): OcrRow[] {
+  }\n\n  // Removed Tesseract execution; OCR handled by Gemini\n\n  private parseTsv(tsv: string): OcrRow[] {
     if (!tsv || tsv.trim().length === 0) {
       return [];
     }
@@ -1380,37 +1323,7 @@ export class PurchaseOrderOcrService {
     }
 
     return resolved;
-  }
-
-  private ensureTessdataPrefix(localAptRoots: string[]): void {
-    const existing = process.env.TESSDATA_PREFIX;
-    if (existing) {
-      try {
-        if (fs.statSync(existing).isDirectory()) {
-          return;
-        }
-      } catch {
-        // Existing value is unusable; fall through to discover a local path.
-      }
-    }
-
-    const candidateDirs = [
-      ...localAptRoots.map((root) => path.join(root, 'usr', 'share', 'tesseract-ocr', '4.00', 'tessdata')),
-      ...localAptRoots.map((root) => path.join(root, 'usr', 'share', 'tesseract-ocr', '5', 'tessdata')),
-    ];
-
-    for (const candidate of candidateDirs) {
-      try {
-        if (fs.statSync(candidate).isDirectory()) {
-          process.env.TESSDATA_PREFIX = candidate;
-          return;
-        }
-      } catch {
-        // Ignore inaccessible paths.
-      }
-    }
-  }
-}
+  }\n}\n
 
   private inferMimeTypeFromPath(filePath: string): string | null {
     const ext = path.extname(filePath).toLowerCase();
@@ -1502,6 +1415,7 @@ export class PurchaseOrderOcrService {
     const cleaned = combined.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
     return cleaned.trim();
   }
+
 
 
 

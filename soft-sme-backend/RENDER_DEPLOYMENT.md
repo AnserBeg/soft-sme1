@@ -105,7 +105,7 @@ After deployment, you may need to run database migrations:
 - Check that all dependencies are in `package.json`
 - Verify TypeScript compilation works locally
 - Check build logs in Render dashboard
-- Confirm `apt.txt` exists at `soft-sme-backend/apt.txt` so Render installs `tesseract-ocr`, `tesseract-ocr-eng`, and `poppler-utils`
+- Confirm `apt.txt` exists at `soft-sme-backend/apt.txt` so Render installs `poppler-utils` (for PDF page rendering)
 
 ### Database Connection Issues
 - Verify database environment variables are set correctly

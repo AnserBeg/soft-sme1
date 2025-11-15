@@ -56,9 +56,7 @@ if [[ ${#portable_lib_dirs[@]} -gt 0 ]]; then
   fi
 fi
 
-if [[ -d "${APT_ROOT}/usr/share/tesseract-ocr/4.00/tessdata" ]]; then
-  export TESSDATA_PREFIX="${APT_ROOT}/usr/share/tesseract-ocr/4.00/tessdata"
-fi
+# No Tesseract runtime needed; Gemini handles OCR
 
 ASSISTANT_PID=""
 ASSISTANT_SCRIPT="${SCRIPT_DIR}/../Aiven.ai/assistant_server.py"

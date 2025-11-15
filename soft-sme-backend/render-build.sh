@@ -141,7 +141,7 @@ EOF
   else
     export LD_LIBRARY_PATH="${portable_ld_paths}"
   fi
-  export TESSDATA_PREFIX="${portable_root}/usr/share/tesseract-ocr/4.00/tessdata"
+  # No Tesseract runtime needed; Gemini handles OCR
 
   return 0
 }
