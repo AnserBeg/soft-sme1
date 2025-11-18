@@ -185,16 +185,12 @@ export class PurchaseOrderOcrService {
     const startTime = Date.now();
 
     const extraction = await this.extractText(file.path, file.mimetype);
-    const normalization = this.normalizeText(extraction.text, extraction.rows);
 
     const aiModule = await import('./PurchaseOrderAiReviewService');
-    const aiResult = await aiModule.PurchaseOrderAiReviewService.reviewRawText(extraction.text, {
-      heuristicNormalized: normalization.normalized,
-    });
+    const aiResult = await aiModule.PurchaseOrderAiReviewService.reviewRawText(extraction.text);
 
     const warningSet = new Set<string>([
       ...extraction.warnings,
-      ...normalization.warnings,
       ...aiResult.warnings,
     ]);
     const warnings = Array.from(warningSet);
@@ -214,7 +210,7 @@ export class PurchaseOrderOcrService {
         rawText: extraction.text,
         normalized: aiResult.normalized,
         warnings,
-        notes: [...normalization.notes, ...aiResult.notes],
+        notes: [...aiResult.notes],
         processingTimeMs: Date.now() - startTime,
       },
     };
