@@ -526,12 +526,17 @@ export class PurchaseOrderOcrAssociationService {
       return cache.get(key) ?? null;
     }
 
-    const queryValue = originalValue && originalValue.trim() ? originalValue.trim() : canonicalNumber;
+    const queryValue =
+      originalValue && originalValue.trim()
+        ? originalValue.trim()
+        : canonicalNumber;
+
+    const canonicalQuery = this.canonicalizePartNumberValue(queryValue) || canonicalNumber;
 
     const { minScoreAuto, maxResults } = getFuzzyConfig();
     let matches: Awaited<ReturnType<typeof fuzzySearch>> = [];
     try {
-      matches = await fuzzySearch({ type: 'part', query: queryValue, limit: maxResults });
+      matches = await fuzzySearch({ type: 'part', query: canonicalQuery, limit: maxResults });
     } catch (error) {
       console.error('PurchaseOrderOcrAssociationService: fuzzy part search failed', error);
       const fallback: PartFuzzyResult = { part: null, score: 0, matches: [] };
@@ -551,7 +556,23 @@ export class PurchaseOrderOcrAssociationService {
       return { id: match.id, label, score };
     });
 
-    const top = sanitized[0];
+    // Require canonical equality to avoid cross-digit/letter matches
+    const canonicalMatches = sanitized.filter((match) => {
+      const canonicalLabel = this.canonicalizePartNumberValue(match.label) || '';
+      return canonicalLabel === canonicalNumber;
+    });
+
+    if (!canonicalMatches.length) {
+      const empty: PartFuzzyResult = {
+        part: null,
+        score: 0,
+        matches: sanitized.map(({ label, score }) => ({ label, score })),
+      };
+      cache.set(key, empty);
+      return empty;
+    }
+
+    const top = canonicalMatches[0];
     const topScore = top ? top.score : 0;
 
     let part: PartRow | null = null;
