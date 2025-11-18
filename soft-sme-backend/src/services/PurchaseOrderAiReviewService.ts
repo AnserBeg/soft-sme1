@@ -1,6 +1,7 @@
 import dotenv from 'dotenv';
 import path from 'path';
 import {
+  PurchaseOrderOcrIssue,
   PurchaseOrderOcrLineItem,
   PurchaseOrderOcrNormalizedData,
 } from './PurchaseOrderOcrService';
@@ -17,6 +18,7 @@ interface PurchaseOrderAiStructuredResponse {
   normalized: PurchaseOrderOcrNormalizedData;
   warnings: string[];
   notes: string[];
+  issues?: PurchaseOrderOcrIssue[];
 }
 
 type ReviewMode = 'full' | 'headers_only';
@@ -132,16 +134,21 @@ export class PurchaseOrderAiReviewService {
           ...result.warnings,
           ...enrichment.warnings,
         ]);
-        const combinedNotes = new Set<string>([
-          ...result.notes,
-          ...enrichment.notes,
-        ]);
+          const combinedNotes = new Set<string>([
+            ...result.notes,
+            ...enrichment.notes,
+          ]);
+          const combinedIssues = [
+            ...(result.issues || []),
+            ...enrichment.issues,
+          ];
 
-        return {
-          normalized: enrichment.normalized,
-          warnings: Array.from(combinedWarnings),
-          notes: Array.from(combinedNotes),
-        };
+          return {
+            normalized: enrichment.normalized,
+            warnings: Array.from(combinedWarnings),
+            notes: Array.from(combinedNotes),
+            issues: combinedIssues,
+          };
       }
 
       attemptErrors.push(`[maxTokens=${maxTokens}${useConcisePrompt ? ', concise' : ''}] ${errorSummary}`);
@@ -433,9 +440,9 @@ export class PurchaseOrderAiReviewService {
   ): PurchaseOrderAiStructuredResponse {
     const extractedJson = this.extractJson(responseContent);
 
-    const normalized = this.buildNormalizedData(extractedJson?.normalized ?? {});
-    const warnings = this.buildStringArray(extractedJson?.warnings);
-    const notes = this.buildStringArray(extractedJson?.notes);
+      const normalized = this.buildNormalizedData(extractedJson?.normalized ?? {});
+      const warnings = this.buildStringArray(extractedJson?.warnings);
+      const notes = this.buildStringArray(extractedJson?.notes);
 
     if (mode === 'headers_only') {
       normalized.lineItems = [];
@@ -443,11 +450,13 @@ export class PurchaseOrderAiReviewService {
 
     this.ensureDefaultWarnings(normalized, warnings, notes);
 
-    return {
-      normalized,
-      warnings,
-      notes,
-    };
+      return {
+        normalized,
+        warnings,
+        notes,
+        // Issues are added later by the association service.
+        issues: undefined,
+      };
   }
 
   private static extractJson(content: string | Record<string, unknown>): any {

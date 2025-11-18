@@ -3,6 +3,7 @@ import { canonicalizeName, canonicalizePartNumber } from '../lib/normalize';
 import { getFuzzyConfig } from '../config';
 import { fuzzySearch } from './FuzzySearchService';
 import {
+  PurchaseOrderOcrIssue,
   PurchaseOrderOcrLineItem,
   PurchaseOrderOcrLineItemMatch,
   PurchaseOrderOcrNormalizedData,
@@ -20,6 +21,7 @@ interface AssociationResult {
   normalized: PurchaseOrderOcrNormalizedData;
   warnings: string[];
   notes: string[];
+  issues: PurchaseOrderOcrIssue[];
 }
 
 interface VendorRow {
@@ -72,6 +74,7 @@ export class PurchaseOrderOcrAssociationService {
 
     const warnings = new Set<string>();
     const notes = new Set<string>();
+    const issues: PurchaseOrderOcrIssue[] = [];
 
     const vendorEnrichment = await this.enrichVendor(
       clone,
@@ -87,15 +90,20 @@ export class PurchaseOrderOcrAssociationService {
     if (vendorEnrichment.match) {
       clone.vendorMatch = vendorEnrichment.match;
     }
+    if (Array.isArray(vendorEnrichment.issues)) {
+      vendorEnrichment.issues.forEach((issue) => issues.push(issue));
+    }
 
-    const partEnrichment = await this.enrichLineItems(clone);
+    const partEnrichment = await this.enrichLineItemsWithIssues(clone);
     partEnrichment.warnings.forEach((warning) => warnings.add(warning));
     partEnrichment.notes.forEach((note) => notes.add(note));
+    partEnrichment.issues.forEach((issue) => issues.push(issue));
 
     return {
       normalized: clone,
       warnings: Array.from(warnings),
       notes: Array.from(notes),
+      issues,
     };
   }
 
@@ -103,7 +111,7 @@ export class PurchaseOrderOcrAssociationService {
     normalized: PurchaseOrderOcrNormalizedData,
     rawText: string,
     heuristicNormalized?: PurchaseOrderOcrNormalizedData,
-  ): Promise<{ match?: PurchaseOrderOcrVendorMatch; warning?: string; note?: string }> {
+  ): Promise<{ match?: PurchaseOrderOcrVendorMatch; warning?: string; note?: string; issues?: PurchaseOrderOcrIssue[] }> {
     const candidateName = (normalized.vendorName || heuristicNormalized?.vendorName || '').trim();
     if (!candidateName) {
       return {};
@@ -176,9 +184,19 @@ export class PurchaseOrderOcrAssociationService {
         ? ` (confidence ${(score * 100).toFixed(0)}%)`
         : '';
 
+      const issue: PurchaseOrderOcrIssue = {
+        id: `vendor_fuzzy_match:${vendor.vendor_id}`,
+        type: 'vendor_fuzzy_match',
+        severity: 'warning',
+        message: `Fuzzy matched invoice vendor "${candidateName}" to existing vendor "${vendor.vendor_name}"${confidenceText}.`,
+        vendorId: vendor.vendor_id,
+        suggestedVendorIds: [vendor.vendor_id],
+      };
+
       return {
         match,
         note: `Fuzzy matched invoice vendor to existing vendor "${vendor.vendor_name}"${confidenceText}.`,
+        issues: [issue],
       };
     }
 
@@ -203,7 +221,18 @@ export class PurchaseOrderOcrAssociationService {
       }
     }
 
-    return { match, warning };
+    const issue: PurchaseOrderOcrIssue = {
+      id: `vendor_missing:${canonicalName}`,
+      type: 'vendor_missing',
+      severity: 'error',
+      message: warning,
+      vendorId: undefined,
+      suggestedVendorIds: (fuzzyVendor?.matches || [])
+        .map((entry: any) => (entry as any).id)
+        .filter((id: any) => Number.isFinite(id)),
+    };
+
+    return { match, warning, issues: [issue] };
   }
 
   private static async enrichLineItems(
@@ -328,6 +357,46 @@ export class PurchaseOrderOcrAssociationService {
     }
 
     return { warnings, notes };
+  }
+
+  private static async enrichLineItemsWithIssues(
+    normalized: PurchaseOrderOcrNormalizedData,
+  ): Promise<{ warnings: string[]; notes: string[]; issues: PurchaseOrderOcrIssue[] }> {
+    const base = await this.enrichLineItems(normalized);
+    const issues: PurchaseOrderOcrIssue[] = [];
+
+    const items: PurchaseOrderOcrLineItem[] = Array.isArray(normalized.lineItems)
+      ? normalized.lineItems
+      : [];
+
+    items.forEach((item, index) => {
+      const match = item.match;
+      if (!match) {
+        return;
+      }
+
+      if (match.status === 'missing') {
+        issues.push({
+          id: `part_missing:${item.normalizedPartNumber || ''}:${index}`,
+          type: 'part_missing',
+          severity: 'error',
+          message: `Part "${item.partNumber || item.normalizedPartNumber || ''}" is not in the inventory system. Add it before finalizing the purchase order.`,
+          lineItemIndex: index,
+          partId: null,
+        });
+      } else if (match.status === 'existing' && match.descriptionMatches === false) {
+        issues.push({
+          id: `description_mismatch:${item.normalizedPartNumber || ''}:${index}`,
+          type: 'description_mismatch',
+          severity: 'warning',
+          message: `Invoice description for part "${item.partNumber || match.matchedPartNumber || ''}" does not match inventory description. Confirm whether this should be a new part.`,
+          lineItemIndex: index,
+          partId: match.partId,
+        });
+      }
+    });
+
+    return { warnings: base.warnings, notes: base.notes, issues };
   }
 
   private static buildSuggestedPartNumber(original: string | null, normalized: string | null): string | null {

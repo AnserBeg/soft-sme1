@@ -80,6 +80,29 @@ export interface PurchaseOrderOcrLineItem {
   match?: PurchaseOrderOcrLineItemMatch | null;
 }
 
+export type PurchaseOrderOcrIssueType =
+  | 'vendor_missing'
+  | 'vendor_fuzzy_match'
+  | 'part_missing'
+  | 'part_fuzzy_match'
+  | 'description_mismatch'
+  | 'gst_missing'
+  | 'other';
+
+export type PurchaseOrderOcrIssueSeverity = 'info' | 'warning' | 'error';
+
+export interface PurchaseOrderOcrIssue {
+  id: string;
+  type: PurchaseOrderOcrIssueType;
+  severity: PurchaseOrderOcrIssueSeverity;
+  message: string;
+  lineItemIndex?: number;
+  vendorId?: number | null;
+  partId?: number | null;
+  suggestedVendorIds?: number[];
+  suggestedPartIds?: number[];
+}
+
 export interface PurchaseOrderOcrNormalizedData {
   vendorName: string | null;
   vendorAddress: string | null;
@@ -109,6 +132,7 @@ export interface PurchaseOrderOcrResponse {
     normalized: PurchaseOrderOcrNormalizedData;
     warnings: string[];
     notes: string[];
+    issues?: PurchaseOrderOcrIssue[];
     processingTimeMs: number;
   };
 }
@@ -211,6 +235,7 @@ export class PurchaseOrderOcrService {
         normalized: aiResult.normalized,
         warnings,
         notes: [...aiResult.notes],
+        issues: (aiResult as any).issues,
         processingTimeMs: Date.now() - startTime,
       },
     };
