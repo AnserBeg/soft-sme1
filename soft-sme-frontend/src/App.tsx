@@ -70,13 +70,13 @@ const PrivateRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => 
     if (path === '/' || path === '/dashboard') {
       return <Navigate to="/attendance" replace />;
     }
-    // Only allow /time-tracking, /attendance, /open-sales-orders, and /woker-sales-orders
+    // Only allow /time-tracking, /attendance, /open-sales-orders, and /worker-sales-orders
     if (
       path !== '/time-tracking' &&
       path !== '/attendance' &&
       path !== '/messaging' &&
       !path.startsWith('/open-sales-orders') &&
-      !path.startsWith('/woker-sales-orders')
+      !path.startsWith('/worker-sales-orders')
     ) {
       return <Navigate to="/attendance" replace />;
     }
@@ -188,8 +188,8 @@ const AppRoutes: React.FC = () => {
         {/* <Route path="sales-order/:id" element={<SalesOrderDetailPage />} /> */}
         <Route path="open-sales-orders" element={<OpenSalesOrdersPage />} />
         <Route path="open-sales-orders/:id" element={<OpenSalesOrderDetailPage />} />
-        <Route path="woker-sales-orders" element={<WokerSalesOrderPage />} />
-        <Route path="woker-sales-orders/:id" element={<WokerSalesOrderPage />} />
+        <Route path="worker-sales-orders" element={<WokerSalesOrderPage />} />
+        <Route path="worker-sales-orders/:id" element={<WokerSalesOrderPage />} />
         
          {/* Quotes */}
          <Route path="quotes" element={<QuotePage />} />

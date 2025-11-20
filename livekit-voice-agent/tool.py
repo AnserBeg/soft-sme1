@@ -1,4 +1,8 @@
+import json
 import logging
+from datetime import datetime
+from pathlib import Path
+
 from livekit import api
 from livekit.agents import function_tool, RunContext, get_job_context
 
@@ -65,4 +69,46 @@ async def end_call(ctx: RunContext) -> str:
         return "ended"
     except Exception as e:
         logger.error(f"Failed to end call: {e}", exc_info=True)
+        return "error"
+
+
+@function_tool
+async def record_summary(ctx: RunContext, summary: str) -> str:
+    """Store the final QUOTE SUMMARY for this call so it can be shown in the web UI. Call exactly once at the end of the conversation."""
+    logger = logging.getLogger("phone-assistant")
+
+    job_ctx = get_job_context()
+    if job_ctx is None:
+        logger.error("Failed to get job context")
+        return "error"
+
+    room_name = getattr(job_ctx.room, "name", "unknown-room")
+
+    metadata = {}
+    try:
+        job = getattr(job_ctx, "job", None)
+        raw_metadata = getattr(job, "metadata", None) if job is not None else None
+        if raw_metadata:
+            metadata = json.loads(raw_metadata)
+    except Exception as e:
+        logger.warning(f"Failed to parse job metadata for room {room_name}: {e}", exc_info=True)
+
+    summaries_dir = Path(__file__).parent / "summaries"
+    summaries_dir.mkdir(exist_ok=True)
+
+    payload = {
+        "room_name": room_name,
+        "created_at": datetime.utcnow().isoformat() + "Z",
+        "summary": summary,
+        "metadata": metadata,
+    }
+
+    output_path = summaries_dir / f"{room_name}.json"
+
+    try:
+        output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        logger.info(f"Recorded summary for room {room_name} at {output_path}")
+        return "recorded"
+    except Exception as e:
+        logger.error(f"Failed to write summary file for room {room_name}: {e}", exc_info=True)
         return "error"
