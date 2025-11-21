@@ -196,6 +196,9 @@ const corsOptions: cors.CorsOptions = {
     'X-Requested-With',
     'Accept',
     'Origin',
+    // Support axios/fetch cache directives from browsers and proxies
+    'Cache-Control',
+    'cache-control',
     'x-device-id',
     'x-timezone',
     'X-Timezone',

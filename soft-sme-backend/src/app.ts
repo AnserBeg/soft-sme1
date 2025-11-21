@@ -92,6 +92,8 @@ const corsOptions: cors.CorsOptions = {
     'Content-Type',
     'Authorization',
     'X-Requested-With',
+    'Cache-Control',
+    'cache-control',
     'x-device-id',
     'x-timezone',
     'X-Timezone',
