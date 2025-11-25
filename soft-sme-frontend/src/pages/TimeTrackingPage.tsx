@@ -297,7 +297,7 @@ const TimeTrackingPage: React.FC = () => {
                         disabled={isClockedIn}
                         sx={{ fontSize: '1.1rem' }}
                       >
-                        {so.number} - {so.product_name || 'No Product Name'}
+                        {`${so.number} - ${so.product_name || 'No Product Name'} - ${so.customer_name || 'Unknown Customer'}`}
                         {isClockedIn ? ' - Already Clocked In' : ''}
                         {/* Debug: {JSON.stringify(so)} */}
                       </MenuItem>

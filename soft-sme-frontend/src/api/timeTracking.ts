@@ -11,6 +11,8 @@ export interface Profile {
 export interface SalesOrder {
   id: number;
   number: string;
+  product_name?: string;
+  customer_name?: string;
 }
 
 export interface TimeEntry {

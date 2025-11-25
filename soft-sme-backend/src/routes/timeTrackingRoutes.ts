@@ -959,13 +959,29 @@ router.get('/sales-orders', async (req: Request, res: Response) => {
     console.log('Product name column exists:', schemaCheck.rows.length > 0);
     
     const result = await pool.query(
-      "SELECT sales_order_id as id, sales_order_number as number, product_name FROM salesorderhistory WHERE status = 'Open' ORDER BY sales_order_number"
+      `SELECT 
+        soh.sales_order_id as id, 
+        soh.sales_order_number as number, 
+        soh.product_name,
+        COALESCE(cm.customer_name, 'Unknown Customer') as customer_name
+       FROM salesorderhistory soh
+       LEFT JOIN customermaster cm ON soh.customer_id = cm.customer_id
+       WHERE soh.status = 'Open'
+       ORDER BY soh.sales_order_number`
     );
     console.log('Sales orders API response:', result.rows);
     
     // Let's also check a few sample records to see what's in the database
     const sampleData = await pool.query(
-      "SELECT sales_order_id, sales_order_number, product_name, status FROM salesorderhistory LIMIT 5"
+      `SELECT 
+        soh.sales_order_id, 
+        soh.sales_order_number, 
+        soh.product_name, 
+        soh.status,
+        COALESCE(cm.customer_name, 'Unknown Customer') as customer_name
+       FROM salesorderhistory soh
+       LEFT JOIN customermaster cm ON soh.customer_id = cm.customer_id
+       LIMIT 5`
     );
     console.log('Sample sales order data:', sampleData.rows);
     res.json(result.rows);

@@ -564,7 +564,7 @@ const TimeTrackingReportsPage: React.FC = () => {
                     <MenuItem value="" sx={{ fontSize: '1.2rem' }}>All Sales Orders</MenuItem>
                     {salesOrders.map((so) => (
                       <MenuItem key={so.id} value={so.id} sx={{ fontSize: '1.1rem' }}>
-                        {so.number}
+                        {`${so.number} - ${so.product_name || 'No Product Name'} - ${so.customer_name || 'Unknown Customer'}`}
                       </MenuItem>
                     ))}
                   </Select>
@@ -819,7 +819,7 @@ const TimeTrackingReportsPage: React.FC = () => {
               </MenuItem>
               {salesOrders.map((so) => (
                 <MenuItem key={so.id} value={so.id}>
-                  {so.number}
+                  {`${so.number} - ${so.product_name || 'No Product Name'} - ${so.customer_name || 'Unknown Customer'}`}
                 </MenuItem>
               ))}
             </Select>

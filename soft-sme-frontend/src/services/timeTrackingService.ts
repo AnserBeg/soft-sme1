@@ -13,6 +13,7 @@ export interface SalesOrder {
   id: number;
   number: string;
   product_name?: string;
+  customer_name?: string;
   default_hourly_rate?: number;
 }
 
