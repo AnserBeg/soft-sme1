@@ -1,9 +1,264 @@
 import express, { Request, Response } from 'express';
 import { pool } from '../db';
 import PDFDocument from 'pdfkit';
+import multer from 'multer';
+import XLSX from 'xlsx';
+import fs from 'fs';
+import path from 'path';
 import { canonicalizeName } from '../lib/normalize';
 
 const router = express.Router();
+
+const uploadsDir = path.join(__dirname, '../../uploads');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+
+const excelUpload = multer({
+  dest: uploadsDir,
+  fileFilter: (req, file, cb) => {
+    const allowedMimeTypes = [
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'application/vnd.ms-excel'
+    ];
+    if (allowedMimeTypes.includes(file.mimetype) || /\.(xlsx|xls)$/i.test(file.originalname)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only Excel files (.xlsx, .xls) are allowed'));
+    }
+  },
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB
+  }
+});
+
+const headerMap: Record<string, string> = {
+  name: 'customer_name',
+  customer: 'customer_name',
+  customer_name: 'customer_name',
+  contact: 'contact_person',
+  contact_person: 'contact_person',
+  contactname: 'contact_person',
+  contact_name: 'contact_person',
+  phone: 'phone_number',
+  phone_number: 'phone_number',
+  telephone: 'phone_number',
+  telephone_number: 'phone_number',
+  phone_no: 'phone_number',
+  address: 'street_address',
+  street: 'street_address',
+  street_address: 'street_address',
+  city: 'city',
+  province: 'province',
+  state: 'province',
+  region: 'province',
+  country: 'country',
+  postal: 'postal_code',
+  postal_code: 'postal_code',
+  zip: 'postal_code',
+  zip_code: 'postal_code',
+  website: 'website',
+  notes: 'general_notes',
+  note: 'general_notes',
+  general_notes: 'general_notes'
+};
+
+const normalizeHeader = (value: string): string => value.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/_+/g, '_').replace(/^_+|_+$/g, '');
+
+const normalizeCell = (value: unknown): string => {
+  if (value == null) return '';
+  return value.toString().trim();
+};
+
+// Downloadable Excel template to guide imports
+router.get('/import-excel/template', (_req: Request, res: Response) => {
+  const workbook = XLSX.utils.book_new();
+  const worksheet = XLSX.utils.aoa_to_sheet([
+    ['customer_name', 'contact_person', 'email', 'phone_number', 'street_address', 'city', 'province', 'country', 'postal_code', 'website', 'general_notes'],
+    ['Acme Corp', 'Jane Smith', 'jane.smith@acme.com', '555-123-4567', '123 Main St', 'Toronto', 'ON', 'Canada', 'M5H 2N2', 'https://acme.com', 'Preferred partner'],
+    ['Beta Industries', 'John Doe', 'john.doe@beta.io', '555-987-6543', '456 Market Ave', 'Vancouver', 'BC', 'Canada', 'V5K 0A1', 'https://beta.io', '']
+  ]);
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Customers');
+  const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', 'attachment; filename="customer_import_template.xlsx"');
+  res.send(buffer);
+});
+
+// Bulk import customers from Excel
+router.post('/import-excel', excelUpload.single('file'), async (req: Request, res: Response) => {
+  if (!req.file) {
+    return res.status(400).json({ error: 'No Excel file uploaded' });
+  }
+
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  const createdCustomers: any[] = [];
+  let rawRows: Record<string, unknown>[] = [];
+
+  try {
+    const workbook = XLSX.readFile(req.file.path);
+    const firstSheetName = workbook.SheetNames[0];
+    if (!firstSheetName) {
+      return res.status(400).json({ error: 'Excel file does not contain any sheets', errors: ['No worksheets found'] });
+    }
+    const sheet = workbook.Sheets[firstSheetName];
+    if (!sheet) {
+      return res.status(400).json({ error: 'Unable to read the first worksheet in the Excel file' });
+    }
+    rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
+
+    if (rawRows.length === 0) {
+      return res.status(400).json({ error: 'Excel file is empty', errors: ['No data rows found'] });
+    }
+
+    const normalizedRows: Array<{
+      rowNumber: number;
+      customer_name: string;
+      canonicalName: string;
+      street_address?: string;
+      city?: string;
+      province?: string;
+      country?: string;
+      postal_code?: string;
+      contact_person?: string;
+      phone_number?: string;
+      email?: string;
+      website?: string;
+      general_notes?: string;
+    }> = [];
+
+    const seenCanonicalNames = new Set<string>();
+
+    rawRows.forEach((row, index) => {
+      const rowNumber = index + 2; // account for header row
+      const normalizedRow: Record<string, unknown> = {};
+
+      Object.entries(row).forEach(([key, value]) => {
+        const mappedKey = headerMap[normalizeHeader(key)] || normalizeHeader(key);
+        if (mappedKey) {
+          normalizedRow[mappedKey] = value;
+        }
+      });
+
+      const nameValue = normalizeCell(normalizedRow.customer_name);
+      if (!nameValue) {
+        errors.push(`Row ${rowNumber}: customer_name is required`);
+        return;
+      }
+
+      const canonicalName = canonicalizeName(nameValue);
+      if (!canonicalName) {
+        errors.push(`Row ${rowNumber}: customer_name is not valid after normalization`);
+        return;
+      }
+
+      if (seenCanonicalNames.has(canonicalName)) {
+        warnings.push(`Row ${rowNumber}: "${nameValue}" skipped because the same name appears multiple times in the file`);
+        return;
+      }
+
+      seenCanonicalNames.add(canonicalName);
+
+      normalizedRows.push({
+        rowNumber,
+        customer_name: nameValue,
+        canonicalName,
+        street_address: normalizeCell(normalizedRow.street_address),
+        city: normalizeCell(normalizedRow.city),
+        province: normalizeCell(normalizedRow.province),
+        country: normalizeCell(normalizedRow.country),
+        postal_code: normalizeCell(normalizedRow.postal_code),
+        contact_person: normalizeCell(normalizedRow.contact_person),
+        phone_number: normalizeCell(normalizedRow.phone_number || normalizedRow.telephone_number),
+        email: normalizeCell(normalizedRow.email),
+        website: normalizeCell(normalizedRow.website),
+        general_notes: normalizeCell(normalizedRow.general_notes || normalizedRow.notes || normalizedRow.note),
+      });
+    });
+
+    if (errors.length > 0) {
+      return res.status(400).json({
+        error: 'Validation failed',
+        errors,
+        warnings,
+      });
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      for (const row of normalizedRows) {
+        const existing = await client.query(
+          'SELECT customer_id, customer_name FROM customermaster WHERE canonical_name = $1',
+          [row.canonicalName]
+        );
+
+        if (existing.rows.length > 0) {
+          warnings.push(`Row ${row.rowNumber}: "${row.customer_name}" skipped because "${existing.rows[0].customer_name}" already exists`);
+          continue;
+        }
+
+        const insertResult = await client.query(
+          'INSERT INTO customermaster (customer_name, canonical_name, street_address, city, province, country, postal_code, contact_person, telephone_number, email, website, general_notes) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *',
+          [
+            row.customer_name,
+            row.canonicalName,
+            row.street_address || null,
+            row.city || null,
+            row.province || null,
+            row.country || null,
+            row.postal_code || null,
+            row.contact_person || null,
+            row.phone_number || null,
+            row.email || null,
+            row.website || null,
+            row.general_notes || null
+          ]
+        );
+
+        const saved = insertResult.rows[0];
+        const { canonical_name: _c, ...customerFields } = saved;
+        createdCustomers.push({
+          ...customerFields,
+          phone_number: saved.telephone_number,
+          id: saved.customer_id
+        });
+      }
+
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      console.error('customerRoutes: Error during Excel import transaction:', err);
+      return res.status(500).json({ error: 'Failed to import customers', details: (err as Error).message });
+    } finally {
+      client.release();
+    }
+
+    res.json({
+      message: 'Customer import completed',
+      summary: {
+        totalRows: rawRows.length,
+        acceptedRows: normalizedRows.length,
+        created: createdCustomers.length,
+        skipped: normalizedRows.length - createdCustomers.length,
+        errors: errors.length,
+        warnings: warnings.length
+      },
+      warnings,
+      errors,
+      createdCustomers
+    });
+  } catch (err) {
+    console.error('customerRoutes: Error processing Excel file:', err);
+    res.status(500).json({ error: 'Internal server error while processing Excel file', details: (err as Error).message });
+  } finally {
+    if (req.file && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
+  }
+});
 
 // Get all customers
 router.get('/', async (req: Request, res: Response) => {
