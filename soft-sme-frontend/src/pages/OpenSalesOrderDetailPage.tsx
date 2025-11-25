@@ -85,6 +85,7 @@ interface SalesOrder {
   status: string;
   customer_po_number?: string | null;
   vin_number?: string | null;
+  unit_number?: string | null;
   exported_to_qbo?: boolean;
   qbo_invoice_id?: string;
   qbo_export_date?: string;
@@ -159,6 +160,7 @@ const SalesOrderDetailPage: React.FC = () => {
   const [terms, setTerms] = useState('');
   const [customerPoNumber, setCustomerPoNumber] = useState('');
   const [vinNumber, setVinNumber] = useState('');
+  const [unitNumber, setUnitNumber] = useState('');
   const [vehicleMake, setVehicleMake] = useState('');
   const [vehicleModel, setVehicleModel] = useState('');
   const [invoiceStatus, setInvoiceStatus] = useState<InvoiceStatus>('');
@@ -246,11 +248,12 @@ const SalesOrderDetailPage: React.FC = () => {
     terms: (terms || '').trim(),
     customerPoNumber: (customerPoNumber || '').trim(),
     vinNumber: (vinNumber || '').trim(),
+    unitNumber: (unitNumber || '').trim(),
     estimatedCost: estimatedCost != null ? Number(estimatedCost) : null,
     vehicleMake: (vehicleMake || '').trim(),
     vehicleModel: (vehicleModel || '').trim(),
     invoiceStatus,
-  }), [customer, product, salesDate, terms, customerPoNumber, vinNumber, estimatedCost, vehicleMake, vehicleModel, invoiceStatus]);
+  }), [customer, product, salesDate, terms, customerPoNumber, vinNumber, unitNumber, estimatedCost, vehicleMake, vehicleModel, invoiceStatus]);
 
   // Set initial signature only once after data is fully loaded
   useEffect(() => {
@@ -521,6 +524,7 @@ const SalesOrderDetailPage: React.FC = () => {
         setTerms(data.salesOrder?.terms || '');
         setCustomerPoNumber(data.salesOrder?.customer_po_number || '');
         setVinNumber(data.salesOrder?.vin_number || '');
+        setUnitNumber(data.salesOrder?.unit_number || '');
         setVehicleMake(data.salesOrder?.vehicle_make || '');
         setVehicleModel(data.salesOrder?.vehicle_model || '');
         setInvoiceStatus(normalizedStatus);
@@ -821,9 +825,10 @@ const SalesOrderDetailPage: React.FC = () => {
 
   // ---------- Validation ----------
   const validateBeforeSave = () => {
-    // VIN optional but must be 17 if present
-    if (vinNumber && vinNumber.trim() !== '' && vinNumber.trim().length !== 17) {
-      toast.error('VIN must be 17 characters');
+    // VIN optional but must be 6 or 17 characters if present
+    const vinLength = vinNumber?.trim().length || 0;
+    if (vinLength > 0 && vinLength !== 6 && vinLength !== 17) {
+      toast.error('VIN must be 6 or 17 characters');
       return false;
     }
 
@@ -943,6 +948,7 @@ const SalesOrderDetailPage: React.FC = () => {
       terms: terms.trim(),
       customer_po_number: customerPoNumber.trim(),
       vin_number: vinNumber.trim(),
+      unit_number: unitNumber.trim(),
       vehicle_make: vehicleMake.trim(),
       vehicle_model: vehicleModel.trim(),
       invoice_status: invoiceStatus || null,
@@ -984,7 +990,7 @@ const SalesOrderDetailPage: React.FC = () => {
           (window as any).__unsavedGuardAllowNext = true;
         }, 100);
         setInitialSignature(JSON.stringify({
-          header: { customer, product, salesDate, terms, customerPoNumber, vinNumber, estimatedCost, vehicleMake, vehicleModel, invoiceStatus },
+          header: getHeaderSignature(),
           lineItems,
           quantityToOrderItems,
         }));
@@ -1004,7 +1010,8 @@ const SalesOrderDetailPage: React.FC = () => {
           } : null);
           setInvoiceStatus(refreshedStatus);
           setSourceQuoteNumber(data.salesOrder?.source_quote_number || '');
- 
+          setUnitNumber(data.salesOrder?.unit_number || '');
+
           const li = (data.lineItems || data.salesOrder?.line_items || []).map((item: any) => ({
             part_number: item.part_number,
             part_description: item.part_description,
@@ -1054,6 +1061,7 @@ const SalesOrderDetailPage: React.FC = () => {
         product_name: product?.label?.trim() || salesOrder.product_name,
         product_description: productDescription.trim(),
         terms: terms.trim(),
+        unit_number: unitNumber.trim() || salesOrder.unit_number,
         status: 'Closed',
         estimated_cost: estimatedCost ?? salesOrder.estimated_cost,
         lineItems: buildPayloadLineItems(lineItems),
@@ -1075,6 +1083,7 @@ const SalesOrderDetailPage: React.FC = () => {
         product_name: product?.label?.trim() || salesOrder.product_name,
         product_description: productDescription.trim(),
         terms: terms.trim(),
+        unit_number: unitNumber.trim() || salesOrder.unit_number,
         status: 'Open',
         estimated_cost: estimatedCost ?? salesOrder.estimated_cost,
         lineItems: buildPayloadLineItems(lineItems),
@@ -1234,6 +1243,7 @@ const SalesOrderDetailPage: React.FC = () => {
               <Grid item xs={12} sm={6}><b>Sales Date:</b> {salesOrder.sales_date ? new Date(salesOrder.sales_date).toLocaleDateString() : ''}</Grid>
               <Grid item xs={12} sm={6}><b>Status:</b> {salesOrder.status?.toUpperCase() || 'N/A'}</Grid>
               <Grid item xs={12} sm={6}><b>VIN #:</b> {salesOrder.vin_number || 'N/A'}</Grid>
+              <Grid item xs={12} sm={6}><b>Unit #:</b> {salesOrder.unit_number || 'N/A'}</Grid>
               <Grid item xs={12} sm={6}><b>Make:</b> {salesOrder.vehicle_make || 'N/A'}</Grid>
               <Grid item xs={12} sm={6}><b>Model:</b> {salesOrder.vehicle_model || 'N/A'}</Grid>
               <Grid item xs={12} sm={6}>
@@ -1347,7 +1357,7 @@ const SalesOrderDetailPage: React.FC = () => {
               setCustomer(null); setCustomerInput(''); setSalesDate(dayjs());
               setProduct(null); setProductInput(''); setProductDescription('');
               setTerms(''); setCustomerPoNumber(''); setVinNumber('');
-              setVehicleMake(''); setVehicleModel(''); setInvoiceStatus('');
+              setUnitNumber(''); setVehicleMake(''); setVehicleModel(''); setInvoiceStatus('');
               setEstimatedCost(null);
               setLineItems([{
                 part_number: '', part_description: '', quantity: '',
@@ -1580,8 +1590,17 @@ const SalesOrderDetailPage: React.FC = () => {
                 onChange={e => setVinNumber(e.target.value)}
                 fullWidth
                 placeholder="Optional"
-                error={!!(vinNumber && vinNumber.trim() !== '' && vinNumber.trim().length !== 17)}
-                helperText={(vinNumber && vinNumber.trim() !== '' && vinNumber.trim().length !== 17) ? 'VIN must be 17 characters' : ''}
+                error={!!(vinNumber && vinNumber.trim() !== '' && ![6, 17].includes(vinNumber.trim().length))}
+                helperText={(vinNumber && vinNumber.trim() !== '' && ![6, 17].includes(vinNumber.trim().length)) ? 'VIN must be 6 or 17 characters' : ''}
+              />
+            </Grid>
+            <Grid item xs={12} sm={4}>
+              <TextField
+                label="Unit #"
+                value={unitNumber}
+                onChange={e => setUnitNumber(e.target.value)}
+                fullWidth
+                placeholder="Optional"
               />
             </Grid>
             <Grid item xs={12} sm={4}>

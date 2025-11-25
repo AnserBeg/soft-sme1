@@ -406,6 +406,7 @@ router.put('/:id', async (req: Request, res: Response) => {
   if (salesOrderData.terms) salesOrderData.terms = salesOrderData.terms.trim();
   if (salesOrderData.customer_po_number) salesOrderData.customer_po_number = salesOrderData.customer_po_number.trim();
   if (salesOrderData.vin_number) salesOrderData.vin_number = salesOrderData.vin_number.trim();
+  if (salesOrderData.unit_number) salesOrderData.unit_number = salesOrderData.unit_number.trim();
   if (salesOrderData.vehicle_make) salesOrderData.vehicle_make = salesOrderData.vehicle_make.trim();
   if (salesOrderData.vehicle_model) salesOrderData.vehicle_model = salesOrderData.vehicle_model.trim();
   if (Object.prototype.hasOwnProperty.call(salesOrderData, 'invoice_required')) {
@@ -460,6 +461,7 @@ if (lineItems && lineItems.length > 0) {
     'sequence_number',
     'customer_po_number',
     'vin_number',
+    'unit_number',
     'vehicle_make',
     'vehicle_model',
     'invoice_status',

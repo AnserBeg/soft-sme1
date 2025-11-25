@@ -52,6 +52,7 @@ export class SalesOrderService {
         terms,
         customer_po_number,
         vin_number,
+        unit_number,
         vehicle_make,
         vehicle_model,
         invoice_status,
@@ -73,6 +74,7 @@ export class SalesOrderService {
       if (!trimmedProductName) {
         throw new Error('product_name is required to create a sales order');
       }
+      const trimmedUnitNumber = unit_number ? String(unit_number).trim() : '';
 
       const normalizedInvoiceStatus = SalesOrderService.normalizeInvoiceStatus(invoice_status ?? invoice_required);
 
@@ -118,9 +120,9 @@ export class SalesOrderService {
       await client.query(
         `INSERT INTO salesorderhistory (
           sales_order_id, sales_order_number, customer_id, sales_date, product_name, product_description, terms,
-          customer_po_number, vin_number, vehicle_make, vehicle_model, invoice_status, subtotal, total_gst_amount, total_amount,
+          customer_po_number, vin_number, unit_number, vehicle_make, vehicle_model, invoice_status, subtotal, total_gst_amount, total_amount,
           status, estimated_cost, sequence_number, quote_id, source_quote_number
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`,
         [
           newSalesOrderId,
           formattedSONumber,
@@ -131,6 +133,7 @@ export class SalesOrderService {
           terms ? String(terms).trim() : '',
           customer_po_number ? String(customer_po_number).trim() : '',
           vin_number ? String(vin_number).trim() : '',
+          trimmedUnitNumber,
           vehicle_make ? String(vehicle_make).trim() : '',
           vehicle_model ? String(vehicle_model).trim() : '',
           normalizedInvoiceStatus,
