@@ -88,5 +88,8 @@ export const importCustomersFromExcel = async (file: File, onUploadProgress?: (p
 };
 
 export const downloadCustomerExcelTemplate = () => {
-  window.open('/api/customers/import-excel/template', '_blank');
+  // Use authenticated request so the download works behind auth middleware
+  return api.get('/api/customers/import-excel/template', {
+    responseType: 'blob',
+  });
 };

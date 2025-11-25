@@ -78,6 +78,26 @@ const CustomerListPage: React.FC = () => {
     setEditCustomer(null);
   };
 
+  const handleDownloadTemplate = async () => {
+    try {
+      const response = await downloadCustomerExcelTemplate();
+      const blob = new Blob([response.data], {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'customer_import_template.xlsx';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Error downloading template', err);
+      toast.error('Failed to download template');
+    }
+  };
+
   const handleUploadClick = () => {
     fileInputRef.current?.click();
   };
@@ -232,7 +252,7 @@ const CustomerListPage: React.FC = () => {
           <Button variant="outlined" startIcon={<UploadFileIcon />} onClick={handleUploadClick}>
             Import Excel
           </Button>
-          <Button variant="outlined" startIcon={<DownloadIcon />} onClick={downloadCustomerExcelTemplate}>
+          <Button variant="outlined" startIcon={<DownloadIcon />} onClick={handleDownloadTemplate}>
             Download Template
           </Button>
           <Button variant="outlined" startIcon={<DownloadIcon />} onClick={handleExportCSV}>
