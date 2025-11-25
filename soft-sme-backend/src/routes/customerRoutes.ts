@@ -143,13 +143,13 @@ router.post('/import-excel', excelUpload.single('file'), async (req: Request, re
 
       const nameValue = normalizeCell(normalizedRow.customer_name);
       if (!nameValue) {
-        errors.push(`Row ${rowNumber}: customer_name is required`);
+        errors.push(`Row ${rowNumber}: customer_name is required; row skipped`);
         return;
       }
 
       const canonicalName = canonicalizeName(nameValue);
       if (!canonicalName) {
-        errors.push(`Row ${rowNumber}: customer_name is not valid after normalization`);
+        errors.push(`Row ${rowNumber}: customer_name is not valid after normalization; row skipped`);
         return;
       }
 
@@ -177,9 +177,9 @@ router.post('/import-excel', excelUpload.single('file'), async (req: Request, re
       });
     });
 
-    if (errors.length > 0) {
+    if (normalizedRows.length === 0) {
       return res.status(400).json({
-        error: 'Validation failed',
+        error: 'No valid rows to import',
         errors,
         warnings,
       });
