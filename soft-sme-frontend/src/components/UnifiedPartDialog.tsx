@@ -15,10 +15,10 @@ import {
 } from '@mui/material';
 import { toast } from 'react-toastify';
 import api from '../api/axios';
-import { getPartVendors, getPartVendorsById, createPartVendor, createPartVendorById, updatePartVendor, updatePartVendorById, deletePartVendor, deletePartVendorById, InventoryVendorLink } from '../services/inventoryService';
+import { getPartVendors, getPartVendorsById, createPartVendor, createPartVendorById, updatePartVendor, updatePartVendorById, deletePartVendor, deletePartVendorById, InventoryVendorLink, getInventoryForPart } from '../services/inventoryService';
 import CategorySelect from './CategorySelect';
 import { useAuth } from '../contexts/AuthContext';
-// Removed debounced PN fetching for unsaved parts
+// Debounced PN lookup warns about duplicate canonical entries while editing
 
 export interface PartFormValues {
   part_id?: number;
@@ -74,6 +74,8 @@ const UnifiedPartDialog: React.FC<UnifiedPartDialogProps> = ({
   const [errors, setErrors] = useState<Partial<Record<keyof PartFormValues, string>>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const partNumberRef = useRef<HTMLInputElement>(null);
+  const [existingPartWarning, setExistingPartWarning] = useState<string | null>(null);
+  const partLookupTimer = useRef<number | null>(null);
   
   
 
@@ -93,6 +95,7 @@ const UnifiedPartDialog: React.FC<UnifiedPartDialogProps> = ({
       });
       setErrors({});
       setIsSubmitting(false);
+      setExistingPartWarning(null);
     }
   }, [open, initialPart?.part_id, initialPart?.part_number]);
 
@@ -129,53 +132,48 @@ const UnifiedPartDialog: React.FC<UnifiedPartDialogProps> = ({
   };
 
   // Removed live duplicate part number check. Duplicates are validated on save via backend response handling.
+  useEffect(() => {
+    if (!open) return;
+    const pn = (formData.part_number || '').trim();
+    if (partLookupTimer.current) {
+      window.clearTimeout(partLookupTimer.current);
+    }
+    if (!pn) {
+      setExistingPartWarning(null);
+      return;
+    }
+
+    partLookupTimer.current = window.setTimeout(async () => {
+      try {
+        const res = await getInventoryForPart(pn);
+        const item = (res as any)?.item || res;
+        const foundPN = String(item?.part_number || '').toUpperCase();
+        const initialPN = String(initialPart?.part_number || '').toUpperCase();
+        const foundId = item?.part_id;
+        const isSameAsInitial = initialPN && initialPN === foundPN;
+        if (foundPN && foundPN === pn.toUpperCase() && !isSameAsInitial && (!formData.part_id || formData.part_id !== foundId)) {
+          setExistingPartWarning(`Part number ${foundPN} already exists. Saving will update that part.`);
+        } else {
+          setExistingPartWarning(null);
+        }
+      } catch {
+        // Not found or failed lookup; no warning needed
+        setExistingPartWarning(null);
+      }
+    }, 400);
+
+    return () => {
+      if (partLookupTimer.current) {
+        window.clearTimeout(partLookupTimer.current);
+      }
+    };
+  }, [formData.part_number, formData.part_id, open, initialPart?.part_number]);
 
   const validateForm = (): boolean => {
     const newErrors: Partial<Record<keyof PartFormValues, string>> = {};
 
     if (!formData.part_number.trim()) {
       newErrors.part_number = 'Part Number is required';
-    }
-
-    // Rule: No spaces in part number
-    if (formData.part_number && /\s/.test(formData.part_number)) {
-      newErrors.part_number = 'Part Number cannot contain spaces';
-    }
-
-    // Rule: Only allow characters A-Z, 0-9, '-', '/', '(', ')'
-    if (formData.part_number && !/^[A-Z0-9()\/-]+$/.test(formData.part_number)) {
-      newErrors.part_number = 'Only letters/numbers and - / ( ) are allowed';
-    }
-
-    // Rule: If there is a '/', it must be enclosed within parentheses to indicate a fraction, e.g., (1/2)
-    const pn = formData.part_number;
-    if (pn && pn.includes('/')) {
-      // Validate every '/' is inside a (...) group
-      const isSlashInsideParens = (): boolean => {
-        // Scan and ensure each '/' falls between a '(' and the next ')'
-        const slashIndices: number[] = [];
-        for (let i = 0; i < pn.length; i++) {
-          if (pn[i] === '/') slashIndices.push(i);
-        }
-        if (slashIndices.length === 0) return true;
-        // Precompute nearest previous '(' and next ')' for each index
-        const prevOpen: number[] = new Array(pn.length).fill(-1);
-        let lastOpen = -1;
-        for (let i = 0; i < pn.length; i++) {
-          if (pn[i] === '(') lastOpen = i;
-          prevOpen[i] = lastOpen;
-        }
-        const nextClose: number[] = new Array(pn.length).fill(-1);
-        let next = -1;
-        for (let i = pn.length - 1; i >= 0; i--) {
-          if (pn[i] === ')') next = i;
-          nextClose[i] = next;
-        }
-        return slashIndices.every(idx => prevOpen[idx] !== -1 && nextClose[idx] !== -1 && prevOpen[idx] < idx && idx < nextClose[idx]);
-      };
-      if (!isSlashInsideParens()) {
-        newErrors.part_number = 'Fractions must be enclosed in parentheses, e.g., (1/2)';
-      }
     }
 
     if (!formData.part_description.trim()) {
@@ -393,6 +391,11 @@ const UnifiedPartDialog: React.FC<UnifiedPartDialogProps> = ({
                 helperText={errors.part_number}
                 inputRef={partNumberRef}
               />
+              {!errors.part_number && existingPartWarning && (
+                <Alert severity="warning" sx={{ mt: 1 }}>
+                  {existingPartWarning}
+                </Alert>
+              )}
             </Grid>
             <Grid item xs={12} sm={6}>
               <TextField
