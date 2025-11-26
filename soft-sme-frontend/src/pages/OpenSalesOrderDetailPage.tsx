@@ -5,7 +5,7 @@ import {
   Typography, Box, TextField, Button, Stack, Autocomplete, Grid,
   Dialog, DialogTitle, DialogContent, DialogActions, Container, Paper, Alert,
   Card, CardContent, CircularProgress, InputAdornment, Snackbar, FormControl,
-  FormLabel, ToggleButton, ToggleButtonGroup
+  FormLabel, ToggleButton, ToggleButtonGroup, Popover, FormGroup, FormControlLabel, Checkbox
 } from '@mui/material';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
@@ -18,6 +18,7 @@ import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CancelIcon from '@mui/icons-material/Cancel';
+import TuneIcon from '@mui/icons-material/Tune';
 import { toast } from 'react-toastify';
 import api from '../api/axios';
 import { useAuth } from '../contexts/AuthContext';
@@ -109,6 +110,19 @@ const normalize = (s: string) =>
   s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\w\s]/g, ' ')
    .replace(/\s+/g, ' ').trim().toUpperCase();
 
+type OptionalFieldKey =
+  | 'customerPoNumber'
+  | 'quotedPrice'
+  | 'sourceQuote'
+  | 'vin'
+  | 'unitNumber'
+  | 'vehicleMake'
+  | 'vehicleModel'
+  | 'invoiceStatus'
+  | 'productDescription'
+  | 'terms';
+type FieldVisibilityMap = Record<OptionalFieldKey, boolean>;
+
 const rankAndFilter = <T extends { label: string }>(options: T[], query: string, limit = 8) => {
   const q = normalize(query);
   if (!q) return options.slice(0, limit);
@@ -182,6 +196,42 @@ const SalesOrderDetailPage: React.FC = () => {
       unit_price: li.unit_price,
     }))
   ), [lineItems]);
+
+  const OPTIONAL_FIELD_STORAGE_KEY = 'salesOrderDetail.fieldVisibility';
+  const DEFAULT_FIELD_VISIBILITY: FieldVisibilityMap = {
+    customerPoNumber: true,
+    quotedPrice: true,
+    sourceQuote: true,
+    vin: true,
+    unitNumber: true,
+    vehicleMake: true,
+    vehicleModel: true,
+    invoiceStatus: true,
+    productDescription: true,
+    terms: true,
+  };
+  const [fieldVisibility, setFieldVisibility] = useState<FieldVisibilityMap>(() => {
+    if (typeof window === 'undefined') return DEFAULT_FIELD_VISIBILITY;
+    try {
+      const stored = localStorage.getItem(OPTIONAL_FIELD_STORAGE_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        return { ...DEFAULT_FIELD_VISIBILITY, ...parsed };
+      }
+    } catch (err) {
+      console.warn('Failed to read sales order field visibility preferences', err);
+    }
+    return DEFAULT_FIELD_VISIBILITY;
+  });
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(OPTIONAL_FIELD_STORAGE_KEY, JSON.stringify(fieldVisibility));
+    }
+  }, [fieldVisibility]);
+
+  const [fieldPickerAnchor, setFieldPickerAnchor] = useState<HTMLElement | null>(null);
+  const openFieldPicker = (event: React.MouseEvent<HTMLElement>) => setFieldPickerAnchor(event.currentTarget);
+  const closeFieldPicker = () => setFieldPickerAnchor(null);
 
   // Calculate totals from all visible line items (including LABOUR/OVERHEAD from backend)
   const totals = useMemo(() => {
@@ -1352,6 +1402,9 @@ const SalesOrderDetailPage: React.FC = () => {
             {isCreationMode ? 'Create Sales Order' : `Edit Sales Order${salesOrder?.sales_order_number ? `: ${salesOrder.sales_order_number}` : ''}`}
           </Typography>
           <Stack direction="row" spacing={1}>
+            <Button variant="outlined" startIcon={<TuneIcon />} onClick={openFieldPicker}>
+              Customize Fields
+            </Button>
             {isCreationMode && <Button variant="outlined" onClick={() => {
               // reset to pristine
               setCustomer(null); setCustomerInput(''); setSalesDate(dayjs());
@@ -1378,6 +1431,49 @@ const SalesOrderDetailPage: React.FC = () => {
             )}
           </Stack>
         </Box>
+        <Popover
+          open={Boolean(fieldPickerAnchor)}
+          anchorEl={fieldPickerAnchor}
+          onClose={closeFieldPicker}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
+        >
+          <Box sx={{ p: 2, width: 280 }}>
+            <Typography variant="subtitle1" sx={{ mb: 1 }}>
+              Show / Hide Optional Fields
+            </Typography>
+            <FormGroup>
+              {[
+                { key: 'customerPoNumber', label: 'Customer PO #' },
+                { key: 'quotedPrice', label: 'Quoted Price' },
+                { key: 'sourceQuote', label: 'Source Quote #' },
+                { key: 'vin', label: 'VIN #' },
+                { key: 'unitNumber', label: 'Unit #' },
+                { key: 'vehicleMake', label: 'Make' },
+                { key: 'vehicleModel', label: 'Model' },
+                { key: 'invoiceStatus', label: 'Invoice Status' },
+                { key: 'productDescription', label: 'Product Description' },
+                { key: 'terms', label: 'Terms' },
+              ].map(({ key, label }) => (
+                <FormControlLabel
+                  key={key}
+                  control={
+                    <Checkbox
+                      size="small"
+                      checked={fieldVisibility[key as OptionalFieldKey]}
+                      onChange={(e) =>
+                        setFieldVisibility((prev) => ({
+                          ...prev,
+                          [key]: e.target.checked,
+                        }))
+                      }
+                    />
+                  }
+                  label={label}
+                />
+              ))}
+            </FormGroup>
+          </Box>
+        </Popover>
 
         {/* Import Line Items */}
         <Box sx={{ mb: 2 }}>
@@ -1496,32 +1592,36 @@ const SalesOrderDetailPage: React.FC = () => {
                 )}
               />
             </Grid>
-            <Grid item xs={12} sm={4}>
-              <TextField label="Customer PO #" value={customerPoNumber} onChange={e => setCustomerPoNumber(e.target.value)} fullWidth placeholder="Optional" />
-            </Grid>
-              {!isSalesPurchaseUser && (
-                <Grid item xs={12} sm={4}>
-                  <TextField
-                    label="Quoted Price"
-                    type="number"
-                    value={estimatedCost ?? ''}
-                    onChange={e => setEstimatedCost(e.target.value ? parseFloat(e.target.value) : null)}
-                    fullWidth
-                    InputProps={{ startAdornment: <InputAdornment position="start">$</InputAdornment> }}
-                    inputProps={{ onWheel: (e) => (e.currentTarget as HTMLInputElement).blur() }}
-                  />
-                </Grid>
-              )}
+            {fieldVisibility.customerPoNumber && (
+              <Grid item xs={12} sm={4}>
+                <TextField label="Customer PO #" value={customerPoNumber} onChange={e => setCustomerPoNumber(e.target.value)} fullWidth placeholder="Optional" />
+              </Grid>
+            )}
+            {!isSalesPurchaseUser && fieldVisibility.quotedPrice && (
+              <Grid item xs={12} sm={4}>
+                <TextField
+                  label="Quoted Price"
+                  type="number"
+                  value={estimatedCost ?? ''}
+                  onChange={e => setEstimatedCost(e.target.value ? parseFloat(e.target.value) : null)}
+                  fullWidth
+                  InputProps={{ startAdornment: <InputAdornment position="start">$</InputAdornment> }}
+                  inputProps={{ onWheel: (e) => (e.currentTarget as HTMLInputElement).blur() }}
+                />
+              </Grid>
+            )}
 
-            <Grid item xs={12} sm={4}>
-              <TextField
-                label="Source Quote #"
-                value={sourceQuoteNumber || ''}
-                placeholder="Not converted from a quote"
-                fullWidth
-                InputProps={{ readOnly: true }}
-              />
-            </Grid>
+            {fieldVisibility.sourceQuote && (
+              <Grid item xs={12} sm={4}>
+                <TextField
+                  label="Source Quote #"
+                  value={sourceQuoteNumber || ''}
+                  placeholder="Not converted from a quote"
+                  fullWidth
+                  InputProps={{ readOnly: true }}
+                />
+              </Grid>
+            )}
 
             <Grid item xs={12} sm={4}>
               <Autocomplete<ProductOption>
@@ -1583,92 +1683,102 @@ const SalesOrderDetailPage: React.FC = () => {
                 disabled={false}
               />
             </Grid>
-            <Grid item xs={12} sm={4}>
-              <TextField
-                label="VIN #"
-                value={vinNumber}
-                onChange={e => setVinNumber(e.target.value)}
-                fullWidth
-                placeholder="Optional"
-                error={!!(vinNumber && vinNumber.trim() !== '' && ![6, 17].includes(vinNumber.trim().length))}
-                helperText={(vinNumber && vinNumber.trim() !== '' && ![6, 17].includes(vinNumber.trim().length)) ? 'VIN must be 6 or 17 characters' : ''}
-              />
-            </Grid>
-            <Grid item xs={12} sm={4}>
-              <TextField
-                label="Unit #"
-                value={unitNumber}
-                onChange={e => setUnitNumber(e.target.value)}
-                fullWidth
-                placeholder="Optional"
-              />
-            </Grid>
-            <Grid item xs={12} sm={4}>
-              <TextField
-                label="Make"
-                value={vehicleMake}
-                onChange={e => setVehicleMake(e.target.value)}
-                fullWidth
-                placeholder="Optional"
-              />
-            </Grid>
-            <Grid item xs={12} sm={4}>
-              <TextField
-                label="Model"
-                value={vehicleModel}
-                onChange={e => setVehicleModel(e.target.value)}
-                fullWidth
-                placeholder="Optional"
-              />
-            </Grid>
-            <Grid item xs={12} sm={4}>
-              <FormControl component="fieldset" fullWidth>
-                <FormLabel sx={{ mb: 1 }}>Invoice</FormLabel>
-                <ToggleButtonGroup
-                  value={invoiceStatus || null}
-                  exclusive
+            {fieldVisibility.vin && (
+              <Grid item xs={12} sm={4}>
+                <TextField
+                  label="VIN #"
+                  value={vinNumber}
+                  onChange={e => setVinNumber(e.target.value)}
                   fullWidth
-                  size="small"
-                  color="standard"
-                  aria-label="Invoice status"
-                  onChange={handleInvoiceStatusToggle}
-                  sx={{
-                    '& .MuiToggleButtonGroup-grouped': {
-                      textTransform: 'none',
-                      flex: 1,
-                      gap: 0,
-                    },
-                    '& .MuiToggleButtonGroup-grouped:not(:first-of-type)': {
-                      marginLeft: 0,
-                    },
-                    '& .MuiToggleButtonGroup-grouped.Mui-selected': {
-                      color: '#fff',
-                    },
-                    '& .MuiToggleButtonGroup-grouped.Mui-selected.MuiToggleButton-colorError': {
-                      bgcolor: (theme) => theme.palette.error.main,
-                      '&:hover': {
-                        bgcolor: (theme) => theme.palette.error.dark,
+                  placeholder="Optional"
+                  error={!!(vinNumber && vinNumber.trim() !== '' && ![6, 17].includes(vinNumber.trim().length))}
+                  helperText={(vinNumber && vinNumber.trim() !== '' && ![6, 17].includes(vinNumber.trim().length)) ? 'VIN must be 6 or 17 characters' : ''}
+                />
+              </Grid>
+            )}
+            {fieldVisibility.unitNumber && (
+              <Grid item xs={12} sm={4}>
+                <TextField
+                  label="Unit #"
+                  value={unitNumber}
+                  onChange={e => setUnitNumber(e.target.value)}
+                  fullWidth
+                  placeholder="Optional"
+                />
+              </Grid>
+            )}
+            {fieldVisibility.vehicleMake && (
+              <Grid item xs={12} sm={4}>
+                <TextField
+                  label="Make"
+                  value={vehicleMake}
+                  onChange={e => setVehicleMake(e.target.value)}
+                  fullWidth
+                  placeholder="Optional"
+                />
+              </Grid>
+            )}
+            {fieldVisibility.vehicleModel && (
+              <Grid item xs={12} sm={4}>
+                <TextField
+                  label="Model"
+                  value={vehicleModel}
+                  onChange={e => setVehicleModel(e.target.value)}
+                  fullWidth
+                  placeholder="Optional"
+                />
+              </Grid>
+            )}
+            {fieldVisibility.invoiceStatus && (
+              <Grid item xs={12} sm={4}>
+                <FormControl component="fieldset" fullWidth>
+                  <FormLabel sx={{ mb: 1 }}>Invoice</FormLabel>
+                  <ToggleButtonGroup
+                    value={invoiceStatus || null}
+                    exclusive
+                    fullWidth
+                    size="small"
+                    color="standard"
+                    aria-label="Invoice status"
+                    onChange={handleInvoiceStatusToggle}
+                    sx={{
+                      '& .MuiToggleButtonGroup-grouped': {
+                        textTransform: 'none',
+                        flex: 1,
+                        gap: 0,
                       },
-                    },
-                    '& .MuiToggleButtonGroup-grouped.Mui-selected.MuiToggleButton-colorSuccess': {
-                      bgcolor: (theme) => theme.palette.success.main,
-                      '&:hover': {
-                        bgcolor: (theme) => theme.palette.success.dark,
+                      '& .MuiToggleButtonGroup-grouped:not(:first-of-type)': {
+                        marginLeft: 0,
                       },
-                    },
-                  }}
-                >
-                  <ToggleButton value="needed" color="error">
-                    <CancelIcon fontSize="small" sx={{ mr: 1 }} />
-                    Needed
-                  </ToggleButton>
-                  <ToggleButton value="done" color="success">
-                    <CheckCircleIcon fontSize="small" sx={{ mr: 1 }} />
-                    Done
-                  </ToggleButton>
-                </ToggleButtonGroup>
-              </FormControl>
-            </Grid>
+                      '& .MuiToggleButtonGroup-grouped.Mui-selected': {
+                        color: '#fff',
+                      },
+                      '& .MuiToggleButtonGroup-grouped.Mui-selected.MuiToggleButton-colorError': {
+                        bgcolor: (theme) => theme.palette.error.main,
+                        '&:hover': {
+                          bgcolor: (theme) => theme.palette.error.dark,
+                        },
+                      },
+                      '& .MuiToggleButtonGroup-grouped.Mui-selected.MuiToggleButton-colorSuccess': {
+                        bgcolor: (theme) => theme.palette.success.main,
+                        '&:hover': {
+                          bgcolor: (theme) => theme.palette.success.dark,
+                        },
+                      },
+                    }}
+                  >
+                    <ToggleButton value="needed" color="error">
+                      <CancelIcon fontSize="small" sx={{ mr: 1 }} />
+                      Needed
+                    </ToggleButton>
+                    <ToggleButton value="done" color="success">
+                      <CheckCircleIcon fontSize="small" sx={{ mr: 1 }} />
+                      Done
+                    </ToggleButton>
+                  </ToggleButtonGroup>
+                </FormControl>
+              </Grid>
+            )}
             <Grid item xs={12} sm={4}>
               <DatePicker
                 label="Sales Date"
@@ -1678,12 +1788,16 @@ const SalesOrderDetailPage: React.FC = () => {
                 slotProps={{ textField: { required: true } }}
               />
             </Grid>
-            <Grid item xs={12}>
-              <TextField label="Product Description" value={productDescription} onChange={e => setProductDescription(e.target.value)} fullWidth multiline minRows={2} maxRows={6} sx={{ mt:1 }} />
-            </Grid>
-            <Grid item xs={12}>
-              <TextField label="Terms" value={terms} onChange={e => setTerms(e.target.value)} fullWidth multiline minRows={3} maxRows={8} sx={{ mt:1 }} placeholder="Enter payment/delivery terms, etc." />
-            </Grid>
+            {fieldVisibility.productDescription && (
+              <Grid item xs={12}>
+                <TextField label="Product Description" value={productDescription} onChange={e => setProductDescription(e.target.value)} fullWidth multiline minRows={2} maxRows={6} sx={{ mt:1 }} />
+              </Grid>
+            )}
+            {fieldVisibility.terms && (
+              <Grid item xs={12}>
+                <TextField label="Terms" value={terms} onChange={e => setTerms(e.target.value)} fullWidth multiline minRows={3} maxRows={8} sx={{ mt:1 }} placeholder="Enter payment/delivery terms, etc." />
+              </Grid>
+            )}
           </Grid>
         </Paper>
 
