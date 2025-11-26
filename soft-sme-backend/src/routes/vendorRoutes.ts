@@ -3,9 +3,261 @@ import { pool } from '../db';
 import PDFDocument from 'pdfkit';
 import fs from 'fs';
 import path from 'path';
+import multer from 'multer';
+import XLSX from 'xlsx';
 import { canonicalizeName } from '../lib/normalize';
 
 const router = express.Router();
+
+const uploadsDir = path.join(__dirname, '../../uploads');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+
+const excelUpload = multer({
+  dest: uploadsDir,
+  fileFilter: (req, file, cb) => {
+    const allowedMimeTypes = [
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'application/vnd.ms-excel'
+    ];
+    if (allowedMimeTypes.includes(file.mimetype) || /\.(xlsx|xls)$/i.test(file.originalname)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only Excel files (.xlsx, .xls) are allowed'));
+    }
+  },
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB
+  }
+});
+
+const vendorHeaderMap: Record<string, string> = {
+  name: 'vendor_name',
+  vendor: 'vendor_name',
+  vendor_name: 'vendor_name',
+  contact: 'contact_person',
+  contact_person: 'contact_person',
+  contactname: 'contact_person',
+  contact_name: 'contact_person',
+  phone: 'telephone_number',
+  phone_number: 'telephone_number',
+  telephone: 'telephone_number',
+  telephone_number: 'telephone_number',
+  phone_no: 'telephone_number',
+  address: 'street_address',
+  street: 'street_address',
+  street_address: 'street_address',
+  city: 'city',
+  province: 'province',
+  state: 'province',
+  region: 'province',
+  country: 'country',
+  postal: 'postal_code',
+  postal_code: 'postal_code',
+  zip: 'postal_code',
+  zip_code: 'postal_code',
+  website: 'website',
+  email: 'email',
+};
+
+const normalizeHeader = (value: string): string => value.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/_+/g, '_').replace(/^_+|_+$/g, '');
+const normalizeCell = (value: unknown): string => (value == null ? '' : value.toString().trim());
+
+// Downloadable Excel template to guide imports
+router.get('/import-excel/template', (_req: Request, res: Response) => {
+  const workbook = XLSX.utils.book_new();
+  const worksheet = XLSX.utils.aoa_to_sheet([
+    ['vendor_name', 'contact_person', 'email', 'telephone_number', 'street_address', 'city', 'province', 'country', 'postal_code', 'website'],
+    ['ACME Supplies', 'Jane Smith', 'jane@acmesupplies.com', '555-111-2222', '123 Industrial Rd', 'Toronto', 'ON', 'Canada', 'M5H 2N2', 'https://acmesupplies.com'],
+    ['Beta Tools', 'John Doe', 'john@betatools.io', '555-987-6543', '456 Market Ave', 'Vancouver', 'BC', 'Canada', 'V5K 0A1', 'https://betatools.io']
+  ]);
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Vendors');
+  const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', 'attachment; filename="vendor_import_template.xlsx"');
+  res.send(buffer);
+});
+
+// Bulk import vendors from Excel
+router.post('/import-excel', excelUpload.single('file'), async (req: Request, res: Response) => {
+  if (!req.file) {
+    return res.status(400).json({ error: 'No Excel file uploaded' });
+  }
+
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  const createdVendors: any[] = [];
+  let rawRows: Record<string, unknown>[] = [];
+
+  try {
+    const workbook = XLSX.readFile(req.file.path);
+    const firstSheetName = workbook.SheetNames[0];
+    if (!firstSheetName) {
+      return res.status(400).json({ error: 'Excel file does not contain any sheets', errors: ['No worksheets found'] });
+    }
+    const sheet = workbook.Sheets[firstSheetName];
+    if (!sheet) {
+      return res.status(400).json({ error: 'Unable to read the first worksheet in the Excel file' });
+    }
+    rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
+
+    if (rawRows.length === 0) {
+      return res.status(400).json({ error: 'Excel file is empty', errors: ['No data rows found'] });
+    }
+
+    const normalizedRows: Array<{
+      rowNumber: number;
+      vendor_name: string;
+      canonicalName: string;
+      street_address?: string;
+      city?: string;
+      province?: string;
+      country?: string;
+      postal_code?: string;
+      contact_person?: string;
+      telephone_number?: string;
+      email?: string;
+      website?: string;
+    }> = [];
+
+    const seenCanonicalNames = new Set<string>();
+
+    rawRows.forEach((row, index) => {
+      const rowNumber = index + 2; // account for header row
+      const normalizedRow: Record<string, unknown> = {};
+
+      Object.entries(row).forEach(([key, value]) => {
+        const mappedKey = vendorHeaderMap[normalizeHeader(key)] || normalizeHeader(key);
+        if (mappedKey) {
+          normalizedRow[mappedKey] = value;
+        }
+      });
+
+      const nameValue = normalizeCell(normalizedRow.vendor_name);
+      if (!nameValue) {
+        errors.push(`Row ${rowNumber}: vendor_name is required; row skipped`);
+        return;
+      }
+
+      const canonicalName = canonicalizeName(nameValue);
+      if (!canonicalName) {
+        errors.push(`Row ${rowNumber}: vendor_name is not valid after normalization; row skipped`);
+        return;
+      }
+
+      if (seenCanonicalNames.has(canonicalName)) {
+        warnings.push(`Row ${rowNumber}: "${nameValue}" skipped because the same name appears multiple times in the file`);
+        return;
+      }
+
+      seenCanonicalNames.add(canonicalName);
+
+      normalizedRows.push({
+        rowNumber,
+        vendor_name: nameValue,
+        canonicalName,
+        street_address: normalizeCell(normalizedRow.street_address),
+        city: normalizeCell(normalizedRow.city),
+        province: normalizeCell(normalizedRow.province),
+        country: normalizeCell(normalizedRow.country),
+        postal_code: normalizeCell(normalizedRow.postal_code),
+        contact_person: normalizeCell(normalizedRow.contact_person),
+        telephone_number: normalizeCell(normalizedRow.telephone_number || normalizedRow.phone_number),
+        email: normalizeCell(normalizedRow.email),
+        website: normalizeCell(normalizedRow.website),
+      });
+    });
+
+    if (normalizedRows.length === 0) {
+      return res.json({
+        message: 'No valid vendor rows to import',
+        summary: {
+          totalRows: rawRows.length,
+          acceptedRows: 0,
+          created: 0,
+          skipped: rawRows.length,
+          errors: errors.length,
+          warnings: warnings.length
+        },
+        warnings,
+        errors,
+        createdVendors
+      });
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      for (const row of normalizedRows) {
+        const existing = await client.query(
+          'SELECT vendor_id, vendor_name FROM vendormaster WHERE canonical_name = $1',
+          [row.canonicalName]
+        );
+
+        if (existing.rows.length > 0) {
+          warnings.push(`Row ${row.rowNumber}: "${row.vendor_name}" skipped because "${existing.rows[0].vendor_name}" already exists`);
+          continue;
+        }
+
+        const insertResult = await client.query(
+          'INSERT INTO vendormaster (vendor_name, canonical_name, street_address, city, province, country, postal_code, contact_person, telephone_number, email, website) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *',
+          [
+            row.vendor_name,
+            row.canonicalName,
+            row.street_address || null,
+            row.city || null,
+            row.province || null,
+            row.country || null,
+            row.postal_code || null,
+            row.contact_person || null,
+            row.telephone_number || null,
+            row.email || null,
+            row.website || null
+          ]
+        );
+
+        const saved = insertResult.rows[0];
+        const { canonical_name: _c, ...vendorFields } = saved;
+        createdVendors.push({
+          ...vendorFields,
+          id: saved.vendor_id
+        });
+      }
+
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      console.error('vendorRoutes: Error during Excel import transaction:', err);
+      return res.status(500).json({ error: 'Failed to import vendors', details: (err as Error).message });
+    } finally {
+      client.release();
+    }
+
+    res.json({
+      message: 'Vendor import completed',
+      summary: {
+        totalRows: rawRows.length,
+        acceptedRows: normalizedRows.length,
+        created: createdVendors.length,
+        skipped: normalizedRows.length - createdVendors.length,
+        errors: errors.length,
+        warnings: warnings.length
+      },
+      warnings,
+      errors,
+      createdVendors
+    });
+  } catch (err) {
+    console.error('vendorRoutes: Error processing Excel file:', err);
+    res.status(500).json({ error: 'Internal server error while processing Excel file', details: (err as Error).message });
+  } finally {
+    if (req.file && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
+  }
+});
 
 // Get all vendors
 router.get('/', async (req: Request, res: Response) => {

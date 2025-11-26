@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Typography, Box, TextField, Stack, Button, InputAdornment, Container, Paper, Alert, Dialog, DialogTitle, DialogContent, DialogActions, Grid, IconButton } from '@mui/material';
+import React, { useState, useEffect, useRef } from 'react';
+import { Typography, Box, TextField, Stack, Button, InputAdornment, Container, Paper, Alert, Dialog, DialogTitle, DialogContent, DialogActions, Grid, IconButton, LinearProgress, Chip, List, ListItem, ListItemText } from '@mui/material';
 import {
   DataGrid,
   GridColDef,
@@ -15,7 +15,8 @@ import SearchIcon from '@mui/icons-material/Search';
 import EditIcon from '@mui/icons-material/Edit';
 import AddIcon from '@mui/icons-material/Add';
 import DownloadIcon from '@mui/icons-material/Download';
-import { getVendors } from '../services/vendorService';
+import UploadFileIcon from '@mui/icons-material/UploadFile';
+import { getVendors, importVendorsFromExcel, downloadVendorExcelTemplate } from '../services/vendorService';
 import { Vendor } from '../types/vendor'; // Import the new Vendor type
 import { toast } from 'react-toastify';
 import UnifiedVendorDialog, { VendorFormValues } from '../components/UnifiedVendorDialog';
@@ -41,6 +42,11 @@ const VendorListPage: React.FC = () => {
   const [openModal, setOpenModal] = useState(false);
   const [isEditMode, setIsEditMode] = useState(false);
   const [currentVendor, setCurrentVendor] = useState<Partial<Vendor>>({});
+  const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadResult, setUploadResult] = useState<any>(null);
+  const [showUploadResult, setShowUploadResult] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const filteredRows = rows.filter(row =>
     (row.vendor_name || '').toLowerCase().includes(search.toLowerCase()) ||
@@ -121,6 +127,84 @@ const VendorListPage: React.FC = () => {
     setCurrentVendor({});
   };
 
+  const handleUploadClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    await uploadExcel(file);
+    event.target.value = '';
+  };
+
+  const uploadExcel = async (file: File) => {
+    setUploading(true);
+    setUploadProgress(0);
+    setUploadResult(null);
+
+    try {
+      const result = await importVendorsFromExcel(file, (progressEvent) => {
+        if (progressEvent?.total) {
+          const progress = Math.round((progressEvent.loaded * 90) / progressEvent.total);
+          setUploadProgress(progress);
+        }
+      });
+
+      setUploadProgress(100);
+      setUploadResult(result);
+      setShowUploadResult(true);
+
+      if (Array.isArray(result?.createdVendors) && result.createdVendors.length > 0) {
+        const withIds = result.createdVendors.map((v: any) => ({ ...v, id: v.vendor_id ?? v.id }));
+        setRows((prev) => [...prev, ...withIds]);
+      } else {
+        fetchVendors();
+      }
+
+      toast.success('Vendor import completed');
+    } catch (error: any) {
+      console.error('Error uploading Excel:', error);
+      const responseData = error?.response?.data;
+      const message = responseData?.error || 'Failed to import vendors';
+      setUploadResult({
+        error: message,
+        errors: responseData?.errors || [],
+        warnings: responseData?.warnings || [],
+      });
+      setShowUploadResult(true);
+      toast.error(message);
+    } finally {
+      setUploading(false);
+      setUploadProgress(0);
+    }
+  };
+
+  const handleDownloadTemplate = async () => {
+    try {
+      const response = await downloadVendorExcelTemplate();
+      const blob = new Blob([response.data], {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'vendor_import_template.xlsx';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Error downloading vendor template', err);
+      toast.error('Failed to download vendor template');
+    }
+  };
+
+  const closeUploadResult = () => {
+    setShowUploadResult(false);
+    setUploadResult(null);
+  };
+
   const handleSaveVendor = async () => {
     try {
       if (isEditMode) {
@@ -198,8 +282,30 @@ const VendorListPage: React.FC = () => {
             <Button variant="contained" startIcon={<AddIcon />} onClick={() => handleOpenModal()}>
                 New Vendor
             </Button>
+            <Button variant="outlined" startIcon={<UploadFileIcon />} onClick={handleUploadClick}>Import Excel</Button>
+            <Button variant="outlined" startIcon={<DownloadIcon />} onClick={handleDownloadTemplate}>Download Template</Button>
             <Button variant="outlined" startIcon={<DownloadIcon />} onClick={handleExportCSV}>Export CSV</Button>
         </Stack>
+        {/* Hidden file input for Excel upload */}
+        <input
+          type="file"
+          accept=".xlsx,.xls"
+          ref={fileInputRef}
+          style={{ display: 'none' }}
+          onChange={handleFileChange}
+        />
+        {/* Upload progress */}
+        {uploading && (
+          <Paper sx={{ p: 2, mb: 2 }}>
+            <Typography variant="body2" gutterBottom>
+              Uploading Excel file...
+            </Typography>
+            <LinearProgress variant="determinate" value={uploadProgress} />
+            <Typography variant="caption" color="text.secondary">
+              {uploadProgress}% complete
+            </Typography>
+          </Paper>
+        )}
         <Paper sx={{ width: '100%', overflow: 'hidden', mb: 3 }}>
           <Box sx={{ p: 2, width: '100%' }}>
             <TextField
@@ -253,6 +359,73 @@ const VendorListPage: React.FC = () => {
             />
           </Box>
         </Paper>
+        {/* Excel Upload Result Dialog */}
+        <Dialog open={showUploadResult} onClose={closeUploadResult} maxWidth="md" fullWidth>
+          <DialogTitle>
+            {uploadResult?.error ? 'Import Failed' : 'Import Completed'}
+          </DialogTitle>
+          <DialogContent>
+            {uploadResult && (
+              <Box>
+                {uploadResult.error ? (
+                  <Alert severity="error" sx={{ mb: 2 }}>
+                    {uploadResult.error}
+                  </Alert>
+                ) : (
+                  <Alert severity="success" sx={{ mb: 2 }}>
+                    {uploadResult.message || 'Vendors imported successfully'}
+                  </Alert>
+                )}
+
+                {uploadResult.summary && (
+                  <Box sx={{ mb: 3 }}>
+                    <Grid container spacing={1}>
+                      <Grid item xs={6} sm={3}><Chip label={`Total rows: ${uploadResult.summary.totalRows || 0}`} color="primary" /></Grid>
+                      <Grid item xs={6} sm={3}><Chip label={`Accepted: ${uploadResult.summary.acceptedRows || 0}`} color="info" /></Grid>
+                      <Grid item xs={6} sm={3}><Chip label={`Created: ${uploadResult.summary.created || 0}`} color="success" /></Grid>
+                      <Grid item xs={6} sm={3}><Chip label={`Skipped: ${uploadResult.summary.skipped || 0}`} color="warning" /></Grid>
+                    </Grid>
+                  </Box>
+                )}
+
+                {uploadResult.errors && uploadResult.errors.length > 0 && (
+                  <Box sx={{ mb: 3 }}>
+                    <Typography variant="h6" color="error" gutterBottom>
+                      Errors ({uploadResult.errors.length})
+                    </Typography>
+                    <List dense>
+                      {uploadResult.errors.map((error: string, index: number) => (
+                        <ListItem key={index}>
+                          <ListItemText primary={error} />
+                        </ListItem>
+                      ))}
+                    </List>
+                  </Box>
+                )}
+
+                {uploadResult.warnings && uploadResult.warnings.length > 0 && (
+                  <Box sx={{ mb: 3 }}>
+                    <Typography variant="h6" color="warning.main" gutterBottom>
+                      Warnings ({uploadResult.warnings.length})
+                    </Typography>
+                    <List dense>
+                      {uploadResult.warnings.map((warning: string, index: number) => (
+                        <ListItem key={index}>
+                          <ListItemText primary={warning} />
+                        </ListItem>
+                      ))}
+                    </List>
+                  </Box>
+                )}
+              </Box>
+            )}
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={closeUploadResult} variant="contained">
+              Close
+            </Button>
+          </DialogActions>
+        </Dialog>
       </Box>
 
       <UnifiedVendorDialog

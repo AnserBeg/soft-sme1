@@ -54,3 +54,19 @@ export const deleteVendorPhone = async (vendorId: number, phoneId: number) => {
   const response = await api.delete(`/api/vendors/${vendorId}/contacts/phones/${phoneId}`);
   return response.data;
 };
+
+export const importVendorsFromExcel = async (file: File, onUploadProgress?: (progressEvent: any) => void) => {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const response = await api.post('/api/vendors/import-excel', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    onUploadProgress,
+  });
+
+  return response.data;
+};
+
+export const downloadVendorExcelTemplate = () => {
+  return api.get('/api/vendors/import-excel/template', { responseType: 'blob' });
+};

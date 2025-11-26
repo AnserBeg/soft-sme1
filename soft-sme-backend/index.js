@@ -31,6 +31,8 @@ app.use(cors({
   origin: function(origin, callback) {
     const allowedOrigins = [
       'http://localhost:3000',
+      'https://localhost',
+      'https://localhost:3000',
       'file://',
       'null',
       'app://-',
