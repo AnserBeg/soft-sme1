@@ -153,6 +153,10 @@ export const clockIn = async (profile_id: number, so_id: number): Promise<TimeEn
     const response = await api.post('/api/time-tracking/time-entries/clock-in', { profile_id, so_id });
     return response.data;
   } catch (err) {
+    // If the server responded (e.g. validation such as missing attendance), surface the error
+    if ((err as any)?.response) {
+      throw err;
+    }
     const evt = {
       event_id: uuid(),
       user_id: profile_id,
