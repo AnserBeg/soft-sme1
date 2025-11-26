@@ -35,7 +35,7 @@ export interface PartFormValues {
 interface UnifiedPartDialogProps {
   open: boolean;
   onClose: () => void;
-  onSave: (part: PartFormValues) => Promise<void>;
+  onSave: (part: PartFormValues) => Promise<any>;
   initialPart?: Partial<PartFormValues>;
   isEditMode?: boolean;
   title?: string;
@@ -243,7 +243,10 @@ const UnifiedPartDialog: React.FC<UnifiedPartDialogProps> = ({
         category: formData.category.trim(),
       };
 
-      await onSave(partData);
+      const result = await onSave(partData);
+      if ((result as any)?.warning) {
+        toast.warning((result as any).warning);
+      }
       toast.success(`Part ${isEditMode ? 'updated' : 'added'} successfully!`);
       onClose();
     } catch (error: any) {

@@ -227,22 +227,6 @@ router.post('/', async (req: Request, res: Response) => {
     return res.status(400).json({ error: 'Part type must be either "stock", "supply", or "service"' });
   }
 
-  // Validate: no spaces in part_number
-  if (/\s/.test(part_number)) {
-    return res.status(400).json({ error: 'Part number cannot contain spaces' });
-  }
-
-  // Validate: any '/' must be inside parentheses
-  if (!isSlashInsideParentheses(String(part_number))) {
-    return res.status(400).json({ error: "Fractions must be enclosed in parentheses, e.g., '(1/2)'" });
-  }
-
-  // Validate: only allowed characters A-Z, 0-9, '-', '/', '(', ')'
-  const upperPn = String(part_number).toUpperCase();
-  if (!isAllowedCharactersOnly(upperPn.replace(/\s+/g, ''))) {
-    return res.status(400).json({ error: 'Only letters/numbers and - / ( ) are allowed in part number' });
-  }
-
   // Trim all string fields and convert part_number to uppercase
   const trimmedPartNumber = part_number.toString().trim().toUpperCase();
   const trimmedPartDescription = part_description.toString().trim();
@@ -258,6 +242,7 @@ router.post('/', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Part number cannot be empty after normalization' });
     }
 
+    let canonicalWarning: string | undefined;
     if (getCanonicalConfig().enforceUniquePart) {
       const existingResult = await pool.query(
         'SELECT part_number FROM inventory WHERE canonical_part_number = $1',
@@ -271,10 +256,7 @@ router.post('/', async (req: Request, res: Response) => {
           'matches',
           existingPn,
         );
-        return res.status(409).json({
-          error: 'Part number already exists',
-          details: `A part with number "${existingPn}" already exists (normalized match for "${trimmedPartNumber}").`,
-        });
+        canonicalWarning = `A part with number "${existingPn}" already exists (normalized match for "${trimmedPartNumber}").`;
       }
     }
 
@@ -296,7 +278,7 @@ router.post('/', async (req: Request, res: Response) => {
     const newItem = result.rows[0];
     const { canonical_part_number, canonical_name, ...item } = newItem;
     console.log('inventoryRoutes: Successfully added new item:', item);
-    res.status(201).json({ message: 'Inventory item added successfully', item });
+    res.status(201).json({ message: 'Inventory item added successfully', item, warning: canonicalWarning });
   } catch (err) {
     console.error('inventoryRoutes: Error adding new item:', err);
     res.status(500).json({ error: 'Internal server error' });
@@ -347,6 +329,7 @@ router.put('/:id', async (req: Request, res: Response) => {
   const trimmedPartType = part_type ? part_type.toString().trim() : undefined;
   const trimmedCategory = category ? category.toString().trim() : undefined;
   const trimmedPartNumber = part_number ? part_number.toString().trim().toUpperCase() : undefined;
+  let canonicalWarning: string | undefined;
 
   const client = await pool.connect();
   try {
@@ -380,8 +363,7 @@ router.put('/:id', async (req: Request, res: Response) => {
           [canonicalPartNumber, partId]
         );
         if (duplicateCheck.rows.length > 0) {
-          await client.query('ROLLBACK');
-          return res.status(409).json({ error: 'Part number already exists' });
+          canonicalWarning = `A part with number "${duplicateCheck.rows[0].part_number}" already exists (normalized match for "${trimmedPartNumber}").`;
         }
       }
 
@@ -446,13 +428,13 @@ router.put('/:id', async (req: Request, res: Response) => {
       const result = await client.query(updateQuery, values);
       await client.query('COMMIT');
       const { canonical_part_number, canonical_name, ...updatedItem } = result.rows[0];
-      res.json({ message: 'Inventory item updated successfully', updatedItem });
+      res.json({ message: 'Inventory item updated successfully', updatedItem, warning: canonicalWarning });
     } else {
       // Just get the updated item if no other fields changed
       const result = await client.query('SELECT * FROM inventory WHERE part_id = $1', [partId]);
       await client.query('COMMIT');
       const { canonical_part_number, canonical_name, ...updatedItem } = result.rows[0];
-      res.json({ message: 'Inventory item updated successfully', updatedItem });
+      res.json({ message: 'Inventory item updated successfully', updatedItem, warning: canonicalWarning });
     }
   } catch (err) {
     await client.query('ROLLBACK');
@@ -506,27 +488,10 @@ router.post('/upload-csv', upload.single('csvFile'), async (req: Request, res: R
             return;
           }
 
-                                           // Clean and validate data - apply same cleaning rules as cleanup function
-            const originalPartNumber = data.part_number.toString();
-            const { cleaned: cleanedPartNumber, hadIllegal } = cleanPartNumberAdvanced(originalPartNumber);
-            const slashOk = isSlashInsideParentheses(cleanedPartNumber);
-            const allowedOnly = isAllowedCharactersOnly(cleanedPartNumber);
-           
-           // Check for slash violations (cannot auto-fix)
-           if (!slashOk) {
-             errors.push(`Row ${rowNumber}: Fractions must be enclosed in parentheses, e.g., (1/2) (received: "${originalPartNumber}")`);
-             return;
-           }
-           
-           // Check for illegal characters (cannot auto-fix)
-           if (!allowedOnly) {
-             errors.push(`Row ${rowNumber}: Only letters/numbers and - / ( ) are allowed in part number (received: "${originalPartNumber}")`);
-             return;
-           }
-           
-           // Use cleaned part number for processing
-           const partNumber = cleanedPartNumber;
-           const normalizedKey = normalizePartNumberForDuplicateCheck(partNumber);
+          // Light normalization for processing; no strict validation
+          const originalPartNumber = data.part_number.toString();
+          const partNumber = originalPartNumber.toString().trim().toUpperCase();
+          const normalizedKey = normalizePartNumberForDuplicateCheck(partNumber);
           const partDescription = data.part_description.toString().trim();
           const unit = data.unit ? data.unit.toString().trim() : 'Each';
           const quantity = parseFloat(data.quantity) || 0;
@@ -584,11 +549,6 @@ router.post('/upload-csv', upload.single('csvFile'), async (req: Request, res: R
              return;
            }
            
-           // Add warning if part number was cleaned
-           if (originalPartNumber !== partNumber) {
-             warnings.push(`Row ${rowNumber}: Part number "${originalPartNumber}" was cleaned to "${partNumber}"`);
-           }
-
           // Store processed item
           processedItems[normalizedKey] = {
             visualPartNumber: partNumber, // keep for insert if new
