@@ -6,6 +6,7 @@ import {
   GridRowParams,
   GridPaginationModel,
   GridActionsCellItem,
+  GridColumnVisibilityModel,
 } from '@mui/x-data-grid';
 import Papa from 'papaparse';
 import { useNavigate, useLocation } from 'react-router-dom';
@@ -27,6 +28,8 @@ import CancelIcon from '@mui/icons-material/Cancel';
 import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty';
 import { InputAdornment } from '@mui/material';
 import { parseNumericInput } from '../utils/salesOrderCalculations';
+import ViewColumnIcon from '@mui/icons-material/ViewColumn';
+import { Checkbox, FormControlLabel, FormGroup, Popover } from '@mui/material';
 
 const normalizeInvoiceStatus = (value: any): '' | 'needed' | 'done' => {
   if (typeof value === 'string') {
@@ -51,6 +54,71 @@ const OpenSalesOrdersPage: React.FC = () => {
   const location = useLocation();
   const { user } = useAuth();
   const [openDialog, setOpenDialog] = useState(false);
+  const COLUMN_VISIBILITY_STORAGE_KEY = 'openSalesOrders.columnVisibility';
+  const [columnVisibilityModel, setColumnVisibilityModel] = useState<GridColumnVisibilityModel>(() => {
+    if (typeof window === 'undefined') return {};
+    const stored = localStorage.getItem(COLUMN_VISIBILITY_STORAGE_KEY);
+    if (stored) {
+      try {
+        return JSON.parse(stored);
+      } catch (error) {
+        console.warn('Failed to parse column visibility model, resetting to defaults', error);
+      }
+    }
+    return {};
+  });
+  const [columnSelectorAnchor, setColumnSelectorAnchor] = useState<HTMLElement | null>(null);
+  const [columnSelectorColumns, setColumnSelectorColumns] = useState<GridColDef[]>([]);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(COLUMN_VISIBILITY_STORAGE_KEY, JSON.stringify(columnVisibilityModel));
+    }
+  }, [columnVisibilityModel]);
+
+  const handleOpenColumnSelector = (event: React.MouseEvent<HTMLElement>, availableColumns: GridColDef[]) => {
+    setColumnSelectorColumns(availableColumns);
+    setColumnSelectorAnchor(event.currentTarget);
+  };
+
+  const handleCloseColumnSelector = () => setColumnSelectorAnchor(null);
+
+  const ColumnSelectorPopover = (
+    <Popover
+      open={Boolean(columnSelectorAnchor)}
+      anchorEl={columnSelectorAnchor}
+      onClose={handleCloseColumnSelector}
+      anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
+    >
+      <Box sx={{ p: 2, maxWidth: 280 }}>
+        <Typography variant="subtitle1" sx={{ mb: 1.5 }}>
+          Show / Hide Columns
+        </Typography>
+        <FormGroup>
+          {columnSelectorColumns
+            .filter((col) => col.field !== 'actions')
+            .map((col) => (
+              <FormControlLabel
+                key={col.field}
+                control={
+                  <Checkbox
+                    size="small"
+                    checked={columnVisibilityModel[col.field] !== false}
+                    onChange={(e) =>
+                      setColumnVisibilityModel((prev) => ({
+                        ...prev,
+                        [col.field]: e.target.checked,
+                      }))
+                    }
+                  />
+                }
+                label={col.headerName || col.field}
+              />
+            ))}
+        </FormGroup>
+      </Box>
+    </Popover>
+  );
 
 
   const [paginationModel, setPaginationModel] = useState<GridPaginationModel>({
@@ -455,16 +523,24 @@ const OpenSalesOrdersPage: React.FC = () => {
     return (
       <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
         <Box sx={{ mb: 4 }}>
-          <Typography variant="h4" component="h1" gutterBottom>
-            Sales Orders
-          </Typography>
-          <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2 }}>
-            <Button
-              variant="outlined"
-              startIcon={<RefreshIcon />}
-              onClick={handleRefresh}
-            >
-              Refresh
+        <Typography variant="h4" component="h1" gutterBottom>
+          Sales Orders
+        </Typography>
+        <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2 }}>
+          <Button
+            variant="outlined"
+            startIcon={<ViewColumnIcon />}
+            sx={{ mr: 1 }}
+            onClick={(event) => handleOpenColumnSelector(event, columns.filter((col) => col.field !== 'actions'))}
+          >
+            Columns
+          </Button>
+          <Button
+            variant="outlined"
+            startIcon={<RefreshIcon />}
+            onClick={handleRefresh}
+          >
+            Refresh
             </Button>
           </Box>
         </Box>
@@ -491,6 +567,8 @@ const OpenSalesOrdersPage: React.FC = () => {
               rows={filteredRows}
               columns={columns.filter(col => col.field !== 'actions')} // Hide actions column for time tracking users
               loading={false}
+              columnVisibilityModel={columnVisibilityModel}
+              onColumnVisibilityModelChange={(model) => setColumnVisibilityModel(model)}
               paginationModel={paginationModel}
               onPaginationModelChange={setPaginationModel}
               pageSizeOptions={[10, 25, 50]}
@@ -524,13 +602,14 @@ const OpenSalesOrdersPage: React.FC = () => {
                 '& .MuiDataGrid-row:hover': {
                   backgroundColor: 'action.hover',
                 },
-              }}
-            />
-          </Box>
-        </Paper>
-      </Container>
-    );
-  }
+            }}
+          />
+        </Box>
+      </Paper>
+      {ColumnSelectorPopover}
+    </Container>
+  );
+}
 
   return (
     <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
@@ -559,6 +638,13 @@ const OpenSalesOrdersPage: React.FC = () => {
                 New SO
               </Button>
             )}
+            <Button
+              variant="outlined"
+              startIcon={<ViewColumnIcon />}
+              onClick={(event) => handleOpenColumnSelector(event, columns)}
+            >
+              Columns
+            </Button>
             <Button
               variant="outlined"
               startIcon={<DownloadIcon />}
@@ -618,13 +704,15 @@ const OpenSalesOrdersPage: React.FC = () => {
               />
             )}
           </Stack>
-          <DataGrid
-            rows={filteredRows}
-            columns={columns}
-            loading={false}
-            paginationModel={paginationModel}
-            onPaginationModelChange={setPaginationModel}
-            pageSizeOptions={[10, 25, 50]}
+            <DataGrid
+              rows={filteredRows}
+              columns={columns}
+              loading={false}
+              columnVisibilityModel={columnVisibilityModel}
+              onColumnVisibilityModelChange={(model) => setColumnVisibilityModel(model)}
+              paginationModel={paginationModel}
+              onPaginationModelChange={setPaginationModel}
+              pageSizeOptions={[10, 25, 50]}
             getRowId={(row) => row.id}
             onRowClick={handleRowClick}
             disableRowSelectionOnClick
@@ -660,7 +748,7 @@ const OpenSalesOrdersPage: React.FC = () => {
         </Box>
       </Paper>
 
-
+      {ColumnSelectorPopover}
     </Container>
   );
 };
