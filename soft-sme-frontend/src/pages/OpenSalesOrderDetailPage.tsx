@@ -1622,67 +1622,6 @@ const SalesOrderDetailPage: React.FC = () => {
                 />
               </Grid>
             )}
-
-            <Grid item xs={12} sm={4}>
-              <Autocomplete<ProductOption>
-                disablePortal
-                open={productOpen}
-                onOpen={() => setProductOpen(true)}
-                onClose={() => setProductOpen(false)}
-                autoHighlight
-                value={product}
-                onChange={(_, newValue) => {
-                  if (newValue && (newValue as any).isNew) {
-                    const typed = (newValue as any).inputValue?.toString?.() || productInput.trim();
-                    setIsAddProductModalOpen(true); setNewProductName(typed);
-                    setProduct(null); setProductInput(''); setProductOpen(false);
-                  } else {
-                    setProduct(newValue as ProductOption); setProductOpen(false);
-                  }
-                }}
-                inputValue={productInput}
-                onInputChange={(_, v, reason) => {
-                  setProductInput(v); setNewProductName(v);
-                  if (productTypingTimer) window.clearTimeout(productTypingTimer);
-                  if (reason === 'reset') return;
-                  const text = (v || '').trim();
-                  if (text.length > 0) {
-                    const t = window.setTimeout(() => setProductOpen(true), 200);
-                    setProductTypingTimer(t as unknown as number);
-                  } else {
-                    setProductOpen(false);
-                  }
-                }}
-                options={products}
-                filterOptions={(options, params) => {
-                  const filtered = options.filter(o => o.label.toLowerCase().includes((params.inputValue||'').toLowerCase()));
-                  if ((params.inputValue||'') !== '' && !options.some(o => o.label.toLowerCase() === (params.inputValue||'').toLowerCase())) {
-                    filtered.push({ label: `Add "${params.inputValue}"`, isNew: true, inputValue: params.inputValue } as any);
-                  }
-                  return filtered;
-                }}
-                getOptionLabel={o => typeof o === 'string' ? o : o.label}
-                renderInput={params => (
-                  <TextField
-                    {...params}
-                    label="Product Name"
-                    required
-                    onKeyDown={handleProductKeyDown}
-                    onBlur={() => {
-                      setProductOpen(false);
-                      if (!product) {
-                        const input = productInput.trim();
-                        if (input) {
-                          const match = products.find(p => p.label.toLowerCase() === input.toLowerCase());
-                          if (match) { setProduct(match); setProductInput(match.label); }
-                        }
-                      }
-                    }}
-                  />
-                )}
-                disabled={false}
-              />
-            </Grid>
             {fieldVisibility.vin && (
               <Grid item xs={12} sm={4}>
                 <TextField
@@ -1786,6 +1725,66 @@ const SalesOrderDetailPage: React.FC = () => {
                 onChange={setSalesDate}
                 sx={{ width:'100%' }}
                 slotProps={{ textField: { required: true } }}
+              />
+            </Grid>
+            <Grid item xs={12}>
+              <Autocomplete<ProductOption>
+                disablePortal
+                open={productOpen}
+                onOpen={() => setProductOpen(true)}
+                onClose={() => setProductOpen(false)}
+                autoHighlight
+                value={product}
+                onChange={(_, newValue) => {
+                  if (newValue && (newValue as any).isNew) {
+                    const typed = (newValue as any).inputValue?.toString?.() || productInput.trim();
+                    setIsAddProductModalOpen(true); setNewProductName(typed);
+                    setProduct(null); setProductInput(''); setProductOpen(false);
+                  } else {
+                    setProduct(newValue as ProductOption); setProductOpen(false);
+                  }
+                }}
+                inputValue={productInput}
+                onInputChange={(_, v, reason) => {
+                  setProductInput(v); setNewProductName(v);
+                  if (productTypingTimer) window.clearTimeout(productTypingTimer);
+                  if (reason === 'reset') return;
+                  const text = (v || '').trim();
+                  if (text.length > 0) {
+                    const t = window.setTimeout(() => setProductOpen(true), 200);
+                    setProductTypingTimer(t as unknown as number);
+                  } else {
+                    setProductOpen(false);
+                  }
+                }}
+                options={products}
+                filterOptions={(options, params) => {
+                  const filtered = options.filter(o => o.label.toLowerCase().includes((params.inputValue||'').toLowerCase()));
+                  if ((params.inputValue||'') !== '' && !options.some(o => o.label.toLowerCase() === (params.inputValue||'').toLowerCase())) {
+                    filtered.push({ label: `Add "${params.inputValue}"`, isNew: true, inputValue: params.inputValue } as any);
+                  }
+                  return filtered;
+                }}
+                getOptionLabel={o => typeof o === 'string' ? o : o.label}
+                renderInput={params => (
+                  <TextField
+                    {...params}
+                    label="Product Name"
+                    required
+                    onKeyDown={handleProductKeyDown}
+                    onBlur={() => {
+                      setProductOpen(false);
+                      if (!product) {
+                        const input = productInput.trim();
+                        if (input) {
+                          const match = products.find(p => p.label.toLowerCase() === input.toLowerCase());
+                          if (match) { setProduct(match); setProductInput(match.label); }
+                        }
+                      }
+                    }}
+                  />
+                )}
+                disabled={false}
               />
             </Grid>
             {fieldVisibility.productDescription && (
