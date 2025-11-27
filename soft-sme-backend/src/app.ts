@@ -55,6 +55,7 @@ const allowedOrigins = [
   'https://mobile.phoenixtrailers.ca', // mobile app tunnel
   'https://clockwise-mobile.phoenixtrailers.ca', // alternative mobile tunnel
   'https://softsme.phoenixtrailers.ca', // production frontend default
+  'https://app.aivenerp.com', // production frontend (Aiven ERP)
   'https://soft-smetest.onrender.com', // staging backend
   'https://soft-smetest-front.onrender.com', // staging frontend
   process.env.CORS_ORIGIN, // production frontend (e.g., https://softsme.phoenixtrailers.ca)

@@ -38,7 +38,8 @@ app.use(cors({
       'app://-',
       'https://consequences-composition-uh-counters.trycloudflare.com',
       'https://kinda-broker-railroad-eyes.trycloudflare.com',
-      'https://softsme.phoenixtrailers.ca'
+      'https://softsme.phoenixtrailers.ca',
+      'https://app.aivenerp.com'
     ];
     // Allow requests with no origin (like curl or some Electron requests)
     if (!origin) return callback(null, true);

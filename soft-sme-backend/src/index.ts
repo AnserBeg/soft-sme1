@@ -85,6 +85,7 @@ const allowedOrigins = (
     'http://localhost:5173',
     'http://localhost:8080',
     'https://softsme.phoenixtrailers.ca',
+    'https://app.aivenerp.com',
     'https://soft-sme1.onrender.com',
     'https://soft-sme-frontend.onrender.com',
     // allow test/staging Render apps
