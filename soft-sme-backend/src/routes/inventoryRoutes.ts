@@ -235,12 +235,8 @@ router.post('/', async (req: Request, res: Response) => {
   const trimmedCategory = category ? category.toString().trim() : 'Uncategorized';
 
   try {
-    const canonicalPartNumber = canonicalizePartNumber(trimmedPartNumber);
-    const canonicalDescription = canonicalizeName(trimmedPartDescription);
-
-    if (!canonicalPartNumber) {
-      return res.status(400).json({ error: 'Part number cannot be empty after normalization' });
-    }
+    const canonicalPartNumber = canonicalizePartNumber(trimmedPartNumber) || trimmedPartNumber;
+    const canonicalDescription = canonicalizeName(trimmedPartDescription) || trimmedPartDescription.toUpperCase();
 
     let canonicalWarning: string | undefined;
     if (getCanonicalConfig().enforceUniquePart) {
@@ -350,12 +346,7 @@ router.put('/:id', async (req: Request, res: Response) => {
     if (trimmedPartNumber && trimmedPartNumber !== decodedPartNumber) {
       console.log(`✅ Part number change detected: ${decodedPartNumber} -> ${trimmedPartNumber}`);
 
-      const canonicalPartNumber = canonicalizePartNumber(trimmedPartNumber);
-      if (!canonicalPartNumber) {
-        await client.query('ROLLBACK');
-        return res.status(400).json({ error: 'Part number cannot be empty after normalization' });
-      }
-
+      const canonicalPartNumber = canonicalizePartNumber(trimmedPartNumber) || trimmedPartNumber;
       // Check if new part number already exists
       if (getCanonicalConfig().enforceUniquePart) {
         const duplicateCheck = await client.query(

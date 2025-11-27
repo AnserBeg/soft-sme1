@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+﻿import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Typography, Box, TextField, Stack, Button, InputAdornment, Container, Paper, Alert, LinearProgress, List, ListItem, ListItemText, Chip, CircularProgress } from '@mui/material';
 import { DataGrid, GridColDef, GridPaginationModel, GridActionsColDef, GridActionsCellItem } from '@mui/x-data-grid';
 import Papa from 'papaparse';
@@ -318,22 +318,24 @@ const InventoryPage: React.FC = () => {
     };
     
     try {
+      let response;
       if (editingPart) {
         // Include part_number in update data so backend can handle part number changes
         const updateData = {
           ...trimmedPartData,
           part_number: trimmedPartData.part_number // Include the new part number
         };
-        console.log('🔍 Frontend: Sending PUT request');
-        console.log('📋 URL:', `/api/inventory/${encodeURIComponent(editingPart.part_number)}`);
-        console.log('📋 Request body:', updateData);
-        console.log('📋 Original part number:', editingPart.part_number);
-        console.log('📋 New part number:', trimmedPartData.part_number);
-        await api.put(`/api/inventory/${encodeURIComponent(editingPart.part_number)}`, updateData);
+        console.log('dY"? Frontend: Sending PUT request');
+        console.log('dY"< URL:', `/api/inventory/${encodeURIComponent(editingPart.part_number)}`);
+        console.log('dY"< Request body:', updateData);
+        console.log('dY"< Original part number:', editingPart.part_number);
+        console.log('dY"< New part number:', trimmedPartData.part_number);
+        response = await api.put(`/api/inventory/${encodeURIComponent(editingPart.part_number)}`, updateData);
       } else {
-        await api.post('/api/inventory', trimmedPartData);
+        response = await api.post('/api/inventory', trimmedPartData);
       }
       fetchInventory();
+      return response.data;
     } catch (error) {
       throw error; // Let the dialog handle the error
     }
@@ -919,3 +921,4 @@ const InventoryPage: React.FC = () => {
 };
 
 export default InventoryPage;
+

@@ -1,0 +1,14 @@
+# Cloudflare Tunnel Configuration for Clockwise Mobile (port 8080)
+tunnel: clockwise-mobile
+credentials-file: .cloudflared/credentials.json
+
+ingress:
+  # Route mobile app to port 8080
+  - hostname: mobile.phoenixtrailers.ca
+    service: http://localhost:8080
+    originRequest:
+      noTLSVerify: true
+
+  # Catch-all rule for unmatched requests
+  - service: http_status:404
+

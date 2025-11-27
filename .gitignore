@@ -142,3 +142,18 @@ dist-electron/
 
 # TypeScript
 *.tsbuildinfo 
+
+# Gradle cache – do NOT commit
+.gradle/
+clockwise-mobile1/.gradle/
+clockwise-mobile1/.idea/
+clockwise-mobile1/**/build/
+
+# Mobile app secrets / certificates - DO NOT COMMIT
+clockwise-mobile1/.cloudflared/
+clockwise-mobile1/Clockwise_App_Store.mobileprovision
+clockwise-mobile1/ios_distribution.cer
+clockwise-mobile1/ios_distribution.csr
+clockwise-mobile1/ios_distribution.p12
+clockwise-mobile1/release.keystore
+clockwise-mobile1/netstat
