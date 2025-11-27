@@ -365,18 +365,30 @@ const OpenSalesOrdersPage: React.FC = () => {
 
 
 
+  const searchTerm = search.toLowerCase();
+
   const filteredRows = rows.filter((row) =>
-    row.sales_order_number?.toLowerCase().includes(search.toLowerCase()) ||
-    row.customer_name?.toLowerCase().includes(search.toLowerCase()) ||
-    row.product_name?.toLowerCase().includes(search.toLowerCase()) ||
-    row.product_description?.toLowerCase().includes(search.toLowerCase())
+    [
+      row.sales_order_number,
+      row.customer_name,
+      row.product_name,
+      row.product_description,
+      row.unit_number,
+      row.vin_number,
+      row.sales_date ? new Date(row.sales_date).toLocaleDateString() : '',
+    ]
+      .filter((value) => value !== undefined && value !== null)
+      .some((value) => value.toString().toLowerCase().includes(searchTerm))
   );
 
   const columns: GridColDef[] = [
     { field: 'sales_order_number', headerName: 'Sales Order #', flex: 1, minWidth: 120, valueFormatter: (params) => params.value ? String(params.value).replace('SO-', '') : '' },
+    { field: 'sales_date', headerName: 'Sales Date', flex: 0.9, minWidth: 130, valueFormatter: (params) => params.value ? new Date(params.value as string).toLocaleDateString() : '' },
     { field: 'customer_name', headerName: 'Customer', flex: 1.3, minWidth: 150 },
     { field: 'product_name', headerName: 'Product Name', flex: 1, minWidth: 120 },
     { field: 'product_description', headerName: 'Product Description', flex: 1.5, minWidth: 150 },
+    { field: 'unit_number', headerName: 'Unit #', flex: 0.9, minWidth: 110 },
+    { field: 'vin_number', headerName: 'VIN #', flex: 1, minWidth: 140 },
     { field: 'subtotal', headerName: 'Subtotal', flex: 0.8, minWidth: 100, valueFormatter: (params) => params.value != null && !isNaN(Number(params.value)) ? `$${Number(params.value).toFixed(2)}` : '$0.00' },
     { field: 'total_amount', headerName: 'Total', flex: 0.8, minWidth: 100, valueFormatter: (params) => params.value != null && !isNaN(Number(params.value)) ? `$${Number(params.value).toFixed(2)}` : '$0.00' },
     { field: 'status', headerName: 'Status', flex: 0.8, minWidth: 100,
