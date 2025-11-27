@@ -1,9 +1,13 @@
 import axios from 'axios';
 
-const ENV_BASE_URL = import.meta.env.VITE_API_BASE_URL?.trim();
+// Allow env override while keeping the previous hard-coded fallback when unset
+const ENV_BASE_URL =
+  import.meta.env.VITE_BACKEND_URL?.trim() ?? import.meta.env.VITE_API_BASE_URL?.trim();
+const DEFAULT_BASE_URL = '/api';
+
 // Normalize base URL so it always includes the /api prefix and no trailing slash
 const BASE_URL = (() => {
-  const raw = ENV_BASE_URL && ENV_BASE_URL.length > 0 ? ENV_BASE_URL : '/api';
+  const raw = ENV_BASE_URL && ENV_BASE_URL.length > 0 ? ENV_BASE_URL : DEFAULT_BASE_URL;
   const trimmed = raw.replace(/\/+$/, '');
   return trimmed.endsWith('/api') ? trimmed : `${trimmed}/api`;
 })();
