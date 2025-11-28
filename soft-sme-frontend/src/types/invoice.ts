@@ -17,6 +17,14 @@ export interface Invoice {
   customer_name?: string;
   sales_order_id?: number | null;
   source_sales_order_number?: string | null;
+  sales_order_number?: string | null;
+  product_name?: string | null;
+  product_description?: string | null;
+  vin_number?: string | null;
+  unit_number?: string | null;
+  vehicle_make?: string | null;
+  vehicle_model?: string | null;
+  terms?: string | null;
   status: 'Paid' | 'Unpaid';
   invoice_date: string;
   due_date: string;

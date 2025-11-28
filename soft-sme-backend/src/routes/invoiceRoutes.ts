@@ -342,69 +342,77 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
     res.setHeader('Content-type', 'application/pdf');
     doc.pipe(res);
 
-    if (logoSource) {
-      try { doc.image(logoSource as any, 40, 30, { width: 140 }); } catch {}
-    }
-    doc.font('Helvetica-Bold').fontSize(18).text('Invoice', 200, 40, { align: 'right' });
-    doc.font('Helvetica').fontSize(12).text(invoice.invoice_number || '', { align: 'right' });
+    // Header (no logo)
+    const headingY = 40;
+    doc.font('Helvetica-Bold').fontSize(18).text(businessProfile.company_name || 'Invoice', 40, headingY);
+    doc.font('Helvetica-Bold').fontSize(18).text('Invoice', 420, headingY, { align: 'right' });
+    doc.font('Helvetica').fontSize(12).text(invoice.invoice_number || '', 420, headingY + 18, { align: 'right' });
 
-    doc.moveDown();
-    doc.font('Helvetica-Bold').text('From');
-    doc.font('Helvetica').text(businessProfile.company_name || '');
-    const companyAddress = [
-      businessProfile.street_address,
-      businessProfile.city,
-      businessProfile.province,
-      businessProfile.country,
-      businessProfile.postal_code,
-    ].filter(Boolean).join(', ');
-    if (companyAddress) doc.text(companyAddress);
-    if (businessProfile.telephone_number) doc.text(`Phone: ${businessProfile.telephone_number}`);
-    if (businessProfile.email) doc.text(`Email: ${businessProfile.email}`);
+    // Divider
+    doc.moveTo(40, headingY + 40).lineTo(560, headingY + 40).stroke();
 
-    doc.moveDown();
-    doc.font('Helvetica-Bold').text('Bill To');
-    doc.font('Helvetica').text(invoice.customer_name || '');
-    const customerAddress = [
-      invoice.street_address,
-      invoice.city,
-      invoice.province,
-      invoice.country,
-      invoice.postal_code,
-    ].filter(Boolean).join(', ');
-    if (customerAddress) doc.text(customerAddress);
-    if (invoice.telephone_number) doc.text(`Phone: ${invoice.telephone_number}`);
-    if (invoice.email) doc.text(`Email: ${invoice.email}`);
+    // Company & Customer blocks
+    const blockTop = headingY + 55;
+    doc.font('Helvetica-Bold').fontSize(12).text('Company Information', 40, blockTop);
+    doc.font('Helvetica').fontSize(11)
+      .text(businessProfile.company_name || '', 40, blockTop + 16)
+      .text(businessProfile.street_address || '', 40, doc.y)
+      .text([businessProfile.city, businessProfile.province, businessProfile.country, businessProfile.postal_code].filter(Boolean).join(', '), 40, doc.y)
+      .text(businessProfile.telephone_number ? `Phone: ${businessProfile.telephone_number}` : '', 40, doc.y)
+      .text(businessProfile.email ? `Email: ${businessProfile.email}` : '', 40, doc.y);
 
+    doc.font('Helvetica-Bold').fontSize(12).text('Customer', 320, blockTop);
+    doc.font('Helvetica').fontSize(11)
+      .text(invoice.customer_name || '', 320, blockTop + 16)
+      .text(invoice.street_address || '', 320, doc.y)
+      .text([invoice.city, invoice.province, invoice.country, invoice.postal_code].filter(Boolean).join(', '), 320, doc.y)
+      .text(invoice.telephone_number ? `Phone: ${invoice.telephone_number}` : '', 320, doc.y)
+      .text(invoice.email ? `Email: ${invoice.email}` : '', 320, doc.y);
+
+    // Divider
     doc.moveDown();
+    doc.moveTo(40, doc.y + 8).lineTo(560, doc.y + 8).stroke();
+    doc.moveDown(2);
+
+    // Invoice metadata
+    const metaStartY = doc.y;
     const invoiceDate = invoice.invoice_date ? new Date(invoice.invoice_date) : null;
     const dueDate = invoice.due_date ? new Date(invoice.due_date) : null;
-    doc.font('Helvetica-Bold').text('Invoice Date: ', { continued: true }).font('Helvetica').text(invoiceDate && !isNaN(invoiceDate.getTime()) ? invoiceDate.toLocaleDateString() : '');
-    doc.font('Helvetica-Bold').text('Due Date: ', { continued: true }).font('Helvetica').text(dueDate && !isNaN(dueDate.getTime()) ? dueDate.toLocaleDateString() : '');
-    doc.font('Helvetica-Bold').text('Status: ', { continued: true }).font('Helvetica').text(invoice.status || '');
+
+    doc.font('Helvetica-Bold').text('Invoice Date:', 40, metaStartY, { continued: true }).font('Helvetica').text(invoiceDate && !isNaN(invoiceDate.getTime()) ? invoiceDate.toLocaleDateString() : '');
+    doc.font('Helvetica-Bold').text('Due Date:', 320, metaStartY, { continued: true }).font('Helvetica').text(dueDate && !isNaN(dueDate.getTime()) ? dueDate.toLocaleDateString() : '');
+    doc.font('Helvetica-Bold').text('Status:', 40, doc.y + 4, { continued: true }).font('Helvetica').text(invoice.status || '');
     if (invoice.source_sales_order_number) {
-      doc.font('Helvetica-Bold').text('Source Sales Order: ', { continued: true }).font('Helvetica').text(invoice.source_sales_order_number);
+      doc.font('Helvetica-Bold').text('Source Sales Order:', 320, doc.y, { continued: true }).font('Helvetica').text(invoice.source_sales_order_number);
     }
     if (invoice.notes) {
-      doc.moveDown().font('Helvetica-Bold').text('Notes').font('Helvetica').text(invoice.notes);
+      doc.moveDown();
+      doc.font('Helvetica-Bold').text('Notes:');
+      doc.font('Helvetica').text(invoice.notes);
     }
 
-    doc.moveDown().font('Helvetica-Bold').fontSize(12).text('Line Items');
-    doc.moveDown(0.5).font('Helvetica').fontSize(10);
+    // Line items
+    doc.moveDown();
+    doc.font('Helvetica-Bold').fontSize(12).text('Line Items');
+    doc.moveTo(40, doc.y + 4).lineTo(560, doc.y + 4).stroke();
+    doc.moveDown(1);
+
+    doc.font('Helvetica-Bold').fontSize(10);
     const headers = ['Part #', 'Description', 'Qty', 'Unit', 'Unit Price', 'Line Total'];
-    const widths = [80, 200, 50, 60, 80, 80];
+    const widths = [80, 200, 60, 50, 80, 80];
     let y = doc.y;
-    let x = doc.x;
+    let x = 40;
     headers.forEach((h, idx) => {
       doc.text(h, x, y, { width: widths[idx] });
       x += widths[idx];
     });
-    y += 16;
-    doc.moveTo(40, y).lineTo(520, y).stroke();
+    y += 14;
+    doc.moveTo(40, y).lineTo(560, y).stroke();
     y += 6;
 
+    doc.font('Helvetica').fontSize(10);
     lineItems.forEach((li: any) => {
-      if (y > doc.page.height - 100) {
+      if (y > doc.page.height - 120) {
         doc.addPage();
         y = doc.y;
       }
@@ -418,16 +426,18 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
         formatCurrency(Number(li.line_amount) || 0),
       ];
       row.forEach((val, idx) => {
-        doc.text(val, x, y, { width: widths[idx] });
+        doc.text(val || '', x, y, { width: widths[idx] });
         x += widths[idx];
       });
       y += 14;
     });
 
-    doc.moveDown(2);
-    doc.font('Helvetica-Bold').fontSize(12).text('Subtotal: ', { continued: true }).font('Helvetica').text(formatCurrency(Number(invoice.subtotal) || 0));
-    doc.font('Helvetica-Bold').text('GST: ', { continued: true }).font('Helvetica').text(formatCurrency(Number(invoice.total_gst_amount) || 0));
-    doc.font('Helvetica-Bold').text('Total: ', { continued: true }).font('Helvetica').text(formatCurrency(Number(invoice.total_amount) || 0));
+    // Totals
+    doc.moveDown(1.5);
+    const totalsX = 360;
+    doc.font('Helvetica-Bold').fontSize(11).text('Subtotal:', totalsX, y, { continued: true }).font('Helvetica').text(formatCurrency(Number(invoice.subtotal) || 0), { align: 'right', width: 200 });
+    doc.font('Helvetica-Bold').text('GST:', totalsX, doc.y + 4, { continued: true }).font('Helvetica').text(formatCurrency(Number(invoice.total_gst_amount) || 0), { align: 'right', width: 200 });
+    doc.font('Helvetica-Bold').text('Total:', totalsX, doc.y + 4, { continued: true }).font('Helvetica').text(formatCurrency(Number(invoice.total_amount) || 0), { align: 'right', width: 200 });
 
     console.info('invoiceRoutes: pdf success', { invoiceId, lineItemCount: lineItems.length });
     doc.end();

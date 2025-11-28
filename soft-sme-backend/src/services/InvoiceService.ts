@@ -24,6 +24,12 @@ export interface InvoiceInput {
   status?: InvoiceStatus;
   notes?: string | null;
   line_items: InvoiceLineItemInput[];
+  product_name?: string | null;
+  product_description?: string | null;
+  vin_number?: string | null;
+  unit_number?: string | null;
+  vehicle_make?: string | null;
+  vehicle_model?: string | null;
 }
 
 export interface InvoiceListResult {
@@ -161,8 +167,9 @@ export class InvoiceService {
       const insertInvoice = await client.query(
         `INSERT INTO invoices (
           invoice_number, sequence_number, customer_id, sales_order_id, source_sales_order_number,
-          status, invoice_date, due_date, payment_terms_in_days, subtotal, total_gst_amount, total_amount, notes
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+          status, invoice_date, due_date, payment_terms_in_days, subtotal, total_gst_amount, total_amount, notes,
+          product_name, product_description, vin_number, unit_number, vehicle_make, vehicle_model
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
         RETURNING invoice_id, invoice_number, due_date`,
         [
           invoiceNumber,
@@ -178,6 +185,12 @@ export class InvoiceService {
           total_gst_amount,
           total_amount,
           null,
+          salesOrder.product_name,
+          salesOrder.product_description,
+          salesOrder.vin_number,
+          salesOrder.unit_number,
+          salesOrder.vehicle_make,
+          salesOrder.vehicle_model,
         ]
       );
 
@@ -239,8 +252,9 @@ export class InvoiceService {
       const insertInvoice = await client.query(
         `INSERT INTO invoices (
           invoice_number, sequence_number, customer_id, sales_order_id, source_sales_order_number,
-          status, invoice_date, due_date, payment_terms_in_days, subtotal, total_gst_amount, total_amount, notes
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+          status, invoice_date, due_date, payment_terms_in_days, subtotal, total_gst_amount, total_amount, notes,
+          product_name, product_description, vin_number, unit_number, vehicle_make, vehicle_model
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
         RETURNING invoice_id, invoice_number`,
         [
           invoiceNumber,
@@ -256,6 +270,12 @@ export class InvoiceService {
           total_gst_amount,
           total_amount,
           payload.notes ?? null,
+          payload.product_name ?? null,
+          payload.product_description ?? null,
+          payload.vin_number ?? null,
+          payload.unit_number ?? null,
+          payload.vehicle_make ?? null,
+          payload.vehicle_model ?? null,
         ]
       );
 
@@ -331,8 +351,14 @@ export class InvoiceService {
              total_gst_amount = $9,
              total_amount = $10,
              notes = $11,
+             product_name = $12,
+             product_description = $13,
+             vin_number = $14,
+             unit_number = $15,
+             vehicle_make = $16,
+             vehicle_model = $17,
              updated_at = NOW()
-         WHERE invoice_id = $12`,
+         WHERE invoice_id = $18`,
         [
           customerId,
           payload.sales_order_id ?? current.sales_order_id,
@@ -345,6 +371,12 @@ export class InvoiceService {
           total_gst_amount,
           total_amount,
           notes,
+          payload.product_name ?? current.product_name,
+          payload.product_description ?? current.product_description,
+          payload.vin_number ?? current.vin_number,
+          payload.unit_number ?? current.unit_number,
+          payload.vehicle_make ?? current.vehicle_make,
+          payload.vehicle_model ?? current.vehicle_model,
           invoiceId,
         ]
       );
@@ -391,22 +423,31 @@ export class InvoiceService {
   async getInvoice(invoiceId: number) {
     const client = await this.pool.connect();
     try {
-      const invoiceRes = await client.query(
-        `SELECT i.*, 
-                c.customer_name, 
-                c.default_payment_terms_in_days,
-                c.street_address,
-                c.city,
-                c.province,
-                c.country,
-                c.postal_code,
-                c.telephone_number,
-                c.email
-         FROM invoices i
-         JOIN customermaster c ON i.customer_id = c.customer_id
-         WHERE i.invoice_id = $1`,
-        [invoiceId]
-      );
+    const invoiceRes = await client.query(
+      `SELECT i.*, 
+              c.customer_name, 
+              c.default_payment_terms_in_days,
+              c.street_address,
+              c.city,
+              c.province,
+              c.country,
+              c.postal_code,
+              c.telephone_number,
+              c.email,
+              so.sales_order_number AS so_sales_order_number,
+              so.product_name AS so_product_name,
+              so.product_description AS so_product_description,
+              so.vin_number AS so_vin_number,
+              so.unit_number AS so_unit_number,
+              so.vehicle_make AS so_vehicle_make,
+              so.vehicle_model AS so_vehicle_model,
+              so.terms AS so_terms
+       FROM invoices i
+       JOIN customermaster c ON i.customer_id = c.customer_id
+       LEFT JOIN salesorderhistory so ON i.sales_order_id = so.sales_order_id
+       WHERE i.invoice_id = $1`,
+      [invoiceId]
+    );
       if (invoiceRes.rows.length === 0) {
         throw new Error('Invoice not found');
       }
@@ -440,15 +481,49 @@ export class InvoiceService {
 
     const whereClause = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
     const query = `
-      SELECT i.*, c.customer_name
+      SELECT 
+        i.*,
+        c.customer_name,
+        so.sales_order_number,
+        so.product_name,
+        so.product_description,
+        so.vin_number,
+        so.unit_number,
+        so.vehicle_make,
+        so.vehicle_model,
+        so.terms
+        i.product_name AS product_name,
+        i.product_description AS product_description,
+        i.vin_number AS vin_number,
+        i.unit_number AS unit_number,
+        i.vehicle_make AS vehicle_make,
+        i.vehicle_model AS vehicle_model,
+        i.terms AS terms,
+        so.sales_order_number AS so_sales_order_number,
+        so.product_name AS so_product_name,
+        so.product_description AS so_product_description,
+        so.vin_number AS so_vin_number,
+        so.unit_number AS so_unit_number,
+        so.vehicle_make AS so_vehicle_make,
+        so.vehicle_model AS so_vehicle_model,
+        so.terms AS so_terms
       FROM invoices i
       JOIN customermaster c ON i.customer_id = c.customer_id
+      LEFT JOIN salesorderhistory so ON i.sales_order_id = so.sales_order_id
       ${whereClause}
       ORDER BY i.invoice_date DESC, i.invoice_id DESC`;
 
     const res = await this.pool.query(query, params);
     const invoices = res.rows.map((row) => ({
       ...row,
+      product_name: row.product_name ?? row.so_product_name ?? null,
+      product_description: row.product_description ?? row.so_product_description ?? null,
+      vin_number: row.vin_number ?? row.so_vin_number ?? null,
+      unit_number: row.unit_number ?? row.so_unit_number ?? null,
+      vehicle_make: row.vehicle_make ?? row.so_vehicle_make ?? null,
+      vehicle_model: row.vehicle_model ?? row.so_vehicle_model ?? null,
+      sales_order_number: row.sales_order_number ?? row.so_sales_order_number ?? null,
+      terms: row.terms ?? row.so_terms ?? null,
       subtotal: toNumber(row.subtotal),
       total_gst_amount: toNumber(row.total_gst_amount),
       total_amount: toNumber(row.total_amount),

@@ -14,12 +14,15 @@ import { DataGrid, GridColDef, GridEventListener } from '@mui/x-data-grid';
 import AddIcon from '@mui/icons-material/Add';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
+import ViewColumnIcon from '@mui/icons-material/ViewColumn';
 import { useNavigate } from 'react-router-dom';
 import { fetchInvoices } from '../services/invoiceService';
 import { getCustomers } from '../services/customerService';
 import { Invoice } from '../types/invoice';
 import { formatCurrency } from '../utils/formatters';
 import Autocomplete from '@mui/material/Autocomplete';
+import Popover from '@mui/material/Popover';
+import { Checkbox, FormControlLabel, FormGroup } from '@mui/material';
 
 interface CustomerOption {
   id: number;
@@ -35,6 +38,17 @@ const InvoicesPage: React.FC = () => {
   const [customers, setCustomers] = useState<CustomerOption[]>([]);
   const [customerValue, setCustomerValue] = useState<CustomerOption | null>(null);
   const [customerInput, setCustomerInput] = useState('');
+  const COLUMN_VISIBILITY_STORAGE_KEY = 'invoices.columnVisibility';
+  const [columnVisibilityModel, setColumnVisibilityModel] = useState<Record<string, boolean>>(() => {
+    if (typeof window === 'undefined') return {};
+    const stored = localStorage.getItem(COLUMN_VISIBILITY_STORAGE_KEY);
+    if (stored) {
+      try { return JSON.parse(stored); } catch {}
+    }
+    return {};
+  });
+  const [columnSelectorAnchor, setColumnSelectorAnchor] = useState<HTMLElement | null>(null);
+  const [columnSelectorColumns, setColumnSelectorColumns] = useState<GridColDef[]>([]);
 
   useEffect(() => {
     (async () => {
@@ -51,6 +65,19 @@ const InvoicesPage: React.FC = () => {
       }
     })();
   }, []);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(COLUMN_VISIBILITY_STORAGE_KEY, JSON.stringify(columnVisibilityModel));
+    }
+  }, [columnVisibilityModel]);
+
+  const handleOpenColumnSelector = (event: React.MouseEvent<HTMLElement>, cols: GridColDef[]) => {
+    setColumnSelectorColumns(cols);
+    setColumnSelectorAnchor(event.currentTarget);
+  };
+
+  const handleCloseColumnSelector = () => setColumnSelectorAnchor(null);
 
   const fetchData = async () => {
     setLoading(true);
@@ -81,6 +108,13 @@ const InvoicesPage: React.FC = () => {
     return [
       { field: 'invoice_number', headerName: 'Invoice #', flex: 1, minWidth: 140 },
       { field: 'customer_name', headerName: 'Customer', flex: 1.2, minWidth: 160 },
+      { field: 'sales_order_number', headerName: 'SO #', minWidth: 140, flex: 1 },
+      { field: 'product_name', headerName: 'Product', minWidth: 140, flex: 1.1 },
+      { field: 'product_description', headerName: 'Product Description', minWidth: 200, flex: 1.5 },
+      { field: 'vin_number', headerName: 'VIN #', minWidth: 120 },
+      { field: 'unit_number', headerName: 'Unit #', minWidth: 120 },
+      { field: 'vehicle_make', headerName: 'Make', minWidth: 120 },
+      { field: 'vehicle_model', headerName: 'Model', minWidth: 120 },
       {
         field: 'invoice_date',
         headerName: 'Invoice Date',
@@ -137,14 +171,21 @@ const InvoicesPage: React.FC = () => {
 
   return (
     <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
-      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} justifyContent="space-between" alignItems={{ xs: 'flex-start', sm: 'center' }} mb={3}>
-        <Typography variant="h4">Invoices</Typography>
-        <Stack direction="row" spacing={1}>
-          <Button startIcon={<RefreshIcon />} variant="outlined" onClick={fetchData}>
-            Refresh
-          </Button>
-          <Button startIcon={<AddIcon />} variant="contained" onClick={() => navigate('/invoices/new')}>
-            New Invoice
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} justifyContent="space-between" alignItems={{ xs: 'flex-start', sm: 'center' }} mb={3}>
+          <Typography variant="h4">Invoices</Typography>
+          <Stack direction="row" spacing={1}>
+            <Button
+              startIcon={<ViewColumnIcon />}
+              variant="outlined"
+              onClick={(e) => handleOpenColumnSelector(e, columns)}
+            >
+              Columns
+            </Button>
+            <Button startIcon={<RefreshIcon />} variant="outlined" onClick={fetchData}>
+              Refresh
+            </Button>
+            <Button startIcon={<AddIcon />} variant="contained" onClick={() => navigate('/invoices/new')}>
+              New Invoice
           </Button>
         </Stack>
       </Stack>
@@ -203,6 +244,8 @@ const InvoicesPage: React.FC = () => {
           loading={loading}
           density="comfortable"
           onRowClick={onRowClick}
+          columnVisibilityModel={columnVisibilityModel}
+          onColumnVisibilityModelChange={(model) => setColumnVisibilityModel(model as any)}
           getRowClassName={(params) => {
             const due = params.row.due_date ? new Date(params.row.due_date) : null;
             const overdue = params.row.status === 'Unpaid' && due && due < new Date();
@@ -215,6 +258,39 @@ const InvoicesPage: React.FC = () => {
           }}
         />
       </Paper>
+      <Popover
+        open={Boolean(columnSelectorAnchor)}
+        anchorEl={columnSelectorAnchor}
+        onClose={handleCloseColumnSelector}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
+      >
+        <Box sx={{ p: 2, maxWidth: 320 }}>
+          <Typography variant="subtitle1" sx={{ mb: 1.5 }}>
+            Show / Hide Columns
+          </Typography>
+          <FormGroup>
+            {columnSelectorColumns
+              .map((col) => (
+                <FormControlLabel
+                  key={col.field}
+                  control={
+                    <Checkbox
+                      size="small"
+                      checked={columnVisibilityModel[col.field] !== false}
+                      onChange={(e) =>
+                        setColumnVisibilityModel((prev) => ({
+                          ...prev,
+                          [col.field]: e.target.checked,
+                        }))
+                      }
+                    />
+                  }
+                  label={col.headerName || col.field}
+                />
+              ))}
+          </FormGroup>
+        </Box>
+      </Popover>
     </Container>
   );
 };

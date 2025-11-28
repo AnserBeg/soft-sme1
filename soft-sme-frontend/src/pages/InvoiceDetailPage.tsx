@@ -48,7 +48,16 @@ const InvoiceDetailPage: React.FC = () => {
   const isNew = id === 'new';
   const navigate = useNavigate();
 
-  const [invoice, setInvoice] = useState<any>({ status: 'Unpaid' });
+  const [invoice, setInvoice] = useState<any>({
+    status: 'Unpaid',
+    product_name: '',
+    product_description: '',
+    vin_number: '',
+    unit_number: '',
+    vehicle_make: '',
+    vehicle_model: '',
+    source_sales_order_number: '',
+  });
   const [lineItems, setLineItems] = useState<InvoiceLineItem[]>([defaultLineItem()]);
   const [customers, setCustomers] = useState<CustomerOption[]>([]);
   const [customer, setCustomer] = useState<CustomerOption | null>(null);
@@ -169,6 +178,12 @@ const InvoiceDetailPage: React.FC = () => {
       notes: invoice.notes,
       sales_order_id: invoice.sales_order_id ?? null,
       source_sales_order_number: invoice.source_sales_order_number ?? null,
+      product_name: invoice.product_name ?? '',
+      product_description: invoice.product_description ?? '',
+      vin_number: invoice.vin_number ?? '',
+      unit_number: invoice.unit_number ?? '',
+      vehicle_make: invoice.vehicle_make ?? '',
+      vehicle_model: invoice.vehicle_model ?? '',
       line_items: lineItems.map((li) => ({
         invoice_line_item_id: li.invoice_line_item_id,
         part_id: li.part_id,
@@ -285,6 +300,56 @@ const InvoiceDetailPage: React.FC = () => {
 
         <Paper sx={{ p: 3, mb: 3 }}>
           <Grid container spacing={2}>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                label="Product"
+                value={invoice.product_name || ''}
+                onChange={(e) => setInvoice((prev: any) => ({ ...prev, product_name: e.target.value }))}
+                fullWidth
+              />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                label="VIN #"
+                value={invoice.vin_number || ''}
+                onChange={(e) => setInvoice((prev: any) => ({ ...prev, vin_number: e.target.value }))}
+                fullWidth
+              />
+            </Grid>
+            <Grid item xs={12}>
+              <TextField
+                label="Product Description"
+                value={invoice.product_description || ''}
+                onChange={(e) => setInvoice((prev: any) => ({ ...prev, product_description: e.target.value }))}
+                fullWidth
+                multiline
+                minRows={2}
+              />
+            </Grid>
+            <Grid item xs={12} sm={4}>
+              <TextField
+                label="Unit #"
+                value={invoice.unit_number || ''}
+                onChange={(e) => setInvoice((prev: any) => ({ ...prev, unit_number: e.target.value }))}
+                fullWidth
+              />
+            </Grid>
+            <Grid item xs={12} sm={4}>
+              <TextField
+                label="Make"
+                value={invoice.vehicle_make || ''}
+                onChange={(e) => setInvoice((prev: any) => ({ ...prev, vehicle_make: e.target.value }))}
+                fullWidth
+              />
+            </Grid>
+            <Grid item xs={12} sm={4}>
+              <TextField
+                label="Model"
+                value={invoice.vehicle_model || ''}
+                onChange={(e) => setInvoice((prev: any) => ({ ...prev, vehicle_model: e.target.value }))}
+                fullWidth
+              />
+            </Grid>
             <Grid item xs={12} sm={6}>
               <TextField
                 select
