@@ -27,6 +27,7 @@ export interface CustomerFormValues {
   province: string;
   country: string;
   postal_code: string;
+  default_payment_terms_in_days?: number;
   website: string;
   general_notes: string;
 }
@@ -52,6 +53,7 @@ const defaultCustomer: CustomerFormValues = {
   province: '',
   country: '',
   postal_code: '',
+  default_payment_terms_in_days: 30,
   website: '',
   general_notes: '',
 };
@@ -339,6 +341,16 @@ const UnifiedCustomerDialog: React.FC<UnifiedCustomerDialogProps> = ({
           </Grid>
           <Grid item xs={12} sm={4}>
             <TextField name="postal_code" label="Postal Code" value={customer.postal_code} onChange={handleInputChange} fullWidth />
+          </Grid>
+          <Grid item xs={12} sm={4}>
+            <TextField
+              name="default_payment_terms_in_days"
+              label="Payment Terms (days)"
+              type="number"
+              value={customer.default_payment_terms_in_days ?? ''}
+              onChange={handleInputChange}
+              fullWidth
+            />
           </Grid>
           <Grid item xs={12}>
             <TextField name="website" label="Website" value={customer.website} onChange={handleInputChange} fullWidth />

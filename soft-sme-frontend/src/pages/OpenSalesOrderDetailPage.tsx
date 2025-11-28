@@ -16,6 +16,7 @@ import DoneAllIcon from '@mui/icons-material/DoneAll';
 import DownloadIcon from '@mui/icons-material/Download';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
+import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CancelIcon from '@mui/icons-material/Cancel';
 import TuneIcon from '@mui/icons-material/Tune';
@@ -454,6 +455,7 @@ const SalesOrderDetailPage: React.FC = () => {
   const [exportLoading, setExportLoading] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const [exportSuccess, setExportSuccess] = useState<string | null>(null);
+  const [invoiceCreating, setInvoiceCreating] = useState(false);
 
   const [inventoryAlert, setInventoryAlert] = useState<string | null>(null);
 
@@ -1177,6 +1179,25 @@ const SalesOrderDetailPage: React.FC = () => {
     }
   };
 
+  const handleCreateInvoiceFromSO = async () => {
+    if (!salesOrder) return;
+    setInvoiceCreating(true);
+    try {
+      const res = await api.post(`/api/invoices/from-sales-order/${salesOrder.sales_order_id}`);
+      const newId = res.data?.invoice_id || res.data?.id || res.data?.invoice?.invoice_id;
+      toast.success('Invoice created from this sales order');
+      if (newId) {
+        navigate(`/invoices/${newId}`);
+      }
+    } catch (err: any) {
+      console.error('Failed to create invoice', err);
+      const msg = err?.response?.data?.error || 'Failed to create invoice';
+      toast.error(msg);
+    } finally {
+      setInvoiceCreating(false);
+    }
+  };
+
   const handleExportToQBO = async () => {
     if (isCreationMode || !salesOrder) return;
     if (quantityToOrderItems.some(i => parseFloat(String(i.quantity_to_order)) > 0)) {
@@ -1359,6 +1380,15 @@ const SalesOrderDetailPage: React.FC = () => {
               {exportLoading ? 'Exporting...' : 'Export to QuickBooks'}
             </Button>
           )}
+          <Button
+            variant="contained"
+            color="secondary"
+            startIcon={<ReceiptLongIcon />}
+            onClick={handleCreateInvoiceFromSO}
+            disabled={invoiceCreating}
+          >
+            {invoiceCreating ? 'Creating Invoice...' : 'Create Invoice'}
+          </Button>
           {user?.access_role !== 'Sales and Purchase' && (
             <Button variant="contained" color="primary" onClick={handleReopenSO}>Reopen SO</Button>
           )}
@@ -2291,11 +2321,22 @@ const SalesOrderDetailPage: React.FC = () => {
             <Snackbar open={!!success} autoHideDuration={6000} onClose={() => setSuccess(null)} anchorOrigin={{ vertical:'top', horizontal:'center' }}>
               <Alert onClose={() => setSuccess(null)} severity="success" sx={{ width:'100%' }}>{success}</Alert>
             </Snackbar>
-            {!salesOrder?.exported_to_qbo && salesOrder?.status?.toLowerCase() === 'closed' && (
+            {salesOrder?.status?.toLowerCase() === 'closed' && (
               <Box display="flex" justifyContent="flex-end" gap={2} mb={2}>
-                <Button variant="contained" color="success" startIcon={<CloudUploadIcon />} disabled={exportLoading} onClick={handleExportToQBO}>
-                  {exportLoading ? 'Exporting...' : 'Export to QuickBooks'}
+                <Button
+                  variant="contained"
+                  color="secondary"
+                  startIcon={<ReceiptLongIcon />}
+                  onClick={handleCreateInvoiceFromSO}
+                  disabled={invoiceCreating}
+                >
+                  {invoiceCreating ? 'Creating Invoice...' : 'Create Invoice'}
                 </Button>
+                {!salesOrder?.exported_to_qbo && (
+                  <Button variant="contained" color="success" startIcon={<CloudUploadIcon />} disabled={exportLoading} onClick={handleExportToQBO}>
+                    {exportLoading ? 'Exporting...' : 'Export to QuickBooks'}
+                  </Button>
+                )}
                 {user?.access_role !== 'Sales and Purchase' && (
                   <Button variant="outlined" onClick={handleReopenSO}>Reopen SO</Button>
                 )}

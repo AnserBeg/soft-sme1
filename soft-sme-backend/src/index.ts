@@ -38,6 +38,7 @@ import employeeRoutes from './routes/employeeRoutes';
 import timeTrackingRoutes from './routes/timeTrackingRoutes';
 import leaveManagementRoutes from './routes/leaveManagementRoutes';
 import globalSettingsRouter from './routes/globalSettingsRoutes';
+import invoiceRoutes from './routes/invoiceRoutes';
 import backupRoutes from './routes/backupRoutes';
 import attendanceRouter from './routes/attendanceRoutes';
 import qboAuthRoutes from './routes/qboAuthRoutes';
@@ -274,6 +275,9 @@ console.log('Registered return order routes');
 
 app.use('/api/employees', authMiddleware, employeeRoutes);
 console.log('Registered employee routes');
+
+app.use('/api/invoices', authMiddleware, invoiceRoutes);
+console.log('Registered invoice routes');
 
 app.use('/api/time-tracking', authMiddleware, timeTrackingRoutes);
 console.log('Registered time tracking routes');

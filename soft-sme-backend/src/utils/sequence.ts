@@ -1,6 +1,6 @@
 import { pool } from '../db';
 
-type SequenceSource = 'quotes' | 'salesorderhistory';
+type SequenceSource = 'quotes' | 'salesorderhistory' | 'invoices';
 
 async function getNextSequenceNumberForTable(
   table: SequenceSource,
@@ -14,10 +14,15 @@ async function getNextSequenceNumberForTable(
        FROM quotes
        WHERE sequence_number IS NOT NULL
          AND CAST(sequence_number AS TEXT) LIKE $1`
-    : `SELECT MAX(CAST(SUBSTRING(CAST(sequence_number AS TEXT), 5, 5) AS INTEGER)) AS max_seq
-       FROM salesorderhistory
-       WHERE sequence_number IS NOT NULL
-         AND CAST(sequence_number AS TEXT) LIKE $1`;
+    : table === 'salesorderhistory'
+      ? `SELECT MAX(CAST(SUBSTRING(CAST(sequence_number AS TEXT), 5, 5) AS INTEGER)) AS max_seq
+         FROM salesorderhistory
+         WHERE sequence_number IS NOT NULL
+           AND CAST(sequence_number AS TEXT) LIKE $1`
+      : `SELECT MAX(CAST(SUBSTRING(CAST(sequence_number AS TEXT), 5, 5) AS INTEGER)) AS max_seq
+         FROM invoices
+         WHERE sequence_number IS NOT NULL
+           AND CAST(sequence_number AS TEXT) LIKE $1`;
 
   const result = await pool.query(query, [likeValue]);
   const maxSeq = result.rows[0]?.max_seq || 0;
@@ -32,6 +37,10 @@ export function getNextQuoteSequenceNumberForYear(year: number) {
 
 export function getNextSalesOrderSequenceNumberForYear(year: number) {
   return getNextSequenceNumberForTable('salesorderhistory', year);
+}
+
+export function getNextInvoiceSequenceNumberForYear(year: number) {
+  return getNextSequenceNumberForTable('invoices', year);
 }
 
 export async function getNextPurchaseOrderNumberForYear(year: number): Promise<{ poNumber: string, nnnnn: number }> {

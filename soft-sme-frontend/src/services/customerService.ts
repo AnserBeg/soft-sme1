@@ -62,12 +62,20 @@ export const getCustomer = async (id: string): Promise<Customer> => {
 };
 
 export const createCustomer = async (customer: Omit<Customer, 'id' | 'created_at' | 'updated_at'>): Promise<Customer> => {
-  const response = await api.post('/api/customers', customer);
+  const payload: any = { ...customer };
+  if (payload.default_payment_terms_in_days !== undefined) {
+    payload.default_payment_terms_in_days = Number(payload.default_payment_terms_in_days);
+  }
+  const response = await api.post('/api/customers', payload);
   return response.data;
 };
 
 export const updateCustomer = async (id: string, customer: Partial<Customer>): Promise<Customer> => {
-  const response = await api.put(`/api/customers/${id}`, customer);
+  const payload: any = { ...customer };
+  if (payload.default_payment_terms_in_days !== undefined) {
+    payload.default_payment_terms_in_days = Number(payload.default_payment_terms_in_days);
+  }
+  const response = await api.put(`/api/customers/${id}`, payload);
   return response.data;
 };
 

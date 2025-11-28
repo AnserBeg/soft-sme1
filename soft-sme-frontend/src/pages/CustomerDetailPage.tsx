@@ -15,8 +15,10 @@ import {
 import { ArrowBack as ArrowBackIcon, Save as SaveIcon } from '@mui/icons-material';
 import { Customer } from '../types/customer';
 import { getCustomer, createCustomer, updateCustomer } from '../services/customerService';
+import { downloadMonthlyStatement } from '../services/invoiceService';
 import { toast } from 'react-toastify';
 import UnifiedCustomerDialog, { CustomerFormValues } from '../components/UnifiedCustomerDialog';
+import dayjs from 'dayjs';
 
 const CustomerDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -30,6 +32,7 @@ const CustomerDetailPage: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [statementMonth, setStatementMonth] = useState(() => dayjs().format('YYYY-MM'));
   
   const [customer, setCustomer] = useState<Partial<Customer>>({
     customer_name: '',
@@ -42,7 +45,8 @@ const CustomerDetailPage: React.FC = () => {
     postal_code: '',
     contact_person: '',
     website: '',
-    general_notes: ''
+    general_notes: '',
+    default_payment_terms_in_days: 30
   });
 
   useEffect(() => {
@@ -68,6 +72,23 @@ const CustomerDetailPage: React.FC = () => {
       toast.error('Failed to load customer data');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleDownloadStatement = async () => {
+    if (!id) return;
+    try {
+      const response = await downloadMonthlyStatement(Number(id), statementMonth);
+      const blob = new Blob([response.data], { type: 'application/pdf' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `statement-${customer.customer_name || 'customer'}-${statementMonth || 'current'}.pdf`;
+      link.click();
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Error downloading statement:', error);
+      toast.error('Failed to download statement');
     }
   };
 
@@ -136,17 +157,34 @@ const CustomerDetailPage: React.FC = () => {
   return (
     <Container maxWidth="md">
       <Box sx={{ my: 4 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
-          <Button
-            startIcon={<ArrowBackIcon />}
-            onClick={handleCancel}
-            sx={{ mr: 2 }}
-          >
-            Back to Customers
-          </Button>
-          <Typography variant="h4" component="h1">
-            {isNewCustomer ? 'Add New Customer' : 'Edit Customer'}
-          </Typography>
+        <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 2, mb: 3 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+            <Button
+              startIcon={<ArrowBackIcon />}
+              onClick={handleCancel}
+              sx={{ mr: 0 }}
+            >
+              Back to Customers
+            </Button>
+            <Typography variant="h4" component="h1">
+              {isNewCustomer ? 'Add New Customer' : 'Edit Customer'}
+            </Typography>
+          </Box>
+          {!isNewCustomer && (
+            <Stack direction="row" spacing={1} alignItems="center" sx={{ marginLeft: { xs: 0, sm: 'auto' } }}>
+              <TextField
+                label="Statement Month"
+                type="month"
+                size="small"
+                value={statementMonth}
+                onChange={(e) => setStatementMonth(e.target.value)}
+                InputLabelProps={{ shrink: true }}
+              />
+              <Button variant="outlined" onClick={handleDownloadStatement}>
+                Download Monthly Statement
+              </Button>
+            </Stack>
+          )}
         </Box>
 
         {error && (

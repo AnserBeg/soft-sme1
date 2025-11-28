@@ -264,7 +264,7 @@ router.post('/import-excel', excelUpload.single('file'), async (req: Request, re
 router.get('/', async (req: Request, res: Response) => {
   console.log('customerRoutes: GET / - fetching all customers');
   try {
-    const result = await pool.query('SELECT customer_id, customer_name, street_address, city, province, country, postal_code, contact_person, telephone_number, email, website, general_notes FROM customermaster');
+    const result = await pool.query('SELECT customer_id, customer_name, street_address, city, province, country, postal_code, contact_person, telephone_number, email, website, general_notes, default_payment_terms_in_days FROM customermaster');
     // Add 'id' field to match frontend expectations
     const customersWithId = result.rows.map(customer => ({
       ...customer,
@@ -382,7 +382,7 @@ router.get('/:id', async (req: Request, res: Response) => {
 router.post('/', async (req: Request, res: Response) => {
   const client = await pool.connect();
   try {
-    const { customer_name, street_address, city, province, country, postal_code, contact_person, phone_number, email, website, general_notes } = req.body;
+    const { customer_name, street_address, city, province, country, postal_code, contact_person, phone_number, email, website, general_notes, default_payment_terms_in_days } = req.body;
 
     console.log('Received new customer data:', req.body);
 
@@ -393,6 +393,9 @@ router.post('/', async (req: Request, res: Response) => {
     }
 
     const canonicalName = canonicalizeName(trimmedCustomerName);
+    const paymentTerms = Number.isFinite(Number(default_payment_terms_in_days))
+      ? Number(default_payment_terms_in_days)
+      : 30;
 
     // Check if customer with same name already exists
     const existingCustomer = await client.query(
@@ -409,7 +412,7 @@ router.post('/', async (req: Request, res: Response) => {
     }
 
     const result = await client.query(
-      'INSERT INTO customermaster (customer_name, canonical_name, street_address, city, province, country, postal_code, contact_person, telephone_number, email, website, general_notes) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *',
+      'INSERT INTO customermaster (customer_name, canonical_name, street_address, city, province, country, postal_code, contact_person, telephone_number, email, website, general_notes, default_payment_terms_in_days) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *',
       [
         trimmedCustomerName,
         canonicalName,
@@ -422,7 +425,8 @@ router.post('/', async (req: Request, res: Response) => {
         phone_number ?? null,
         email ?? null,
         website ?? null,
-        general_notes ?? null
+        general_notes ?? null,
+        paymentTerms
       ]
     );
 
@@ -472,7 +476,7 @@ router.post('/', async (req: Request, res: Response) => {
 // Update a customer by ID
 router.put('/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
-  const { customer_name, street_address, city, province, country, postal_code, contact_person, phone_number, email, website, general_notes } = req.body;
+  const { customer_name, street_address, city, province, country, postal_code, contact_person, phone_number, email, website, general_notes, default_payment_terms_in_days } = req.body;
 
   const client = await pool.connect();
 
@@ -517,6 +521,13 @@ router.put('/:id', async (req: Request, res: Response) => {
   if (email !== undefined) { updateFields.push(`email = $${paramIndex++}`); queryParams.push(email); }
   if (website !== undefined) { updateFields.push(`website = $${paramIndex++}`); queryParams.push(website); }
   if (general_notes !== undefined) { updateFields.push(`general_notes = $${paramIndex++}`); queryParams.push(general_notes); }
+  if (default_payment_terms_in_days !== undefined) {
+    const termsVal = Number.isFinite(Number(default_payment_terms_in_days))
+      ? Number(default_payment_terms_in_days)
+      : 30;
+    updateFields.push(`default_payment_terms_in_days = $${paramIndex++}`);
+    queryParams.push(termsVal);
+  }
 
   if (updateFields.length === 0) {
     return res.status(400).json({ error: 'No update fields provided' });

@@ -15,6 +15,7 @@ export interface Customer {
   contact_person?: string;
   website?: string;
   general_notes?: string;
+  default_payment_terms_in_days?: number;
   created_at: string;
   updated_at: string;
 }

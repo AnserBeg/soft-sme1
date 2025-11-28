@@ -33,6 +33,8 @@ import OpenSalesOrdersPage from './pages/OpenSalesOrdersPage';
 import OpenSalesOrderDetailPage from './pages/OpenSalesOrderDetailPage';
 import OpenPurchaseOrdersPage from './pages/OpenPurchaseOrdersPage';
 import OpenPurchaseOrderDetailPage from './pages/OpenPurchaseOrderDetailPage';
+import InvoicesPage from './pages/InvoicesPage';
+import InvoiceDetailPage from './pages/InvoiceDetailPage';
 import WokerSalesOrderPage from './pages/WokerSalesOrderPage';
 import TimeTrackingPage from './pages/TimeTrackingPage';
 import TimeTrackingReportsPage from './pages/TimeTrackingReportsPage';
@@ -86,6 +88,7 @@ const PrivateRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => 
     const allowed = [
       '/',
       '/open-sales-orders',
+      '/invoices',
       '/open-purchase-orders',
       '/purchase-order',
       '/return-orders',
@@ -101,6 +104,7 @@ const PrivateRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => 
     if (
       !allowed.includes(path) &&
       !path.startsWith('/open-sales-orders/') &&
+      !path.startsWith('/invoices/') &&
       !path.startsWith('/open-purchase-orders/') &&
       !path.startsWith('/purchase-order/') &&
       !path.startsWith('/return-orders/')
@@ -188,6 +192,8 @@ const AppRoutes: React.FC = () => {
         {/* <Route path="sales-order/:id" element={<SalesOrderDetailPage />} /> */}
         <Route path="open-sales-orders" element={<OpenSalesOrdersPage />} />
         <Route path="open-sales-orders/:id" element={<OpenSalesOrderDetailPage />} />
+        <Route path="invoices" element={<InvoicesPage />} />
+        <Route path="invoices/:id" element={<InvoiceDetailPage />} />
         <Route path="worker-sales-orders" element={<WokerSalesOrderPage />} />
         <Route path="worker-sales-orders/:id" element={<WokerSalesOrderPage />} />
         

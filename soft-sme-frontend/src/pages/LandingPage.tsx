@@ -90,6 +90,7 @@ const LandingPage: React.FC = () => {
       items: [
         { title: 'Quotes', description: 'Manage and track quotes', icon: <ListAltIcon sx={{ fontSize: 40, color: 'primary.main' }} />, path: '/quotes' },
         { title: 'Sales Orders', description: 'Manage sales orders', icon: <ReceiptIcon sx={{ fontSize: 40, color: 'primary.main' }} />, path: '/open-sales-orders' },
+        { title: 'Invoices', description: 'Track and edit invoices', icon: <ReceiptIcon sx={{ fontSize: 40, color: 'primary.main' }} />, path: '/invoices' },
         { title: 'Customers', description: 'Track and manage your customer relationships', icon: <PeopleIcon sx={{ fontSize: 40, color: 'primary.main' }} />, path: '/customers' }
       ]
     },
@@ -139,6 +140,7 @@ const LandingPage: React.FC = () => {
         title: 'Sales & Purchase',
         items: [
           { title: 'Sales Orders', description: 'Manage sales orders', icon: <ReceiptIcon sx={{ fontSize: 40, color: 'primary.main' }} />, path: '/open-sales-orders' },
+          { title: 'Invoices', description: 'Track and edit invoices', icon: <ReceiptIcon sx={{ fontSize: 40, color: 'primary.main' }} />, path: '/invoices' },
           { title: 'Purchase Orders', description: 'Manage purchase orders', icon: <AssignmentIcon sx={{ fontSize: 40, color: 'primary.main' }} />, path: '/open-purchase-orders' },
           { title: 'Return Orders', description: 'Track vendor returns tied to POs', icon: <AssignmentReturnIcon sx={{ fontSize: 40, color: 'primary.main' }} />, path: '/return-orders' },
           { title: 'Parts to Order', description: 'View parts that need to be ordered', icon: <InventoryIcon sx={{ fontSize: 40, color: 'primary.main' }} />, path: '/parts-to-order' },
