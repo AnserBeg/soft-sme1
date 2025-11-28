@@ -774,15 +774,7 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
     // --- Line Items temporarily suppressed ---
     y += 6;
 
-    // --- Totals Section ---
-    doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Sub Total:', 400, y, { align: 'left', width: 80 });
-    doc.font('Helvetica').fontSize(11).fillColor('#000000').text(parseFloat(salesOrder.subtotal).toFixed(2), 480, y, { align: 'right', width: 70 });
-    y += 16;
-    doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Total GST:', 400, y, { align: 'left', width: 80 });
-    doc.font('Helvetica').fontSize(11).fillColor('#000000').text(parseFloat(salesOrder.total_gst_amount).toFixed(2), 480, y, { align: 'right', width: 70 });
-    y += 16;
-    doc.font('Helvetica-Bold').fontSize(13).fillColor('#000000').text('Total:', 400, y, { align: 'left', width: 80 });
-    doc.font('Helvetica-Bold').fontSize(13).fillColor('#000000').text(parseFloat(salesOrder.total_amount).toFixed(2), 480, y, { align: 'right', width: 70 });
+    // Totals intentionally hidden (temporary)
 
     // --- Terms Section ---
     y += 40;
