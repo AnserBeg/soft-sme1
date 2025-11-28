@@ -585,7 +585,7 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
       if (Array.isArray(rawVisibleFields)) {
         return new Set(
           rawVisibleFields
-            .flatMap((f) => f.split(','))
+            .flatMap((f) => String(f).split(','))
             .map((f) => f.trim())
             .filter(Boolean)
         );

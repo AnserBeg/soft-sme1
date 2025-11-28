@@ -442,10 +442,22 @@ const OpenSalesOrdersPage: React.FC = () => {
     {
       field: 'actions',
       headerName: 'Actions',
-      width: 100,
+      width: 140,
       sortable: false,
       renderCell: (params) => (
         <Box sx={{ display: 'flex', gap: 0.5 }}>
+          {params.row.status !== 'Closed' && (
+            <IconButton
+              size="small"
+              color="primary"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleCloseOrder(params.row.sales_order_id);
+              }}
+            >
+              <CloseIcon />
+            </IconButton>
+          )}
           {params.row.status !== 'Closed' && (
             <IconButton size="small" color="error" onClick={(e) => {
               e.stopPropagation();
