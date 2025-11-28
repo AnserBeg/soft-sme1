@@ -602,13 +602,14 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
 
     // --- HEADER ---
     let headerY = 50;
-    let logoHeight = 100;
-    let logoWidth = 180;
-    let pageWidth = 600;
-    let logoX = 50;
-    let companyTitleX = logoX + logoWidth + 20;
-    const logoSource = await getLogoImageSource(businessProfile?.logo_url);
-    if (logoSource) {
+    const showLogo = false; // Temporarily hide logo from sales order PDFs
+    const logoHeight = showLogo ? 100 : 0;
+    const logoWidth = showLogo ? 180 : 0;
+    const pageWidth = 600;
+    const logoX = 50;
+    const companyTitleX = showLogo ? logoX + logoWidth + 20 : logoX;
+    const logoSource = showLogo ? await getLogoImageSource(businessProfile?.logo_url) : null;
+    if (showLogo && logoSource) {
       try {
         doc.image(logoSource, logoX, headerY, { fit: [logoWidth, logoHeight] });
       } catch (error) {
@@ -618,7 +619,9 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
     // Company name (right of logo, vertically centered with logo)
     const fontSize = 16;
     // Company name slightly above vertical center of logo
-    const companyTitleY = headerY + (logoHeight / 2) - (fontSize / 2) - 6;
+    const companyTitleY = showLogo
+      ? headerY + (logoHeight / 2) - (fontSize / 2) - 6
+      : headerY;
     if (businessProfile) {
       doc.font('Helvetica-Bold').fontSize(fontSize).fillColor('#000000').text(
         (businessProfile.business_name || '').toUpperCase(),
