@@ -290,6 +290,7 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
       lineItems = data.lineItems || [];
     } catch (err: any) {
       const msg = err?.message || '';
+      console.error('invoiceRoutes: pdf invoice fetch error', err);
       if (msg.toLowerCase().includes('not found')) {
         return res.status(404).json({ error: 'Invoice not found' });
       }
@@ -404,10 +405,12 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
     doc.font('Helvetica-Bold').text('GST: ', { continued: true }).font('Helvetica').text(formatCurrency(Number(invoice.total_gst_amount) || 0));
     doc.font('Helvetica-Bold').text('Total: ', { continued: true }).font('Helvetica').text(formatCurrency(Number(invoice.total_amount) || 0));
 
+    console.info('invoiceRoutes: pdf success', { invoiceId, lineItemCount: lineItems.length });
     doc.end();
   } catch (error) {
-    console.error('invoiceRoutes: pdf error', error);
-    res.status(500).json({ error: 'Failed to generate invoice PDF' });
+    console.error('invoiceRoutes: pdf error', error instanceof Error ? error.stack || error.message : error);
+    const message = error instanceof Error ? error.message : 'Failed to generate invoice PDF';
+    res.status(500).json({ error: 'Failed to generate invoice PDF', details: message });
   }
 });
 
