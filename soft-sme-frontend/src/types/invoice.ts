@@ -21,6 +21,7 @@ export interface Invoice {
   invoice_date: string;
   due_date: string;
   payment_terms_in_days?: number | null;
+  default_payment_terms_in_days?: number | null;
   subtotal: number;
   total_gst_amount: number;
   total_amount: number;
