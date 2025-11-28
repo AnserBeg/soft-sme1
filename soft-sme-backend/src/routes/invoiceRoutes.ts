@@ -282,7 +282,19 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
   const invoiceId = normalizeId(req.params.id);
   if (!invoiceId) return res.status(400).json({ error: 'Invalid invoice id' });
   try {
-    const { invoice, lineItems } = await invoiceService.getInvoice(invoiceId);
+    let invoice;
+    let lineItems: any[] = [];
+    try {
+      const data = await invoiceService.getInvoice(invoiceId);
+      invoice = data.invoice;
+      lineItems = data.lineItems || [];
+    } catch (err: any) {
+      const msg = err?.message || '';
+      if (msg.toLowerCase().includes('not found')) {
+        return res.status(404).json({ error: 'Invoice not found' });
+      }
+      throw err;
+    }
 
     const bp = await pool.query(
       'SELECT company_name, street_address, city, province, country, postal_code, telephone_number, email, logo_url FROM business_profile ORDER BY id DESC LIMIT 1'

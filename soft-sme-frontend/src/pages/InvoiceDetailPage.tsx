@@ -361,7 +361,7 @@ const InvoiceDetailPage: React.FC = () => {
                     fullWidth
                   />
                 </Grid>
-                <Grid item xs={6} sm={3} md={1.2}>
+                <Grid item xs={6} sm={3} md={1}>
                   <TextField
                     label="Qty"
                     type="number"
