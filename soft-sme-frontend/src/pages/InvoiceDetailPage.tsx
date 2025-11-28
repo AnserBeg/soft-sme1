@@ -360,6 +360,48 @@ const InvoiceDetailPage: React.FC = () => {
 
         <Paper sx={{ p: 3, mb: 3 }}>
           <Grid container spacing={2}>
+            {/* Customer aligned to top left like SO */}
+            <Grid item xs={12} sm={6}>
+              <TextField
+                select
+                SelectProps={{ native: true }}
+                label="Customer"
+                value={customer?.id || invoice.customer_id || ''}
+                onChange={(e) => {
+                  const idVal = Number(e.target.value);
+                  const found = customers.find((c) => c.id === idVal) || null;
+                  setCustomer(found);
+                  setInvoice((prev: any) => ({ ...prev, customer_id: idVal }));
+                }}
+                fullWidth
+              >
+                <option value=""></option>
+                {customers.map((c) => (
+                  <option key={c.id} value={c.id}>{c.label}</option>
+                ))}
+              </TextField>
+            </Grid>
+            {/* Keep dates on the right similar to SO layout */}
+            <Grid item xs={12} sm={3}>
+              <DatePicker
+                label="Invoice Date"
+                value={invoiceDate}
+                onChange={(val) => setInvoiceDate(val)}
+                slotProps={{ textField: { fullWidth: true } }}
+              />
+            </Grid>
+            <Grid item xs={12} sm={3}>
+              <DatePicker
+                label="Due Date"
+                value={dueDate}
+                onChange={(val) => {
+                  setDueDate(val);
+                  setDueDateTouched(true);
+                }}
+                slotProps={{ textField: { fullWidth: true } }}
+              />
+            </Grid>
+
             <Grid item xs={12} sm={6}>
               <TextField
                 label="Product"
@@ -369,13 +411,16 @@ const InvoiceDetailPage: React.FC = () => {
               />
             </Grid>
             <Grid item xs={12} sm={6}>
-              <TextField
-                label="VIN #"
-                value={invoice.vin_number || ''}
-                onChange={(e) => setInvoice((prev: any) => ({ ...prev, vin_number: e.target.value }))}
-                fullWidth
-              />
+              {fieldVisibility.vin !== false && (
+                <TextField
+                  label="VIN #"
+                  value={invoice.vin_number || ''}
+                  onChange={(e) => setInvoice((prev: any) => ({ ...prev, vin_number: e.target.value }))}
+                  fullWidth
+                />
+              )}
             </Grid>
+
             <Grid item xs={12}>
               {fieldVisibility.productDescription !== false && (
                 <TextField
@@ -388,6 +433,7 @@ const InvoiceDetailPage: React.FC = () => {
                 />
               )}
             </Grid>
+
             <Grid item xs={12} sm={4}>
               {fieldVisibility.unitNumber !== false && (
                 <TextField
@@ -418,45 +464,7 @@ const InvoiceDetailPage: React.FC = () => {
                 />
               )}
             </Grid>
-            <Grid item xs={12} sm={6}>
-              <TextField
-                select
-                SelectProps={{ native: true }}
-                label="Customer"
-                value={customer?.id || invoice.customer_id || ''}
-                onChange={(e) => {
-                  const idVal = Number(e.target.value);
-                  const found = customers.find((c) => c.id === idVal) || null;
-                  setCustomer(found);
-                  setInvoice((prev: any) => ({ ...prev, customer_id: idVal }));
-                }}
-                fullWidth
-              >
-                <option value=""></option>
-                {customers.map((c) => (
-                  <option key={c.id} value={c.id}>{c.label}</option>
-                ))}
-              </TextField>
-            </Grid>
-            <Grid item xs={12} sm={3}>
-              <DatePicker
-                label="Invoice Date"
-                value={invoiceDate}
-                onChange={(val) => setInvoiceDate(val)}
-                slotProps={{ textField: { fullWidth: true } }}
-              />
-            </Grid>
-            <Grid item xs={12} sm={3}>
-              <DatePicker
-                label="Due Date"
-                value={dueDate}
-                onChange={(val) => {
-                  setDueDate(val);
-                  setDueDateTouched(true);
-                }}
-                slotProps={{ textField: { fullWidth: true } }}
-              />
-            </Grid>
+
             <Grid item xs={12}>
               <TextField
                 label="Notes"
