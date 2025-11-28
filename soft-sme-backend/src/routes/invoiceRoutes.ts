@@ -118,7 +118,19 @@ router.get('/customers/:customerId/statement', async (req: Request, res: Respons
       const customer = customerRes.rows[0];
 
       const businessProfileRes = await client.query(
-        'SELECT company_name, street_address, city, province, country, postal_code, telephone_number, email, logo_url FROM business_profile ORDER BY id DESC LIMIT 1'
+        `SELECT 
+          business_name AS company_name,
+          street_address,
+          city,
+          province,
+          country,
+          postal_code,
+          telephone_number,
+          email,
+          logo_url
+         FROM business_profile
+         ORDER BY id DESC
+         LIMIT 1`
       );
       const businessProfile = businessProfileRes.rows[0] || {};
 
@@ -298,7 +310,19 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
     }
 
     const bp = await pool.query(
-      'SELECT company_name, street_address, city, province, country, postal_code, telephone_number, email, logo_url FROM business_profile ORDER BY id DESC LIMIT 1'
+      `SELECT 
+        business_name AS company_name,
+        street_address,
+        city,
+        province,
+        country,
+        postal_code,
+        telephone_number,
+        email,
+        logo_url
+      FROM business_profile
+      ORDER BY id DESC
+      LIMIT 1`
     );
     const businessProfile = bp.rows[0] || {};
     const logoSource = await getLogoImageSource(businessProfile.logo_url);
