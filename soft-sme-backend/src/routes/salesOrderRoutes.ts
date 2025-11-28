@@ -572,6 +572,29 @@ router.delete('/:id', async (req: Request, res: Response) => {
 router.get('/:id/pdf', async (req: Request, res: Response) => {
   const { id } = req.params;
   try {
+    const rawVisibleFields = req.query.visibleFields;
+    const parsedVisibleFields: Set<string> | null = (() => {
+      if (typeof rawVisibleFields === 'string') {
+        return new Set(
+          rawVisibleFields
+            .split(',')
+            .map((f) => f.trim())
+            .filter(Boolean)
+        );
+      }
+      if (Array.isArray(rawVisibleFields)) {
+        return new Set(
+          rawVisibleFields
+            .flatMap((f) => f.split(','))
+            .map((f) => f.trim())
+            .filter(Boolean)
+        );
+      }
+      return null;
+    })();
+    const isFieldVisible = (key: string) =>
+      parsedVisibleFields === null ? true : parsedVisibleFields.has(key);
+
     // Fetch business profile
     const businessProfileResult = await pool.query('SELECT * FROM business_profile ORDER BY id DESC LIMIT 1');
     const businessProfile = businessProfileResult.rows[0];
@@ -683,17 +706,21 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
     // First line: Sales Order # and Customer PO #
     doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Sales Order #:', 50, y);
     doc.font('Helvetica').fontSize(11).fillColor('#000000').text(salesOrder.sales_order_number, 170, y);
-    doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Customer PO #:', 320, y);
-    doc.font('Helvetica').fontSize(11).fillColor('#000000').text(salesOrder.customer_po_number || 'N/A', 450, y);
+    if (isFieldVisible('customerPoNumber')) {
+      doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Customer PO #:', 320, y);
+      doc.font('Helvetica').fontSize(11).fillColor('#000000').text(salesOrder.customer_po_number || 'N/A', 450, y);
+    }
     y += 16;
     // Second line: Source Quote # (if available)
-    doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Source Quote #:', 50, y);
-    doc
-      .font('Helvetica')
-      .fontSize(11)
-      .fillColor('#000000')
-      .text(salesOrder.source_quote_number || 'N/A', 170, y);
-    y += 16;
+    if (isFieldVisible('sourceQuote')) {
+      doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Source Quote #:', 50, y);
+      doc
+        .font('Helvetica')
+        .fontSize(11)
+        .fillColor('#000000')
+        .text(salesOrder.source_quote_number || 'N/A', 170, y);
+      y += 16;
+    }
     // Third line: Product and Sales Date
     doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Product:', 50, y);
     doc.font('Helvetica').fontSize(11).fillColor('#000000').text(salesOrder.product_name || 'N/A', 170, y);
@@ -704,90 +731,48 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
     );
     y += 16;
     const vinValue = salesOrder.vin_number?.trim() || '';
-    doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('VIN #:', 50, y);
-    doc.font('Helvetica').fontSize(11).fillColor('#000000').text(vinValue || 'N/A', 170, y);
-    doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Invoice:', 320, y);
-    const invoiceLabel = salesOrder.invoice_status === 'done'
-      ? 'Done'
-      : salesOrder.invoice_status === 'needed'
-        ? 'Needed'
-        : '—';
-    doc.font('Helvetica').fontSize(11).fillColor('#000000').text(invoiceLabel, 450, y);
-    y += 16;
+    if (isFieldVisible('vin') || isFieldVisible('invoiceStatus')) {
+      if (isFieldVisible('vin')) {
+        doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('VIN #:', 50, y);
+        doc.font('Helvetica').fontSize(11).fillColor('#000000').text(vinValue || 'N/A', 170, y);
+      }
+      if (isFieldVisible('invoiceStatus')) {
+        doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Invoice:', 320, y);
+        const invoiceLabel = salesOrder.invoice_status === 'done'
+          ? 'Done'
+          : salesOrder.invoice_status === 'needed'
+            ? 'Needed'
+            : 'N/A';
+        doc.font('Helvetica').fontSize(11).fillColor('#000000').text(invoiceLabel, 450, y);
+      }
+      y += 16;
+    }
     const makeValue = salesOrder.vehicle_make?.trim() || '';
     const modelValue = salesOrder.vehicle_model?.trim() || '';
-    doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Make:', 50, y);
-    doc.font('Helvetica').fontSize(11).fillColor('#000000').text(makeValue || 'N/A', 170, y);
-    doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Model:', 320, y);
-    doc.font('Helvetica').fontSize(11).fillColor('#000000').text(modelValue || 'N/A', 450, y);
-    y += 16;
+    if (isFieldVisible('vehicleMake') || isFieldVisible('vehicleModel')) {
+      if (isFieldVisible('vehicleMake')) {
+        doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Make:', 50, y);
+        doc.font('Helvetica').fontSize(11).fillColor('#000000').text(makeValue || 'N/A', 170, y);
+      }
+      if (isFieldVisible('vehicleModel')) {
+        doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Model:', 320, y);
+        doc.font('Helvetica').fontSize(11).fillColor('#000000').text(modelValue || 'N/A', 450, y);
+      }
+      y += 16;
+    }
     y += 8;
     // Product Description below
-    doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Product Description:', 50, y);
-    const descResult = doc.font('Helvetica').fontSize(11).fillColor('#000000').text(salesOrder.product_description || '', 170, y, { width: 370 });
-    y = descResult.y + 8;
+    if (isFieldVisible('productDescription')) {
+      doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Product Description:', 50, y);
+      const descResult = doc.font('Helvetica').fontSize(11).fillColor('#000000').text(salesOrder.product_description || '', 170, y, { width: 370 });
+      y = descResult.y + 8;
+    }
     // Horizontal line
     doc.moveTo(50, y).lineTo(550, y).strokeColor('#444444').lineWidth(1).stroke();
     y += 14;
 
-    // --- Line Item Table ---
-    const tableHeaders = ['SN', 'Item Code', 'Description', 'Qty', 'Unit', 'Unit Price', 'Line Total'];
-    const colWidths = [30, 70, 140, 40, 40, 80, 80];
-    let currentX = 50;
-    doc.font('Helvetica-Bold').fontSize(10).fillColor('#000000');
-    tableHeaders.forEach((header, i) => {
-      doc.text(header, currentX, y, { width: colWidths[i], align: 'left' });
-      currentX += colWidths[i];
-    });
-    y += 16;
-    doc.moveTo(50, y - 2).lineTo(550, y - 2).strokeColor('#888888').stroke();
-    doc.font('Helvetica').fontSize(10).fillColor('#000000');
-    let sn = 1;
-    salesOrder.lineItems.forEach((item: any) => {
-      currentX = 50;
-      let rowY = y;
-      // Calculate wrapped heights for each cell
-      const snResult = doc.heightOfString(sn.toString(), { width: colWidths[0] });
-      const partNumberResult = doc.heightOfString(item.part_number, { width: colWidths[1] });
-      const partDescResult = doc.heightOfString(item.part_description, { width: colWidths[2] });
-      const qtyResult = doc.heightOfString(parseFloat(item.quantity_sold).toString(), { width: colWidths[3] });
-      const unitResult = doc.heightOfString(item.unit, { width: colWidths[4] });
-      const unitPriceResult = doc.heightOfString(parseFloat(item.unit_price).toFixed(2), { width: colWidths[5] });
-      const lineTotalResult = doc.heightOfString(parseFloat(item.line_amount).toFixed(2), { width: colWidths[6] });
-      const rowHeight = Math.max(snResult, partNumberResult, partDescResult, qtyResult, unitResult, unitPriceResult, lineTotalResult, 12);
-      // SN
-      doc.text(sn.toString(), currentX, rowY, { width: colWidths[0], align: 'left' });
-      currentX += colWidths[0];
-      // Part Number
-      doc.text(item.part_number, currentX, rowY, { width: colWidths[1], align: 'left' });
-      currentX += colWidths[1];
-      // Part Description
-      doc.text(item.part_description, currentX, rowY, { width: colWidths[2], align: 'left' });
-      currentX += colWidths[2];
-      // Quantity
-      doc.text(parseFloat(item.quantity_sold).toString(), currentX, rowY, { width: colWidths[3], align: 'left' });
-      currentX += colWidths[3];
-      // Unit
-      doc.text(item.unit, currentX, rowY, { width: colWidths[4], align: 'left' });
-      currentX += colWidths[4];
-      // Unit Price
-      doc.text(parseFloat(item.unit_price).toFixed(2), currentX, rowY, { width: colWidths[5], align: 'right' });
-      currentX += colWidths[5];
-      // Line Total
-      doc.text(parseFloat(item.line_amount).toFixed(2), currentX, rowY, { width: colWidths[6], align: 'right' });
-      // Move y to the max y of the wrapped fields plus some padding
-      y += rowHeight + 4;
-      // Draw row line
-      doc.moveTo(50, y - 2).lineTo(550, y - 2).strokeColor('#eeeeee').stroke();
-      sn++;
-      if (y > doc.page.height - 100) {
-        doc.addPage();
-        y = 50;
-      }
-    });
-    y += 10;
-    doc.moveTo(50, y).lineTo(550, y).strokeColor('#444444').stroke();
-    y += 10;
+    // --- Line Items temporarily suppressed ---
+    y += 6;
 
     // --- Totals Section ---
     doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Sub Total:', 400, y, { align: 'left', width: 80 });
@@ -801,7 +786,7 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
 
     // --- Terms Section ---
     y += 40;
-    if (salesOrder.terms && salesOrder.terms.trim()) {
+    if (isFieldVisible('terms') && salesOrder.terms && salesOrder.terms.trim()) {
       doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Terms:', 50, y);
       y += 16;
       const termsResult = doc.font('Helvetica').fontSize(10).fillColor('#000000').text(salesOrder.terms, 50, y, { 
@@ -2198,3 +2183,4 @@ router.delete('/:salesOrderId/parts-to-order/:partNumber', async (req: Request, 
 });
 
 export default router; 
+

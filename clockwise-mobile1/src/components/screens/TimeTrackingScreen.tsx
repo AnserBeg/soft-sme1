@@ -42,6 +42,7 @@ interface SalesOrder {
   name: string;
   number: string;
   product_name?: string;
+  customer_name?: string;
 }
 
 export const TimeTrackingScreen: React.FC = () => {
@@ -331,9 +332,20 @@ export const TimeTrackingScreen: React.FC = () => {
     return profiles.find(p => p.id === profileId)?.name || 'Unknown Profile';
   };
 
+  const formatSalesOrderLabel = (salesOrder?: SalesOrder) => {
+    if (!salesOrder) return 'Unknown Order';
+    const parts = [
+      salesOrder.number,
+      salesOrder.customer_name,
+      salesOrder.product_name || salesOrder.name
+    ].filter(Boolean);
+
+    return parts.join(' | ');
+  };
+
   const getSalesOrderName = (salesOrderId: string) => {
     const so = salesOrders.find(s => s.id === salesOrderId);
-    return so ? `${so.number} - ${so.name}` : 'Unknown Order';
+    return formatSalesOrderLabel(so);
   };
 
   // Helper function to get profile name from time entry data
@@ -343,7 +355,13 @@ export const TimeTrackingScreen: React.FC = () => {
 
   // Helper function to get sales order name from time entry data
   const getSalesOrderNameFromEntry = (entry: any) => {
-    return entry.sales_order_number || getSalesOrderName(entry.sales_order_id);
+    const labelFromState = getSalesOrderName(entry.sales_order_id);
+    if (labelFromState !== 'Unknown Order') {
+      return labelFromState;
+    }
+
+    const fallbackParts = [entry.sales_order_number, entry.customer_name, entry.product_name].filter(Boolean);
+    return fallbackParts.join(' | ') || 'Unknown Order';
   };
 
   const activeEntries = timeEntries.filter(entry => entry.status === 'active');
@@ -359,6 +377,9 @@ export const TimeTrackingScreen: React.FC = () => {
   const hasActiveEntries = selectedProfile ? allEntries.some(entry => 
     entry.profile_id?.toString() === selectedProfile?.toString() && !entry.clock_out
   ) : false;
+  const selectedSalesOrderDetails = selectedSalesOrder
+    ? salesOrders.find(so => so.id?.toString() === selectedSalesOrder?.toString())
+    : undefined;
   
   console.log('Current time entries:', timeEntries);
   console.log('Current active entry:', currentActiveEntry);
@@ -427,17 +448,17 @@ export const TimeTrackingScreen: React.FC = () => {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid grid-cols-1 gap-3">
-                             <div>
-                 <label className="text-sm font-medium text-muted-foreground mb-2 block">
-                   Your Profile
-                 </label>
-                 {profiles.length === 0 ? (
-                   <div className="h-12 flex items-center justify-center border border-dashed border-muted-foreground/25 rounded-md bg-muted/5">
-                     <p className="text-sm text-muted-foreground text-center">
-                       No profile assigned. You can view time entries but cannot clock in.
-                     </p>
-                   </div>
-                 ) : (
+              <div>
+                <label className="text-sm font-medium text-muted-foreground mb-2 block">
+                  Your Profile
+                </label>
+                {profiles.length === 0 ? (
+                  <div className="h-12 flex items-center justify-center border border-dashed border-muted-foreground/25 rounded-md bg-muted/5">
+                    <p className="text-sm text-muted-foreground text-center">
+                      No profile assigned. You can view time entries but cannot clock in.
+                    </p>
+                  </div>
+                ) : (
                   <div className="h-12 flex items-center px-3 border border-input bg-background rounded-md">
                     <span className="font-medium">
                       {profiles.find(p => p.id?.toString() === selectedProfile?.toString())?.name || 'Loading...'}
@@ -451,26 +472,51 @@ export const TimeTrackingScreen: React.FC = () => {
                   Select Sales Order
                 </label>
                 <Select value={selectedSalesOrder} onValueChange={setSelectedSalesOrder} disabled={!selectedProfile}>
-                  <SelectTrigger className="h-12">
-                    <SelectValue placeholder={selectedProfile ? "Select a sales order" : "Select a profile first"} />
+                  <SelectTrigger className="h-auto min-h-[3rem] items-start py-3 text-left text-base [&>span]:line-clamp-2 [&>span]:text-left">
+                    <SelectValue className="sr-only" placeholder={selectedProfile ? "Select a sales order" : "Select a profile first"} />
+                    <div className="flex flex-col text-left">
+                      {selectedSalesOrderDetails ? (
+                        <>
+                          <span className="font-semibold leading-tight">{selectedSalesOrderDetails.number}</span>
+                          <span className="text-xs text-muted-foreground leading-tight">
+                            {[selectedSalesOrderDetails.customer_name, selectedSalesOrderDetails.product_name].filter(Boolean).join(' | ') || 'No additional details'}
+                          </span>
+                        </>
+                      ) : (
+                        <span className="text-sm text-muted-foreground">
+                          {selectedProfile ? "Select a sales order" : "Select a profile first"}
+                        </span>
+                      )}
+                    </div>
                   </SelectTrigger>
-                  <SelectContent className="max-h-60 overflow-y-auto bg-white">
-                                         {salesOrders.map((so) => {
-                       // Only disable SO if the selected profile has an open entry for this SO
-                       const isClockedInForSO = !!(selectedProfile && allEntries.find(
-                         entry => entry.profile_id?.toString() === selectedProfile?.toString() && entry.sales_order_id?.toString() === so.id?.toString() && !entry.clock_out
-                       ));
+                  <SelectContent className="max-h-80 bg-white shadow-lg border min-w-[18rem]">
+                    {salesOrders.map((so) => {
+                      // Only disable SO if the selected profile has an open entry for this SO
+                      const isClockedInForSO = !!(selectedProfile && allEntries.find(
+                        entry => entry.profile_id?.toString() === selectedProfile?.toString() && entry.sales_order_id?.toString() === so.id?.toString() && !entry.clock_out
+                      ));
+                      const label = formatSalesOrderLabel(so);
                       return (
                         <SelectItem
                           key={so.id}
                           value={so.id}
-                          className="py-2 px-4 hover:bg-primary/10"
+                          textValue={label}
+                          className="items-start gap-2 whitespace-normal py-3 pl-10 pr-3 text-left leading-5 hover:bg-primary/5"
                           disabled={isClockedInForSO}
                         >
-                          <div>
-                            <span className="font-medium">{so.number}</span>
-                            {so.product_name && <span className="ml-2 text-muted-foreground">{so.product_name}</span>}
-                            {isClockedInForSO ? <span className="ml-2 text-warning">(Already Clocked In)</span> : ''}
+                          <div className="flex flex-col gap-1 text-left">
+                            <div className="flex items-start justify-between gap-2">
+                              <span className="font-semibold text-sm">{so.number}</span>
+                              {so.customer_name && (
+                                <span className="text-xs text-muted-foreground truncate max-w-[50%]">
+                                  {so.customer_name}
+                                </span>
+                              )}
+                            </div>
+                            {so.product_name && (
+                              <span className="text-xs text-muted-foreground leading-tight">{so.product_name}</span>
+                            )}
+                            {isClockedInForSO ? <span className="text-[11px] font-medium text-warning">Already Clocked In</span> : ''}
                           </div>
                         </SelectItem>
                       );
@@ -480,47 +526,47 @@ export const TimeTrackingScreen: React.FC = () => {
               </div>
             </div>
             
-                         {!hasActiveEntries ? (
-               <>
-                 {!selectedProfile ? (
-                   <div className="text-center py-4">
-                     <p className="text-muted-foreground text-sm">
-                       No profile selected. You can view time entries but cannot clock in.
-                     </p>
-                   </div>
-                 ) : (
-                   <Button
-                     onClick={handleClockIn}
-                     disabled={
-                       isLoading ||
-                       !selectedProfile ||
-                       !selectedSalesOrder
-                     }
-                     variant="success"
-                     size="mobile"
-                     className="w-full"
-                   >
-                     {isLoading ? (
-                       <>
-                         <RefreshCw className="h-4 w-4 animate-spin mr-2" />
-                         Clocking In...
-                       </>
-                     ) : (
-                       <>
-                         <Play className="h-4 w-4 mr-2" />
-                         Clock In
-                       </>
-                     )}
-                   </Button>
-                 )}
-               </>
-             ) : (
-                              <div className="text-center py-4">
-                 <p className="text-warning text-sm font-medium">
-                   You are currently clocked in. Please clock out before starting a new session.
-                 </p>
-               </div>
-             )}
+            {!hasActiveEntries ? (
+              <>
+                {!selectedProfile ? (
+                  <div className="text-center py-4">
+                    <p className="text-muted-foreground text-sm">
+                      No profile selected. You can view time entries but cannot clock in.
+                    </p>
+                  </div>
+                ) : (
+                  <Button
+                    onClick={handleClockIn}
+                    disabled={
+                      isLoading ||
+                      !selectedProfile ||
+                      !selectedSalesOrder
+                    }
+                    variant="success"
+                    size="mobile"
+                    className="w-full"
+                  >
+                    {isLoading ? (
+                      <>
+                        <RefreshCw className="h-4 w-4 animate-spin mr-2" />
+                        Clocking In...
+                      </>
+                    ) : (
+                      <>
+                        <Play className="h-4 w-4 mr-2" />
+                        Clock In
+                      </>
+                    )}
+                  </Button>
+                )}
+              </>
+            ) : (
+              <div className="text-center py-4">
+                <p className="text-warning text-sm font-medium">
+                  You are currently clocked in. Please clock out before starting a new session.
+                </p>
+              </div>
+            )}
           </CardContent>
         </Card>
 

@@ -1157,7 +1157,14 @@ const SalesOrderDetailPage: React.FC = () => {
     try {
       // Save first if open
       if (salesOrder.status?.toLowerCase() !== 'closed') await handleSave();
-      const res = await api.get(`/api/sales-orders/${salesOrder.sales_order_id}/pdf`, { responseType: 'blob' });
+      const visibleFields = Object.entries(fieldVisibility)
+        .filter(([, isVisible]) => isVisible)
+        .map(([key]) => key)
+        .join(',');
+      const res = await api.get(`/api/sales-orders/${salesOrder.sales_order_id}/pdf`, { 
+        responseType: 'blob',
+        params: { visibleFields }
+      });
       const url = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
       const a = document.createElement('a');
       a.href = url; a.download = `sales_order_${salesOrder.sales_order_number}.pdf`;
