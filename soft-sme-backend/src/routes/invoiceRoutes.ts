@@ -303,6 +303,15 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
     const logoSource = await getLogoImageSource(businessProfile.logo_url);
 
     const doc = new PDFDocument({ margin: 40 });
+    doc.on('error', (err: any) => {
+      console.error('invoiceRoutes: pdf stream error', err);
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'Failed to generate invoice PDF' });
+      } else {
+        res.end();
+      }
+    });
+
     const filename = `${invoice.invoice_number || 'invoice'}.pdf`;
     res.setHeader('Content-disposition', `attachment; filename="${filename}"`);
     res.setHeader('Content-type', 'application/pdf');
@@ -343,8 +352,10 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
     if (invoice.email) doc.text(`Email: ${invoice.email}`);
 
     doc.moveDown();
-    doc.font('Helvetica-Bold').text('Invoice Date: ', { continued: true }).font('Helvetica').text(invoice.invoice_date ? new Date(invoice.invoice_date).toLocaleDateString() : '');
-    doc.font('Helvetica-Bold').text('Due Date: ', { continued: true }).font('Helvetica').text(invoice.due_date ? new Date(invoice.due_date).toLocaleDateString() : '');
+    const invoiceDate = invoice.invoice_date ? new Date(invoice.invoice_date) : null;
+    const dueDate = invoice.due_date ? new Date(invoice.due_date) : null;
+    doc.font('Helvetica-Bold').text('Invoice Date: ', { continued: true }).font('Helvetica').text(invoiceDate && !isNaN(invoiceDate.getTime()) ? invoiceDate.toLocaleDateString() : '');
+    doc.font('Helvetica-Bold').text('Due Date: ', { continued: true }).font('Helvetica').text(dueDate && !isNaN(dueDate.getTime()) ? dueDate.toLocaleDateString() : '');
     doc.font('Helvetica-Bold').text('Status: ', { continued: true }).font('Helvetica').text(invoice.status || '');
     if (invoice.source_sales_order_number) {
       doc.font('Helvetica-Bold').text('Source Sales Order: ', { continued: true }).font('Helvetica').text(invoice.source_sales_order_number);
@@ -378,8 +389,8 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
         li.part_description || '',
         String(li.quantity ?? ''),
         li.unit || '',
-        formatCurrency(li.unit_price || 0),
-        formatCurrency(li.line_amount || 0),
+        formatCurrency(Number(li.unit_price) || 0),
+        formatCurrency(Number(li.line_amount) || 0),
       ];
       row.forEach((val, idx) => {
         doc.text(val, x, y, { width: widths[idx] });
@@ -389,9 +400,9 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
     });
 
     doc.moveDown(2);
-    doc.font('Helvetica-Bold').fontSize(12).text('Subtotal: ', { continued: true }).font('Helvetica').text(formatCurrency(invoice.subtotal || 0));
-    doc.font('Helvetica-Bold').text('GST: ', { continued: true }).font('Helvetica').text(formatCurrency(invoice.total_gst_amount || 0));
-    doc.font('Helvetica-Bold').text('Total: ', { continued: true }).font('Helvetica').text(formatCurrency(invoice.total_amount || 0));
+    doc.font('Helvetica-Bold').fontSize(12).text('Subtotal: ', { continued: true }).font('Helvetica').text(formatCurrency(Number(invoice.subtotal) || 0));
+    doc.font('Helvetica-Bold').text('GST: ', { continued: true }).font('Helvetica').text(formatCurrency(Number(invoice.total_gst_amount) || 0));
+    doc.font('Helvetica-Bold').text('Total: ', { continued: true }).font('Helvetica').text(formatCurrency(Number(invoice.total_amount) || 0));
 
     doc.end();
   } catch (error) {
