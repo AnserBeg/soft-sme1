@@ -12,6 +12,10 @@ import {
   Chip,
   Divider,
   InputAdornment,
+  Popover,
+  FormGroup,
+  FormControlLabel,
+  Checkbox,
 } from '@mui/material';
 import dayjs, { Dayjs } from 'dayjs';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
@@ -68,6 +72,28 @@ const InvoiceDetailPage: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
+  const FIELD_VISIBILITY_STORAGE_KEY = 'invoiceDetail.fieldVisibility';
+  const [fieldVisibility, setFieldVisibility] = useState<Record<string, boolean>>(() => {
+    if (typeof window === 'undefined') return {
+      vin: true,
+      productDescription: true,
+      unitNumber: true,
+      vehicleMake: true,
+      vehicleModel: true,
+    };
+    const stored = localStorage.getItem(FIELD_VISIBILITY_STORAGE_KEY);
+    if (stored) {
+      try { return JSON.parse(stored); } catch {}
+    }
+    return {
+      vin: true,
+      productDescription: true,
+      unitNumber: true,
+      vehicleMake: true,
+      vehicleModel: true,
+    };
+  });
+  const [fieldPickerAnchor, setFieldPickerAnchor] = useState<HTMLElement | null>(null);
 
   const totals = useMemo(() => {
     const subtotal = lineItems.reduce((sum, item) => sum + (Number(item.line_amount) || 0), 0);
@@ -91,6 +117,31 @@ const InvoiceDetailPage: React.FC = () => {
       }
     })();
   }, []);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(FIELD_VISIBILITY_STORAGE_KEY, JSON.stringify(fieldVisibility));
+    }
+  }, [fieldVisibility]);
+
+  const applySalesOrderDefaults = async (soId: number) => {
+    try {
+      const res = await api.get(`/api/sales-orders/${soId}`);
+      const so = res.data?.salesOrder || res.data;
+      if (!so) return;
+      setInvoice((prev: any) => ({
+        ...prev,
+        product_name: prev.product_name || so.product_name || '',
+        product_description: prev.product_description || so.product_description || '',
+        vin_number: prev.vin_number || so.vin_number || '',
+        unit_number: prev.unit_number || so.unit_number || '',
+        vehicle_make: prev.vehicle_make || so.vehicle_make || '',
+        vehicle_model: prev.vehicle_model || so.vehicle_model || '',
+      }));
+    } catch (e) {
+      console.warn('Failed to pull sales order defaults for invoice', e);
+    }
+  };
 
   useEffect(() => {
     if (!isNew && id) {
@@ -126,6 +177,9 @@ const InvoiceDetailPage: React.FC = () => {
           setCustomer(option || null);
           setInvoiceDate(header.invoice_date ? dayjs(header.invoice_date) : dayjs());
           setDueDate(header.due_date ? dayjs(header.due_date) : dayjs().add(option?.defaultTerms || 30, 'day'));
+          if (header.sales_order_id) {
+            applySalesOrderDefaults(header.sales_order_id);
+          }
         } catch (e) {
           console.error('Failed to load invoice', e);
           setError('Failed to load invoice');
@@ -160,6 +214,9 @@ const InvoiceDetailPage: React.FC = () => {
       return clone;
     });
   };
+
+  const openFieldPicker = (event: React.MouseEvent<HTMLElement>) => setFieldPickerAnchor(event.currentTarget);
+  const closeFieldPicker = () => setFieldPickerAnchor(null);
 
   const addLineItem = () => setLineItems((prev) => [...prev, defaultLineItem()]);
   const removeLineItem = (index: number) => setLineItems((prev) => prev.filter((_, idx) => idx !== index));
@@ -295,6 +352,9 @@ const InvoiceDetailPage: React.FC = () => {
             <Button variant="contained" startIcon={<SaveIcon />} onClick={handleSave} disabled={saving}>
               {saving ? 'Saving...' : 'Save'}
             </Button>
+            <Button variant="outlined" onClick={(e) => setFieldPickerAnchor(e.currentTarget)}>
+              Customize Fields
+            </Button>
           </Stack>
         </Box>
 
@@ -317,38 +377,46 @@ const InvoiceDetailPage: React.FC = () => {
               />
             </Grid>
             <Grid item xs={12}>
-              <TextField
-                label="Product Description"
-                value={invoice.product_description || ''}
-                onChange={(e) => setInvoice((prev: any) => ({ ...prev, product_description: e.target.value }))}
-                fullWidth
-                multiline
-                minRows={2}
-              />
+              {fieldVisibility.productDescription !== false && (
+                <TextField
+                  label="Product Description"
+                  value={invoice.product_description || ''}
+                  onChange={(e) => setInvoice((prev: any) => ({ ...prev, product_description: e.target.value }))}
+                  fullWidth
+                  multiline
+                  minRows={2}
+                />
+              )}
             </Grid>
             <Grid item xs={12} sm={4}>
-              <TextField
-                label="Unit #"
-                value={invoice.unit_number || ''}
-                onChange={(e) => setInvoice((prev: any) => ({ ...prev, unit_number: e.target.value }))}
-                fullWidth
-              />
+              {fieldVisibility.unitNumber !== false && (
+                <TextField
+                  label="Unit #"
+                  value={invoice.unit_number || ''}
+                  onChange={(e) => setInvoice((prev: any) => ({ ...prev, unit_number: e.target.value }))}
+                  fullWidth
+                />
+              )}
             </Grid>
             <Grid item xs={12} sm={4}>
-              <TextField
-                label="Make"
-                value={invoice.vehicle_make || ''}
-                onChange={(e) => setInvoice((prev: any) => ({ ...prev, vehicle_make: e.target.value }))}
-                fullWidth
-              />
+              {fieldVisibility.vehicleMake !== false && (
+                <TextField
+                  label="Make"
+                  value={invoice.vehicle_make || ''}
+                  onChange={(e) => setInvoice((prev: any) => ({ ...prev, vehicle_make: e.target.value }))}
+                  fullWidth
+                />
+              )}
             </Grid>
             <Grid item xs={12} sm={4}>
-              <TextField
-                label="Model"
-                value={invoice.vehicle_model || ''}
-                onChange={(e) => setInvoice((prev: any) => ({ ...prev, vehicle_model: e.target.value }))}
-                fullWidth
-              />
+              {fieldVisibility.vehicleModel !== false && (
+                <TextField
+                  label="Model"
+                  value={invoice.vehicle_model || ''}
+                  onChange={(e) => setInvoice((prev: any) => ({ ...prev, vehicle_model: e.target.value }))}
+                  fullWidth
+                />
+              )}
             </Grid>
             <Grid item xs={12} sm={6}>
               <TextField
@@ -401,6 +469,38 @@ const InvoiceDetailPage: React.FC = () => {
             </Grid>
           </Grid>
         </Paper>
+      <Popover
+        open={Boolean(fieldPickerAnchor)}
+        anchorEl={fieldPickerAnchor}
+        onClose={closeFieldPicker}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+      >
+        <Box sx={{ p: 2, minWidth: 220 }}>
+          <Typography variant="subtitle1" sx={{ mb: 1.5 }}>Show / Hide Fields</Typography>
+          <FormGroup>
+            <FormControlLabel
+              control={<Checkbox size="small" checked={fieldVisibility.vin !== false} onChange={(e) => setFieldVisibility((prev) => ({ ...prev, vin: e.target.checked }))} />}
+              label="VIN #"
+            />
+            <FormControlLabel
+              control={<Checkbox size="small" checked={fieldVisibility.productDescription !== false} onChange={(e) => setFieldVisibility((prev) => ({ ...prev, productDescription: e.target.checked }))} />}
+              label="Product Description"
+            />
+            <FormControlLabel
+              control={<Checkbox size="small" checked={fieldVisibility.unitNumber !== false} onChange={(e) => setFieldVisibility((prev) => ({ ...prev, unitNumber: e.target.checked }))} />}
+              label="Unit #"
+            />
+            <FormControlLabel
+              control={<Checkbox size="small" checked={fieldVisibility.vehicleMake !== false} onChange={(e) => setFieldVisibility((prev) => ({ ...prev, vehicleMake: e.target.checked }))} />}
+              label="Make"
+            />
+            <FormControlLabel
+              control={<Checkbox size="small" checked={fieldVisibility.vehicleModel !== false} onChange={(e) => setFieldVisibility((prev) => ({ ...prev, vehicleModel: e.target.checked }))} />}
+              label="Model"
+            />
+          </FormGroup>
+        </Box>
+      </Popover>
 
         <Typography variant="h6" sx={{ mt: 2, mb: 0.5 }}>Line Items</Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
