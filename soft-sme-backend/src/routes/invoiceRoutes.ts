@@ -277,6 +277,117 @@ router.get('/customers/:customerId/statement', async (req: Request, res: Respons
   }
 });
 
+// Invoice PDF
+router.get('/:id/pdf', async (req: Request, res: Response) => {
+  const invoiceId = normalizeId(req.params.id);
+  if (!invoiceId) return res.status(400).json({ error: 'Invalid invoice id' });
+  try {
+    const { invoice, lineItems } = await invoiceService.getInvoice(invoiceId);
+
+    const bp = await pool.query(
+      'SELECT company_name, street_address, city, province, country, postal_code, telephone_number, email, logo_url FROM business_profile ORDER BY id DESC LIMIT 1'
+    );
+    const businessProfile = bp.rows[0] || {};
+    const logoSource = await getLogoImageSource(businessProfile.logo_url);
+
+    const doc = new PDFDocument({ margin: 40 });
+    const filename = `${invoice.invoice_number || 'invoice'}.pdf`;
+    res.setHeader('Content-disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-type', 'application/pdf');
+    doc.pipe(res);
+
+    if (logoSource) {
+      try { doc.image(logoSource as any, 40, 30, { width: 140 }); } catch {}
+    }
+    doc.font('Helvetica-Bold').fontSize(18).text('Invoice', 200, 40, { align: 'right' });
+    doc.font('Helvetica').fontSize(12).text(invoice.invoice_number || '', { align: 'right' });
+
+    doc.moveDown();
+    doc.font('Helvetica-Bold').text('From');
+    doc.font('Helvetica').text(businessProfile.company_name || '');
+    const companyAddress = [
+      businessProfile.street_address,
+      businessProfile.city,
+      businessProfile.province,
+      businessProfile.country,
+      businessProfile.postal_code,
+    ].filter(Boolean).join(', ');
+    if (companyAddress) doc.text(companyAddress);
+    if (businessProfile.telephone_number) doc.text(`Phone: ${businessProfile.telephone_number}`);
+    if (businessProfile.email) doc.text(`Email: ${businessProfile.email}`);
+
+    doc.moveDown();
+    doc.font('Helvetica-Bold').text('Bill To');
+    doc.font('Helvetica').text(invoice.customer_name || '');
+    const customerAddress = [
+      invoice.street_address,
+      invoice.city,
+      invoice.province,
+      invoice.country,
+      invoice.postal_code,
+    ].filter(Boolean).join(', ');
+    if (customerAddress) doc.text(customerAddress);
+    if (invoice.telephone_number) doc.text(`Phone: ${invoice.telephone_number}`);
+    if (invoice.email) doc.text(`Email: ${invoice.email}`);
+
+    doc.moveDown();
+    doc.font('Helvetica-Bold').text('Invoice Date: ', { continued: true }).font('Helvetica').text(invoice.invoice_date ? new Date(invoice.invoice_date).toLocaleDateString() : '');
+    doc.font('Helvetica-Bold').text('Due Date: ', { continued: true }).font('Helvetica').text(invoice.due_date ? new Date(invoice.due_date).toLocaleDateString() : '');
+    doc.font('Helvetica-Bold').text('Status: ', { continued: true }).font('Helvetica').text(invoice.status || '');
+    if (invoice.source_sales_order_number) {
+      doc.font('Helvetica-Bold').text('Source Sales Order: ', { continued: true }).font('Helvetica').text(invoice.source_sales_order_number);
+    }
+    if (invoice.notes) {
+      doc.moveDown().font('Helvetica-Bold').text('Notes').font('Helvetica').text(invoice.notes);
+    }
+
+    doc.moveDown().font('Helvetica-Bold').fontSize(12).text('Line Items');
+    doc.moveDown(0.5).font('Helvetica').fontSize(10);
+    const headers = ['Part #', 'Description', 'Qty', 'Unit', 'Unit Price', 'Line Total'];
+    const widths = [80, 200, 50, 60, 80, 80];
+    let y = doc.y;
+    let x = doc.x;
+    headers.forEach((h, idx) => {
+      doc.text(h, x, y, { width: widths[idx] });
+      x += widths[idx];
+    });
+    y += 16;
+    doc.moveTo(40, y).lineTo(520, y).stroke();
+    y += 6;
+
+    lineItems.forEach((li: any) => {
+      if (y > doc.page.height - 100) {
+        doc.addPage();
+        y = doc.y;
+      }
+      x = 40;
+      const row = [
+        li.part_number || '',
+        li.part_description || '',
+        String(li.quantity ?? ''),
+        li.unit || '',
+        formatCurrency(li.unit_price || 0),
+        formatCurrency(li.line_amount || 0),
+      ];
+      row.forEach((val, idx) => {
+        doc.text(val, x, y, { width: widths[idx] });
+        x += widths[idx];
+      });
+      y += 14;
+    });
+
+    doc.moveDown(2);
+    doc.font('Helvetica-Bold').fontSize(12).text('Subtotal: ', { continued: true }).font('Helvetica').text(formatCurrency(invoice.subtotal || 0));
+    doc.font('Helvetica-Bold').text('GST: ', { continued: true }).font('Helvetica').text(formatCurrency(invoice.total_gst_amount || 0));
+    doc.font('Helvetica-Bold').text('Total: ', { continued: true }).font('Helvetica').text(formatCurrency(invoice.total_amount || 0));
+
+    doc.end();
+  } catch (error) {
+    console.error('invoiceRoutes: pdf error', error);
+    res.status(500).json({ error: 'Failed to generate invoice PDF' });
+  }
+});
+
 // Get invoice detail
 router.get('/:id', async (req: Request, res: Response) => {
   const invoiceId = normalizeId(req.params.id);

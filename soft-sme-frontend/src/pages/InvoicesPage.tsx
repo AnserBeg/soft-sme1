@@ -19,6 +19,7 @@ import { fetchInvoices } from '../services/invoiceService';
 import { getCustomers } from '../services/customerService';
 import { Invoice } from '../types/invoice';
 import { formatCurrency } from '../utils/formatters';
+import Autocomplete from '@mui/material/Autocomplete';
 
 interface CustomerOption {
   id: number;
@@ -32,7 +33,8 @@ const InvoicesPage: React.FC = () => {
   const [summary, setSummary] = useState({ totalReceivables: 0, totalOverdue: 0 });
   const [loading, setLoading] = useState(false);
   const [customers, setCustomers] = useState<CustomerOption[]>([]);
-  const [customerFilter, setCustomerFilter] = useState('');
+  const [customerValue, setCustomerValue] = useState<CustomerOption | null>(null);
+  const [customerInput, setCustomerInput] = useState('');
 
   useEffect(() => {
     (async () => {
@@ -53,7 +55,7 @@ const InvoicesPage: React.FC = () => {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const selected = customers.find((c) => String(c.id) === customerFilter);
+      const selected = customerValue;
       const data = await fetchInvoices(selected ? { customer_id: selected.id } : undefined);
       const withId = data.invoices.map((inv: Invoice) => ({
         ...inv,
@@ -73,7 +75,7 @@ const InvoicesPage: React.FC = () => {
   useEffect(() => {
     fetchData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [customerFilter, customers.length]);
+  }, [customerValue?.id, customers.length]);
 
   const columns = useMemo<GridColDef[]>(() => {
     return [
@@ -124,7 +126,14 @@ const InvoicesPage: React.FC = () => {
     navigate(`/invoices/${params.row.invoice_id}`);
   };
 
-  const totalRows = rows.length;
+  const overdueCount = useMemo(
+    () =>
+      rows.filter((r) => {
+        const due = r.due_date ? new Date(r.due_date) : null;
+        return r.status === 'Unpaid' && due && due < new Date();
+      }).length,
+    [rows]
+  );
 
   return (
     <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
@@ -162,31 +171,27 @@ const InvoicesPage: React.FC = () => {
         <Grid item xs={12} sm={6} md={3}>
           <Paper sx={{ p: 2 }}>
             <Typography variant="body2" color="text.secondary">
-              Customer Filter
+              Customer
             </Typography>
-            <TextField
-              select
-              SelectProps={{ native: true }}
-              value={customerFilter}
-              onChange={(e) => setCustomerFilter(e.target.value)}
-              fullWidth
-              size="small"
-            >
-              <option value="">All Customers</option>
-              {customers.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.label}
-                </option>
-              ))}
-            </TextField>
+            <Autocomplete
+              options={customers}
+              getOptionLabel={(option) => option.label}
+              value={customerValue}
+              inputValue={customerInput}
+              onInputChange={(_, val) => setCustomerInput(val)}
+              onChange={(_, val) => setCustomerValue(val)}
+              renderInput={(params) => <TextField {...params} size="small" placeholder="Type or select a customer" />}
+              clearOnBlur={false}
+              sx={{ mt: 1 }}
+            />
           </Paper>
         </Grid>
         <Grid item xs={12} sm={6} md={3}>
           <Paper sx={{ p: 2 }}>
             <Typography variant="body2" color="text.secondary">
-              Count
+              Overdue Invoices
             </Typography>
-            <Typography variant="h5">{totalRows}</Typography>
+            <Typography variant="h5">{overdueCount}</Typography>
           </Paper>
         </Grid>
       </Grid>

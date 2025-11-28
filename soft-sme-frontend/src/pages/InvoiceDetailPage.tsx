@@ -7,16 +7,11 @@ import {
   Grid,
   Paper,
   Stack,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
   TextField,
   Typography,
   Chip,
   Divider,
+  InputAdornment,
 } from '@mui/material';
 import dayjs, { Dayjs } from 'dayjs';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
@@ -31,6 +26,7 @@ import { getCustomers } from '../services/customerService';
 import { createInvoice, getInvoice, updateInvoice } from '../services/invoiceService';
 import { InvoiceLineItem } from '../types/invoice';
 import { formatCurrency } from '../utils/formatters';
+import api from '../api/axios';
 
 interface CustomerOption {
   id: number;
@@ -62,6 +58,7 @@ const InvoiceDetailPage: React.FC = () => {
   const [loading, setLoading] = useState(!isNew);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [downloading, setDownloading] = useState(false);
 
   const totals = useMemo(() => {
     const subtotal = lineItems.reduce((sum, item) => sum + (Number(item.line_amount) || 0), 0);
@@ -201,6 +198,27 @@ const InvoiceDetailPage: React.FC = () => {
     }
   };
 
+  const handleDownloadPDF = async () => {
+    if (isNew || !invoice.invoice_id) return;
+    setDownloading(true);
+    try {
+      const res = await api.get(`/api/invoices/${invoice.invoice_id}/pdf`, { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${invoice.invoice_number || 'invoice'}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error('Failed to download invoice PDF', e);
+      toast.error('Failed to download invoice PDF');
+    } finally {
+      setDownloading(false);
+    }
+  };
+
   if (loading) {
     return (
       <Container maxWidth="md" sx={{ mt: 6, textAlign: 'center' }}>
@@ -256,6 +274,9 @@ const InvoiceDetailPage: React.FC = () => {
                 }))
               }
             />
+            <Button variant="outlined" startIcon={<ReceiptLongIcon />} onClick={handleDownloadPDF} disabled={downloading || isNew}>
+              {downloading ? 'Downloading...' : 'Download PDF'}
+            </Button>
             <Button variant="contained" startIcon={<SaveIcon />} onClick={handleSave} disabled={saving}>
               {saving ? 'Saving...' : 'Save'}
             </Button>
@@ -316,105 +337,99 @@ const InvoiceDetailPage: React.FC = () => {
           </Grid>
         </Paper>
 
-        <Paper sx={{ p: 2 }}>
-          <Stack direction="row" alignItems="center" justifyContent="space-between" mb={2}>
-            <Typography variant="h6">Line Items</Typography>
-            <Button startIcon={<AddIcon />} onClick={addLineItem}>
+        <Typography variant="h6" sx={{ mt: 2, mb: 0.5 }}>Line Items</Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          Each part number can only appear once. Edit existing line items to change quantities.
+        </Typography>
+        <Paper sx={{ p: 3, mb: 3 }} elevation={3}>
+          <Grid container spacing={2}>
+            {lineItems.map((item, idx) => (
+              <React.Fragment key={idx}>
+                <Grid item xs={12} sm={6} md={2.5}>
+                  <TextField
+                    label="Part Number *"
+                    value={item.part_number}
+                    onChange={(e) => updateLineItem(idx, 'part_number', e.target.value)}
+                    fullWidth
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6} md={3.5}>
+                  <TextField
+                    label="Part Description *"
+                    value={item.part_description}
+                    onChange={(e) => updateLineItem(idx, 'part_description', e.target.value)}
+                    fullWidth
+                  />
+                </Grid>
+                <Grid item xs={6} sm={3} md={1.2}>
+                  <TextField
+                    label="Qty"
+                    type="number"
+                    value={item.quantity}
+                    onChange={(e) => updateLineItem(idx, 'quantity', e.target.value)}
+                    fullWidth
+                    inputProps={{ step: 0.01 }}
+                  />
+                </Grid>
+                <Grid item xs={6} sm={3} md={1}>
+                  <TextField
+                    label="Unit"
+                    value={item.unit}
+                    onChange={(e) => updateLineItem(idx, 'unit', e.target.value)}
+                    fullWidth
+                  />
+                </Grid>
+                <Grid item xs={6} sm={3} md={1.5}>
+                  <TextField
+                    label="Unit Price"
+                    type="number"
+                    value={item.unit_price}
+                    onChange={(e) => updateLineItem(idx, 'unit_price', e.target.value)}
+                    fullWidth
+                    InputProps={{ startAdornment: <InputAdornment position="start">$</InputAdornment> }}
+                  />
+                </Grid>
+                <Grid item xs={6} sm={3} md={1.5}>
+                  <TextField
+                    label="Amount"
+                    type="number"
+                    value={item.line_amount}
+                    onChange={(e) => updateLineItem(idx, 'line_amount', e.target.value)}
+                    fullWidth
+                    InputProps={{ startAdornment: <InputAdornment position="start">$</InputAdornment> }}
+                  />
+                </Grid>
+                <Grid item xs={12} sm={3} md={1} sx={{ display: 'flex', alignItems: 'center' }}>
+                  <Button
+                    variant="outlined"
+                    color="primary"
+                    onClick={() => removeLineItem(idx)}
+                    startIcon={<DeleteIcon />}
+                    fullWidth
+                  >
+                    Remove
+                  </Button>
+                </Grid>
+              </React.Fragment>
+            ))}
+          </Grid>
+          <Box sx={{ mt: 2 }}>
+            <Button variant="outlined" color="primary" onClick={addLineItem} startIcon={<AddIcon />}>
               Add Line Item
             </Button>
-          </Stack>
-          <TableContainer>
-            <Table size="small">
-              <TableHead>
-                <TableRow>
-                  <TableCell>Part #</TableCell>
-                  <TableCell>Description</TableCell>
-                  <TableCell width="80">Qty</TableCell>
-                  <TableCell width="100">Unit</TableCell>
-                  <TableCell width="120">Unit Price</TableCell>
-                  <TableCell width="120">Line Total</TableCell>
-                  <TableCell width="60" align="center">Actions</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {lineItems.map((item, idx) => (
-                  <TableRow key={idx}>
-                    <TableCell>
-                      <TextField
-                        value={item.part_number}
-                        onChange={(e) => updateLineItem(idx, 'part_number', e.target.value)}
-                        size="small"
-                        fullWidth
-                      />
-                    </TableCell>
-                    <TableCell>
-                      <TextField
-                        value={item.part_description}
-                        onChange={(e) => updateLineItem(idx, 'part_description', e.target.value)}
-                        size="small"
-                        fullWidth
-                      />
-                    </TableCell>
-                    <TableCell>
-                      <TextField
-                        type="number"
-                        value={item.quantity}
-                        onChange={(e) => updateLineItem(idx, 'quantity', e.target.value)}
-                        size="small"
-                        fullWidth
-                      />
-                    </TableCell>
-                    <TableCell>
-                      <TextField
-                        value={item.unit}
-                        onChange={(e) => updateLineItem(idx, 'unit', e.target.value)}
-                        size="small"
-                        fullWidth
-                      />
-                    </TableCell>
-                    <TableCell>
-                      <TextField
-                        type="number"
-                        value={item.unit_price}
-                        onChange={(e) => updateLineItem(idx, 'unit_price', e.target.value)}
-                        size="small"
-                        fullWidth
-                      />
-                    </TableCell>
-                    <TableCell>
-                      <TextField
-                        type="number"
-                        value={item.line_amount}
-                        onChange={(e) => updateLineItem(idx, 'line_amount', e.target.value)}
-                        size="small"
-                        fullWidth
-                      />
-                    </TableCell>
-                    <TableCell align="center">
-                      <Button color="error" onClick={() => removeLineItem(idx)}>
-                        <DeleteIcon fontSize="small" />
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </TableContainer>
+          </Box>
         </Paper>
 
-        <Paper sx={{ p: 2, mt: 3 }}>
+        <Paper sx={{ p: 3, mb: 3 }} elevation={3}>
           <Grid container spacing={2}>
             <Grid item xs={12} sm={4}>
-              <Typography variant="body1">Subtotal</Typography>
-              <Typography variant="h6">{formatCurrency(totals.subtotal)}</Typography>
+              <Typography variant="subtitle1">Subtotal: {formatCurrency(totals.subtotal)}</Typography>
             </Grid>
             <Grid item xs={12} sm={4}>
-              <Typography variant="body1">GST</Typography>
-              <Typography variant="h6">{formatCurrency(totals.gst)}</Typography>
+              <Typography variant="subtitle1">Total GST: {formatCurrency(totals.gst)}</Typography>
             </Grid>
             <Grid item xs={12} sm={4}>
-              <Typography variant="body1">Total</Typography>
-              <Typography variant="h5">{formatCurrency(totals.total)}</Typography>
+              <Typography variant="h6">Total Amount: {formatCurrency(totals.total)}</Typography>
             </Grid>
           </Grid>
         </Paper>

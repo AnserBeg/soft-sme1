@@ -201,6 +201,14 @@ export class InvoiceService {
         );
       }
 
+      // Mark sales order invoice status as done if applicable
+      if (salesOrder.sales_order_id) {
+        await client.query(
+          'UPDATE salesorderhistory SET invoice_status = $1, updated_at = NOW() WHERE sales_order_id = $2',
+          ['done', salesOrder.sales_order_id]
+        );
+      }
+
       await client.query('COMMIT');
       return insertInvoice.rows[0];
     } catch (error) {
@@ -267,6 +275,13 @@ export class InvoiceService {
             item.unit_price,
             item.line_amount,
           ]
+        );
+      }
+
+      if (payload.sales_order_id) {
+        await client.query(
+          'UPDATE salesorderhistory SET invoice_status = $1, updated_at = NOW() WHERE sales_order_id = $2',
+          ['done', payload.sales_order_id]
         );
       }
 
@@ -353,6 +368,13 @@ export class InvoiceService {
         );
       }
 
+      if (payload.sales_order_id ?? current.sales_order_id) {
+        await client.query(
+          'UPDATE salesorderhistory SET invoice_status = $1, updated_at = NOW() WHERE sales_order_id = $2',
+          ['done', payload.sales_order_id ?? current.sales_order_id]
+        );
+      }
+
       await client.query('COMMIT');
     } catch (error) {
       await client.query('ROLLBACK');
@@ -370,7 +392,16 @@ export class InvoiceService {
     const client = await this.pool.connect();
     try {
       const invoiceRes = await client.query(
-        `SELECT i.*, c.customer_name, c.default_payment_terms_in_days
+        `SELECT i.*, 
+                c.customer_name, 
+                c.default_payment_terms_in_days,
+                c.street_address,
+                c.city,
+                c.province,
+                c.country,
+                c.postal_code,
+                c.telephone_number,
+                c.email
          FROM invoices i
          JOIN customermaster c ON i.customer_id = c.customer_id
          WHERE i.invoice_id = $1`,

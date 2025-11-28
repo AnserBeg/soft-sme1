@@ -1189,6 +1189,7 @@ const SalesOrderDetailPage: React.FC = () => {
       if (newId) {
         navigate(`/invoices/${newId}`);
       }
+      setSalesOrder(prev => prev ? { ...prev, invoice_status: 'done' } : prev);
     } catch (err: any) {
       console.error('Failed to create invoice', err);
       const msg = err?.response?.data?.error || 'Failed to create invoice';
