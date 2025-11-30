@@ -1,4 +1,4 @@
-import { pool } from '../db';
+import { sharedPool as pool } from '../dbShared';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import { Request } from 'express';

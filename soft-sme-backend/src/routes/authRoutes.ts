@@ -3,7 +3,7 @@ import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import path from 'path';
 import { authMiddleware, adminAuth } from '../middleware/authMiddleware';
-import { pool } from '../db';
+import { sharedPool as pool } from '../dbShared';
 import { SessionManager } from '../utils/sessionManager';
 
 const router = express.Router();

@@ -1,11 +1,13 @@
 import { Router, Request, Response } from 'express';
 import { pool } from '../db';
 import { authMiddleware } from '../middleware/authMiddleware';
+import { tenantContextMiddleware } from '../middleware/tenantMiddleware';
 
 const router = Router();
 
 // Apply auth middleware to all routes
 router.use(authMiddleware);
+router.use(tenantContextMiddleware);
 
 // Submit leave request
 router.post('/request', async (req: Request, res: Response) => {

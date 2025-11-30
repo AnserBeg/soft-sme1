@@ -4,11 +4,13 @@ import path from 'path';
 import fs from 'fs';
 import { pool } from '../db';
 import { authMiddleware, adminAuth } from '../middleware/authMiddleware';
+import { tenantContextMiddleware } from '../middleware/tenantMiddleware';
 
 const router = express.Router();
 
 // Apply auth middleware to all routes
 router.use(authMiddleware);
+router.use(tenantContextMiddleware);
 
 // Configure multer for file uploads
 const storage = multer.diskStorage({

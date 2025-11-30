@@ -8,6 +8,7 @@ import bodyParser from 'body-parser';
 import expressWs from 'express-ws';
 import { pool } from './db';
 import { authMiddleware } from './middleware/authMiddleware';
+import { tenantContextMiddleware } from './middleware/tenantMiddleware';
 import { requestLogger } from './middleware/requestLogger';
 import { logger } from './utils/logger';
 
@@ -76,6 +77,9 @@ const HOST = process.env.HOST || '0.0.0.0';
 
 // Initialize express-ws for WebSocket support
 const wsInstance = expressWs(app);
+
+// Convenience tuple to apply auth + tenant scoping consistently
+const authWithTenant = [authMiddleware, tenantContextMiddleware];
 
 // Request logging with request IDs
 app.use(requestLogger());
@@ -233,100 +237,100 @@ console.log('Registered auth routes at /api/auth');
 app.use('/api/business-profile', businessProfileRoutes);
 console.log('Registered business profile routes');
 
-app.use('/api/customers', authMiddleware, customerRoutes);
+app.use('/api/customers', authWithTenant, customerRoutes);
 console.log('Registered customer routes');
 
-app.use('/api/products', authMiddleware, productRoutes);
+app.use('/api/products', authWithTenant, productRoutes);
 console.log('Registered product routes');
 
-app.use('/api/purchase-history', authMiddleware, purchaseHistoryRoutes);
+app.use('/api/purchase-history', authWithTenant, purchaseHistoryRoutes);
 console.log('Registered purchase history routes');
 
-app.use('/api/margin-schedule', authMiddleware, marginScheduleRoutes);
+app.use('/api/margin-schedule', authWithTenant, marginScheduleRoutes);
 console.log('Registered margin schedule routes');
 
-app.use('/api/vendors', authMiddleware, vendorRoutes);
+app.use('/api/vendors', authWithTenant, vendorRoutes);
 console.log('Registered vendor routes');
 
-app.use('/api/inventory', authMiddleware, inventoryRoutes);
+app.use('/api/inventory', authWithTenant, inventoryRoutes);
 console.log('Registered inventory routes');
 
 // Categories
-app.use('/api/categories', authMiddleware, categoryRoutes);
+app.use('/api/categories', authWithTenant, categoryRoutes);
 console.log('Registered category routes');
 
-app.use('/api/quotes', authMiddleware, quoteRoutes);
+app.use('/api/quotes', authWithTenant, quoteRoutes);
 console.log('Registered quote routes');
 
-app.use('/api/quote-templates', authMiddleware, quoteTemplateRoutes);
+app.use('/api/quote-templates', authWithTenant, quoteTemplateRoutes);
 console.log('Registered quote template routes');
 
-app.use('/api/sales-orders', authMiddleware, salesOrderRoutes);
+app.use('/api/sales-orders', authWithTenant, salesOrderRoutes);
 console.log('Registered sales order routes');
 
-app.use('/api/purchase-orders', authMiddleware, purchaseOrderRoutes);
+app.use('/api/purchase-orders', authWithTenant, purchaseOrderRoutes);
 console.log('Registered purchase order routes');
 
-app.use('/api/purchase-orders/ocr', authMiddleware, purchaseOrderOcrRoutes);
+app.use('/api/purchase-orders/ocr', authWithTenant, purchaseOrderOcrRoutes);
 console.log('Registered purchase order OCR routes');
 
-app.use('/api/return-orders', authMiddleware, returnOrderRoutes);
+app.use('/api/return-orders', authWithTenant, returnOrderRoutes);
 console.log('Registered return order routes');
 
-app.use('/api/employees', authMiddleware, employeeRoutes);
+app.use('/api/employees', authWithTenant, employeeRoutes);
 console.log('Registered employee routes');
 
-app.use('/api/invoices', authMiddleware, invoiceRoutes);
+app.use('/api/invoices', authWithTenant, invoiceRoutes);
 console.log('Registered invoice routes');
 
-app.use('/api/time-tracking', authMiddleware, timeTrackingRoutes);
+app.use('/api/time-tracking', authWithTenant, timeTrackingRoutes);
 console.log('Registered time tracking routes');
 
-app.use('/api/leave-management', authMiddleware, leaveManagementRoutes);
+app.use('/api/leave-management', authWithTenant, leaveManagementRoutes);
 console.log('Registered leave management routes');
 
-app.use('/api/attendance', authMiddleware, attendanceRouter);
+app.use('/api/attendance', authWithTenant, attendanceRouter);
 console.log('Registered attendance routes');
 
-app.use('/api/settings', authMiddleware, globalSettingsRouter);
+app.use('/api/settings', authWithTenant, globalSettingsRouter);
 console.log('Registered global settings routes');
 
-app.use('/api/backup', authMiddleware, backupRoutes);
+app.use('/api/backup', authWithTenant, backupRoutes);
 console.log('Registered backup routes');
 
 app.use('/api/qbo', qboAuthRoutes);
 console.log('Registered QBO auth routes');
 
-app.use('/api/qbo-accounts', authMiddleware, qboAccountRoutes);
+app.use('/api/qbo-accounts', authWithTenant, qboAccountRoutes);
 console.log('Registered QBO account routes');
 
 // AI Assistant (routes to local Python sidecar)
-app.use('/api/assistant', authMiddleware, assistantRoutes);
+app.use('/api/assistant', authWithTenant, assistantRoutes);
 console.log('Registered AI assistant routes');
 
-app.use('/api/qbo-export', authMiddleware, qboExportRoutes);
+app.use('/api/qbo-export', authWithTenant, qboExportRoutes);
 console.log('Registered QBO export routes');
 
-app.use('/api/overhead', authMiddleware, overheadRoutes);
+app.use('/api/overhead', authWithTenant, overheadRoutes);
 console.log('Registered overhead routes');
 
 // Part Finder (SO-specific stats)
-app.use('/api/part-finder', authMiddleware, partFinderRoutes);
+app.use('/api/part-finder', authWithTenant, partFinderRoutes);
 console.log('Registered part finder routes');
 
 // Inventory vendor mappings
-app.use('/api/inventory', authMiddleware, inventoryVendorRoutes);
+app.use('/api/inventory', authWithTenant, inventoryVendorRoutes);
 console.log('Registered inventory vendor routes');
 
 // Email routes
-app.use('/api/email', authMiddleware, emailRoutes);
+app.use('/api/email', authWithTenant, emailRoutes);
 console.log('Registered email routes');
 
 // Profile document routes
 app.use('/api/profile-documents', profileDocumentRoutes);
 console.log('Registered profile document routes');
 
-app.use('/api/messaging', authMiddleware, messagingRoutes);
+app.use('/api/messaging', authWithTenant, messagingRoutes);
 console.log('Registered messaging routes');
 
 app.use('/api/tasks', taskRoutes);
@@ -335,13 +339,13 @@ console.log('Registered task routes');
 // Voice/calling routes (feature flag optional)
 if (process.env.ENABLE_VENDOR_CALLING !== 'false') {
   // LiveKit/Telnyx: protect routes; no Twilio webhooks here anymore
-  app.use('/api/voice', authMiddleware, voiceRoutes);
+  app.use('/api/voice', authWithTenant, voiceRoutes);
   // Register WebSocket routes with express-ws instance
   if (wsInstance) {
     app.use('/api/voice', voiceStreamRoutes);
 
 // Voice search routes (always available)
-app.use('/api/voice-search', authMiddleware, voiceSearchRoutes);
+app.use('/api/voice-search', authWithTenant, voiceSearchRoutes);
 console.log('Registered voice search routes');
     
     // Add WebSocket endpoint directly to the main app
@@ -509,7 +513,7 @@ console.log('Registered voice search routes');
 // Chat routes with error handling
 try {
   console.log('Attempting to register chat routes...');
-  app.use('/api/chat', authMiddleware, chatRouter);
+  app.use('/api/chat', authWithTenant, chatRouter);
   logger.info('Registered chat routes');
 } catch (error) {
   logger.error('Error registering chat routes', { err: logger.serializeError(error) });

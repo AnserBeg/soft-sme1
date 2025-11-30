@@ -1,6 +1,7 @@
 import express, { Request, Response } from 'express';
 import { pool } from '../db';
 import { authMiddleware } from '../middleware/authMiddleware';
+import { tenantContextMiddleware } from '../middleware/tenantMiddleware';
 import {
   TaskMessageService,
   TaskAccessError,
@@ -24,6 +25,7 @@ function parseId(value: unknown): number | null {
 }
 
 router.use(authMiddleware);
+router.use(tenantContextMiddleware);
 
 function ensureCompanyAccess(participant: TaskParticipant, companyId: number | null): boolean {
   if (companyId == null) {

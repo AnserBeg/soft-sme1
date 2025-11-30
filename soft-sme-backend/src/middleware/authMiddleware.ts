@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
-import { pool } from '../db';
+import { sharedPool } from '../dbShared';
 import { SessionManager } from '../utils/sessionManager';
 
 interface JwtPayload {
@@ -44,7 +44,7 @@ export const authMiddleware = async (
     }
 
     // Get user details from database
-    const result = await pool.query(
+    const result = await sharedPool.query(
       'SELECT id, email, company_id, access_role FROM users WHERE id = $1',
       [session.userId]
     );
