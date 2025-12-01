@@ -37,3 +37,10 @@ export const downloadMonthlyStatement = async (customerId: number, month: string
     responseType: 'blob',
   });
 };
+
+export const downloadMonthlyStatements = async (params: { month: string; customer_id?: number }) => {
+  return api.get('/api/invoices/statement', {
+    params,
+    responseType: 'blob',
+  });
+};

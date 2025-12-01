@@ -2,32 +2,33 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   Box,
   Button,
+  Chip,
   Container,
-  Grid,
   Paper,
   Stack,
   TextField,
   Typography,
-  Chip,
 } from '@mui/material';
 import { DataGrid, GridColDef, GridEventListener } from '@mui/x-data-grid';
 import AddIcon from '@mui/icons-material/Add';
+import DownloadIcon from '@mui/icons-material/Download';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import ViewColumnIcon from '@mui/icons-material/ViewColumn';
 import { useNavigate } from 'react-router-dom';
-import { fetchInvoices } from '../services/invoiceService';
+import { fetchInvoices, downloadMonthlyStatements } from '../services/invoiceService';
 import { getCustomers } from '../services/customerService';
 import { Invoice } from '../types/invoice';
 import { formatCurrency } from '../utils/formatters';
-import Autocomplete from '@mui/material/Autocomplete';
 import Popover from '@mui/material/Popover';
-import { Checkbox, FormControlLabel, FormGroup } from '@mui/material';
+import { Checkbox, FormControlLabel, FormGroup, InputAdornment } from '@mui/material';
+import SearchIcon from '@mui/icons-material/Search';
+import Autocomplete from '@mui/material/Autocomplete';
+import { toast } from 'react-toastify';
 
 interface CustomerOption {
   id: number;
   label: string;
-  defaultTerms?: number;
 }
 
 const InvoicesPage: React.FC = () => {
@@ -38,6 +39,12 @@ const InvoicesPage: React.FC = () => {
   const [customers, setCustomers] = useState<CustomerOption[]>([]);
   const [customerValue, setCustomerValue] = useState<CustomerOption | null>(null);
   const [customerInput, setCustomerInput] = useState('');
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'unpaid' | 'paid'>('unpaid');
+  const [statementMonth, setStatementMonth] = useState(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  });
   const COLUMN_VISIBILITY_STORAGE_KEY = 'invoices.columnVisibility';
   const [columnVisibilityModel, setColumnVisibilityModel] = useState<Record<string, boolean>>(() => {
     if (typeof window === 'undefined') return {};
@@ -49,6 +56,12 @@ const InvoicesPage: React.FC = () => {
   });
   const [columnSelectorAnchor, setColumnSelectorAnchor] = useState<HTMLElement | null>(null);
   const [columnSelectorColumns, setColumnSelectorColumns] = useState<GridColDef[]>([]);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(COLUMN_VISIBILITY_STORAGE_KEY, JSON.stringify(columnVisibilityModel));
+    }
+  }, [columnVisibilityModel]);
 
   useEffect(() => {
     (async () => {
@@ -66,12 +79,6 @@ const InvoicesPage: React.FC = () => {
     })();
   }, []);
 
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem(COLUMN_VISIBILITY_STORAGE_KEY, JSON.stringify(columnVisibilityModel));
-    }
-  }, [columnVisibilityModel]);
-
   const handleOpenColumnSelector = (event: React.MouseEvent<HTMLElement>, cols: GridColDef[]) => {
     setColumnSelectorColumns(cols);
     setColumnSelectorAnchor(event.currentTarget);
@@ -82,8 +89,7 @@ const InvoicesPage: React.FC = () => {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const selected = customerValue;
-      const data = await fetchInvoices(selected ? { customer_id: selected.id } : undefined);
+      const data = await fetchInvoices(customerValue ? { customer_id: customerValue.id } : undefined);
       const withId = data.invoices.map((inv: Invoice) => ({
         ...inv,
         id: inv.invoice_id,
@@ -102,7 +108,7 @@ const InvoicesPage: React.FC = () => {
   useEffect(() => {
     fetchData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [customerValue?.id, customers.length]);
+  }, [customerValue?.id]);
 
   const columns = useMemo<GridColDef[]>(() => {
     return [
@@ -160,6 +166,34 @@ const InvoicesPage: React.FC = () => {
     navigate(`/invoices/${params.row.invoice_id}`);
   };
 
+  const filteredRows = useMemo(() => {
+    const term = search.toLowerCase();
+    return rows
+      .filter((row) => {
+        const statusValue = String(row.status || '').toLowerCase();
+        if (statusFilter === 'unpaid') return statusValue === 'unpaid';
+        if (statusFilter === 'paid') return statusValue === 'paid';
+        return true;
+      })
+      .filter((row) =>
+        [
+          row.invoice_number,
+          row.sales_order_number,
+          row.customer_name,
+          row.product_name,
+          row.product_description,
+          row.vin_number,
+          row.unit_number,
+          row.vehicle_make,
+          row.vehicle_model,
+          row.invoice_date ? new Date(row.invoice_date).toLocaleDateString() : '',
+          row.due_date ? new Date(row.due_date).toLocaleDateString() : '',
+        ]
+          .filter((value) => value !== undefined && value !== null)
+          .some((value) => value.toString().toLowerCase().includes(term))
+      );
+  }, [rows, search, statusFilter]);
+
   const overdueCount = useMemo(
     () =>
       rows.filter((r) => {
@@ -169,51 +203,97 @@ const InvoicesPage: React.FC = () => {
     [rows]
   );
 
+  const handleDownloadStatements = async () => {
+    if (!statementMonth) {
+      toast.error('Select a month for the statement.');
+      return;
+    }
+    try {
+      const response = await downloadMonthlyStatements({
+        month: statementMonth,
+        customer_id: customerValue?.id,
+      });
+      const blob = new Blob([response.data], { type: 'application/pdf' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      const namePart = customerValue?.label ? customerValue.label.replace(/\s+/g, '_') : 'all-customers';
+      link.download = `statement-${namePart}-${statementMonth}.pdf`;
+      link.click();
+      window.URL.revokeObjectURL(url);
+      toast.success('Statement downloaded.');
+    } catch (error) {
+      console.error('Error downloading statements', error);
+      toast.error('Failed to download statement.');
+    }
+  };
+
   return (
-    <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
-        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} justifyContent="space-between" alignItems={{ xs: 'flex-start', sm: 'center' }} mb={3}>
-          <Typography variant="h4">Invoices</Typography>
-          <Stack direction="row" spacing={1}>
-            <Button
-              startIcon={<ViewColumnIcon />}
-              variant="outlined"
-              onClick={(e) => handleOpenColumnSelector(e, columns)}
-            >
-              Columns
-            </Button>
-            <Button startIcon={<RefreshIcon />} variant="outlined" onClick={fetchData}>
-              Refresh
-            </Button>
-            <Button startIcon={<AddIcon />} variant="contained" onClick={() => navigate('/invoices/new')}>
-              New Invoice
+    <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
+      <Stack
+        direction={{ xs: 'column', sm: 'row' }}
+        spacing={2}
+        justifyContent="space-between"
+        alignItems={{ xs: 'flex-start', sm: 'center' }}
+        mb={3}
+      >
+        <Typography variant="h4">Invoices</Typography>
+        <Stack direction="row" spacing={1}>
+          <Button
+            startIcon={<ViewColumnIcon />}
+            variant="outlined"
+            onClick={(e) => handleOpenColumnSelector(e, columns)}
+          >
+            Columns
+          </Button>
+          <Button startIcon={<RefreshIcon />} variant="outlined" onClick={fetchData}>
+            Refresh
+          </Button>
+          <Button startIcon={<AddIcon />} variant="contained" onClick={() => navigate('/invoices/new')}>
+            New Invoice
+          </Button>
+          <Button
+            startIcon={<DownloadIcon />}
+            variant="outlined"
+            onClick={handleDownloadStatements}
+          >
+            Download Statement
           </Button>
         </Stack>
       </Stack>
 
-      <Grid container spacing={2} mb={2}>
-        <Grid item xs={12} sm={6} md={3}>
-          <Paper sx={{ p: 2 }}>
-            <Typography variant="body2" color="text.secondary">
-              Total Receivables
-            </Typography>
-            <Typography variant="h5">{formatCurrency(summary.totalReceivables)}</Typography>
-          </Paper>
-        </Grid>
-        <Grid item xs={12} sm={6} md={3}>
-          <Paper sx={{ p: 2 }}>
-            <Typography variant="body2" color="text.secondary">
-              Total Overdue
-            </Typography>
-            <Typography variant="h5" color={summary.totalOverdue > 0 ? 'error' : 'inherit'}>
-              {formatCurrency(summary.totalOverdue)}
-            </Typography>
-          </Paper>
-        </Grid>
-        <Grid item xs={12} sm={6} md={3}>
-          <Paper sx={{ p: 2 }}>
-            <Typography variant="body2" color="text.secondary">
-              Customer
-            </Typography>
+      <Paper sx={{ width: '100%', overflow: 'hidden', mb: 3 }}>
+        <Box sx={{ p: 2 }}>
+          <Stack direction="row" spacing={3} sx={{ mb: 2 }} flexWrap="wrap">
+            <TextField
+              label="Search"
+              variant="outlined"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              InputProps={{
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <SearchIcon sx={{ fontSize: 22 }} />
+                  </InputAdornment>
+                ),
+              }}
+              sx={{
+                minWidth: 300,
+                maxWidth: 380,
+                '& .MuiInputBase-input': { fontSize: 18, py: 1.5 },
+                '& .MuiInputLabel-root': { fontSize: 16 },
+              }}
+              size="small"
+            />
+            <TextField
+              label="Statement Month"
+              type="month"
+              value={statementMonth}
+              onChange={(e) => setStatementMonth(e.target.value)}
+              size="small"
+              sx={{ minWidth: 170 }}
+              InputLabelProps={{ shrink: true }}
+            />
             <Autocomplete
               options={customers}
               getOptionLabel={(option) => option.label}
@@ -221,42 +301,98 @@ const InvoicesPage: React.FC = () => {
               inputValue={customerInput}
               onInputChange={(_, val) => setCustomerInput(val)}
               onChange={(_, val) => setCustomerValue(val)}
-              renderInput={(params) => <TextField {...params} size="small" placeholder="Type or select a customer" />}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label="Customer (optional)"
+                  size="small"
+                  placeholder="Choose customer or leave empty for all"
+                  sx={{ minWidth: 260 }}
+                />
+              )}
               clearOnBlur={false}
-              sx={{ mt: 1 }}
             />
-          </Paper>
-        </Grid>
-        <Grid item xs={12} sm={6} md={3}>
-          <Paper sx={{ p: 2 }}>
-            <Typography variant="body2" color="text.secondary">
-              Overdue Invoices
-            </Typography>
-            <Typography variant="h5">{overdueCount}</Typography>
-          </Paper>
-        </Grid>
-      </Grid>
+            <Chip
+              label="All"
+              onClick={() => setStatusFilter('all')}
+              color={statusFilter === 'all' ? 'primary' : 'default'}
+              sx={{ fontSize: 16, px: 3, py: 1, minWidth: 80, height: 40 }}
+            />
+            <Chip
+              label="Unpaid"
+              onClick={() => setStatusFilter('unpaid')}
+              color={statusFilter === 'unpaid' ? 'primary' : 'default'}
+              sx={{ fontSize: 16, px: 3, py: 1, minWidth: 90, height: 40 }}
+            />
+            <Chip
+              label="Paid"
+              onClick={() => setStatusFilter('paid')}
+              color={statusFilter === 'paid' ? 'primary' : 'default'}
+              sx={{ fontSize: 16, px: 3, py: 1, minWidth: 80, height: 40 }}
+            />
+            <Box sx={{ flexGrow: 1 }} />
+            <Stack direction="row" spacing={2} alignItems="stretch">
+              <Paper sx={{ p: 1.5, minWidth: 180 }} elevation={0} variant="outlined">
+                <Typography variant="body2" color="text.secondary">
+                  Total Receivables
+                </Typography>
+                <Typography variant="h6">{formatCurrency(summary.totalReceivables)}</Typography>
+              </Paper>
+              <Paper sx={{ p: 1.5, minWidth: 160 }} elevation={0} variant="outlined">
+                <Typography variant="body2" color="text.secondary">
+                  Overdue
+                </Typography>
+                <Typography variant="h6" color={summary.totalOverdue > 0 ? 'error' : 'inherit'}>
+                  {formatCurrency(summary.totalOverdue)}
+                </Typography>
+              </Paper>
+              <Paper sx={{ p: 1.5, minWidth: 140 }} elevation={0} variant="outlined">
+                <Typography variant="body2" color="text.secondary">
+                  Overdue Count
+                </Typography>
+                <Typography variant="h6">{overdueCount}</Typography>
+              </Paper>
+            </Stack>
+          </Stack>
 
-      <Paper sx={{ height: 520 }}>
-        <DataGrid
-          rows={rows}
-          columns={columns}
-          loading={loading}
-          density="comfortable"
-          onRowClick={onRowClick}
-          columnVisibilityModel={columnVisibilityModel}
-          onColumnVisibilityModelChange={(model) => setColumnVisibilityModel(model as any)}
-          getRowClassName={(params) => {
-            const due = params.row.due_date ? new Date(params.row.due_date) : null;
-            const overdue = params.row.status === 'Unpaid' && due && due < new Date();
-            return overdue ? 'overdue-row' : '';
-          }}
-          sx={{
-            '& .overdue-row': {
-              backgroundColor: '#fff5f5',
-            },
-          }}
-        />
+          <DataGrid
+            rows={filteredRows}
+            columns={columns}
+            loading={loading}
+            density="comfortable"
+            onRowClick={onRowClick}
+            columnVisibilityModel={columnVisibilityModel}
+            onColumnVisibilityModelChange={(model) => setColumnVisibilityModel(model as any)}
+            getRowClassName={(params) => {
+              const due = params.row.due_date ? new Date(params.row.due_date) : null;
+              const overdue = params.row.status === 'Unpaid' && due && due < new Date();
+              return overdue ? 'overdue-row' : '';
+            }}
+            initialState={{
+              sorting: {
+                sortModel: [{ field: 'invoice_number', sort: 'desc' }],
+              },
+            }}
+            sx={{
+              '& .overdue-row': {
+                backgroundColor: '#fff5f5',
+              },
+              '& .MuiDataGrid-cell, & .MuiDataGrid-columnHeader, & .MuiDataGrid-columnHeaderTitle': {
+                fontSize: '1.05rem',
+              },
+              '& .MuiDataGrid-cell': {
+                borderBottom: '1px solid rgba(224, 224, 224, 1)',
+              },
+              '& .MuiDataGrid-columnHeaders': {
+                backgroundColor: 'background.paper',
+                borderBottom: '2px solid rgba(224, 224, 224, 1)',
+              },
+              '& .MuiDataGrid-row:hover': {
+                backgroundColor: 'action.hover',
+              },
+            }}
+          />
+        </Box>
       </Paper>
       <Popover
         open={Boolean(columnSelectorAnchor)}
