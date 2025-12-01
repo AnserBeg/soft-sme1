@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import {
   Box,
   Button,
@@ -9,14 +9,15 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import { DataGrid, GridColDef, GridEventListener } from '@mui/x-data-grid';
+import { DataGrid, GridColDef, GridEventListener, GridActionsCellItem } from '@mui/x-data-grid';
 import AddIcon from '@mui/icons-material/Add';
 import DownloadIcon from '@mui/icons-material/Download';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import ViewColumnIcon from '@mui/icons-material/ViewColumn';
+import DeleteIcon from '@mui/icons-material/Delete';
 import { useNavigate } from 'react-router-dom';
-import { fetchInvoices, downloadMonthlyStatements } from '../services/invoiceService';
+import { fetchInvoices, downloadMonthlyStatements, deleteInvoice } from '../services/invoiceService';
 import { getCustomers } from '../services/customerService';
 import { Invoice } from '../types/invoice';
 import { formatCurrency } from '../utils/formatters';
@@ -86,7 +87,7 @@ const InvoicesPage: React.FC = () => {
 
   const handleCloseColumnSelector = () => setColumnSelectorAnchor(null);
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     setLoading(true);
     try {
       const data = await fetchInvoices(customerValue ? { customer_id: customerValue.id } : undefined);
@@ -103,15 +104,34 @@ const InvoicesPage: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [customerValue?.id]);
 
   useEffect(() => {
     fetchData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [customerValue?.id]);
+  }, [fetchData]);
+
+  const onRowClick: GridEventListener<'rowClick'> = (params) => {
+    navigate(`/invoices/${params.row.invoice_id}`);
+  };
+
+  const handleDeleteInvoice = useCallback(
+    async (invoiceId: number) => {
+      if (!invoiceId) return;
+      if (!window.confirm('Delete this invoice? This cannot be undone.')) return;
+      try {
+        await deleteInvoice(invoiceId);
+        toast.success('Invoice deleted.');
+        fetchData();
+      } catch (error) {
+        console.error('Failed to delete invoice', error);
+        toast.error('Failed to delete invoice.');
+      }
+    },
+    [fetchData]
+  );
 
   const columns = useMemo<GridColDef[]>(() => {
-    return [
+    const base: GridColDef[] = [
       { field: 'invoice_number', headerName: 'Invoice #', flex: 1, minWidth: 140 },
       { field: 'customer_name', headerName: 'Customer', flex: 1.2, minWidth: 160 },
       { field: 'sales_order_number', headerName: 'SO #', minWidth: 140, flex: 1 },
@@ -128,18 +148,27 @@ const InvoicesPage: React.FC = () => {
         valueFormatter: (params) => (params.value ? new Date(params.value).toLocaleDateString() : ''),
       },
       {
-        field: 'due_date',
-        headerName: 'Due Date',
-        minWidth: 130,
+        field: 'due_in',
+        headerName: 'Due In',
+        minWidth: 140,
         renderCell: (params) => {
-          const isOverdue = params.row.status === 'Unpaid' && params.value && new Date(params.value) < new Date();
+          const due = params.row.due_date ? new Date(params.row.due_date) : null;
+          if (!due) return '';
+          const today = new Date();
+          const diffMs = due.getTime() - today.getTime();
+          const days = Math.round(diffMs / (1000 * 60 * 60 * 24));
+          const isOverdue = days < 0;
+          const label = `${days} day${Math.abs(days) === 1 ? '' : 's'}`;
           return (
             <Stack direction="row" spacing={1} alignItems="center">
-              <span>{params.value ? new Date(params.value).toLocaleDateString() : ''}</span>
+              <Typography color={isOverdue ? 'error' : 'success.main'} fontWeight={600}>
+                {label}
+              </Typography>
               {isOverdue && <WarningAmberIcon color="error" fontSize="small" />}
             </Stack>
           );
         },
+        valueGetter: (params) => params.row.due_date || null,
       },
       {
         field: 'status',
@@ -160,11 +189,29 @@ const InvoicesPage: React.FC = () => {
         valueFormatter: (params) => formatCurrency(Number(params.value) || 0),
       },
     ];
-  }, []);
-
-  const onRowClick: GridEventListener<'rowClick'> = (params) => {
-    navigate(`/invoices/${params.row.invoice_id}`);
-  };
+    const actions: GridColDef = {
+      field: 'actions',
+      headerName: 'Actions',
+      type: 'actions',
+      width: 90,
+      getActions: (params) => {
+        if (String(params.row.status || '').toLowerCase() !== 'unpaid') return [];
+        return [
+          <GridActionsCellItem
+            key="delete"
+            icon={<DeleteIcon color="error" />}
+            label="Delete"
+            onClick={(e) => {
+              e.stopPropagation();
+              handleDeleteInvoice(params.row.invoice_id);
+            }}
+            showInMenu={false}
+          />,
+        ];
+      },
+    };
+    return [...base, actions];
+  }, [handleDeleteInvoice]);
 
   const filteredRows = useMemo(() => {
     const term = search.toLowerCase();

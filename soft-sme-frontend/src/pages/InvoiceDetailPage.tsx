@@ -22,7 +22,6 @@ import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import AddIcon from '@mui/icons-material/Add';
-import DeleteIcon from '@mui/icons-material/Delete';
 import SaveIcon from '@mui/icons-material/Save';
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
 import { toast } from 'react-toastify';
@@ -720,7 +719,6 @@ const InvoiceDetailPage: React.FC = () => {
                     variant="outlined"
                     color="primary"
                     onClick={() => removeLineItem(idx)}
-                    startIcon={<DeleteIcon />}
                     fullWidth
                   >
                     Remove
