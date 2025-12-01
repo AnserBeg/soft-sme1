@@ -449,6 +449,7 @@ router.post('/upload-csv', upload.single('csvFile'), async (req: Request, res: R
   const processedItems: { [normalizedKey: string]: any } = {};
   const errors: string[] = [];
   const warnings: string[] = [];
+  let skippedMissingRequired = 0;
   let rowNumber = 0; // Track actual row number from CSV file
 
   try {
@@ -475,7 +476,8 @@ router.post('/upload-csv', upload.single('csvFile'), async (req: Request, res: R
           
           // Validate required fields
           if (!data.part_number || !data.part_description) {
-            errors.push(`Row ${rowNumber}: Missing required fields (part_number and part_description are mandatory)`);
+            warnings.push(`Row ${rowNumber}: Skipped - missing required part_number or part_description`);
+            skippedMissingRequired++;
             return;
           }
 
@@ -733,7 +735,8 @@ router.post('/upload-csv', upload.single('csvFile'), async (req: Request, res: R
         updatedItems: updatedCount,
         vendorMappings: vendorMappingCount,
         errors: errors.length,
-        warnings: warnings.length
+        warnings: warnings.length,
+        skippedMissingRequired
       },
       errors: errors.length > 0 ? errors : undefined,
       warnings: warnings.length > 0 ? warnings : undefined
