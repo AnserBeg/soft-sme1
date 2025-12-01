@@ -456,89 +456,6 @@ const TimeTrackingReportsPage: React.FC = () => {
     }
   }, [editShift]);
 
-  if (loading) {
-    return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="80vh">
-        <CircularProgress />
-      </Box>
-    );
-  }
-
-  const addEntryClockInDate = addEntryClockIn ? new Date(addEntryClockIn) : null;
-  const addEntryClockOutDate = addEntryClockOut ? new Date(addEntryClockOut) : null;
-  const canSaveAddEntry = Boolean(
-    addEntryShift &&
-    addEntrySalesOrder !== '' &&
-    addEntryClockInDate &&
-    addEntryClockOutDate &&
-    addEntryClockOutDate.getTime() > addEntryClockInDate.getTime()
-  );
-  const addEntryProfileName = addEntryShift
-    ? (addEntryShift.profile_name || profiles.find(p => p.id === addEntryShift.profile_id)?.name || `Profile ${addEntryShift.profile_id}`)
-    : '';
-  const deleteShiftProfileName = shiftToDelete
-    ? (shiftToDelete.profile_name || profiles.find(p => p.id === shiftToDelete.profile_id)?.name || `Profile ${shiftToDelete.profile_id}`)
-    : '';
-
-  // Compute total shift duration, idle time, regular, and overtime per profile
-  const profileShiftStats: { [profileId: number]: { hours: number, idle: number, regular: number, overtime: number } } = {};
-  shifts.forEach(shift => {
-    if (shift.clock_in && shift.clock_out) {
-      const shiftId = Number(shift.id);
-      if (Number.isNaN(shiftId)) {
-        return;
-      }
-      const profileId = Number(shift.profile_id);
-      if (Number.isNaN(profileId)) {
-        return;
-      }
-      const inTime = new Date(shift.clock_in).getTime();
-      const outTime = new Date(shift.clock_out).getTime();
-      const dur = resolveShiftDurationHours(
-        shift.duration,
-        shift.clock_in,
-        shift.clock_out,
-        dailyBreakStart,
-        dailyBreakEnd,
-        browserTimeZone
-      );
-      // Find all entries for this shift
-      const entries = shiftEntries[shiftId] || [];
-      let booked = 0;
-      entries.forEach(e => {
-        const parsedEntryDuration = parseDurationHours(e.duration);
-        const entryDur = parsedEntryDuration !== null ? parsedEntryDuration : 0;
-        booked += entryDur;
-      });
-      const idle = Math.max(0, dur - booked);
-
-      // Calculate regular and overtime hours for the shift
-      const regularHoursShift = Math.min(dur, 8);
-      const overtimeHoursShift = Math.max(0, dur - 8);
-
-      if (!profileShiftStats[profileId]) profileShiftStats[profileId] = { hours: 0, idle: 0, regular: 0, overtime: 0 };
-      profileShiftStats[profileId].hours += dur;
-      profileShiftStats[profileId].idle += idle;
-      profileShiftStats[profileId].regular += regularHoursShift;
-      profileShiftStats[profileId].overtime += overtimeHoursShift;
-    }
-  });
-
-  // Calculate profile totals for selected sales order
-  let soProfileTotals: { [profileName: string]: number } = {};
-  let soProfileEntries: { [profileName: string]: { date: string, duration: number }[] } = {};
-  if (selectedSO) {
-    // When a sales order is selected, all reports are already filtered for that sales order
-    reports.forEach(entry => {
-      const pname = entry.profile_name || 'Unknown';
-      const parsedDuration = parseDurationHours(entry.duration);
-      const dur = parsedDuration !== null ? parsedDuration : 0;
-      soProfileTotals[pname] = (soProfileTotals[pname] || 0) + dur;
-      if (!soProfileEntries[pname]) soProfileEntries[pname] = [];
-      soProfileEntries[pname].push({ date: entry.date, duration: dur });
-    });
-  }
-
   const { stackedChartData, salesOrderKeys, salesOrderColorMap } = useMemo(() => {
     const salesOrderKeySet = new Set<string>();
     const profileData = new Map<number, { profileName: string; total: number; salesOrders: Record<string, number> }>();
@@ -621,6 +538,89 @@ const TimeTrackingReportsPage: React.FC = () => {
   };
 
   const chartHeight = Math.max(320, stackedChartData.length * 80);
+
+  if (loading) {
+    return (
+      <Box display="flex" justifyContent="center" alignItems="center" minHeight="80vh">
+        <CircularProgress />
+      </Box>
+    );
+  }
+
+  const addEntryClockInDate = addEntryClockIn ? new Date(addEntryClockIn) : null;
+  const addEntryClockOutDate = addEntryClockOut ? new Date(addEntryClockOut) : null;
+  const canSaveAddEntry = Boolean(
+    addEntryShift &&
+    addEntrySalesOrder !== '' &&
+    addEntryClockInDate &&
+    addEntryClockOutDate &&
+    addEntryClockOutDate.getTime() > addEntryClockInDate.getTime()
+  );
+  const addEntryProfileName = addEntryShift
+    ? (addEntryShift.profile_name || profiles.find(p => p.id === addEntryShift.profile_id)?.name || `Profile ${addEntryShift.profile_id}`)
+    : '';
+  const deleteShiftProfileName = shiftToDelete
+    ? (shiftToDelete.profile_name || profiles.find(p => p.id === shiftToDelete.profile_id)?.name || `Profile ${shiftToDelete.profile_id}`)
+    : '';
+
+  // Compute total shift duration, idle time, regular, and overtime per profile
+  const profileShiftStats: { [profileId: number]: { hours: number, idle: number, regular: number, overtime: number } } = {};
+  shifts.forEach(shift => {
+    if (shift.clock_in && shift.clock_out) {
+      const shiftId = Number(shift.id);
+      if (Number.isNaN(shiftId)) {
+        return;
+      }
+      const profileId = Number(shift.profile_id);
+      if (Number.isNaN(profileId)) {
+        return;
+      }
+      const inTime = new Date(shift.clock_in).getTime();
+      const outTime = new Date(shift.clock_out).getTime();
+      const dur = resolveShiftDurationHours(
+        shift.duration,
+        shift.clock_in,
+        shift.clock_out,
+        dailyBreakStart,
+        dailyBreakEnd,
+        browserTimeZone
+      );
+      // Find all entries for this shift
+      const entries = shiftEntries[shiftId] || [];
+      let booked = 0;
+      entries.forEach(e => {
+        const parsedEntryDuration = parseDurationHours(e.duration);
+        const entryDur = parsedEntryDuration !== null ? parsedEntryDuration : 0;
+        booked += entryDur;
+      });
+      const idle = Math.max(0, dur - booked);
+
+      // Calculate regular and overtime hours for the shift
+      const regularHoursShift = Math.min(dur, 8);
+      const overtimeHoursShift = Math.max(0, dur - 8);
+
+      if (!profileShiftStats[profileId]) profileShiftStats[profileId] = { hours: 0, idle: 0, regular: 0, overtime: 0 };
+      profileShiftStats[profileId].hours += dur;
+      profileShiftStats[profileId].idle += idle;
+      profileShiftStats[profileId].regular += regularHoursShift;
+      profileShiftStats[profileId].overtime += overtimeHoursShift;
+    }
+  });
+
+  // Calculate profile totals for selected sales order
+  let soProfileTotals: { [profileName: string]: number } = {};
+  let soProfileEntries: { [profileName: string]: { date: string, duration: number }[] } = {};
+  if (selectedSO) {
+    // When a sales order is selected, all reports are already filtered for that sales order
+    reports.forEach(entry => {
+      const pname = entry.profile_name || 'Unknown';
+      const parsedDuration = parseDurationHours(entry.duration);
+      const dur = parsedDuration !== null ? parsedDuration : 0;
+      soProfileTotals[pname] = (soProfileTotals[pname] || 0) + dur;
+      if (!soProfileEntries[pname]) soProfileEntries[pname] = [];
+      soProfileEntries[pname].push({ date: entry.date, duration: dur });
+    });
+  }
 
   return (
     <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
