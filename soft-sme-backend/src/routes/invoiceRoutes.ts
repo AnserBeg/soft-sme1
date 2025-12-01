@@ -381,6 +381,11 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
     const metaStartY = doc.y;
     const invoiceDateText = invoiceDate && !isNaN(invoiceDate.getTime()) ? invoiceDate.toLocaleDateString() : '';
     const dueDateText = dueDate && !isNaN(dueDate.getTime()) ? dueDate.toLocaleDateString() : '';
+    const renderField = (label: string, value: string, xLabel: number, xValue: number, y: number, width = 140) => {
+      if (!value) return;
+      doc.font('Helvetica-Bold').fontSize(11).text(label, xLabel, y);
+      doc.font('Helvetica').fontSize(11).text(value, xValue, y, { width });
+    };
 
     // Row 1: Invoice/Due dates (fixed positions)
     doc.font('Helvetica-Bold').fontSize(11).text('Invoice Date:', 40, metaStartY);
@@ -388,24 +393,15 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
     doc.font('Helvetica-Bold').fontSize(11).text('Due Date:', 320, metaStartY);
     doc.font('Helvetica').fontSize(11).text(dueDateText || 'N/A', 400, metaStartY, { width: 140 });
 
-    // Row 2: Unit #, Make, Model, VIN # (hide blank fields and reflow)
-    const vehicleFields = [
-      { label: 'Unit #:', value: invoice.unit_number || '' },
-      { label: 'Make:', value: invoice.vehicle_make || '' },
-      { label: 'Model:', value: invoice.vehicle_model || '' },
-      { label: 'VIN #:', value: invoice.vin_number || '' },
-    ].filter((f) => f.value);
+    // Row 2: Unit # (left), Make (under Due Date), Model, VIN # (optional)
     const vehicleRowY = metaStartY + metaRowHeight;
-    const colWidth = vehicleFields.length ? Math.floor(520 / vehicleFields.length) : 130;
-    let vehicleX = 40;
-    vehicleFields.forEach((field) => {
-      doc.font('Helvetica-Bold').fontSize(11).text(field.label, vehicleX, vehicleRowY);
-      doc.font('Helvetica').fontSize(11).text(field.value, vehicleX + 70, vehicleRowY, { width: colWidth - 70 });
-      vehicleX += colWidth;
-    });
+    renderField('Unit #:', invoice.unit_number || '', 40, 120, vehicleRowY, 140);
+    renderField('Make:', invoice.vehicle_make || '', 320, 400, vehicleRowY, 140); // aligned under Due Date
+    renderField('Model:', invoice.vehicle_model || '', 480, 540, vehicleRowY, 80);
+    renderField('VIN #:', invoice.vin_number || '', 480, 540, vehicleRowY + metaRowHeight, 140);
 
     // Row 3: Product only
-    const productRowY = vehicleRowY + metaRowHeight;
+    const productRowY = vehicleRowY + metaRowHeight * 2;
     doc.font('Helvetica-Bold').fontSize(11).text('Product:', 40, productRowY);
     doc.font('Helvetica').fontSize(11).text(invoice.product_name || 'N/A', 140, productRowY, { width: 420 });
 
