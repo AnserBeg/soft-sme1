@@ -277,7 +277,7 @@ router.post('/', async (req: Request, res: Response) => {
   }
 });
 
-// Download monthly statement PDF for a customer
+// Download monthly statement PDF for a customer (includes all unpaid through selected month)
 router.get('/customers/:customerId/statement', async (req: Request, res: Response) => {
   const customerId = normalizeId(req.params.customerId);
   if (!customerId) {
@@ -287,182 +287,82 @@ router.get('/customers/:customerId/statement', async (req: Request, res: Respons
   try {
     const { start, end, label } = parseMonthRange(req.query.month as string | undefined);
     const client = await pool.connect();
-    try {
-      const customerRes = await client.query('SELECT * FROM customermaster WHERE customer_id = $1', [customerId]);
-      if (customerRes.rows.length === 0) {
-        return res.status(404).json({ error: 'Customer not found' });
-      }
-      const customer = customerRes.rows[0];
-
-      const businessProfileRes = await client.query(
-        `SELECT 
-          business_name AS company_name,
-          street_address,
-          city,
-          province,
-          country,
-          postal_code,
-          telephone_number,
-          email,
-          logo_url
-         FROM business_profile
-         ORDER BY id DESC
-         LIMIT 1`
-      );
-      const businessProfile = businessProfileRes.rows[0] || {};
-
-      const invoicesRes = await client.query(
-        `SELECT invoice_id, invoice_number, invoice_date, due_date, status, subtotal, total_gst_amount, total_amount
-         FROM invoices
-         WHERE customer_id = $1
-           AND LOWER(status) <> 'paid'
-           AND invoice_date >= $2
-           AND invoice_date < $3
-         ORDER BY invoice_date, invoice_id`,
-        [customerId, start, end]
-      );
-      const invoices = invoicesRes.rows;
-      const invoiceIds = invoices.map((inv) => inv.invoice_id);
-
-      const linesMap: Record<number, any[]> = {};
-      if (invoiceIds.length > 0) {
-        const linesRes = await client.query(
-          `SELECT * FROM invoicelineitems WHERE invoice_id = ANY($1::int[]) ORDER BY invoice_id, invoice_line_item_id`,
-          [invoiceIds]
-        );
-        for (const line of linesRes.rows) {
-          if (!linesMap[line.invoice_id]) linesMap[line.invoice_id] = [];
-          linesMap[line.invoice_id].push(line);
-        }
-      }
-
-      const outstandingRes = await client.query(
-        `SELECT total_amount, due_date, status FROM invoices WHERE customer_id = $1 AND LOWER(status) <> 'paid'`,
-        [customerId]
-      );
-
-      const totalOutstanding = outstandingRes.rows.reduce(
-        (sum, inv) => sum + Number(inv.total_amount || 0),
-        0
-      );
-      const now = new Date();
-      const totalOverdue = outstandingRes.rows
-        .filter((inv) => inv.due_date && new Date(inv.due_date) < now)
-        .reduce((sum, inv) => sum + Number(inv.total_amount || 0), 0);
-
-      const doc = new PDFDocument({ margin: 40 });
-      const filename = `customer-statement-${customer.customer_name}-${label.replace(/\s+/g, '-').toLowerCase()}.pdf`;
-      res.setHeader('Content-disposition', `attachment; filename="${filename}"`);
-      res.setHeader('Content-type', 'application/pdf');
-      doc.pipe(res);
-
-      const logoSource = await getLogoImageSource(businessProfile.logo_url);
-      if (logoSource) {
-        try {
-          doc.image(logoSource as any, 40, 30, { width: 140 });
-        } catch (err) {
-          console.warn('invoiceRoutes: failed to render logo', err);
-        }
-      }
-
-      doc.font('Helvetica-Bold').fontSize(18).text('Monthly Statement', 200, 40, { align: 'right' });
-      doc.font('Helvetica').fontSize(12).text(label, { align: 'right' });
-
-      doc.moveDown();
-      doc.font('Helvetica-Bold').text('Company');
-      doc.font('Helvetica').text(businessProfile.company_name || 'N/A');
-      const companyAddress = [
-        businessProfile.street_address,
-        businessProfile.city,
-        businessProfile.province,
-        businessProfile.country,
-        businessProfile.postal_code,
-      ]
-        .filter(Boolean)
-        .join(', ');
-      if (companyAddress) doc.text(companyAddress);
-      if (businessProfile.telephone_number) doc.text(`Phone: ${businessProfile.telephone_number}`);
-      if (businessProfile.email) doc.text(`Email: ${businessProfile.email}`);
-
-      doc.moveDown();
-      doc.font('Helvetica-Bold').text('Customer');
-      doc.font('Helvetica').text(customer.customer_name || '');
-      const customerAddress = [
-        customer.street_address,
-        customer.city,
-        customer.province,
-        customer.country,
-        customer.postal_code,
-      ]
-        .filter(Boolean)
-        .join(', ');
-      if (customerAddress) doc.text(customerAddress);
-      if (customer.telephone_number) doc.text(`Phone: ${customer.telephone_number}`);
-      if (customer.email) doc.text(`Email: ${customer.email}`);
-
-      doc.moveDown();
-      doc.font('Helvetica-Bold').text('Summary');
-      doc.font('Helvetica').text(`Total Outstanding: ${formatCurrency(totalOutstanding)}`);
-      doc.text(`Total Overdue: ${formatCurrency(totalOverdue)}`);
-
-      doc.moveDown();
-      doc.font('Helvetica-Bold').fontSize(14).text('Unpaid Invoices', { underline: true });
-      doc.moveDown(0.5);
-      const tableHeaders = ['Invoice #', 'Date', 'Due Date', 'Status', 'Amount'];
-      const columnWidths = [120, 80, 80, 80, 100];
-      let y = doc.y;
-      let x = doc.x;
-      doc.fontSize(10);
-      tableHeaders.forEach((header, idx) => {
-        doc.text(header, x, y, { width: columnWidths[idx], continued: false });
-        x += columnWidths[idx];
-      });
-      y += 16;
-      doc.moveTo(40, y).lineTo(520, y).stroke();
-      y += 6;
-
-      invoices.forEach((invoice) => {
-        if (y > doc.page.height - 120) {
-          doc.addPage();
-          y = doc.y;
-        }
-        x = 40;
-        const dueDate = invoice.due_date ? new Date(invoice.due_date).toLocaleDateString() : '';
-        const invDate = invoice.invoice_date ? new Date(invoice.invoice_date).toLocaleDateString() : '';
-        const status = (invoice.status || '').toUpperCase();
-        [invoice.invoice_number, invDate, dueDate, status, formatCurrency(invoice.total_amount)].forEach(
-          (value, idx) => {
-            doc.text(value || '', x, y, { width: columnWidths[idx] });
-            x += columnWidths[idx];
-          }
-        );
-        y += 16;
-
-        const lines = linesMap[invoice.invoice_id] || [];
-        if (lines.length) {
-          doc.font('Helvetica-Oblique').fontSize(9);
-          lines.forEach((line) => {
-            if (y > doc.page.height - 100) {
-              doc.addPage();
-              y = doc.y;
-            }
-            doc.text(`• ${line.part_description || line.part_number || 'Line Item'}`, 60, y, { width: 260 });
-            doc.text(String(line.quantity || 0), 330, y, { width: 60, align: 'right' });
-            doc.text(formatCurrency(line.line_amount || 0), 400, y, { width: 120, align: 'right' });
-            y += 12;
-          });
-          doc.font('Helvetica').fontSize(10);
-          y += 4;
-        }
-      });
-
-      doc.end();
-    } finally {
-      client.release();
+    const customerRes = await client.query('SELECT * FROM customermaster WHERE customer_id = $1', [customerId]);
+    client.release();
+    if (customerRes.rows.length === 0) {
+      return res.status(404).json({ error: 'Customer not found' });
     }
+    const customer = customerRes.rows[0];
+    const businessProfile = await fetchBusinessProfile();
+
+    const doc = new PDFDocument({ margin: 40 });
+    const filename = `customer-statement-${customer.customer_name}-${label.replace(/\s+/g, '-').toLowerCase()}.pdf`;
+    res.setHeader('Content-disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-type', 'application/pdf');
+    doc.pipe(res);
+
+    await buildCustomerStatement(doc, customer, businessProfile, { start, end, label });
+
+    doc.end();
   } catch (error) {
     console.error('invoiceRoutes: statement error', error);
     res.status(500).json({ error: 'Failed to generate statement' });
+  }
+});
+
+// Download monthly statements for all customers (or a single one via query)
+router.get('/statement', async (req: Request, res: Response) => {
+  try {
+    const customerId = req.query.customer_id ? normalizeId(req.query.customer_id) : undefined;
+    if (req.query.customer_id && customerId === null) {
+      return res.status(400).json({ error: 'Invalid customer id' });
+    }
+    const { start, end, label } = parseMonthRange(req.query.month as string | undefined);
+    const businessProfile = await fetchBusinessProfile();
+
+    const client = await pool.connect();
+    let customers: any[] = [];
+    try {
+      if (customerId) {
+        const customerRes = await client.query('SELECT * FROM customermaster WHERE customer_id = $1', [customerId]);
+        if (customerRes.rows.length === 0) {
+          return res.status(404).json({ error: 'Customer not found' });
+        }
+        customers = customerRes.rows;
+      } else {
+        const customersRes = await client.query(
+          `SELECT DISTINCT cm.*
+           FROM customermaster cm
+           JOIN invoices i ON i.customer_id = cm.customer_id
+           WHERE LOWER(i.status) <> 'paid'`
+        );
+        customers = customersRes.rows;
+      }
+    } finally {
+      client.release();
+    }
+
+    if (customers.length === 0) {
+      return res.status(404).json({ error: 'No customers with outstanding invoices' });
+    }
+
+    const filenameBase = customerId && customers[0] ? customers[0].customer_name : 'all-customers';
+    const filename = `statements-${filenameBase}-${label.replace(/\s+/g, '-').toLowerCase()}.pdf`;
+    res.setHeader('Content-disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-type', 'application/pdf');
+
+    const doc = new PDFDocument({ margin: 40, bufferPages: true });
+    doc.pipe(res);
+
+    for (let i = 0; i < customers.length; i++) {
+      if (i > 0) doc.addPage();
+      await buildCustomerStatement(doc, customers[i], businessProfile, { start, end, label });
+    }
+
+    doc.end();
+  } catch (error) {
+    console.error('invoiceRoutes: bulk statement error', error);
+    res.status(500).json({ error: 'Failed to generate statements' });
   }
 });
 
@@ -697,3 +597,4 @@ router.delete('/:id', async (req: Request, res: Response) => {
 });
 
 export default router;
+

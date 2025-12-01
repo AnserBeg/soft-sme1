@@ -262,6 +262,29 @@ const InvoicesPage: React.FC = () => {
         </Stack>
       </Stack>
 
+      <Paper sx={{ mb: 3, p: 2, border: '1px solid', borderColor: 'divider' }}>
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={3} alignItems="flex-start">
+          <Box>
+            <Typography variant="h6" sx={{ fontWeight: 'bold', color: 'primary.main' }}>
+              Total Receivables: {formatCurrency(summary.totalReceivables)}
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              Total value of all unpaid invoices
+            </Typography>
+          </Box>
+          <Box>
+            <Typography variant="subtitle1">Overdue</Typography>
+            <Typography variant="h6" color={summary.totalOverdue > 0 ? 'error' : 'inherit'}>
+              {formatCurrency(summary.totalOverdue)}
+            </Typography>
+          </Box>
+          <Box>
+            <Typography variant="subtitle1">Overdue Count</Typography>
+            <Typography variant="h6">{overdueCount}</Typography>
+          </Box>
+        </Stack>
+      </Paper>
+
       <Paper sx={{ width: '100%', overflow: 'hidden', mb: 3 }}>
         <Box sx={{ p: 2 }}>
           <Stack direction="row" spacing={3} sx={{ mb: 2 }} flexWrap="wrap">
@@ -331,28 +354,6 @@ const InvoicesPage: React.FC = () => {
               sx={{ fontSize: 16, px: 3, py: 1, minWidth: 80, height: 40 }}
             />
             <Box sx={{ flexGrow: 1 }} />
-            <Stack direction="row" spacing={2} alignItems="stretch">
-              <Paper sx={{ p: 1.5, minWidth: 180 }} elevation={0} variant="outlined">
-                <Typography variant="body2" color="text.secondary">
-                  Total Receivables
-                </Typography>
-                <Typography variant="h6">{formatCurrency(summary.totalReceivables)}</Typography>
-              </Paper>
-              <Paper sx={{ p: 1.5, minWidth: 160 }} elevation={0} variant="outlined">
-                <Typography variant="body2" color="text.secondary">
-                  Overdue
-                </Typography>
-                <Typography variant="h6" color={summary.totalOverdue > 0 ? 'error' : 'inherit'}>
-                  {formatCurrency(summary.totalOverdue)}
-                </Typography>
-              </Paper>
-              <Paper sx={{ p: 1.5, minWidth: 140 }} elevation={0} variant="outlined">
-                <Typography variant="body2" color="text.secondary">
-                  Overdue Count
-                </Typography>
-                <Typography variant="h6">{overdueCount}</Typography>
-              </Paper>
-            </Stack>
           </Stack>
 
           <DataGrid
