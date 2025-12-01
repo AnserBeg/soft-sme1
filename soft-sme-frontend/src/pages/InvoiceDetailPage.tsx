@@ -137,6 +137,7 @@ const InvoiceDetailPage: React.FC = () => {
         unit_number: prev.unit_number || so.unit_number || '',
         vehicle_make: prev.vehicle_make || so.vehicle_make || '',
         vehicle_model: prev.vehicle_model || so.vehicle_model || '',
+        notes: prev.notes || so.terms || '',
       }));
     } catch (e) {
       console.warn('Failed to pull sales order defaults for invoice', e);
@@ -403,22 +404,53 @@ const InvoiceDetailPage: React.FC = () => {
             </Grid>
 
             <Grid item xs={12} sm={6}>
-              <TextField
-                label="Product"
-                value={invoice.product_name || ''}
-                onChange={(e) => setInvoice((prev: any) => ({ ...prev, product_name: e.target.value }))}
-                fullWidth
-              />
+              {fieldVisibility.unitNumber !== false && (
+                <TextField
+                  label="Unit #"
+                  value={invoice.unit_number || ''}
+                  onChange={(e) => setInvoice((prev: any) => ({ ...prev, unit_number: e.target.value }))}
+                  fullWidth
+                />
+              )}
             </Grid>
-            <Grid item xs={12} sm={6}>
-              {fieldVisibility.vin !== false && (
+            <Grid item xs={12} sm={3}>
+              {fieldVisibility.vehicleMake !== false && (
+                <TextField
+                  label="Make"
+                  value={invoice.vehicle_make || ''}
+                  onChange={(e) => setInvoice((prev: any) => ({ ...prev, vehicle_make: e.target.value }))}
+                  fullWidth
+                />
+              )}
+            </Grid>
+            <Grid item xs={12} sm={3}>
+              {fieldVisibility.vehicleModel !== false && (
+                <TextField
+                  label="Model"
+                  value={invoice.vehicle_model || ''}
+                  onChange={(e) => setInvoice((prev: any) => ({ ...prev, vehicle_model: e.target.value }))}
+                  fullWidth
+                />
+              )}
+            </Grid>
+
+            {fieldVisibility.vin !== false && (
+              <Grid item xs={12} sm={6}>
                 <TextField
                   label="VIN #"
                   value={invoice.vin_number || ''}
                   onChange={(e) => setInvoice((prev: any) => ({ ...prev, vin_number: e.target.value }))}
                   fullWidth
                 />
-              )}
+              </Grid>
+            )}
+            <Grid item xs={12} sm={6}>
+              <TextField
+                label="Product"
+                value={invoice.product_name || ''}
+                onChange={(e) => setInvoice((prev: any) => ({ ...prev, product_name: e.target.value }))}
+                fullWidth
+              />
             </Grid>
 
             <Grid item xs={12}>
@@ -434,40 +466,9 @@ const InvoiceDetailPage: React.FC = () => {
               )}
             </Grid>
 
-            <Grid item xs={12} sm={4}>
-              {fieldVisibility.unitNumber !== false && (
-                <TextField
-                  label="Unit #"
-                  value={invoice.unit_number || ''}
-                  onChange={(e) => setInvoice((prev: any) => ({ ...prev, unit_number: e.target.value }))}
-                  fullWidth
-                />
-              )}
-            </Grid>
-            <Grid item xs={12} sm={4}>
-              {fieldVisibility.vehicleMake !== false && (
-                <TextField
-                  label="Make"
-                  value={invoice.vehicle_make || ''}
-                  onChange={(e) => setInvoice((prev: any) => ({ ...prev, vehicle_make: e.target.value }))}
-                  fullWidth
-                />
-              )}
-            </Grid>
-            <Grid item xs={12} sm={4}>
-              {fieldVisibility.vehicleModel !== false && (
-                <TextField
-                  label="Model"
-                  value={invoice.vehicle_model || ''}
-                  onChange={(e) => setInvoice((prev: any) => ({ ...prev, vehicle_model: e.target.value }))}
-                  fullWidth
-                />
-              )}
-            </Grid>
-
             <Grid item xs={12}>
               <TextField
-                label="Notes"
+                label="Terms"
                 multiline
                 minRows={2}
                 fullWidth

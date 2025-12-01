@@ -381,14 +381,31 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
 
     doc.font('Helvetica-Bold').text('Invoice Date:', 40, metaStartY, { continued: true }).font('Helvetica').text(invoiceDate && !isNaN(invoiceDate.getTime()) ? invoiceDate.toLocaleDateString() : '');
     doc.font('Helvetica-Bold').text('Due Date:', 320, metaStartY, { continued: true }).font('Helvetica').text(dueDate && !isNaN(dueDate.getTime()) ? dueDate.toLocaleDateString() : '');
-    doc.font('Helvetica-Bold').text('Status:', 40, doc.y + 4, { continued: true }).font('Helvetica').text(invoice.status || '');
-    if (invoice.source_sales_order_number) {
-      doc.font('Helvetica-Bold').text('Source Sales Order:', 320, doc.y, { continued: true }).font('Helvetica').text(invoice.source_sales_order_number);
+    // Product + VIN row
+    doc.font('Helvetica-Bold').text('Product:', 40, doc.y + 8, { continued: true }).font('Helvetica').text(invoice.product_name || '');
+    doc.font('Helvetica-Bold').text('VIN #:', 320, doc.y, { continued: true }).font('Helvetica').text(invoice.vin_number || '');
+
+    // Product description (full width)
+    doc.moveDown();
+    doc.font('Helvetica-Bold').text('Product Description:');
+    if (invoice.product_description) {
+      doc.font('Helvetica').text(invoice.product_description, { width: 520 });
+    } else {
+      doc.font('Helvetica').text('N/A', { width: 520 });
     }
+
+    // Unit / Make / Model row
+    doc.moveDown();
+    const rowY = doc.y;
+    doc.font('Helvetica-Bold').text('Unit #:', 40, rowY, { continued: true }).font('Helvetica').text(invoice.unit_number || '');
+    doc.font('Helvetica-Bold').text('Make:', 200, rowY, { continued: true }).font('Helvetica').text(invoice.vehicle_make || '');
+    doc.font('Helvetica-Bold').text('Model:', 360, rowY, { continued: true }).font('Helvetica').text(invoice.vehicle_model || '');
+
+    // Terms (notes)
     if (invoice.notes) {
       doc.moveDown();
-      doc.font('Helvetica-Bold').text('Notes:');
-      doc.font('Helvetica').text(invoice.notes);
+      doc.font('Helvetica-Bold').text('Terms:');
+      doc.font('Helvetica').text(invoice.notes, { width: 520 });
     }
 
     // Line items

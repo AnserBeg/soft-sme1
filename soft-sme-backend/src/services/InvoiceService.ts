@@ -184,7 +184,7 @@ export class InvoiceService {
           subtotal,
           total_gst_amount,
           total_amount,
-          null,
+          salesOrder.terms ?? null,
           salesOrder.product_name,
           salesOrder.product_description,
           salesOrder.vin_number,
