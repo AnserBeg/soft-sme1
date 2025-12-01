@@ -216,19 +216,6 @@ const InvoiceDetailPage: React.FC = () => {
     }
   }, [customer, invoiceDate, dueDateTouched, isNew]);
 
-  useEffect(() => {
-    if (!isNew) return;
-    if (!inventoryItems.length) return;
-    setLineItems((prev) =>
-      prev.map((item) => {
-        const inv = item.part_number ? findInventoryPart(item.part_number) : null;
-        if (!inv) return item;
-        if (item.unit_price && item.unit_price > 0 && item.part_id) return item;
-        return applyMarginPricing(item, inv);
-      })
-    );
-  }, [applyMarginPricing, findInventoryPart, inventoryItems, isNew]);
-
   const findInventoryPart = useCallback(
     (partNumber: string) => {
       const normalized = (partNumber || '').trim().toUpperCase();
@@ -316,6 +303,19 @@ const InvoiceDetailPage: React.FC = () => {
     },
     [findInventoryPart, findMarginFactor, shouldSkipMargin]
   );
+
+  useEffect(() => {
+    if (!isNew) return;
+    if (!inventoryItems.length) return;
+    setLineItems((prev) =>
+      prev.map((item) => {
+        const inv = item.part_number ? findInventoryPart(item.part_number) : null;
+        if (!inv) return item;
+        if (item.unit_price && item.unit_price > 0 && item.part_id) return item;
+        return applyMarginPricing(item, inv);
+      })
+    );
+  }, [applyMarginPricing, findInventoryPart, inventoryItems, isNew]);
 
   const updateLineItem = (index: number, field: keyof InvoiceLineItem, value: any) => {
     setLineItems((prev) => {
