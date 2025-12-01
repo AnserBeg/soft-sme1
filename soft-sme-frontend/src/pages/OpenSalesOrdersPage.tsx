@@ -376,6 +376,8 @@ const OpenSalesOrdersPage: React.FC = () => {
       row.unit_number,
       row.vin_number,
       row.sales_date ? new Date(row.sales_date).toLocaleDateString() : '',
+      row.wanted_by_date ? new Date(row.wanted_by_date).toLocaleDateString() : '',
+      row.wanted_by_time_of_day,
     ]
       .filter((value) => value !== undefined && value !== null)
       .some((value) => value.toString().toLowerCase().includes(searchTerm))
@@ -384,6 +386,8 @@ const OpenSalesOrdersPage: React.FC = () => {
   const columns: GridColDef[] = [
     { field: 'sales_order_number', headerName: 'Sales Order #', flex: 1, minWidth: 120, valueFormatter: (params) => params.value ? String(params.value).replace('SO-', '') : '' },
     { field: 'sales_date', headerName: 'Sales Date', flex: 0.9, minWidth: 130, valueFormatter: (params) => params.value ? new Date(params.value as string).toLocaleDateString() : '' },
+    { field: 'wanted_by_date', headerName: 'Wanted By Date', flex: 0.9, minWidth: 140, valueFormatter: (params) => params.value ? new Date(params.value as string).toLocaleDateString() : '' },
+    { field: 'wanted_by_time_of_day', headerName: 'Wanted Time', flex: 0.8, minWidth: 120, valueFormatter: (params) => params.value ? `${String(params.value).charAt(0).toUpperCase()}${String(params.value).slice(1)}` : '' },
     { field: 'customer_name', headerName: 'Customer', flex: 1.3, minWidth: 150 },
     { field: 'product_name', headerName: 'Product Name', flex: 1, minWidth: 120 },
     { field: 'product_description', headerName: 'Product Description', flex: 1.5, minWidth: 150 },
@@ -493,7 +497,7 @@ const OpenSalesOrdersPage: React.FC = () => {
         columns.forEach(col => {
             if (col.field !== 'actions') {
                 const value = (row as any)[col.field];
-                if (col.field === 'bill_date' || col.field === 'sales_date') {
+                if (col.field === 'bill_date' || col.field === 'sales_date' || col.field === 'wanted_by_date') {
                      csvRow[col.headerName as string] = value ? new Date(value).toLocaleDateString() : '';
                 } else if (col.type === 'number') { 
                      csvRow[col.headerName as string] = value !== undefined && value !== null && !isNaN(parseFloat(String(value))) ? parseFloat(String(value)).toFixed(2) : '';

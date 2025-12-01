@@ -34,6 +34,15 @@ export class SalesOrderService {
     return null;
   }
 
+  static normalizeWantedTimeOfDay(value: any): 'morning' | 'afternoon' | 'evening' | null {
+    if (typeof value !== 'string') return null;
+    const normalized = value.trim().toLowerCase();
+    if (['morning', 'afternoon', 'evening'].includes(normalized)) {
+      return normalized as 'morning' | 'afternoon' | 'evening';
+    }
+    return null;
+  }
+
   async createSalesOrder(payload: CreateSalesOrderInput, user?: any, clientArg?: PoolClient) {
     const client = clientArg ?? (await this.pool.connect());
     let startedTransaction = false;
@@ -55,6 +64,8 @@ export class SalesOrderService {
         unit_number,
         vehicle_make,
         vehicle_model,
+        wanted_by_date,
+        wanted_by_time_of_day,
         invoice_status,
         invoice_required,
         status,
@@ -75,6 +86,9 @@ export class SalesOrderService {
         throw new Error('product_name is required to create a sales order');
       }
       const trimmedUnitNumber = unit_number ? String(unit_number).trim() : '';
+      const wantedByDate = wanted_by_date ? new Date(wanted_by_date) : null;
+      const safeWantedByDate = wantedByDate && !isNaN(wantedByDate.getTime()) ? wantedByDate : null;
+      const wantedByTimeOfDay = SalesOrderService.normalizeWantedTimeOfDay(wanted_by_time_of_day);
 
       const normalizedInvoiceStatus = SalesOrderService.normalizeInvoiceStatus(invoice_status ?? invoice_required);
 
@@ -120,9 +134,11 @@ export class SalesOrderService {
       await client.query(
         `INSERT INTO salesorderhistory (
           sales_order_id, sales_order_number, customer_id, sales_date, product_name, product_description, terms,
-          customer_po_number, vin_number, unit_number, vehicle_make, vehicle_model, invoice_status, subtotal, total_gst_amount, total_amount,
+          customer_po_number, vin_number, unit_number, vehicle_make, vehicle_model,
+          wanted_by_date, wanted_by_time_of_day,
+          invoice_status, subtotal, total_gst_amount, total_amount,
           status, estimated_cost, sequence_number, quote_id, source_quote_number
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`,
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)`,
         [
           newSalesOrderId,
           formattedSONumber,
@@ -136,6 +152,8 @@ export class SalesOrderService {
           trimmedUnitNumber,
           vehicle_make ? String(vehicle_make).trim() : '',
           vehicle_model ? String(vehicle_model).trim() : '',
+          safeWantedByDate,
+          wantedByTimeOfDay,
           normalizedInvoiceStatus,
           0,
           0,

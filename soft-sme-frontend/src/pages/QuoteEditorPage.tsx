@@ -1034,12 +1034,11 @@ const QuoteEditorPage: React.FC = () => {
                 <TextField
                   label="VIN #"
                   fullWidth
+                  placeholder="Optional"
                   value={vinNumber}
                   onChange={(e) => setVinNumber(e.target.value)}
                   sx={input56Sx}
                   InputLabelProps={{ sx: labelSx }}
-                  error={vinNumber.length > 0 && vinNumber.length !== 17}
-                  helperText={vinNumber.length > 0 && vinNumber.length !== 17 ? 'VIN must be 17 characters' : ''}
                 />
               </Grid>
 

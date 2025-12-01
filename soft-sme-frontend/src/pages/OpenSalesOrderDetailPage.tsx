@@ -39,6 +39,7 @@ type PartOption = string | { label: string; isNew?: true; inputValue?: string };
 const DEFAULT_GST_RATE = 5.0;
 
 type InvoiceStatus = '' | 'needed' | 'done';
+type WantedTimeOfDay = '' | 'morning' | 'afternoon' | 'evening';
 
 const normalizeInvoiceStatus = (value: any): InvoiceStatus => {
   if (typeof value === 'string') {
@@ -88,6 +89,8 @@ interface SalesOrder {
   customer_po_number?: string | null;
   vin_number?: string | null;
   unit_number?: string | null;
+  wanted_by_date?: string | null;
+  wanted_by_time_of_day?: WantedTimeOfDay | null;
   exported_to_qbo?: boolean;
   qbo_invoice_id?: string;
   qbo_export_date?: string;
@@ -120,6 +123,8 @@ type OptionalFieldKey =
   | 'vehicleMake'
   | 'vehicleModel'
   | 'invoiceStatus'
+  | 'wantedByDate'
+  | 'wantedByTimeOfDay'
   | 'productDescription'
   | 'terms';
 type FieldVisibilityMap = Record<OptionalFieldKey, boolean>;
@@ -171,6 +176,7 @@ const SalesOrderDetailPage: React.FC = () => {
   const [productTypingTimer, setProductTypingTimer] = useState<number | null>(null);
 
   const [salesDate, setSalesDate] = useState<Dayjs | null>(dayjs());
+  const [wantedByDate, setWantedByDate] = useState<Dayjs | null>(null);
   const [productDescription, setProductDescription] = useState('');
   const [terms, setTerms] = useState('');
   const [customerPoNumber, setCustomerPoNumber] = useState('');
@@ -179,6 +185,7 @@ const SalesOrderDetailPage: React.FC = () => {
   const [vehicleMake, setVehicleMake] = useState('');
   const [vehicleModel, setVehicleModel] = useState('');
   const [invoiceStatus, setInvoiceStatus] = useState<InvoiceStatus>('');
+  const [wantedByTimeOfDay, setWantedByTimeOfDay] = useState<WantedTimeOfDay>('');
 
   const handleInvoiceStatusToggle = useCallback((_: React.MouseEvent<HTMLElement>, value: InvoiceStatus | null) => {
     setInvoiceStatus(value ?? '');
@@ -208,6 +215,8 @@ const SalesOrderDetailPage: React.FC = () => {
     vehicleMake: true,
     vehicleModel: true,
     invoiceStatus: true,
+    wantedByDate: true,
+    wantedByTimeOfDay: true,
     productDescription: true,
     terms: true,
   };
@@ -296,6 +305,8 @@ const SalesOrderDetailPage: React.FC = () => {
     customer: customer ? { id: customer.id, label: customer.label } : null,
     product: product ? { id: product.id, label: product.label } : null,
     salesDate: salesDate ? salesDate.toISOString() : null,
+    wantedByDate: wantedByDate ? wantedByDate.toISOString() : null,
+    wantedByTimeOfDay,
     terms: (terms || '').trim(),
     customerPoNumber: (customerPoNumber || '').trim(),
     vinNumber: (vinNumber || '').trim(),
@@ -304,7 +315,7 @@ const SalesOrderDetailPage: React.FC = () => {
     vehicleMake: (vehicleMake || '').trim(),
     vehicleModel: (vehicleModel || '').trim(),
     invoiceStatus,
-  }), [customer, product, salesDate, terms, customerPoNumber, vinNumber, unitNumber, estimatedCost, vehicleMake, vehicleModel, invoiceStatus]);
+  }), [customer, product, salesDate, wantedByDate, wantedByTimeOfDay, terms, customerPoNumber, vinNumber, unitNumber, estimatedCost, vehicleMake, vehicleModel, invoiceStatus]);
 
   // Set initial signature only once after data is fully loaded
   useEffect(() => {
@@ -571,6 +582,11 @@ const SalesOrderDetailPage: React.FC = () => {
         setQuantityToOrderItems(partsToOrder);
         
         setSalesDate(dayjs(data.salesOrder?.sales_date));
+        setWantedByDate(data.salesOrder?.wanted_by_date ? dayjs(data.salesOrder?.wanted_by_date) : null);
+        const normalizedWantedTime = data.salesOrder?.wanted_by_time_of_day
+          ? String(data.salesOrder.wanted_by_time_of_day).toLowerCase()
+          : '';
+        setWantedByTimeOfDay((normalizedWantedTime as WantedTimeOfDay) || '');
         setEstimatedCost(data.salesOrder?.estimated_cost || 0);
         setProductDescription(data.salesOrder?.product_description || '');
         setTerms(data.salesOrder?.terms || '');
@@ -877,13 +893,6 @@ const SalesOrderDetailPage: React.FC = () => {
 
   // ---------- Validation ----------
   const validateBeforeSave = () => {
-    // VIN optional but must be 6 or 17 characters if present
-    const vinLength = vinNumber?.trim().length || 0;
-    if (vinLength > 0 && vinLength !== 6 && vinLength !== 17) {
-      toast.error('VIN must be 6 or 17 characters');
-      return false;
-    }
-
     // disallow blank part numbers
     const blanks = lineItems.filter(i => !i.part_number || i.part_number.trim() === '');
     if (blanks.length > 0) {
@@ -995,6 +1004,8 @@ const SalesOrderDetailPage: React.FC = () => {
     const payload = {
       customer_id: customer?.id,
       sales_date: salesDate ? salesDate.toISOString() : new Date().toISOString(),
+      wanted_by_date: wantedByDate ? wantedByDate.format('YYYY-MM-DD') : null,
+      wanted_by_time_of_day: wantedByTimeOfDay || null,
       product_name: product?.label?.trim(),
       product_description: productDescription.trim(),
       terms: terms.trim(),
@@ -1320,6 +1331,7 @@ const SalesOrderDetailPage: React.FC = () => {
               <Grid item xs={12} sm={6}><b>Sales Order #:</b> {salesOrder.sales_order_number}</Grid>
               <Grid item xs={12} sm={6}><b>Customer:</b> {salesOrder.customer_name || 'N/A'}</Grid>
               <Grid item xs={12} sm={6}><b>Sales Date:</b> {salesOrder.sales_date ? new Date(salesOrder.sales_date).toLocaleDateString() : ''}</Grid>
+              <Grid item xs={12} sm={6}><b>Wanted By:</b> {salesOrder.wanted_by_date ? new Date(salesOrder.wanted_by_date).toLocaleDateString() : 'N/A'}{salesOrder.wanted_by_time_of_day ? ` (${String(salesOrder.wanted_by_time_of_day).charAt(0).toUpperCase()}${String(salesOrder.wanted_by_time_of_day).slice(1)})` : ''}</Grid>
               <Grid item xs={12} sm={6}><b>Status:</b> {salesOrder.status?.toUpperCase() || 'N/A'}</Grid>
               <Grid item xs={12} sm={6}><b>VIN #:</b> {salesOrder.vin_number || 'N/A'}</Grid>
               <Grid item xs={12} sm={6}><b>Unit #:</b> {salesOrder.unit_number || 'N/A'}</Grid>
@@ -1445,7 +1457,7 @@ const SalesOrderDetailPage: React.FC = () => {
             </Button>
             {isCreationMode && <Button variant="outlined" onClick={() => {
               // reset to pristine
-              setCustomer(null); setCustomerInput(''); setSalesDate(dayjs());
+              setCustomer(null); setCustomerInput(''); setSalesDate(dayjs()); setWantedByDate(null); setWantedByTimeOfDay('');
               setProduct(null); setProductInput(''); setProductDescription('');
               setTerms(''); setCustomerPoNumber(''); setVinNumber('');
               setUnitNumber(''); setVehicleMake(''); setVehicleModel(''); setInvoiceStatus('');
@@ -1489,6 +1501,8 @@ const SalesOrderDetailPage: React.FC = () => {
                 { key: 'vehicleMake', label: 'Make' },
                 { key: 'vehicleModel', label: 'Model' },
                 { key: 'invoiceStatus', label: 'Invoice Status' },
+                { key: 'wantedByDate', label: 'Wanted By Date' },
+                { key: 'wantedByTimeOfDay', label: 'Wanted Time of Day' },
                 { key: 'productDescription', label: 'Product Description' },
                 { key: 'terms', label: 'Terms' },
               ].map(({ key, label }) => (
@@ -1668,8 +1682,6 @@ const SalesOrderDetailPage: React.FC = () => {
                   onChange={e => setVinNumber(e.target.value)}
                   fullWidth
                   placeholder="Optional"
-                  error={!!(vinNumber && vinNumber.trim() !== '' && ![6, 17].includes(vinNumber.trim().length))}
-                  helperText={(vinNumber && vinNumber.trim() !== '' && ![6, 17].includes(vinNumber.trim().length)) ? 'VIN must be 6 or 17 characters' : ''}
                 />
               </Grid>
             )}
@@ -1752,6 +1764,41 @@ const SalesOrderDetailPage: React.FC = () => {
                       <CheckCircleIcon fontSize="small" sx={{ mr: 1 }} />
                       Done
                     </ToggleButton>
+                  </ToggleButtonGroup>
+                </FormControl>
+              </Grid>
+            )}
+            {fieldVisibility.wantedByDate && (
+              <Grid item xs={12} sm={4}>
+                <DatePicker
+                  label="Wanted By Date"
+                  value={wantedByDate}
+                  onChange={setWantedByDate}
+                  sx={{ width:'100%' }}
+                  slotProps={{ textField: { placeholder: 'Optional' } }}
+                />
+              </Grid>
+            )}
+            {fieldVisibility.wantedByTimeOfDay && (
+              <Grid item xs={12} sm={4}>
+                <FormControl component="fieldset" fullWidth>
+                  <FormLabel sx={{ mb: 1 }}>Wanted Time of Day</FormLabel>
+                  <ToggleButtonGroup
+                    value={wantedByTimeOfDay || null}
+                    exclusive
+                    fullWidth
+                    size="small"
+                    color="standard"
+                    aria-label="Wanted time of day"
+                    onChange={(_, value) => setWantedByTimeOfDay((value || '') as WantedTimeOfDay)}
+                    sx={{
+                      '& .MuiToggleButtonGroup-grouped': { textTransform: 'none', flex: 1, gap: 0 },
+                      '& .MuiToggleButtonGroup-grouped:not(:first-of-type)': { marginLeft: 0 },
+                    }}
+                  >
+                    <ToggleButton value="morning">Morning</ToggleButton>
+                    <ToggleButton value="afternoon">Afternoon</ToggleButton>
+                    <ToggleButton value="evening">Evening</ToggleButton>
                   </ToggleButtonGroup>
                 </FormControl>
               </Grid>

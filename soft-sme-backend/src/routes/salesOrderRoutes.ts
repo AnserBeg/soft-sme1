@@ -166,6 +166,15 @@ const normalizeInvoiceStatus = (value: any): 'needed' | 'done' | null => {
   return null;
 };
 
+const normalizeWantedTimeOfDay = (value: any): 'morning' | 'afternoon' | 'evening' | null => {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toLowerCase();
+  if (['morning', 'afternoon', 'evening'].includes(normalized)) {
+    return normalized as 'morning' | 'afternoon' | 'evening';
+  }
+  return null;
+};
+
 // Helper function to recalculate aggregated parts to order
 async function recalculateAggregatedPartsToOrder() {
   try {
@@ -409,6 +418,9 @@ router.put('/:id', async (req: Request, res: Response) => {
   if (salesOrderData.unit_number) salesOrderData.unit_number = salesOrderData.unit_number.trim();
   if (salesOrderData.vehicle_make) salesOrderData.vehicle_make = salesOrderData.vehicle_make.trim();
   if (salesOrderData.vehicle_model) salesOrderData.vehicle_model = salesOrderData.vehicle_model.trim();
+  if (salesOrderData.wanted_by_time_of_day !== undefined) {
+    salesOrderData.wanted_by_time_of_day = normalizeWantedTimeOfDay(salesOrderData.wanted_by_time_of_day);
+  }
   if (Object.prototype.hasOwnProperty.call(salesOrderData, 'invoice_required')) {
     salesOrderData.invoice_status = normalizeInvoiceStatus((salesOrderData as any).invoice_required);
     delete (salesOrderData as any).invoice_required;
@@ -464,6 +476,8 @@ if (lineItems && lineItems.length > 0) {
     'unit_number',
     'vehicle_make',
     'vehicle_model',
+    'wanted_by_date',
+    'wanted_by_time_of_day',
     'invoice_status',
     'subtotal',
     'total_gst_amount',
@@ -483,6 +497,17 @@ if (lineItems && lineItems.length > 0) {
           if (key === 'total_gst_amount') coercedValue = parseFloat(salesOrderData.total_gst_amount);
           if (key === 'total_amount') coercedValue = parseFloat(salesOrderData.total_amount);
           if (key === 'estimated_cost') coercedValue = parseFloat(salesOrderData.estimated_cost);
+          if (key === 'wanted_by_date') {
+            if (value) {
+              const parsed = new Date(value as any);
+              coercedValue = isNaN(parsed.getTime()) ? null : parsed;
+            } else {
+              coercedValue = null;
+            }
+          }
+          if (key === 'wanted_by_time_of_day') {
+            coercedValue = normalizeWantedTimeOfDay(value);
+          }
           if (key === 'invoice_status') coercedValue = normalizeInvoiceStatus(value);
           if (key === 'quote_id') {
             coercedValue = value === null ? null : parseInt(value as any, 10);
@@ -730,6 +755,21 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
       450, y
     );
     y += 16;
+    const wantedDate = salesOrder.wanted_by_date ? new Date(salesOrder.wanted_by_date).toLocaleDateString() : '';
+    const wantedTime = salesOrder.wanted_by_time_of_day
+      ? `${String(salesOrder.wanted_by_time_of_day).charAt(0).toUpperCase()}${String(salesOrder.wanted_by_time_of_day).slice(1)}`
+      : '';
+    if ((wantedDate && isFieldVisible('wantedByDate')) || (wantedTime && isFieldVisible('wantedByTimeOfDay'))) {
+      if (isFieldVisible('wantedByDate')) {
+        doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Wanted By Date:', 50, y);
+        doc.font('Helvetica').fontSize(11).fillColor('#000000').text(wantedDate || 'N/A', 170, y);
+      }
+      if (isFieldVisible('wantedByTimeOfDay')) {
+        doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Wanted Time:', 320, y);
+        doc.font('Helvetica').fontSize(11).fillColor('#000000').text(wantedTime || 'N/A', 450, y);
+      }
+      y += 16;
+    }
     const vinValue = salesOrder.vin_number?.trim() || '';
     if (isFieldVisible('vin') || isFieldVisible('invoiceStatus')) {
       if (isFieldVisible('vin')) {
