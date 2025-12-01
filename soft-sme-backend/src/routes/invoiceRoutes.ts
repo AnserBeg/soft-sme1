@@ -378,37 +378,43 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
     const invoiceDate = invoice.invoice_date ? new Date(invoice.invoice_date) : null;
     const dueDate = invoice.due_date ? new Date(invoice.due_date) : null;
     const metaRowHeight = 18;
-    const labelValue = (
-      label: string,
-      value: string,
-      xLabel: number,
-      xValue: number,
-      y: number,
-      valueWidth = 180
-    ) => {
-      doc.font('Helvetica-Bold').fontSize(11).text(label, xLabel, y);
-      doc.font('Helvetica').fontSize(11).text(value || 'N/A', xValue, y, { width: valueWidth });
-    };
-
     const metaStartY = doc.y;
     const invoiceDateText = invoiceDate && !isNaN(invoiceDate.getTime()) ? invoiceDate.toLocaleDateString() : '';
     const dueDateText = dueDate && !isNaN(dueDate.getTime()) ? dueDate.toLocaleDateString() : '';
 
-    labelValue('Invoice Date:', invoiceDateText, 40, 140, metaStartY);
-    labelValue('Due Date:', dueDateText, 320, 400, metaStartY);
+    // Row 1: Invoice/Due dates (fixed positions)
+    doc.font('Helvetica-Bold').fontSize(11).text('Invoice Date:', 40, metaStartY);
+    doc.font('Helvetica').fontSize(11).text(invoiceDateText || 'N/A', 140, metaStartY, { width: 140 });
+    doc.font('Helvetica-Bold').fontSize(11).text('Due Date:', 320, metaStartY);
+    doc.font('Helvetica').fontSize(11).text(dueDateText || 'N/A', 400, metaStartY, { width: 140 });
 
-    labelValue('Product:', invoice.product_name || '', 40, 140, metaStartY + metaRowHeight);
-    labelValue('VIN #:', invoice.vin_number || '', 320, 400, metaStartY + metaRowHeight);
+    // Row 2: Unit #, Make, Model, VIN # (hide blank fields and reflow)
+    const vehicleFields = [
+      { label: 'Unit #:', value: invoice.unit_number || '' },
+      { label: 'Make:', value: invoice.vehicle_make || '' },
+      { label: 'Model:', value: invoice.vehicle_model || '' },
+      { label: 'VIN #:', value: invoice.vin_number || '' },
+    ].filter((f) => f.value);
+    const vehicleRowY = metaStartY + metaRowHeight;
+    const colWidth = vehicleFields.length ? Math.floor(520 / vehicleFields.length) : 130;
+    let vehicleX = 40;
+    vehicleFields.forEach((field) => {
+      doc.font('Helvetica-Bold').fontSize(11).text(field.label, vehicleX, vehicleRowY);
+      doc.font('Helvetica').fontSize(11).text(field.value, vehicleX + 70, vehicleRowY, { width: colWidth - 70 });
+      vehicleX += colWidth;
+    });
 
-    const descLabelY = metaStartY + metaRowHeight * 2;
+    // Row 3: Product only
+    const productRowY = vehicleRowY + metaRowHeight;
+    doc.font('Helvetica-Bold').fontSize(11).text('Product:', 40, productRowY);
+    doc.font('Helvetica').fontSize(11).text(invoice.product_name || 'N/A', 140, productRowY, { width: 420 });
+
+    // Row 4: Product Description
+    const descLabelY = productRowY + metaRowHeight;
     doc.font('Helvetica-Bold').fontSize(11).text('Product Description:', 40, descLabelY);
     doc.font('Helvetica').fontSize(11).text(invoice.product_description || 'N/A', 40, descLabelY + 12, { width: 520 });
 
-    const unitRowY = doc.y + 8;
-    labelValue('Unit #:', invoice.unit_number || '', 40, 120, unitRowY, 90);
-    labelValue('Make:', invoice.vehicle_make || '', 220, 290, unitRowY, 120);
-    labelValue('Model:', invoice.vehicle_model || '', 400, 470, unitRowY, 120);
-    doc.y = unitRowY + metaRowHeight;
+    doc.y = descLabelY + metaRowHeight + 4;
 
     // Terms (notes)
     if (invoice.notes) {
@@ -419,7 +425,7 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
 
     // Line items
     doc.moveDown();
-    doc.font('Helvetica-Bold').fontSize(12).text('Line Items');
+    doc.font('Helvetica-Bold').fontSize(12).text('Line Items', 40);
     doc.moveTo(40, doc.y + 4).lineTo(560, doc.y + 4).stroke();
     doc.moveDown(1);
 
