@@ -197,6 +197,70 @@ router.put('/supply-rate', async (req: Request, res: Response) => {
   }
 });
 
+// Get labour hourly rate charged to customer (for invoices)
+router.get('/labour-charge-rate', async (_req: Request, res: Response) => {
+  try {
+    const result = await pool.query('SELECT value FROM global_settings WHERE key = $1', ['labour_charge_rate']);
+    if (result.rows.length === 0) {
+      return res.json({ labour_charge_rate: null });
+    }
+    res.json({ labour_charge_rate: parseFloat(result.rows[0].value) });
+  } catch (err) {
+    console.error('globalSettingsRoutes: Error fetching labour charge rate:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Update labour hourly rate charged to customer (for invoices)
+router.put('/labour-charge-rate', async (req: Request, res: Response) => {
+  const { labour_charge_rate } = req.body;
+  if (typeof labour_charge_rate !== 'number' || isNaN(labour_charge_rate) || labour_charge_rate < 0) {
+    return res.status(400).json({ error: 'Invalid labour charge rate' });
+  }
+  try {
+    await pool.query(
+      'INSERT INTO global_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = $2',
+      ['labour_charge_rate', labour_charge_rate.toString()]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    console.error('globalSettingsRoutes: Error updating labour charge rate:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get overhead hourly rate charged to customer (for invoices)
+router.get('/overhead-charge-rate', async (_req: Request, res: Response) => {
+  try {
+    const result = await pool.query('SELECT value FROM global_settings WHERE key = $1', ['overhead_charge_rate']);
+    if (result.rows.length === 0) {
+      return res.json({ overhead_charge_rate: null });
+    }
+    res.json({ overhead_charge_rate: parseFloat(result.rows[0].value) });
+  } catch (err) {
+    console.error('globalSettingsRoutes: Error fetching overhead charge rate:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Update overhead hourly rate charged to customer (for invoices)
+router.put('/overhead-charge-rate', async (req: Request, res: Response) => {
+  const { overhead_charge_rate } = req.body;
+  if (typeof overhead_charge_rate !== 'number' || isNaN(overhead_charge_rate) || overhead_charge_rate < 0) {
+    return res.status(400).json({ error: 'Invalid overhead charge rate' });
+  }
+  try {
+    await pool.query(
+      'INSERT INTO global_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = $2',
+      ['overhead_charge_rate', overhead_charge_rate.toString()]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    console.error('globalSettingsRoutes: Error updating overhead charge rate:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Get the daily break start time
 router.get('/daily-break-start', async (req: Request, res: Response) => {
   try {

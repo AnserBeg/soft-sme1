@@ -65,6 +65,8 @@ const InvoiceDetailPage: React.FC = () => {
   const [lineItems, setLineItems] = useState<InvoiceLineItem[]>([defaultLineItem()]);
   const [inventoryItems, setInventoryItems] = useState<any[]>([]);
   const [marginSchedule, setMarginSchedule] = useState<any[]>([]);
+  const [labourChargeRate, setLabourChargeRate] = useState<number | null>(null);
+  const [overheadChargeRate, setOverheadChargeRate] = useState<number | null>(null);
   const [customers, setCustomers] = useState<CustomerOption[]>([]);
   const [customer, setCustomer] = useState<CustomerOption | null>(null);
   const [invoiceDate, setInvoiceDate] = useState<Dayjs | null>(dayjs());
@@ -123,12 +125,16 @@ const InvoiceDetailPage: React.FC = () => {
   useEffect(() => {
     (async () => {
       try {
-        const [invRes, marginRes] = await Promise.all([
+        const [invRes, marginRes, labourRateRes, overheadRateRes] = await Promise.all([
           api.get('/api/inventory'),
           api.get('/api/margin-schedule'),
+          api.get('/api/settings/labour-charge-rate').catch(() => ({ data: { labour_charge_rate: null } })),
+          api.get('/api/settings/overhead-charge-rate').catch(() => ({ data: { overhead_charge_rate: null } })),
         ]);
         setInventoryItems(invRes.data || []);
         setMarginSchedule(marginRes.data || []);
+        setLabourChargeRate(labourRateRes.data?.labour_charge_rate ?? null);
+        setOverheadChargeRate(overheadRateRes.data?.overhead_charge_rate ?? null);
       } catch (e) {
         console.error('Failed to load inventory or margin schedule for invoices', e);
       }
@@ -325,11 +331,24 @@ const InvoiceDetailPage: React.FC = () => {
         const nextNumber = String(value || '').trim();
         target.part_number = nextNumber;
         target.part_id = null;
+        const upper = nextNumber.toUpperCase();
         if (!nextNumber) {
           target.part_description = '';
           target.unit = '';
           target.unit_price = 0;
           target.line_amount = 0;
+        } else if (upper === 'LABOUR' || upper === 'LABOR') {
+          const rate = labourChargeRate ?? 0;
+          target.unit = target.unit || 'hr';
+          target.unit_price = rate;
+          const qty = Number(target.quantity) || 0;
+          target.line_amount = Math.round(qty * rate * 100) / 100;
+        } else if (upper === 'OVERHEAD') {
+          const rate = overheadChargeRate ?? 0;
+          target.unit = target.unit || 'hr';
+          target.unit_price = rate;
+          const qty = Number(target.quantity) || 0;
+          target.line_amount = Math.round(qty * rate * 100) / 100;
         } else {
           const inv = findInventoryPart(nextNumber);
           if (inv) {

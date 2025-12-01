@@ -30,6 +30,16 @@ import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Legend,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis
+} from 'recharts';
+import {
   getProfiles,
   getSalesOrders,
   getTimeEntryReport,
@@ -73,6 +83,20 @@ function formatDateAtLocalMidnight(date: Date) {
   const day = String(normalized.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
 }
+
+const SALES_ORDER_COLORS = [
+  '#2563eb',
+  '#22c55e',
+  '#f97316',
+  '#06b6d4',
+  '#eab308',
+  '#8b5cf6',
+  '#ef4444',
+  '#0ea5e9',
+  '#d946ef',
+  '#14b8a6',
+];
+const IDLE_COLOR = '#9ca3af';
 
 const TimeTrackingReportsPage: React.FC = () => {
   const [profiles, setProfiles] = useState<Profile[]>([]);
@@ -515,6 +539,89 @@ const TimeTrackingReportsPage: React.FC = () => {
     });
   }
 
+  const { stackedChartData, salesOrderKeys, salesOrderColorMap } = useMemo(() => {
+    const salesOrderKeySet = new Set<string>();
+    const profileData = new Map<number, { profileName: string; total: number; salesOrders: Record<string, number> }>();
+
+    shifts.forEach(shift => {
+      const shiftId = Number(shift.id);
+      const profileId = Number(shift.profile_id);
+      if (Number.isNaN(shiftId) || Number.isNaN(profileId) || !shift.clock_in || !shift.clock_out) {
+        return;
+      }
+
+      const profileName =
+        shift.profile_name ||
+        profiles.find(p => p.id === profileId)?.name ||
+        `Profile ${profileId}`;
+      const durationHours = resolveShiftDurationHours(
+        shift.duration,
+        shift.clock_in,
+        shift.clock_out,
+        dailyBreakStart,
+        dailyBreakEnd,
+        browserTimeZone
+      );
+
+      const entries = shiftEntries[shiftId] || [];
+      const current = profileData.get(profileId) || { profileName, total: 0, salesOrders: {} };
+      current.total += durationHours;
+
+      entries.forEach(entry => {
+        const soKey = entry.sales_order_number || `SO ${entry.sales_order_id || 'Unknown'}`;
+        const parsed = parseDurationHours(entry.duration);
+        const entryDuration = parsed !== null ? parsed : 0;
+        current.salesOrders[soKey] = (current.salesOrders[soKey] || 0) + entryDuration;
+        salesOrderKeySet.add(soKey);
+      });
+
+      profileData.set(profileId, current);
+    });
+
+    const data = Array.from(profileData.values()).map(profile => {
+      const totalBooked = Object.values(profile.salesOrders).reduce((acc, val) => acc + val, 0);
+      const idle = Math.max(0, profile.total - totalBooked);
+      return {
+        profileName: profile.profileName,
+        ...profile.salesOrders,
+        Idle: idle,
+      };
+    });
+
+    const colorMap: Record<string, string> = { Idle: IDLE_COLOR };
+    Array.from(salesOrderKeySet).forEach((key, index) => {
+      colorMap[key] = SALES_ORDER_COLORS[index % SALES_ORDER_COLORS.length];
+    });
+
+    return {
+      stackedChartData: data,
+      salesOrderKeys: Array.from(salesOrderKeySet),
+      salesOrderColorMap: colorMap,
+    };
+  }, [browserTimeZone, dailyBreakEnd, dailyBreakStart, profiles, shiftEntries, shifts]);
+
+  const renderChartTooltip = ({ active, payload, label }: any) => {
+    if (!active || !payload?.length) {
+      return null;
+    }
+    const items = payload.filter((p: any) => p?.value && p.value > 0.0001);
+    if (!items.length) {
+      return null;
+    }
+    return (
+      <Paper sx={{ p: 1.5 }} elevation={3}>
+        <Typography variant="subtitle2" fontWeight={700}>{label}</Typography>
+        {items.map((item: any) => (
+          <Typography key={item.name} variant="body2">
+            {item.name}: {Number(item.value).toFixed(2)} hrs
+          </Typography>
+        ))}
+      </Paper>
+    );
+  };
+
+  const chartHeight = Math.max(320, stackedChartData.length * 80);
+
   return (
     <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
       <Typography variant="h4" gutterBottom sx={{ fontSize: '2.5rem' }}>
@@ -526,6 +633,39 @@ const TimeTrackingReportsPage: React.FC = () => {
           {error}
         </Alert>
       )}
+
+      <Box mb={3}>
+        <Paper sx={{ p: 2 }}>
+          <Typography variant="h6" gutterBottom sx={{ fontSize: '1.5rem' }}>
+            Hours by Profile (Attendance vs Sales Orders)
+          </Typography>
+          {stackedChartData.length > 0 ? (
+            <Box sx={{ width: '100%', height: chartHeight }}>
+              <ResponsiveContainer>
+                <BarChart
+                  data={stackedChartData}
+                  layout="vertical"
+                  margin={{ top: 16, right: 24, left: 24, bottom: 16 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis type="number" tickFormatter={(value) => `${value}h`} />
+                  <YAxis dataKey="profileName" type="category" width={180} />
+                  <Tooltip content={renderChartTooltip} />
+                  <Legend wrapperStyle={{ paddingTop: 8 }} />
+                  {salesOrderKeys.map(key => (
+                    <Bar key={key} dataKey={key} stackId="hours" fill={salesOrderColorMap[key]} />
+                  ))}
+                  <Bar dataKey="Idle" stackId="hours" fill={salesOrderColorMap.Idle} />
+                </BarChart>
+              </ResponsiveContainer>
+            </Box>
+          ) : (
+            <Typography variant="body1" sx={{ color: 'text.secondary' }}>
+              Generate a report to see attendance hours stacked by sales order and idle time.
+            </Typography>
+          )}
+        </Paper>
+      </Box>
 
       <Grid container spacing={3}>
         {/* Filters */}
