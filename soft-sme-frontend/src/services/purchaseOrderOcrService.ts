@@ -70,6 +70,14 @@ export interface PurchaseOrderOcrResponse {
     uploadedAt: string;
     relativePath: string;
   };
+  files?: Array<{
+    originalName: string;
+    storedName: string;
+    mimeType: string;
+    size: number;
+    uploadedAt: string;
+    relativePath: string;
+  }>;
   ocr: {
     rawText: string;
     normalized: PurchaseOrderOcrNormalizedData;
@@ -79,9 +87,16 @@ export interface PurchaseOrderOcrResponse {
   };
 }
 
-export const uploadPurchaseOrderDocument = async (file: File): Promise<PurchaseOrderOcrResponse> => {
+export const uploadPurchaseOrderDocument = async (files: File | File[]): Promise<PurchaseOrderOcrResponse> => {
+  const fileList = Array.isArray(files) ? files : [files];
+  if (fileList.length === 0) {
+    throw new Error('Please select at least one document to analyze.');
+  }
   const formData = new FormData();
-  formData.append('document', file);
+  fileList.forEach((file) => formData.append('documents', file));
+  if (fileList.length === 1) {
+    formData.append('document', fileList[0]);
+  }
 
   const response = await api.post<PurchaseOrderOcrResponse>('/api/purchase-orders/ocr/upload', formData, {
     headers: {

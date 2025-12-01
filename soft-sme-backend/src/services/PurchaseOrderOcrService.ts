@@ -127,6 +127,14 @@ export interface PurchaseOrderOcrResponse {
     uploadedAt: string;
     relativePath: string;
   };
+  files?: Array<{
+    originalName: string;
+    storedName: string;
+    mimeType: string;
+    size: number;
+    uploadedAt: string;
+    relativePath: string;
+  }>;
   ocr: {
     rawText: string;
     normalized: PurchaseOrderOcrNormalizedData;
@@ -205,8 +213,79 @@ export class PurchaseOrderOcrService {
     }
   }
 
+  private mapFileMetadata(file: Express.Multer.File, uploadedAt = new Date().toISOString()) {
+    return {
+      originalName: file.originalname,
+      storedName: file.filename,
+      mimeType: file.mimetype,
+      size: file.size,
+      uploadedAt,
+      relativePath: path.relative(path.join(__dirname, '..'), file.path),
+    };
+  }
+
+  async processDocuments(files: Express.Multer.File[]): Promise<PurchaseOrderOcrResponse> {
+    if (!files || files.length === 0) {
+      throw new Error('No documents provided for OCR.');
+    }
+    if (files.length === 1) {
+      return this.processDocument(files[0]);
+    }
+
+    const startTime = Date.now();
+    const uploadedAt = new Date().toISOString();
+    const extractions: Array<{ file: Express.Multer.File; text: string; warnings: string[] }> = [];
+
+    for (const file of files) {
+      const extraction = await this.extractText(file.path, file.mimetype);
+      extractions.push({ file, text: extraction.text, warnings: extraction.warnings });
+    }
+
+    const combinedRawText = extractions
+      .map((entry, idx) => {
+        const header = `=== Document ${idx + 1}: ${entry.file.originalname} ===`;
+        const body = entry.text?.trim() || '';
+        return [header, body].filter(Boolean).join('\n');
+      })
+      .filter(Boolean)
+      .join('\n\n')
+      .trim();
+
+    const aiModule = await import('./PurchaseOrderAiReviewService');
+    const aiResult = await aiModule.PurchaseOrderAiReviewService.reviewRawText(combinedRawText);
+
+    const warningSet = new Set<string>();
+    extractions.forEach((entry) => entry.warnings.forEach((w) => warningSet.add(w)));
+    aiResult.warnings.forEach((w: string) => warningSet.add(w));
+
+    const primaryFile = files[0];
+    const response: PurchaseOrderOcrResponse = {
+      source: 'ai',
+      uploadId: crypto.randomUUID(),
+      file: this.mapFileMetadata(primaryFile, uploadedAt),
+      files: files.map((file) => this.mapFileMetadata(file, uploadedAt)),
+      ocr: {
+        rawText: combinedRawText,
+        normalized: aiResult.normalized,
+        warnings: Array.from(warningSet),
+        notes: [...aiResult.notes],
+        issues: (aiResult as any).issues,
+        processingTimeMs: Date.now() - startTime,
+      },
+    };
+
+    try {
+      await this.persistResult(primaryFile, response);
+    } catch (persistError) {
+      console.warn('PurchaseOrderOcrService: failed to persist OCR artifact', persistError);
+    }
+
+    return response;
+  }
+
   async processDocument(file: Express.Multer.File): Promise<PurchaseOrderOcrResponse> {
     const startTime = Date.now();
+    const uploadedAt = new Date().toISOString();
 
     const extraction = await this.extractText(file.path, file.mimetype);
 
@@ -222,14 +301,8 @@ export class PurchaseOrderOcrService {
     const response: PurchaseOrderOcrResponse = {
       source: 'ai',
       uploadId: crypto.randomUUID(),
-      file: {
-        originalName: file.originalname,
-        storedName: file.filename,
-        mimeType: file.mimetype,
-        size: file.size,
-        uploadedAt: new Date().toISOString(),
-        relativePath: path.relative(path.join(__dirname, '..'), file.path),
-      },
+      file: this.mapFileMetadata(file, uploadedAt),
+      files: [this.mapFileMetadata(file, uploadedAt)],
       ocr: {
         rawText: extraction.text,
         normalized: aiResult.normalized,

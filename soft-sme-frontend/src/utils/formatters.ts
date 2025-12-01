@@ -8,6 +8,36 @@ export const formatCurrency = (amount: number): string => {
   }).format(amount);
 };
 
+/**
+ * Format a unit price with up to 4 decimals.
+ * Always keep at least 2 decimals; include 3rd/4th only when non-zero.
+ * Examples: 14 -> 14.00, 14.2 -> 14.20, 14.2300 -> 14.23, 14.2345 -> 14.2345.
+ */
+export const formatUnitPrice = (value: number | string): string => {
+  const num = Number(value);
+  if (!Number.isFinite(num)) {
+    return '0.00';
+  }
+
+  const rounded = Number(num.toFixed(4)); // limit to 4 decimals max
+  let text = rounded.toFixed(4);
+  text = text.replace(/0+$/, '');
+  if (text.endsWith('.')) {
+    text = text.slice(0, -1);
+  }
+
+  if (!text.includes('.')) {
+    return `${text}.00`;
+  }
+
+  const [whole, decimals] = text.split('.');
+  if (decimals.length < 2) {
+    return `${whole}.${decimals.padEnd(2, '0')}`;
+  }
+
+  return text;
+};
+
 export const formatPercentage = (value: number): string => {
   return new Intl.NumberFormat('en-US', {
     style: 'percent',

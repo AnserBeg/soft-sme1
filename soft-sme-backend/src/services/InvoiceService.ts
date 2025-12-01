@@ -65,6 +65,148 @@ export class InvoiceService {
     this.pool = pool;
   }
 
+  private async getMarginSchedule(client: PoolClient) {
+    const res = await client.query(
+      `SELECT margin_id, product_id, cost_lower_bound, cost_upper_bound, margin_factor
+       FROM marginschedule
+       ORDER BY cost_lower_bound ASC, margin_id ASC`
+    );
+    return res.rows.map((row) => ({
+      margin_id: row.margin_id,
+      product_id: row.product_id ?? null,
+      cost_lower_bound: Number(row.cost_lower_bound ?? 0),
+      cost_upper_bound: row.cost_upper_bound === null ? null : Number(row.cost_upper_bound),
+      margin_factor: Number(row.margin_factor ?? 1),
+    }));
+  }
+
+  private pickMarginFactor(
+    schedule: {
+      product_id: number | null;
+      cost_lower_bound: number;
+      cost_upper_bound: number | null;
+      margin_factor: number;
+    }[],
+    cost: number,
+    productId: number | null
+  ) {
+    const findFactor = (rows: typeof schedule) => {
+      for (const row of rows) {
+        const lower = Number(row.cost_lower_bound ?? 0);
+        const upper = row.cost_upper_bound === null ? null : Number(row.cost_upper_bound);
+        const factor = Number(row.margin_factor ?? 1);
+        if (cost >= lower && (upper === null || cost < upper)) {
+          return Number.isFinite(factor) && factor > 0 ? factor : 1;
+        }
+      }
+      return 1;
+    };
+
+    const productMatches = schedule.filter((row) => row.product_id === productId);
+    const general = schedule.filter((row) => row.product_id === null);
+
+    const productFactor = productMatches.length ? findFactor(productMatches) : null;
+    if (productFactor && productFactor !== 1) return productFactor;
+    return findFactor(productMatches.length ? productMatches : general);
+  }
+
+  private async applyMarginToLineItems(
+    client: PoolClient,
+    items: Required<InvoiceLineItemInput>[]
+  ): Promise<Required<InvoiceLineItemInput>[]> {
+    if (!items.length) return items;
+
+    const schedule = await this.getMarginSchedule(client);
+    if (!schedule.length) return items;
+
+    const partIds = Array.from(
+      new Set(items.map((item) => item.part_id).filter((id): id is number => Number.isFinite(Number(id))))
+    );
+    const partNumbers = Array.from(
+      new Set(
+        items
+          .filter((item) => !item.part_id && item.part_number)
+          .map((item) => item.part_number.trim())
+          .filter(Boolean)
+      )
+    );
+
+    const inventoryMap = new Map<
+      number,
+      { part_id: number; part_number: string; last_unit_cost: number; part_type: string | null }
+    >();
+    const inventoryByNumber = new Map<string, { part_id: number; last_unit_cost: number; part_type: string | null }>();
+
+    if (partIds.length) {
+      const res = await client.query(
+        'SELECT part_id, part_number, last_unit_cost, part_type FROM inventory WHERE part_id = ANY($1)',
+        [partIds]
+      );
+      for (const row of res.rows) {
+        const cost = Number(row.last_unit_cost ?? 0);
+        const partType = row.part_type ? String(row.part_type).toLowerCase() : null;
+        inventoryMap.set(row.part_id, {
+          part_id: row.part_id,
+          part_number: row.part_number,
+          last_unit_cost: Number.isFinite(cost) ? cost : 0,
+          part_type: partType,
+        });
+        inventoryByNumber.set(row.part_number, {
+          part_id: row.part_id,
+          last_unit_cost: Number.isFinite(cost) ? cost : 0,
+          part_type: partType,
+        });
+      }
+    }
+
+    if (partNumbers.length) {
+      const res = await client.query(
+        'SELECT part_id, part_number, last_unit_cost, part_type FROM inventory WHERE part_number = ANY($1)',
+        [partNumbers]
+      );
+      for (const row of res.rows) {
+        if (!inventoryByNumber.has(row.part_number)) {
+          const cost = Number(row.last_unit_cost ?? 0);
+          const partType = row.part_type ? String(row.part_type).toLowerCase() : null;
+          inventoryByNumber.set(row.part_number, {
+            part_id: row.part_id,
+            last_unit_cost: Number.isFinite(cost) ? cost : 0,
+            part_type: partType,
+          });
+        }
+      }
+    }
+
+    const shouldSkipMargin = (item: Required<InvoiceLineItemInput>, partType: string | null) => {
+      const pn = (item.part_number || '').trim().toUpperCase();
+      if (pn === 'LABOUR' || pn === 'LABOR' || pn === 'OVERHEAD' || pn === 'SUPPLY') return true;
+      const normalizedType = (partType || '').toLowerCase();
+      return normalizedType === 'labour' || normalizedType === 'labor' || normalizedType === 'overhead' || normalizedType === 'supply';
+    };
+
+    return items.map((item) => {
+      const inventory =
+        (item.part_id ? inventoryMap.get(item.part_id) : null) ||
+        (item.part_number ? inventoryByNumber.get(item.part_number) : null) ||
+        null;
+
+      if (shouldSkipMargin(item, inventory?.part_type ?? null)) return item;
+
+      const baseCost = Number(inventory?.last_unit_cost ?? NaN);
+      if (!Number.isFinite(baseCost) || baseCost <= 0) return item;
+
+      const factor = this.pickMarginFactor(schedule, baseCost, inventory?.part_id ?? null);
+      const unit_price = round2(baseCost * factor);
+      const line_amount = round2(unit_price * Number(item.quantity ?? 0));
+
+      return {
+        ...item,
+        unit_price,
+        line_amount,
+      };
+    });
+  }
+
   private async getCustomerTerms(client: PoolClient, customerId: number): Promise<number> {
     const res = await client.query(
       'SELECT default_payment_terms_in_days FROM customermaster WHERE customer_id = $1',
@@ -158,7 +300,9 @@ export class InvoiceService {
         }))
       );
 
-      const { subtotal, total_gst_amount, total_amount } = this.calcTotals(lineItems);
+      const marginAdjustedItems = await this.applyMarginToLineItems(client, lineItems);
+
+      const { subtotal, total_gst_amount, total_amount } = this.calcTotals(marginAdjustedItems);
       const invoiceDate = new Date();
       const { sequenceNumber, nnnnn } = await getNextInvoiceSequenceNumberForYear(invoiceDate.getFullYear());
       const invoiceNumber = `INV-${invoiceDate.getFullYear()}-${nnnnn.toString().padStart(5, '0')}`;
@@ -196,7 +340,7 @@ export class InvoiceService {
 
       const invoiceId = insertInvoice.rows[0].invoice_id;
 
-      for (const item of lineItems) {
+      for (const item of marginAdjustedItems) {
         await client.query(
           `INSERT INTO invoicelineitems
            (invoice_id, part_id, part_number, part_description, quantity, unit, unit_price, line_amount)
@@ -239,13 +383,14 @@ export class InvoiceService {
       const invoiceDate = parseDate(payload.invoice_date, new Date());
       const status = normalizeStatus(payload.status);
       const lineItems = this.normalizeLineItems(payload.line_items || []);
+      const marginAdjustedItems = await this.applyMarginToLineItems(client, lineItems);
       const terms =
         payload.payment_terms_in_days && Number.isFinite(Number(payload.payment_terms_in_days))
           ? Number(payload.payment_terms_in_days)
           : await this.getCustomerTerms(client, payload.customer_id);
       const dueDate = parseDate(payload.due_date, this.addDays(invoiceDate, terms));
 
-      const { subtotal, total_gst_amount, total_amount } = this.calcTotals(lineItems);
+      const { subtotal, total_gst_amount, total_amount } = this.calcTotals(marginAdjustedItems);
       const { sequenceNumber, nnnnn } = await getNextInvoiceSequenceNumberForYear(invoiceDate.getFullYear());
       const invoiceNumber = `INV-${invoiceDate.getFullYear()}-${nnnnn.toString().padStart(5, '0')}`;
 
@@ -280,7 +425,7 @@ export class InvoiceService {
       );
 
       const invoiceId = insertInvoice.rows[0].invoice_id;
-      for (const item of lineItems) {
+      for (const item of marginAdjustedItems) {
         await client.query(
           `INSERT INTO invoicelineitems
            (invoice_id, part_id, part_number, part_description, quantity, unit, unit_price, line_amount)

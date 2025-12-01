@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   Box,
@@ -39,6 +39,7 @@ interface CustomerOption {
 }
 
 const defaultLineItem = (): InvoiceLineItem => ({
+  part_id: null,
   part_number: '',
   part_description: '',
   quantity: 1,
@@ -63,6 +64,8 @@ const InvoiceDetailPage: React.FC = () => {
     source_sales_order_number: '',
   });
   const [lineItems, setLineItems] = useState<InvoiceLineItem[]>([defaultLineItem()]);
+  const [inventoryItems, setInventoryItems] = useState<any[]>([]);
+  const [marginSchedule, setMarginSchedule] = useState<any[]>([]);
   const [customers, setCustomers] = useState<CustomerOption[]>([]);
   const [customer, setCustomer] = useState<CustomerOption | null>(null);
   const [invoiceDate, setInvoiceDate] = useState<Dayjs | null>(dayjs());
@@ -119,6 +122,21 @@ const InvoiceDetailPage: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    (async () => {
+      try {
+        const [invRes, marginRes] = await Promise.all([
+          api.get('/api/inventory'),
+          api.get('/api/margin-schedule'),
+        ]);
+        setInventoryItems(invRes.data || []);
+        setMarginSchedule(marginRes.data || []);
+      } catch (e) {
+        console.error('Failed to load inventory or margin schedule for invoices', e);
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
     if (typeof window !== 'undefined') {
       localStorage.setItem(FIELD_VISIBILITY_STORAGE_KEY, JSON.stringify(fieldVisibility));
     }
@@ -153,6 +171,7 @@ const InvoiceDetailPage: React.FC = () => {
           const header = res.invoice;
           const items = (res.lineItems || []).map((li: any) => ({
             invoice_line_item_id: li.invoice_line_item_id,
+            part_id: li.part_id ?? null,
             part_number: li.part_number || '',
             part_description: li.part_description || '',
             quantity: Number(li.quantity) || 0,
@@ -197,11 +216,133 @@ const InvoiceDetailPage: React.FC = () => {
     }
   }, [customer, invoiceDate, dueDateTouched, isNew]);
 
+  useEffect(() => {
+    if (!isNew) return;
+    if (!inventoryItems.length) return;
+    setLineItems((prev) =>
+      prev.map((item) => {
+        const inv = item.part_number ? findInventoryPart(item.part_number) : null;
+        if (!inv) return item;
+        if (item.unit_price && item.unit_price > 0 && item.part_id) return item;
+        return applyMarginPricing(item, inv);
+      })
+    );
+  }, [applyMarginPricing, findInventoryPart, inventoryItems, isNew]);
+
+  const findInventoryPart = useCallback(
+    (partNumber: string) => {
+      const normalized = (partNumber || '').trim().toUpperCase();
+      return inventoryItems.find(
+        (p: any) => String(p.part_number || '').trim().toUpperCase() === normalized
+      );
+    },
+    [inventoryItems]
+  );
+
+  const findMarginFactor = useCallback(
+    (cost: number, productId?: number | null) => {
+      const listForProduct = marginSchedule.filter((m: any) => m.product_id === (productId ?? null));
+      const generalList = marginSchedule.filter((m: any) => m.product_id == null);
+      const findInList = (rows: any[]) => {
+        const sorted = [...rows].sort(
+          (a, b) => Number(a.cost_lower_bound ?? 0) - Number(b.cost_lower_bound ?? 0)
+        );
+        for (const entry of sorted) {
+          const lower = Number(entry.cost_lower_bound ?? 0);
+          const upper = entry.cost_upper_bound == null ? null : Number(entry.cost_upper_bound);
+          const factor = Number(entry.margin_factor ?? 1);
+          if (cost >= lower && (upper === null || cost < upper)) {
+            return Number.isFinite(factor) && factor > 0 ? factor : 1;
+          }
+        }
+        return 1;
+      };
+
+      const specific = listForProduct.length ? findInList(listForProduct) : 1;
+      if (specific !== 1) return specific;
+      return findInList(listForProduct.length ? listForProduct : generalList);
+    },
+    [marginSchedule]
+  );
+
+  const shouldSkipMargin = useCallback((partNumber: string, partType?: string | null) => {
+    const pn = (partNumber || '').trim().toUpperCase();
+    if (pn === 'LABOUR' || pn === 'LABOR' || pn === 'OVERHEAD' || pn === 'SUPPLY') return true;
+    const normalizedType = (partType || '').toLowerCase();
+    return (
+      normalizedType === 'labour' ||
+      normalizedType === 'labor' ||
+      normalizedType === 'overhead' ||
+      normalizedType === 'supply'
+    );
+  }, []);
+
+  const applyMarginPricing = useCallback(
+    (item: InvoiceLineItem, inventory?: any): InvoiceLineItem => {
+      const inv =
+        inventory ??
+        (item.part_number ? findInventoryPart(item.part_number) : null);
+      if (!inv || shouldSkipMargin(item.part_number, inv.part_type)) {
+        return {
+          ...item,
+          part_id: inv?.part_id ?? item.part_id ?? null,
+        };
+      }
+
+      const baseCost = Number(inv.last_unit_cost ?? 0);
+      if (!Number.isFinite(baseCost) || baseCost <= 0) {
+        return {
+          ...item,
+          part_id: inv.part_id ?? item.part_id ?? null,
+          part_description: item.part_description || inv.part_description || '',
+          unit: item.unit || inv.unit || '',
+        };
+      }
+
+      const factor = findMarginFactor(baseCost, inv.part_id ?? null);
+      const unit_price = Math.round(baseCost * factor * 100) / 100;
+      const qty = Number(item.quantity ?? 0);
+      const line_amount = Math.round(unit_price * qty * 100) / 100;
+
+      return {
+        ...item,
+        part_id: inv.part_id ?? item.part_id ?? null,
+        part_number: inv.part_number ?? item.part_number,
+        part_description: item.part_description || inv.part_description || '',
+        unit: item.unit || inv.unit || '',
+        unit_price,
+        line_amount: qty ? line_amount : item.line_amount,
+      };
+    },
+    [findInventoryPart, findMarginFactor, shouldSkipMargin]
+  );
+
   const updateLineItem = (index: number, field: keyof InvoiceLineItem, value: any) => {
     setLineItems((prev) => {
       const clone = [...prev];
       const target = { ...clone[index] };
-      if (field === 'quantity' || field === 'unit_price') {
+
+      if (field === 'part_number') {
+        const nextNumber = String(value || '').trim();
+        target.part_number = nextNumber;
+        target.part_id = null;
+        if (!nextNumber) {
+          target.part_description = '';
+          target.unit = '';
+          target.unit_price = 0;
+          target.line_amount = 0;
+        } else {
+          const inv = findInventoryPart(nextNumber);
+          if (inv) {
+            const withMargin = applyMarginPricing({ ...target, part_number: nextNumber }, inv);
+            clone[index] = withMargin;
+            return clone;
+          }
+          target.part_description = '';
+          target.unit_price = 0;
+          target.line_amount = 0;
+        }
+      } else if (field === 'quantity' || field === 'unit_price') {
         const numeric = Number(value);
         target[field] = Number.isFinite(numeric) ? numeric : 0;
         target.line_amount = Math.round((Number(target.quantity) * Number(target.unit_price)) * 100) / 100;
@@ -211,6 +352,7 @@ const InvoiceDetailPage: React.FC = () => {
       } else {
         (target as any)[field] = value;
       }
+
       clone[index] = target;
       return clone;
     });

@@ -157,7 +157,6 @@ const SalesOrderDetailPage: React.FC = () => {
   const [customers, setCustomers] = useState<CustomerOption[]>([]);
   const [products, setProducts] = useState<ProductOption[]>([]);
   const [inventoryItems, setInventoryItems] = useState<any[]>([]);
-  const [marginSchedule, setMarginSchedule] = useState<any[]>([]);
   const [globalLabourRate, setGlobalLabourRate] = useState<number | null>(null);
   const [globalOverheadRate, setGlobalOverheadRate] = useState<number | null>(null);
   const [globalSupplyRate, setGlobalSupplyRate] = useState<number | null>(null);
@@ -474,16 +473,14 @@ const SalesOrderDetailPage: React.FC = () => {
   useEffect(() => {
     (async () => {
       try {
-        const [custRes, prodRes, invRes, marginRes] = await Promise.all([
+        const [custRes, prodRes, invRes] = await Promise.all([
           api.get('/api/customers'),
           api.get('/api/products'),
           api.get('/api/inventory'),
-          api.get('/api/margin-schedule'),
         ]);
         setCustomers(custRes.data.map((c: any) => ({ label: c.customer_name, id: c.customer_id })));
         setProducts(prodRes.data.map((p: any) => ({ label: p.product_name, id: p.product_id, description: p.product_description })));
         setInventoryItems(invRes.data);
-        setMarginSchedule(marginRes.data);
         
         // For creation mode, mark as loaded after lists are fetched
         if (isCreationMode) {
@@ -703,8 +700,7 @@ const SalesOrderDetailPage: React.FC = () => {
         const liUnit = String(li.unit || '').trim();
         const invDesc = String(inv.part_description || '');
         const lastUnitCost = parseFloat(String(inv.last_unit_cost)) || 0;
-        const marginFactor = findMarginFactor(lastUnitCost);
-        const desiredUnitPrice = lastUnitCost * marginFactor;
+        const desiredUnitPrice = lastUnitCost;
 
         let next = li;
         if (invUnit && invUnit !== liUnit) {
@@ -723,18 +719,7 @@ const SalesOrderDetailPage: React.FC = () => {
       });
       return changed ? updated : prev;
     });
-  }, [isDataFullyLoaded, inventoryItems, lineItems, marginSchedule]);
-
-  const findMarginFactor = (cost: number) => {
-    const sorted = [...marginSchedule].sort((a, b) => a.cost_lower_bound - b.cost_lower_bound);
-    for (const entry of sorted) {
-      const lower = +entry.cost_lower_bound;
-      const upper = entry.cost_upper_bound == null ? null : +entry.cost_upper_bound;
-      const factor = +entry.margin_factor;
-      if (cost >= lower && (upper === null || cost < upper)) return factor;
-    }
-    return 1.0;
-  };
+  }, [isDataFullyLoaded, inventoryItems, lineItems]);
 
   const findInventoryPart = (partNumber: string) =>
     inventoryItems.find((p: any) => p.part_number === partNumber);
@@ -754,8 +739,7 @@ const SalesOrderDetailPage: React.FC = () => {
         const inv = findInventoryPart(newValue);
         if (inv) {
           const lastUnitCost = parseFloat(String(inv.last_unit_cost)) || 0;
-          const marginFactor = findMarginFactor(lastUnitCost);
-          const price = lastUnitCost * marginFactor;
+          const price = lastUnitCost;
           const existingQty = parseNumericInput(updated[idx]?.quantity as any);
           const amount = calculateLineAmount(existingQty, price);
           updated[idx] = { ...updated[idx],
@@ -2184,14 +2168,13 @@ const SalesOrderDetailPage: React.FC = () => {
                           setQuantityToOrderItems(prev => {
                             const u=[...prev]; u[idx] = { ...u[idx], part_number:'', part_description:'', unit:'Each', unit_price:0, line_amount:0 }; return u;
                           });
-                          return;
+                         return;
                          }
                          if (typeof v === 'string') {
                            const inv = inventoryItems.find((x:any)=>x.part_number===v);
                            if (inv) {
                           const lastUnitCost = parseFloat(String(inv.last_unit_cost)) || 0;
-                          const marginFactor = findMarginFactor(lastUnitCost);
-                          const calcPrice = lastUnitCost * marginFactor;
+                          const calcPrice = lastUnitCost;
                           setQuantityToOrderItems(prev => {
                             const u=[...prev]; u[idx]={ ...u[idx], part_number:inv.part_number, part_description:inv.part_description, unit:inv.unit||'Each', unit_price:calcPrice, line_amount:0 }; return u;
                           });
@@ -2411,8 +2394,7 @@ const SalesOrderDetailPage: React.FC = () => {
             setLineItems(prev => {
               const updated = [...prev];
               const lastUnitCost = parseFloat(String(addedPart.last_unit_cost)) || 0;
-              const marginFactor = findMarginFactor(lastUnitCost);
-              const unitPrice = lastUnitCost * marginFactor;
+              const unitPrice = lastUnitCost;
               updated[linePartToAddIndex] = {
                 ...updated[linePartToAddIndex],
                 part_number: addedPart.part_number,
@@ -2444,8 +2426,7 @@ const SalesOrderDetailPage: React.FC = () => {
             setQuantityToOrderItems(prev => {
               const u = [...prev];
               const lastUnitCost = parseFloat(String(addedPart.last_unit_cost)) || 0;
-              const marginFactor = findMarginFactor(lastUnitCost);
-              const calcPrice = lastUnitCost * marginFactor;
+              const calcPrice = lastUnitCost;
               u[ptoPartToAddIndex] = {
                 ...u[ptoPartToAddIndex],
                 part_number: addedPart.part_number,

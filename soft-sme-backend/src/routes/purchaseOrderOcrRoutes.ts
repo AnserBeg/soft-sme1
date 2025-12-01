@@ -6,7 +6,6 @@ import { PurchaseOrderOcrService, PurchaseOrderOcrResponse } from '../services/P
 import { PurchaseOrderAiReviewService } from '../services/PurchaseOrderAiReviewService';
 import { logger } from '../utils/logger';
 import { dedupedError } from '../utils/logDeduper';
-import { promisify } from 'util';
 
 const router = express.Router();
 
@@ -53,6 +52,11 @@ const upload = multer({
 });
 
 const ocrService = new PurchaseOrderOcrService(uploadDir);
+const uploadMiddleware = upload.fields([
+  { name: 'documents', maxCount: 10 },
+  { name: 'document', maxCount: 1 },
+]);
+
 function checkGeminiAvailability(): { ok: boolean; message?: string } {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey || apiKey.trim().length === 0) {
@@ -62,7 +66,7 @@ function checkGeminiAvailability(): { ok: boolean; message?: string } {
 }
 
 router.post('/upload', (req: Request, res: Response) => {
-  upload.single('document')(req, res, async (err: any) => {
+  uploadMiddleware(req, res, async (err: any) => {
     if (err) {
       logger.error('purchaseOrderOcrRoutes: Upload error', { err: logger.serializeError(err) });
       if (err instanceof multer.MulterError) {
@@ -75,8 +79,25 @@ router.post('/upload', (req: Request, res: Response) => {
     }
 
     try {
-      const file = (req as any).file as Express.Multer.File | undefined;
-      if (!file) {
+      const fileMap = (req as any).files as
+        | Express.Multer.File[]
+        | Record<string, Express.Multer.File[]>
+        | undefined;
+      const singleFile = (req as any).file as Express.Multer.File | undefined;
+
+      let files: Express.Multer.File[] = [];
+      if (Array.isArray(fileMap)) {
+        files = fileMap;
+      } else if (fileMap && typeof fileMap === 'object') {
+        files = [
+          ...(Array.isArray((fileMap as any).documents) ? (fileMap as any).documents : []),
+          ...(Array.isArray((fileMap as any).document) ? (fileMap as any).document : []),
+        ];
+      } else if (singleFile) {
+        files = [singleFile];
+      }
+
+      if (!files || files.length === 0) {
         return res.status(400).json({ error: 'No document uploaded.' });
       }
 
@@ -93,11 +114,14 @@ router.post('/upload', (req: Request, res: Response) => {
         });
       }
 
-      const result = await ocrService.processDocument(file);
+      const result =
+        files.length === 1
+          ? await ocrService.processDocument(files[0])
+          : await ocrService.processDocuments(files);
 
       logger.info('purchaseOrderOcrRoutes: AI review processed successfully', {
         uploadId: result.uploadId,
-        file: result.file,
+        files: result.files?.length ? result.files.map((f) => f.originalName) : result.file?.originalName,
       });
 
       return res.json(result);

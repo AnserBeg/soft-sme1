@@ -71,7 +71,6 @@ const WokerSalesOrderPage: React.FC = () => {
 
   // inventory / pricing helpers
   const [inventoryItems, setInventoryItems] = useState<any[]>([]);
-  const [marginSchedule, setMarginSchedule] = useState<any[]>([]);
   const [globalLabourRate, setGlobalLabourRate] = useState<number | null>(null);
   const [globalOverheadRate, setGlobalOverheadRate] = useState<number | null>(null);
 
@@ -119,16 +118,6 @@ const WokerSalesOrderPage: React.FC = () => {
   const [finderTargetIndex, setFinderTargetIndex] = useState<number>(0);
 
   // ---------- helpers ----------
-  const findMarginFactor = (cost: number) => {
-    const sorted = [...marginSchedule].sort((a, b) => a.cost_lower_bound - b.cost_lower_bound);
-    for (const entry of sorted) {
-      const lower = +entry.cost_lower_bound;
-      const upper = entry.cost_upper_bound == null ? null : +entry.cost_upper_bound;
-      const factor = +entry.margin_factor;
-      if (cost >= lower && (upper === null || cost < upper)) return factor;
-    }
-    return 1.0;
-  };
 
   const findInventoryPart = (partNumber: string) =>
     inventoryItems.find((p: any) => p.part_number === partNumber);
@@ -209,14 +198,12 @@ const WokerSalesOrderPage: React.FC = () => {
   useEffect(() => {
     (async () => {
       try {
-        const [invRes, marginRes, labRes, ohRes] = await Promise.all([
+        const [invRes, labRes, ohRes] = await Promise.all([
           api.get('/api/inventory'),
-          api.get('/api/margin-schedule'),
           api.get('/api/settings/labour-rate').catch(() => ({ data: { labour_rate: null } })),
           api.get('/api/settings/overhead-rate').catch(() => ({ data: { overhead_rate: null } })),
         ]);
         setInventoryItems(invRes.data);
-        setMarginSchedule(marginRes.data);
         setGlobalLabourRate(labRes.data.labour_rate ?? null);
         setGlobalOverheadRate(ohRes.data.overhead_rate ?? null);
       } catch (e) {
@@ -343,13 +330,12 @@ const WokerSalesOrderPage: React.FC = () => {
         const inv = findInventoryPart(newValue);
         if (inv) {
           const lastUnitCost = parseFloat(String(inv.last_unit_cost)) || 0;
-          const marginFactor = findMarginFactor(lastUnitCost);
           updated[idx] = {
             ...updated[idx],
             part_number: newValue,
             part_description: inv.part_description || '',
             unit: inv.unit || 'Each',
-            unit_price: lastUnitCost * marginFactor
+            unit_price: lastUnitCost
           };
         } else {
           updated[idx] = { ...updated[idx], part_number: newValue, part_description: 'Part not found', unit_price: 0 };
@@ -882,8 +868,7 @@ const WokerSalesOrderPage: React.FC = () => {
                         const inv = inventoryItems.find((x:any)=>x.part_number===v);
                         if (inv) {
                           const lastUnitCost = parseFloat(String(inv.last_unit_cost)) || 0;
-                          const marginFactor = findMarginFactor(lastUnitCost);
-                          const calcPrice = lastUnitCost * marginFactor;
+                          const calcPrice = lastUnitCost;
                           setPartsToOrder(prev => {
                             const u=[...prev]; u[idx]={ ...u[idx], part_number:inv.part_number, part_description:inv.part_description, unit:inv.unit||'Each', unit_price:calcPrice, line_amount:0 }; return u;
                           });
@@ -1051,8 +1036,7 @@ const WokerSalesOrderPage: React.FC = () => {
             setLineItems(prev => {
               const updated = [...prev];
               const lastUnitCost = parseFloat(String(addedPart.last_unit_cost)) || 0;
-              const marginFactor = findMarginFactor(lastUnitCost);
-              const unitPrice = lastUnitCost * marginFactor;
+              const unitPrice = lastUnitCost;
               updated[linePartToAddIndex] = {
                 ...updated[linePartToAddIndex],
                 part_number: addedPart.part_number,
@@ -1117,8 +1101,7 @@ const WokerSalesOrderPage: React.FC = () => {
             setPartsToOrder(prev => {
               const u = [...prev];
               const lastUnitCost = parseFloat(String(addedPart.last_unit_cost)) || 0;
-              const marginFactor = findMarginFactor(lastUnitCost);
-              const calcPrice = lastUnitCost * marginFactor;
+              const calcPrice = lastUnitCost;
               u[ptoPartToAddIndex] = {
                 ...u[ptoPartToAddIndex],
                 part_number: addedPart.part_number,

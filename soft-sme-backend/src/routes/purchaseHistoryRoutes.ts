@@ -4,6 +4,27 @@ import PDFDocument from 'pdfkit';
 import { getLogoImageSource } from '../utils/pdfLogoHelper';
 import { SalesOrderService } from '../services/SalesOrderService';
 
+// Format unit costs with up to 4 decimals; keep at least 2 decimals.
+const formatUnitCost = (value: any): string => {
+  const num = Number(value);
+  if (!Number.isFinite(num)) {
+    return '0.00';
+  }
+  const rounded = Number(num.toFixed(4));
+  let text = rounded.toFixed(4).replace(/0+$/, '');
+  if (text.endsWith('.')) {
+    text = text.slice(0, -1);
+  }
+  if (!text.includes('.')) {
+    return `${text}.00`;
+  }
+  const [whole, decimals] = text.split('.');
+  if ((decimals || '').length < 2) {
+    return `${whole}.${(decimals || '').padEnd(2, '0')}`;
+  }
+  return text;
+};
+
 const router = express.Router();
 const salesOrderService = new SalesOrderService(pool);
 
@@ -548,7 +569,7 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
       const partDescHeight = doc.heightOfString(item.part_description || '', { width: colWidths[2] });
       const qtyHeight = doc.heightOfString(parseFloat(item.quantity).toString(), { width: colWidths[3] });
       const unitHeight = doc.heightOfString(item.unit || '', { width: colWidths[4] });
-      const unitCostHeight = doc.heightOfString(parseFloat(item.unit_cost).toFixed(2), { width: colWidths[5] });
+      const unitCostHeight = doc.heightOfString(formatUnitCost(item.unit_cost), { width: colWidths[5] });
       const lineTotalHeight = doc.heightOfString(parseFloat(item.line_total).toFixed(2), { width: colWidths[6] });
       
       const maxTextHeight = Math.max(snHeight, partNumberHeight, partDescHeight, qtyHeight, unitHeight, unitCostHeight, lineTotalHeight);
@@ -602,7 +623,7 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
       currentX += colWidths[4];
       
       // Unit Cost
-      doc.text(parseFloat(item.unit_cost).toFixed(2), currentX, rowY, { 
+      doc.text(formatUnitCost(item.unit_cost), currentX, rowY, { 
         width: colWidths[5], 
         align: 'right',
         height: rowHeight

@@ -32,7 +32,7 @@ import UnsavedChangesGuard from '../components/UnsavedChangesGuard';
 import { VoiceService } from '../services/voiceService';
 import { toast } from 'react-toastify';
 import { getApiConfig } from '../config/api';
-import { formatCurrency, getLogoUrl } from '../utils/formatters';
+import { formatCurrency, formatUnitPrice, getLogoUrl } from '../utils/formatters';
 import UnifiedVendorDialog, { VendorFormValues } from '../components/UnifiedVendorDialog';
 import UnifiedPartDialog, { PartFormValues } from '../components/UnifiedPartDialog';
 import AllocationModal from '../components/AllocationModal';
@@ -776,8 +776,8 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
   };
 
   const handleOcrFileSelected = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) {
+    const files = event.target.files ? Array.from(event.target.files) : [];
+    if (files.length === 0) {
       return;
     }
 
@@ -785,9 +785,10 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
     setIsOcrUploading(true);
 
     try {
-      const result = await uploadPurchaseOrderDocument(file);
+      const result = await uploadPurchaseOrderDocument(files);
       setOcrUploadResult(result);
-      toast.success('Gemini analysis completed for the uploaded document. Review the detected values before applying them.');
+      const fileCountText = files.length > 1 ? `${files.length} documents` : 'the uploaded document';
+      toast.success(`Gemini analysis completed for ${fileCountText}. Review the detected values before applying them.`);
     } catch (error: any) {
       console.error('Error processing OCR document:', error);
       let message = 'Failed to analyze the document with AI. Please ensure OCR and Gemini are configured on the server.';
@@ -2053,7 +2054,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
                 <Grid item xs={6} sm={5} md={4}>{it.part_description}</Grid>
                 <Grid item xs={4} sm={2} md={1.5}>{it.quantity}</Grid>
                 <Grid item xs={4} sm={2} md={1.5}>{it.unit}</Grid>
-                <Grid item xs={4} sm={2} md={1.5}>{formatCurrency(Number(it.unit_cost) || 0)}</Grid>
+                <Grid item xs={4} sm={2} md={1.5}>${formatUnitPrice(Number(it.unit_cost) || 0)}</Grid>
                 <Grid item xs={4} sm={2} md={1}>{formatCurrency(Number(it.line_amount) || 0)}</Grid>
               </Grid>
             ))}
@@ -2395,12 +2396,13 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
                 <Box sx={{ flexGrow: 1 }}>
                   <Typography variant="h6">Invoice / Packing Slip OCR Prefill</Typography>
                   <Typography variant="body2" color="text.secondary">
-                    Upload a vendor invoice or packing slip to extract vendor, bill, and line item details using on-server Tesseract OCR.
+                    Upload one or multiple invoice/packing slip images (or a PDF) to extract vendor, bill, and line item details using on-server OCR.
                   </Typography>
                 </Box>
                 <input
                   type="file"
                   accept="image/*,.pdf"
+                  multiple
                   hidden
                   ref={ocrFileInputRef}
                   onChange={handleOcrFileSelected}
@@ -2412,7 +2414,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
                   onClick={() => ocrFileInputRef.current?.click()}
                   disabled={isOcrUploading}
                 >
-                  {isOcrUploading ? 'Processing…' : 'Upload Document'}
+                  {isOcrUploading ? 'Processing…' : 'Upload Documents'}
                 </Button>
                 {isOcrUploading && <CircularProgress size={24} />}
               </Stack>
@@ -2443,6 +2445,17 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
                       <Typography variant="body2" color="text.secondary">
                         Review the extracted details and apply them to this purchase order.
                       </Typography>
+                      {ocrUploadResult.files?.length ? (
+                        <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', mt: 1 }}>
+                          {ocrUploadResult.files.map((file) => (
+                            <Chip key={file.storedName} size="small" label={file.originalName} variant="outlined" />
+                          ))}
+                        </Stack>
+                      ) : ocrUploadResult.file ? (
+                        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+                          {ocrUploadResult.file.originalName}
+                        </Typography>
+                      ) : null}
                     </Box>
                     <Stack direction="row" spacing={1}>
                       <Button variant="contained" color="primary" onClick={handleApplyOcrResult}>
@@ -2912,7 +2925,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
                       error={!!errors.lineItems?.[idx]?.unit_cost}
                       helperText={errors.lineItems?.[idx]?.unit_cost}
                       inputProps={{ 
-                        step: "0.01",
+                        step: "0.0001",
                         onWheel: (e) => e.currentTarget.blur()
                       }}
                     />
