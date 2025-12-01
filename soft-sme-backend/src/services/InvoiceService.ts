@@ -267,6 +267,7 @@ export class InvoiceService {
       await client.query('BEGIN');
       const soRes = await client.query(
         `SELECT sales_order_id, sales_order_number, customer_id, status
+                , product_name, product_description, vin_number, unit_number, vehicle_make, vehicle_model, terms
          FROM salesorderhistory
          WHERE sales_order_id = $1`,
         [salesOrderId]
@@ -601,10 +602,21 @@ export class InvoiceService {
         [invoiceId]
       );
       const invoice = invoiceRes.rows[0];
-      invoice.subtotal = toNumber(invoice.subtotal);
-      invoice.total_gst_amount = toNumber(invoice.total_gst_amount);
-      invoice.total_amount = toNumber(invoice.total_amount);
-      return { invoice, lineItems: linesRes.rows };
+      const mergedInvoice = {
+        ...invoice,
+        product_name: invoice.product_name ?? invoice.so_product_name ?? invoice.product_name ?? null,
+        product_description:
+          invoice.product_description ?? invoice.so_product_description ?? invoice.product_description ?? null,
+        vin_number: invoice.vin_number ?? invoice.so_vin_number ?? invoice.vin_number ?? null,
+        unit_number: invoice.unit_number ?? invoice.so_unit_number ?? invoice.unit_number ?? null,
+        vehicle_make: invoice.vehicle_make ?? invoice.so_vehicle_make ?? invoice.vehicle_make ?? null,
+        vehicle_model: invoice.vehicle_model ?? invoice.so_vehicle_model ?? invoice.vehicle_model ?? null,
+        sales_order_number: invoice.so_sales_order_number ?? invoice.sales_order_number ?? null,
+        subtotal: toNumber(invoice.subtotal),
+        total_gst_amount: toNumber(invoice.total_gst_amount),
+        total_amount: toNumber(invoice.total_amount),
+      };
+      return { invoice: mergedInvoice, lineItems: linesRes.rows };
     } finally {
       client.release();
     }

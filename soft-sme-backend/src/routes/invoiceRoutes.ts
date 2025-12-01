@@ -375,31 +375,40 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
     doc.moveDown(2);
 
     // Invoice metadata
-    const metaStartY = doc.y;
     const invoiceDate = invoice.invoice_date ? new Date(invoice.invoice_date) : null;
     const dueDate = invoice.due_date ? new Date(invoice.due_date) : null;
+    const metaRowHeight = 18;
+    const labelValue = (
+      label: string,
+      value: string,
+      xLabel: number,
+      xValue: number,
+      y: number,
+      valueWidth = 180
+    ) => {
+      doc.font('Helvetica-Bold').fontSize(11).text(label, xLabel, y);
+      doc.font('Helvetica').fontSize(11).text(value || 'N/A', xValue, y, { width: valueWidth });
+    };
 
-    doc.font('Helvetica-Bold').text('Invoice Date:', 40, metaStartY, { continued: true }).font('Helvetica').text(invoiceDate && !isNaN(invoiceDate.getTime()) ? invoiceDate.toLocaleDateString() : '');
-    doc.font('Helvetica-Bold').text('Due Date:', 320, metaStartY, { continued: true }).font('Helvetica').text(dueDate && !isNaN(dueDate.getTime()) ? dueDate.toLocaleDateString() : '');
-    // Product + VIN row
-    doc.font('Helvetica-Bold').text('Product:', 40, doc.y + 8, { continued: true }).font('Helvetica').text(invoice.product_name || '');
-    doc.font('Helvetica-Bold').text('VIN #:', 320, doc.y, { continued: true }).font('Helvetica').text(invoice.vin_number || '');
+    const metaStartY = doc.y;
+    const invoiceDateText = invoiceDate && !isNaN(invoiceDate.getTime()) ? invoiceDate.toLocaleDateString() : '';
+    const dueDateText = dueDate && !isNaN(dueDate.getTime()) ? dueDate.toLocaleDateString() : '';
 
-    // Product description (full width)
-    doc.moveDown();
-    doc.font('Helvetica-Bold').text('Product Description:');
-    if (invoice.product_description) {
-      doc.font('Helvetica').text(invoice.product_description, { width: 520 });
-    } else {
-      doc.font('Helvetica').text('N/A', { width: 520 });
-    }
+    labelValue('Invoice Date:', invoiceDateText, 40, 140, metaStartY);
+    labelValue('Due Date:', dueDateText, 320, 400, metaStartY);
 
-    // Unit / Make / Model row
-    doc.moveDown();
-    const rowY = doc.y;
-    doc.font('Helvetica-Bold').text('Unit #:', 40, rowY, { continued: true }).font('Helvetica').text(invoice.unit_number || '');
-    doc.font('Helvetica-Bold').text('Make:', 200, rowY, { continued: true }).font('Helvetica').text(invoice.vehicle_make || '');
-    doc.font('Helvetica-Bold').text('Model:', 360, rowY, { continued: true }).font('Helvetica').text(invoice.vehicle_model || '');
+    labelValue('Product:', invoice.product_name || '', 40, 140, metaStartY + metaRowHeight);
+    labelValue('VIN #:', invoice.vin_number || '', 320, 400, metaStartY + metaRowHeight);
+
+    const descLabelY = metaStartY + metaRowHeight * 2;
+    doc.font('Helvetica-Bold').fontSize(11).text('Product Description:', 40, descLabelY);
+    doc.font('Helvetica').fontSize(11).text(invoice.product_description || 'N/A', 40, descLabelY + 12, { width: 520 });
+
+    const unitRowY = doc.y + 8;
+    labelValue('Unit #:', invoice.unit_number || '', 40, 120, unitRowY, 90);
+    labelValue('Make:', invoice.vehicle_make || '', 220, 290, unitRowY, 120);
+    labelValue('Model:', invoice.vehicle_model || '', 400, 470, unitRowY, 120);
+    doc.y = unitRowY + metaRowHeight;
 
     // Terms (notes)
     if (invoice.notes) {
