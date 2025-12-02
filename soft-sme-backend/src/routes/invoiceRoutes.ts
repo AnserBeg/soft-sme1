@@ -274,7 +274,6 @@ router.post('/upload-csv', upload.single('file'), async (req: Request, res: Resp
       return;
     }
 
-    const invoiceDate = parseCsvDate(normalizedRow.transaction_date || '');
     const invoiceDate = parseCsvDate(normalizedRow.transaction_date || '') || null;
 
     const rawStatus = (normalizedRow.payment_status || normalizedRow.transaction_type || '').toLowerCase();
