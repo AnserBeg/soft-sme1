@@ -44,3 +44,16 @@ export const downloadMonthlyStatements = async (params: { month: string; custome
     responseType: 'blob',
   });
 };
+
+export const downloadInvoiceImportTemplate = async () => {
+  return api.get('/api/invoices/csv-template', { responseType: 'blob' });
+};
+
+export const uploadInvoiceCsv = async (file: File) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  const response = await api.post('/api/invoices/upload-csv', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+  return response.data;
+};

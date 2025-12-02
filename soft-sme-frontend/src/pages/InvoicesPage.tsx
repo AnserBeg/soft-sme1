@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import {
   Box,
   Button,
@@ -12,12 +12,19 @@ import {
 import { DataGrid, GridColDef, GridEventListener, GridActionsCellItem } from '@mui/x-data-grid';
 import AddIcon from '@mui/icons-material/Add';
 import DownloadIcon from '@mui/icons-material/Download';
+import UploadIcon from '@mui/icons-material/Upload';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import ViewColumnIcon from '@mui/icons-material/ViewColumn';
 import DeleteIcon from '@mui/icons-material/Delete';
 import { useNavigate } from 'react-router-dom';
-import { fetchInvoices, downloadMonthlyStatements, deleteInvoice } from '../services/invoiceService';
+import {
+  fetchInvoices,
+  downloadMonthlyStatements,
+  deleteInvoice,
+  downloadInvoiceImportTemplate,
+  uploadInvoiceCsv,
+} from '../services/invoiceService';
 import { getCustomers } from '../services/customerService';
 import { Invoice } from '../types/invoice';
 import { formatCurrency } from '../utils/formatters';
@@ -46,6 +53,8 @@ const InvoicesPage: React.FC = () => {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   });
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const COLUMN_VISIBILITY_STORAGE_KEY = 'invoices.columnVisibility';
   const [columnVisibilityModel, setColumnVisibilityModel] = useState<Record<string, boolean>>(() => {
     if (typeof window === 'undefined') return {};
@@ -275,6 +284,49 @@ const InvoicesPage: React.FC = () => {
     }
   };
 
+  const handleDownloadTemplate = async () => {
+    try {
+      const response = await downloadInvoiceImportTemplate();
+      const blob = new Blob([response.data], { type: 'text/csv' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'invoice_import_template.csv';
+      link.click();
+      window.URL.revokeObjectURL(url);
+      toast.success('Template downloaded.');
+    } catch (error) {
+      console.error('Error downloading template', error);
+      toast.error('Failed to download template.');
+    }
+  };
+
+  const handleUploadClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange: React.ChangeEventHandler<HTMLInputElement> = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    try {
+      const result = await uploadInvoiceCsv(file);
+      toast.success(`Upload complete. Created: ${result.summary?.invoicesCreated ?? 0}, skipped: ${result.summary?.invoicesSkipped ?? 0}`);
+      if (result.warnings?.length) {
+        console.warn('Invoice CSV upload warnings:', result.warnings);
+      }
+      fetchData();
+    } catch (error: any) {
+      console.error('Error uploading invoice CSV', error);
+      const message = error?.response?.data?.error || 'Failed to upload CSV';
+      const details = error?.response?.data?.errors?.[0];
+      toast.error(details ? `${message}: ${details}` : message);
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
   return (
     <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
       <Stack
@@ -296,6 +348,18 @@ const InvoicesPage: React.FC = () => {
           <Button startIcon={<RefreshIcon />} variant="outlined" onClick={fetchData}>
             Refresh
           </Button>
+          <Button startIcon={<DownloadIcon />} variant="outlined" onClick={handleDownloadTemplate}>
+            Download Template
+          </Button>
+          <Button
+            startIcon={<UploadIcon />}
+            variant="outlined"
+            color="secondary"
+            onClick={handleUploadClick}
+            disabled={uploading}
+          >
+            {uploading ? 'Uploading...' : 'Upload CSV'}
+          </Button>
           <Button startIcon={<AddIcon />} variant="contained" onClick={() => navigate('/invoices/new')}>
             New Invoice
           </Button>
@@ -308,6 +372,13 @@ const InvoicesPage: React.FC = () => {
           </Button>
         </Stack>
       </Stack>
+      <input
+        type="file"
+        accept=".csv,text/csv"
+        ref={fileInputRef}
+        style={{ display: 'none' }}
+        onChange={handleFileChange}
+      />
 
       <Paper sx={{ mb: 3, p: 2, border: '1px solid', borderColor: 'divider' }}>
         <Stack direction={{ xs: 'column', sm: 'row' }} spacing={3} alignItems="flex-start">

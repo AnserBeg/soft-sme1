@@ -1,11 +1,33 @@
 import express, { Request, Response } from 'express';
 import PDFDocument from 'pdfkit';
+import multer from 'multer';
+import csv from 'csv-parser';
+import fs from 'fs';
+import path from 'path';
 import { pool } from '../db';
 import { InvoiceService, InvoiceInput } from '../services/InvoiceService';
 import { getLogoImageSource } from '../utils/pdfLogoHelper';
+import { canonicalizeName } from '../lib/normalize';
 
 const router = express.Router();
 const invoiceService = new InvoiceService(pool);
+const uploadsDir = path.join(__dirname, '../../uploads');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+const upload = multer({
+  dest: uploadsDir,
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype === 'text/csv' || file.originalname.toLowerCase().endsWith('.csv')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only CSV files are allowed'));
+    }
+  },
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB
+  },
+});
 
 const formatCurrency = (value: number | string | null | undefined): string => {
   const amount = Number(value ?? 0);
@@ -20,6 +42,65 @@ const formatCurrency = (value: number | string | null | undefined): string => {
 const normalizeId = (value: any) => {
   const num = Number(value);
   return Number.isFinite(num) ? num : null;
+};
+
+const normalizeHeader = (value: string) =>
+  value.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/_+/g, '_').replace(/^_+|_+$/g, '');
+
+const normalizeCell = (value: unknown) => (value == null ? '' : String(value).trim());
+
+const headerMap: Record<string, string> = {
+  '#': 'invoice_number',
+  no: 'invoice_number',
+  number: 'invoice_number',
+  txn_no: 'invoice_number',
+  transaction_no: 'invoice_number',
+  transaction_number: 'invoice_number',
+  transaction_date: 'transaction_date',
+  txn_date: 'transaction_date',
+  customer_full_name: 'customer_name',
+  customer: 'customer_name',
+  customer_name: 'customer_name',
+  memo: 'memo',
+  memo_description: 'memo',
+  description: 'memo',
+  product_service: 'product_service',
+  quantity: 'quantity',
+  qty: 'quantity',
+  amount: 'amount',
+  vin_no: 'vin_number',
+  vin_no_: 'vin_number',
+  vin: 'vin_number',
+  make_year: 'make_year',
+  make: 'make_year',
+  a_r_paid: 'payment_status',
+  ar_paid: 'payment_status',
+  status: 'payment_status',
+};
+
+const round2 = (value: number) => Math.round(value * 100) / 100;
+const toNumberSafe = (value: unknown, defaultValue = 0) => {
+  if (value == null || value === '') return defaultValue;
+  const cleaned = typeof value === 'string' ? value.replace(/[^0-9.\-]+/g, '') : value;
+  const num = Number(cleaned);
+  return Number.isFinite(num) ? num : defaultValue;
+};
+const GST_RATE = 0.05;
+
+const parseCsvDate = (value: string): Date | null => {
+  if (!value) return null;
+  const direct = new Date(value);
+  if (!isNaN(direct.getTime())) return direct;
+  const parts = value.split(/[/-]/).map((p) => Number(p));
+  if (parts.length === 3 && parts.every((n) => Number.isFinite(n) && n > 0)) {
+    const [a, b, c] = parts;
+    const year = c < 100 ? 2000 + c : c;
+    const month = a > 12 ? b : a;
+    const day = a > 12 ? a : b;
+    const parsed = new Date(year, month - 1, day);
+    if (!isNaN(parsed.getTime())) return parsed;
+  }
+  return null;
 };
 
 const parseMonthRange = (monthParam?: string | string[]) => {
@@ -38,6 +119,308 @@ const parseMonthRange = (monthParam?: string | string[]) => {
   const label = start.toLocaleString('default', { month: 'long', year: 'numeric' });
   return { start, end, label };
 };
+
+// Download CSV template for historical invoice import
+router.get('/csv-template', (_req: Request, res: Response) => {
+  const csvTemplate = `Product/Service,Transaction date,Transaction type,#,Customer full name,Memo/Description,Quantity,Amount,VIN NO -,MAKE/YEAR,A/R paid
+CVIP,10/01/2025,Invoice,15205,CHAUMAD INTEGRATED RESOURCES LTD.,VEHICLE SAFETY INSPECTION,1,200,GT4232,FRTL/2015,Paid
+DW1302,10/01/2025,Invoice,15205,CHAUMAD INTEGRATED RESOURCES LTD.,WINDSHIELD,1,180,GT4232,FRTL/2015,Paid`;
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', 'attachment; filename=\"invoice_import_template.csv\"');
+  res.send(csvTemplate);
+});
+
+// Bulk import historical invoices from a QuickBooks CSV export
+router.post('/upload-csv', upload.single('file'), async (req: Request, res: Response) => {
+  if (!req.file) {
+    return res.status(400).json({ error: 'No CSV file uploaded' });
+  }
+
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  const rawRows: any[] = [];
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      fs.createReadStream(req.file!.path)
+        .pipe(csv())
+        .on('data', (data) => rawRows.push(data))
+        .on('end', () => resolve())
+        .on('error', (err) => reject(err));
+    });
+  } catch (err) {
+    console.error('invoiceRoutes: failed to read CSV', err);
+    fs.unlink(req.file.path, () => undefined);
+    return res.status(400).json({ error: 'Unable to read CSV file' });
+  }
+
+  if (rawRows.length === 0) {
+    fs.unlink(req.file.path, () => undefined);
+    return res.status(400).json({ error: 'CSV file is empty' });
+  }
+
+  type ImportLine = {
+    part_number: string;
+    part_description: string;
+    quantity: number;
+    unit: string;
+    unit_price: number;
+    line_amount: number;
+  };
+
+  type ImportInvoice = {
+    invoiceNumber: string;
+    customerName: string;
+    canonicalName: string;
+    invoiceDate: Date | null;
+    status: 'Paid' | 'Unpaid';
+    subtotal: number;
+    productName?: string;
+    productDescription?: string;
+    vin_number?: string;
+    vehicle_make?: string;
+    vehicle_model?: string;
+    memo?: string;
+    lines: ImportLine[];
+  };
+
+  const invoiceMap = new Map<string, ImportInvoice>();
+
+  rawRows.forEach((row, idx) => {
+    const rowNumber = idx + 2; // account for header row
+    const normalizedRow: Record<string, string> = {};
+    Object.entries(row).forEach(([key, value]) => {
+      const mappedKey = headerMap[normalizeHeader(key)] || normalizeHeader(key);
+      normalizedRow[mappedKey] = normalizeCell(value);
+    });
+
+    const invoiceNumber = normalizedRow.invoice_number;
+    if (!invoiceNumber) {
+      errors.push(`Row ${rowNumber}: Missing invoice number (# column)`);
+      return;
+    }
+
+    const customerName = normalizedRow.customer_name;
+    if (!customerName) {
+      errors.push(`Row ${rowNumber}: Missing customer name`);
+      return;
+    }
+    const canonicalName = canonicalizeName(customerName);
+    if (!canonicalName) {
+      errors.push(`Row ${rowNumber}: Customer name could not be normalized`);
+      return;
+    }
+
+    const invoiceDate = parseCsvDate(normalizedRow.transaction_date || '');
+    if (!invoiceDate) {
+      errors.push(`Row ${rowNumber}: Invalid transaction date`);
+      return;
+    }
+
+    const rawStatus = (normalizedRow.payment_status || normalizedRow.transaction_type || '').toLowerCase();
+    const status: 'Paid' | 'Unpaid' = rawStatus.includes('paid') ? 'Paid' : 'Unpaid';
+
+    const amount = toNumberSafe(normalizedRow.amount, NaN);
+    if (!Number.isFinite(amount)) {
+      errors.push(`Row ${rowNumber}: Amount is required and must be a number`);
+      return;
+    }
+
+    const rawQty = toNumberSafe(normalizedRow.quantity, 1);
+    const quantity = rawQty > 0 ? rawQty : 1;
+    if (rawQty <= 0) {
+      warnings.push(`Row ${rowNumber}: Quantity was ${rawQty}; defaulted to 1`);
+    }
+
+    const productService = normalizedRow.product_service;
+    const memo = normalizedRow.memo;
+    const vinNumber = normalizedRow.vin_number;
+    const makeYearRaw = normalizedRow.make_year;
+    const [firstPart, ...restParts] = makeYearRaw ? makeYearRaw.split('/').map((p) => p.trim()).filter(Boolean) : [];
+    const vehicle_make = restParts.length ? firstPart : makeYearRaw || undefined;
+    const vehicle_model = restParts.length ? restParts.join('/') : undefined;
+
+    const key = `${canonicalName}::${invoiceNumber}`;
+    if (!invoiceMap.has(key)) {
+      invoiceMap.set(key, {
+        invoiceNumber,
+        customerName,
+        canonicalName,
+        invoiceDate,
+        status,
+        subtotal: 0,
+        productName: productService || undefined,
+        productDescription: memo || undefined,
+        vin_number: vinNumber || undefined,
+        vehicle_make,
+        vehicle_model,
+        memo: memo || undefined,
+        lines: [],
+      });
+    }
+
+    const invoice = invoiceMap.get(key)!;
+    if (invoice.status !== 'Paid' && status === 'Paid') {
+      invoice.status = 'Paid';
+    }
+    if (status === 'Unpaid') {
+      invoice.status = 'Unpaid';
+    }
+    if (!invoice.invoiceDate && invoiceDate) {
+      invoice.invoiceDate = invoiceDate;
+    } else if (invoice.invoiceDate && invoiceDate && invoice.invoiceDate.getTime() !== invoiceDate.getTime()) {
+      warnings.push(`Invoice ${invoiceNumber}: multiple dates found; using first date ${invoice.invoiceDate.toLocaleDateString()}`);
+    }
+    if (!invoice.vin_number && vinNumber) {
+      invoice.vin_number = vinNumber;
+    } else if (vinNumber && invoice.vin_number && invoice.vin_number !== vinNumber) {
+      warnings.push(`Invoice ${invoiceNumber}: multiple VIN values found; kept "${invoice.vin_number}"`);
+    }
+    if (!invoice.vehicle_make && vehicle_make) invoice.vehicle_make = vehicle_make;
+    if (!invoice.vehicle_model && vehicle_model) invoice.vehicle_model = vehicle_model;
+    if (!invoice.memo && memo) invoice.memo = memo;
+    if (!invoice.productName && productService) invoice.productName = productService;
+    if (!invoice.productDescription && memo) invoice.productDescription = memo;
+
+    const unitPrice = quantity !== 0 ? round2(amount / quantity) : round2(amount);
+    invoice.lines.push({
+      part_number: productService || memo || `Line ${invoice.lines.length + 1}`,
+      part_description: memo || productService || 'Imported line item',
+      quantity,
+      unit: 'Each',
+      unit_price: unitPrice,
+      line_amount: round2(amount),
+    });
+    invoice.subtotal = round2(invoice.subtotal + round2(amount));
+  });
+
+  if (errors.length) {
+    fs.unlink(req.file.path, () => undefined);
+    return res.status(400).json({ error: 'Validation failed', errors, warnings });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const canonicalNames = Array.from(new Set(Array.from(invoiceMap.values()).map((inv) => inv.canonicalName)));
+    const customersRes = await client.query(
+      'SELECT customer_id, canonical_name, default_payment_terms_in_days FROM customermaster WHERE canonical_name = ANY($1)',
+      [canonicalNames]
+    );
+    const customerMap = new Map<string, { customer_id: number; terms: number }>();
+    customersRes.rows.forEach((row: any) => {
+      const terms = Number(row.default_payment_terms_in_days);
+      customerMap.set(row.canonical_name, { customer_id: row.customer_id, terms: Number.isFinite(terms) && terms > 0 ? terms : 30 });
+    });
+
+    canonicalNames.forEach((name) => {
+      if (!customerMap.has(name)) {
+        errors.push(`Customer "${name}" not found. Create it first or update the CSV.`);
+      }
+    });
+    if (errors.length) {
+      await client.query('ROLLBACK');
+      fs.unlink(req.file.path, () => undefined);
+      return res.status(400).json({ error: 'Missing customers', errors, warnings });
+    }
+
+    const incomingNumbers = Array.from(invoiceMap.values()).map((inv) => inv.invoiceNumber);
+    const existingRes = await client.query('SELECT invoice_number FROM invoices WHERE invoice_number = ANY($1)', [incomingNumbers]);
+    const existingNumbers = new Set(existingRes.rows.map((r: any) => r.invoice_number));
+
+    const createdInvoices: { invoice_id: number; invoice_number: string }[] = [];
+    const skippedInvoices: string[] = [];
+
+    for (const invoice of invoiceMap.values()) {
+      if (existingNumbers.has(invoice.invoiceNumber)) {
+        warnings.push(`Invoice ${invoice.invoiceNumber} already exists; skipped to avoid duplicate import`);
+        skippedInvoices.push(invoice.invoiceNumber);
+        continue;
+      }
+
+      const customer = customerMap.get(invoice.canonicalName)!;
+      const invoiceDate = invoice.invoiceDate ?? new Date();
+      const dueDate = new Date(invoiceDate);
+      dueDate.setDate(dueDate.getDate() + customer.terms);
+    const subtotal = round2(invoice.subtotal);
+    const total_gst_amount = round2(subtotal * GST_RATE);
+    const total_amount = round2(subtotal + total_gst_amount);
+
+    const insertInvoice = await client.query(
+      `INSERT INTO invoices (
+          invoice_number, sequence_number, customer_id, sales_order_id, source_sales_order_number,
+          status, invoice_date, due_date, payment_terms_in_days, subtotal, total_gst_amount, total_amount, notes,
+          product_name, product_description, vin_number, unit_number, vehicle_make, vehicle_model
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+        RETURNING invoice_id`,
+        [
+          invoice.invoiceNumber,
+          invoice.invoiceNumber.slice(-16),
+          customer.customer_id,
+          null,
+          null,
+          invoice.status,
+          invoiceDate,
+          dueDate,
+          customer.terms,
+          subtotal,
+          total_gst_amount,
+          total_amount,
+          invoice.memo || null,
+          invoice.productName || null,
+          invoice.productDescription || null,
+          invoice.vin_number || null,
+          null,
+          invoice.vehicle_make || null,
+          invoice.vehicle_model || null,
+        ]
+      );
+
+      const invoiceId = insertInvoice.rows[0].invoice_id;
+      for (const line of invoice.lines) {
+        await client.query(
+          `INSERT INTO invoicelineitems
+           (invoice_id, part_id, part_number, part_description, quantity, unit, unit_price, line_amount)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+          [
+            invoiceId,
+            null,
+            line.part_number,
+            line.part_description,
+            line.quantity,
+            line.unit,
+            line.unit_price,
+            line.line_amount,
+          ]
+        );
+      }
+
+      createdInvoices.push({ invoice_id: invoiceId, invoice_number: invoice.invoiceNumber });
+    }
+
+    await client.query('COMMIT');
+    res.json({
+      message: 'Invoice CSV upload completed',
+      summary: {
+        rowsProcessed: rawRows.length,
+        invoicesCreated: createdInvoices.length,
+        invoicesSkipped: skippedInvoices.length,
+      },
+      createdInvoices,
+      skippedInvoices,
+      errors,
+      warnings,
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('invoiceRoutes: upload csv error', error);
+    res.status(500).json({ error: 'Failed to import invoices from CSV' });
+  } finally {
+    client.release();
+    fs.unlink(req.file.path, () => undefined);
+  }
+});
 
 const fetchBusinessProfile = async () => {
   const businessProfileRes = await pool.query(
