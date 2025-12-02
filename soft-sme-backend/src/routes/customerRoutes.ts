@@ -70,6 +70,10 @@ const normalizeCell = (value: unknown): string => {
   return value.toString().trim();
 };
 
+// DB column limits (keep in sync with migrations)
+const MAX_PHONE_LENGTH = 50;
+const MAX_NOTES_LENGTH = 1000; // general_notes is TEXT in most schemas, but cap to avoid oversized input
+
 // Downloadable Excel template to guide imports
 router.get('/import-excel/template', (_req: Request, res: Response) => {
   const workbook = XLSX.utils.book_new();
@@ -171,10 +175,24 @@ router.post('/import-excel', excelUpload.single('file'), async (req: Request, re
         country: normalizeCell(normalizedRow.country),
         postal_code: normalizeCell(normalizedRow.postal_code),
         contact_person: normalizeCell(normalizedRow.contact_person),
-        phone_number: normalizeCell(normalizedRow.phone_number || normalizedRow.telephone_number),
+        phone_number: (() => {
+          const phoneRaw = normalizeCell(normalizedRow.phone_number || normalizedRow.telephone_number);
+          if (phoneRaw.length > MAX_PHONE_LENGTH) {
+            warnings.push(`Row ${rowNumber}: phone truncated to ${MAX_PHONE_LENGTH} characters`);
+            return phoneRaw.slice(0, MAX_PHONE_LENGTH);
+          }
+          return phoneRaw;
+        })(),
         email: normalizeCell(normalizedRow.email),
         website: normalizeCell(normalizedRow.website),
-        general_notes: normalizeCell(normalizedRow.general_notes || normalizedRow.notes || normalizedRow.note),
+        general_notes: (() => {
+          const notesRaw = normalizeCell(normalizedRow.general_notes || normalizedRow.notes || normalizedRow.note);
+          if (notesRaw.length > MAX_NOTES_LENGTH) {
+            warnings.push(`Row ${rowNumber}: notes truncated to ${MAX_NOTES_LENGTH} characters`);
+            return notesRaw.slice(0, MAX_NOTES_LENGTH);
+          }
+          return notesRaw;
+        })(),
       });
     });
 
