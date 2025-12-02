@@ -110,7 +110,15 @@ const upload = multer({
 // Get business profile
 router.get('/', authMiddleware, async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM business_profile ORDER BY id DESC LIMIT 1');
+    const companyId = (req.user as any)?.company_id;
+    if (!companyId) {
+      return res.status(400).json({ error: 'Missing company context' });
+    }
+
+    const result = await pool.query(
+      'SELECT * FROM business_profile WHERE company_id = $1 ORDER BY id DESC LIMIT 1',
+      [companyId]
+    );
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Business profile not found' });
     }
@@ -149,7 +157,15 @@ router.delete('/logo', authMiddleware, async (req, res) => {
     await client.query('BEGIN');
 
     // Get current profile
-    const result = await client.query('SELECT logo_url FROM business_profile ORDER BY id DESC LIMIT 1');
+    const companyId = (req.user as any)?.company_id;
+    if (!companyId) {
+      return res.status(400).json({ error: 'Missing company context' });
+    }
+
+    const result = await client.query(
+      'SELECT id, logo_url FROM business_profile WHERE company_id = $1 ORDER BY id DESC LIMIT 1',
+      [companyId]
+    );
     
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Business profile not found' });
@@ -165,10 +181,10 @@ router.delete('/logo', authMiddleware, async (req, res) => {
       }
 
       // Update database to remove logo_url
-      await client.query(
-        'UPDATE business_profile SET logo_url = NULL WHERE id = $1',
-        [result.rows[0].id]
-      );
+      await client.query('UPDATE business_profile SET logo_url = NULL WHERE id = $1 AND company_id = $2', [
+        result.rows[0].id,
+        companyId,
+      ]);
     }
 
     await client.query('COMMIT');
@@ -205,7 +221,15 @@ router.post('/', authMiddleware, upload.single('logo'), async (req, res) => {
     const geofence = parseGeofenceInput(req.body);
 
     // Check if profile exists
-    const existingProfile = await client.query('SELECT * FROM business_profile ORDER BY id DESC LIMIT 1');
+    const companyId = (req.user as any)?.company_id;
+    if (!companyId) {
+      return res.status(400).json({ error: 'Missing company context' });
+    }
+
+    const existingProfile = await client.query(
+      'SELECT * FROM business_profile WHERE company_id = $1 ORDER BY id DESC LIMIT 1',
+      [companyId]
+    );
     
     let logoUrl = existingProfile.rows[0]?.logo_url;
     
@@ -227,11 +251,13 @@ router.post('/', authMiddleware, upload.single('logo'), async (req, res) => {
       // Create new profile
       const result = await client.query(
         `INSERT INTO business_profile (
+          company_id,
           business_name, street_address, city, province, country, postal_code,
           telephone_number, email, business_number, website, logo_url,
           geo_fence_enabled, geo_fence_center_latitude, geo_fence_center_longitude, geo_fence_radius_meters
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING *`,
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING *`,
         [
+          companyId,
           business_name,
           street_address,
           city,
@@ -270,7 +296,7 @@ router.post('/', authMiddleware, upload.single('logo'), async (req, res) => {
           geo_fence_center_latitude = $13,
           geo_fence_center_longitude = $14,
           geo_fence_radius_meters = $15
-        WHERE id = $16 RETURNING *`,
+        WHERE id = $16 AND company_id = $17 RETURNING *`,
         [
           business_name,
           street_address,
@@ -287,7 +313,8 @@ router.post('/', authMiddleware, upload.single('logo'), async (req, res) => {
           geofence.lat,
           geofence.lng,
           geofence.radius,
-          existingProfile.rows[0].id
+          existingProfile.rows[0].id,
+          companyId
         ]
       );
       await client.query('COMMIT');
