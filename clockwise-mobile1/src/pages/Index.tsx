@@ -12,7 +12,7 @@ import { AttendanceScreen } from '@/components/screens/AttendanceScreen';
 
 const Index = () => {
   const { isAuthenticated, isLoading } = useAuth();
-  const [currentScreen, setCurrentScreen] = useState<'attendance' | 'time-tracking' | 'leave-management' | 'documents'>('attendance');
+  const [currentScreen, setCurrentScreen] = useState<'attendance' | 'time-tracking' | 'leave-management' | 'documents'>('time-tracking');
   const [isMenuOpen, setIsMenuOpen] = useState(false);
 
   if (isLoading) {
