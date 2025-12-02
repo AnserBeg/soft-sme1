@@ -55,6 +55,15 @@ const AttendancePage: React.FC = () => {
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const successTimeoutRef = useRef<number | null>(null);
 
+  const formatErrorMessage = (err: any, fallback: string) => {
+    return (
+      err?.response?.data?.message ||
+      err?.response?.data?.error ||
+      err?.message ||
+      fallback
+    );
+  };
+
   const showSuccess = (message: string) => {
     if (successTimeoutRef.current) {
       window.clearTimeout(successTimeoutRef.current);
@@ -135,7 +144,7 @@ const AttendancePage: React.FC = () => {
       setShifts([]);
       showSuccess('Successfully clocked in.');
     } catch (err) {
-      setError('Failed to clock in. Please try again.');
+      setError(formatErrorMessage(err, 'Failed to clock in. Please try again.'));
       console.error('Error clocking in:', err);
     }
   };
@@ -150,7 +159,7 @@ const AttendancePage: React.FC = () => {
       setShifts([]);
       showSuccess('Successfully clocked out.');
     } catch (err) {
-      setError('Failed to clock out. Please try again.');
+      setError(formatErrorMessage(err, 'Failed to clock out. Please try again.'));
       console.error('Error clocking out:', err);
     }
   };

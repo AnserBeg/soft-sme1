@@ -218,6 +218,17 @@ const haversineDistanceMeters = (lat1: number, lon1: number, lat2: number, lon2:
 
 const router = express.Router();
 
+function isMobileRequest(req: Request): boolean {
+  const headerType = (req.headers['x-device-type'] as string | undefined)?.toLowerCase();
+  if (headerType === 'mobile' || headerType === 'tablet') {
+    return true;
+  }
+
+  const ua = req.headers['user-agent'];
+  if (!ua) return false;
+  return /mobile|android|iphone|ipad/i.test(ua);
+}
+
 router.get('/geofence', async (_req: Request, res: Response) => {
   try {
     const fence = await loadGeoFenceSettings(getTenantPool());
@@ -277,6 +288,7 @@ router.post('/clock-in', async (req: Request, res: Response) => {
   const { profile_id, latitude, longitude } = req.body;
   try {
     const tenantPool = getTenantPool();
+    const isMobile = isMobileRequest(req);
 
     // Prevent multiple open shifts
     const open = await tenantPool.query(
@@ -287,9 +299,10 @@ router.post('/clock-in', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Already clocked in. Please clock out first.' });
     }
 
-    const geofence = await loadGeoFenceSettings(tenantPool);
+    // Geofence enforcement is only applied for mobile clients to avoid blocking desktop time tracking users.
+    const geofence = isMobile ? await loadGeoFenceSettings(tenantPool) : null;
     let geofenceCheck: { within: boolean; distance_meters: number; radius_meters: number | null } | null = null;
-    if (isGeoFenceActive(geofence)) {
+    if (geofence && isGeoFenceActive(geofence)) {
       const latNum = latitude === undefined || latitude === null || latitude === '' ? NaN : Number(latitude);
       const lngNum = longitude === undefined || longitude === null || longitude === '' ? NaN : Number(longitude);
 

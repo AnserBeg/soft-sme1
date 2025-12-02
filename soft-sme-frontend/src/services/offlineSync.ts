@@ -35,7 +35,11 @@ export const syncPending = async (): Promise<{ synced: number; failed: number }>
       const payload = JSON.parse(row.payload_json || '{}');
       switch (row.type) {
         case 'attendance_clock_in':
-          await api.post('/api/attendance/clock-in', { profile_id: payload.profile_id });
+          await api.post('/api/attendance/clock-in', {
+            profile_id: payload.profile_id,
+            latitude: payload.latitude,
+            longitude: payload.longitude,
+          });
           break;
         case 'attendance_clock_out':
           await api.post('/api/attendance/clock-out', { shift_id: payload.shift_id });

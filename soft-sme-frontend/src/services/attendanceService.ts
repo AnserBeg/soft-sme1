@@ -3,23 +3,98 @@ import api from '../api/axios';
 const toUtcIso = (d: Date) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString();
 const uuid = () => (crypto as any).randomUUID ? (crypto as any).randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
+type GeoFenceConfig = {
+  enabled: boolean;
+  configured: boolean;
+  center_latitude: number | null;
+  center_longitude: number | null;
+  radius_meters: number | null;
+};
+
+const getBrowserLocation = (): Promise<{ latitude: number; longitude: number }> => {
+  return new Promise((resolve, reject) => {
+    if (typeof navigator === 'undefined' || !navigator?.geolocation) {
+      return reject(new Error('Location services are unavailable in this environment.'));
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => resolve({ latitude: pos.coords.latitude, longitude: pos.coords.longitude }),
+      (err) => reject(err),
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  });
+};
+
+const isLikelyMobile = (): boolean => {
+  try {
+    const ua = typeof navigator !== 'undefined' ? (navigator as any).userAgent || (navigator as any).vendor || '' : '';
+    if (ua && /android|iphone|ipad|ipod|mobile/i.test(ua)) {
+      return true;
+    }
+    if (typeof window !== 'undefined' && window.matchMedia) {
+      return window.matchMedia('(max-width: 768px)').matches;
+    }
+  } catch {
+    // Default to non-mobile
+  }
+  return false;
+};
+
+const fetchGeoFenceConfig = async (): Promise<GeoFenceConfig | null> => {
+  try {
+    const response = await api.get('/api/attendance/geofence');
+    return response.data;
+  } catch {
+    return null;
+  }
+};
+
 export const getShifts = async (profileId: number) => {
   const response = await api.get('/api/attendance', { params: { profile_id: profileId } });
   return response.data;
 };
 
 export const clockInShift = async (profileId: number) => {
+  const isMobile = isLikelyMobile();
+  const geofence = isMobile ? await fetchGeoFenceConfig() : null;
+  const needsLocation = Boolean(isMobile && geofence?.enabled && geofence?.configured);
+  let coords: { latitude: number; longitude: number } | null = null;
+
+  if (needsLocation) {
+    try {
+      coords = await getBrowserLocation();
+    } catch (geoErr: any) {
+      const message =
+        geoErr?.message ||
+        'Location access is required to clock in because geofencing is enabled. Please allow location permissions and try again.';
+      const error = new Error(message);
+      (error as any).code = 'GEOFENCE_LOCATION_REQUIRED';
+      throw error;
+    }
+  }
+
+  const payload: any = { profile_id: profileId };
+  if (coords) {
+    payload.latitude = coords.latitude;
+    payload.longitude = coords.longitude;
+  }
+
   try {
-    const response = await api.post('/api/attendance/clock-in', { profile_id: profileId });
+    const response = await api.post('/api/attendance/clock-in', payload);
     return response.data;
-  } catch (err) {
+  } catch (err: any) {
+    // Surface server-side validation/errors (e.g., outside geofence) instead of silently falling back offline
+    if (err?.response) {
+      throw err;
+    }
+
+    const evtPayload = { ...payload };
     const evt = {
       event_id: uuid(),
       user_id: profileId,
       device_id: localStorage.getItem('deviceId') || 'unknown-device',
       type: 'attendance_clock_in',
       timestamp_utc: toUtcIso(new Date()),
-      payload_json: JSON.stringify({ profile_id: profileId }),
+      payload_json: JSON.stringify(evtPayload),
       created_at: toUtcIso(new Date()),
     };
     await (window as any)?.api?.timeEvents?.insert?.(evt);
