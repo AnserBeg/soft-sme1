@@ -217,6 +217,12 @@ router.post('/upload-csv', upload.single('file'), async (req: Request, res: Resp
       normalizedRow[mappedKey] = normalizeCell(value);
     });
 
+    const hasAnyValue = Object.values(normalizedRow).some((v) => normalizeCell(v));
+    if (!hasAnyValue) {
+      // Entirely blank row; skip quietly
+      return;
+    }
+
     const invoiceNumber = pickFirst(normalizedRow, [
       'invoice_number',
       '#',
@@ -256,7 +262,8 @@ router.post('/upload-csv', upload.single('file'), async (req: Request, res: Resp
     const rawStatus = (normalizedRow.payment_status || normalizedRow.transaction_type || '').toLowerCase();
     const status: 'Paid' | 'Unpaid' = rawStatus.includes('paid') ? 'Paid' : 'Unpaid';
 
-    const amount = toNumberSafe(normalizedRow.amount, NaN);
+    const amountRaw = pickFirst(normalizedRow, ['amount']);
+    const amount = toNumberSafe(amountRaw, NaN);
     if (!Number.isFinite(amount)) {
       errors.push(`Row ${rowNumber}: Amount is required and must be a number`);
       return;
