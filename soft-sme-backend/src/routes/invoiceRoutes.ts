@@ -25,7 +25,8 @@ const upload = multer({
     }
   },
   limits: {
-    fileSize: 5 * 1024 * 1024, // 5MB
+    // Allow larger historical imports (up to ~20MB CSV)
+    fileSize: 20 * 1024 * 1024,
   },
 });
 
@@ -174,33 +175,42 @@ DW1302,10/01/2025,Invoice,15205,CHAUMAD INTEGRATED RESOURCES LTD.,WINDSHIELD,1,1
 });
 
 // Bulk import historical invoices from a QuickBooks CSV export
-router.post('/upload-csv', upload.single('file'), async (req: Request, res: Response) => {
-  if (!req.file) {
-    return res.status(400).json({ error: 'No CSV file uploaded' });
-  }
+router.post('/upload-csv', (req: Request, res: Response) => {
+  upload.single('file')(req, res, async (err: any) => {
+    if (err) {
+      console.error('invoiceRoutes: upload csv multer error', err);
+      if (err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({ error: 'CSV file too large (max 20MB)' });
+      }
+      return res.status(400).json({ error: err.message || 'File upload failed' });
+    }
 
-  const errors: string[] = [];
-  const warnings: string[] = [];
-  const rawRows: any[] = [];
+    if (!req.file) {
+      return res.status(400).json({ error: 'No CSV file uploaded' });
+    }
 
-  try {
-    await new Promise<void>((resolve, reject) => {
-      fs.createReadStream(req.file!.path)
-        .pipe(csv())
-        .on('data', (data) => rawRows.push(data))
-        .on('end', () => resolve())
-        .on('error', (err) => reject(err));
-    });
-  } catch (err) {
-    console.error('invoiceRoutes: failed to read CSV', err);
-    fs.unlink(req.file.path, () => undefined);
-    return res.status(400).json({ error: 'Unable to read CSV file' });
-  }
+    const errors: string[] = [];
+    const warnings: string[] = [];
+    const rawRows: any[] = [];
 
-  if (rawRows.length === 0) {
-    fs.unlink(req.file.path, () => undefined);
-    return res.status(400).json({ error: 'CSV file is empty' });
-  }
+    try {
+      await new Promise<void>((resolve, reject) => {
+        fs.createReadStream(req.file!.path)
+          .pipe(csv())
+          .on('data', (data) => rawRows.push(data))
+          .on('end', () => resolve())
+          .on('error', (readErr) => reject(readErr));
+      });
+    } catch (readErr) {
+      console.error('invoiceRoutes: failed to read CSV', readErr);
+      fs.unlink(req.file.path, () => undefined);
+      return res.status(400).json({ error: 'Unable to read CSV file' });
+    }
+
+    if (rawRows.length === 0) {
+      fs.unlink(req.file.path, () => undefined);
+      return res.status(400).json({ error: 'CSV file is empty' });
+    }
 
   type ImportLine = {
     part_number: string;
@@ -228,14 +238,14 @@ router.post('/upload-csv', upload.single('file'), async (req: Request, res: Resp
     lines: ImportLine[];
   };
 
-  const invoiceMap = new Map<string, ImportInvoice>();
+    const invoiceMap = new Map<string, ImportInvoice>();
 
-  rawRows.forEach((row, idx) => {
-    const rowNumber = idx + 2; // account for header row
-    const normalizedRow: Record<string, string> = {};
-    Object.entries(row).forEach(([key, value]) => {
-      const mappedKey = headerMap[normalizeHeader(key)] || normalizeHeader(key);
-      normalizedRow[mappedKey] = normalizeCell(value);
+    rawRows.forEach((row, idx) => {
+      const rowNumber = idx + 2; // account for header row
+      const normalizedRow: Record<string, string> = {};
+      Object.entries(row).forEach(([key, value]) => {
+        const mappedKey = headerMap[normalizeHeader(key)] || normalizeHeader(key);
+        normalizedRow[mappedKey] = normalizeCell(value);
     });
 
     const hasAnyValue = Object.values(normalizedRow).some((v) => normalizeCell(v));
@@ -310,207 +320,208 @@ router.post('/upload-csv', upload.single('file'), async (req: Request, res: Resp
     const vehicle_model = restParts.length ? restParts.join('/') : undefined;
     const unit_number = normalizedRow.unit_number;
 
-    const key = `${canonicalName}::${invoiceNumber}`;
-    if (!invoiceMap.has(key)) {
-      invoiceMap.set(key, {
-        invoiceNumber,
-        customerName,
-        canonicalName,
-        invoiceDate,
-        status,
-        subtotal: 0,
-        productName: productService || undefined,
-        productDescription: memo || undefined,
-        vin_number: vinNumber || undefined,
-        vehicle_make,
-        vehicle_model,
-        unit_number: unit_number || undefined,
-        memo: memo || undefined,
-        lines: [],
-      });
-    }
-
-    const invoice = invoiceMap.get(key)!;
-    if (invoice.status !== 'Paid' && status === 'Paid') {
-      invoice.status = 'Paid';
-    }
-    if (status === 'Unpaid') {
-      invoice.status = 'Unpaid';
-    }
-    if (!invoice.invoiceDate && invoiceDate) {
-      invoice.invoiceDate = invoiceDate;
-    } else if (invoice.invoiceDate && invoiceDate && invoice.invoiceDate.getTime() !== invoiceDate.getTime()) {
-      warnings.push(`Invoice ${invoiceNumber}: multiple dates found; using first date ${invoice.invoiceDate.toLocaleDateString()}`);
-    }
-    if (!invoice.vin_number && vinNumber) {
-      invoice.vin_number = vinNumber;
-    } else if (vinNumber && invoice.vin_number && invoice.vin_number !== vinNumber) {
-      warnings.push(`Invoice ${invoiceNumber}: multiple VIN values found; kept "${invoice.vin_number}"`);
-    }
-    if (!invoice.vehicle_make && vehicle_make) invoice.vehicle_make = vehicle_make;
-    if (!invoice.vehicle_model && vehicle_model) invoice.vehicle_model = vehicle_model;
-    if (!invoice.unit_number && unit_number) invoice.unit_number = unit_number;
-    if (!invoice.memo && memo) invoice.memo = memo;
-    if (!invoice.productName && productService) invoice.productName = productService;
-    if (!invoice.productDescription && (partDescription || memo)) invoice.productDescription = partDescription || memo;
-
-    invoice.lines.push({
-      part_number: productService || memo || partDescription || `Line ${invoice.lines.length + 1}`,
-      part_description: partDescription || memo || productService || 'Imported line item',
-      quantity,
-      unit: normalizedRow.unit || 'Each',
-      unit_price: unitPrice,
-      line_amount: round2(amount),
-    });
-    invoice.subtotal = round2(invoice.subtotal + round2(amount));
-  });
-
-  if (errors.length) {
-    fs.unlink(req.file.path, () => undefined);
-    return res.status(400).json({ error: 'Validation failed', errors, warnings });
-  }
-
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-
-    const canonicalNames = Array.from(new Set(Array.from(invoiceMap.values()).map((inv) => inv.canonicalName)));
-    const customersRes = await client.query(
-      'SELECT customer_id, canonical_name, default_payment_terms_in_days FROM customermaster WHERE canonical_name = ANY($1)',
-      [canonicalNames]
-    );
-    const customerMap = new Map<string, { customer_id: number; terms: number }>();
-    customersRes.rows.forEach((row: any) => {
-      const terms = Number(row.default_payment_terms_in_days);
-      customerMap.set(row.canonical_name, { customer_id: row.customer_id, terms: Number.isFinite(terms) && terms > 0 ? terms : 30 });
-    });
-
-    // Auto-create any missing customers with minimal info so the import never blocks
-    for (const name of canonicalNames) {
-      if (customerMap.has(name)) continue;
-      const original = Array.from(invoiceMap.values()).find((inv) => inv.canonicalName === name);
-      const customerName = original?.customerName || name;
-      const insert = await client.query(
-        `INSERT INTO customermaster (
-          customer_name,
-          canonical_name,
-          street_address,
-          city,
-          province,
-          country,
-          postal_code,
-          contact_person,
-          telephone_number,
-          email,
-          website,
-          general_notes,
-          default_payment_terms_in_days
-        ) VALUES ($1,$2,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,$3,$4) RETURNING customer_id, default_payment_terms_in_days`,
-        [customerName, name, 'Created via invoice import', 30]
-      );
-      const terms = Number(insert.rows[0].default_payment_terms_in_days);
-      customerMap.set(name, { customer_id: insert.rows[0].customer_id, terms: Number.isFinite(terms) && terms > 0 ? terms : 30 });
-      warnings.push(`Customer "${customerName}" was missing and created automatically`);
-    }
-
-    const incomingNumbers = Array.from(invoiceMap.values()).map((inv) => inv.invoiceNumber);
-    const existingRes = await client.query('SELECT invoice_number FROM invoices WHERE invoice_number = ANY($1)', [incomingNumbers]);
-    // Track invoice numbers that already exist or get created in this import to avoid unique violations
-    const existingNumbers = new Set(existingRes.rows.map((r: any) => r.invoice_number));
-    const createdNumbers = new Set<string>();
-
-    const createdInvoices: { invoice_id: number; invoice_number: string }[] = [];
-    const skippedInvoices: string[] = [];
-
-    for (const invoice of invoiceMap.values()) {
-      if (existingNumbers.has(invoice.invoiceNumber) || createdNumbers.has(invoice.invoiceNumber)) {
-        warnings.push(`Invoice ${invoice.invoiceNumber} already exists; skipped to avoid duplicate import`);
-        skippedInvoices.push(invoice.invoiceNumber);
-        continue;
+      const key = `${canonicalName}::${invoiceNumber}`;
+      if (!invoiceMap.has(key)) {
+        invoiceMap.set(key, {
+          invoiceNumber,
+          customerName,
+          canonicalName,
+          invoiceDate,
+          status,
+          subtotal: 0,
+          productName: productService || undefined,
+          productDescription: memo || undefined,
+          vin_number: vinNumber || undefined,
+          vehicle_make,
+          vehicle_model,
+          unit_number: unit_number || undefined,
+          memo: memo || undefined,
+          lines: [],
+        });
       }
 
-      const customer = customerMap.get(invoice.canonicalName)!;
-      const invoiceDate = invoice.invoiceDate ?? new Date();
-      const dueDate = new Date(invoiceDate);
-      dueDate.setDate(dueDate.getDate() + customer.terms);
-    const subtotal = round2(invoice.subtotal);
-    const total_gst_amount = round2(subtotal * GST_RATE);
-    const total_amount = round2(subtotal + total_gst_amount);
+      const invoice = invoiceMap.get(key)!;
+      if (invoice.status !== 'Paid' && status === 'Paid') {
+        invoice.status = 'Paid';
+      }
+      if (status === 'Unpaid') {
+        invoice.status = 'Unpaid';
+      }
+      if (!invoice.invoiceDate && invoiceDate) {
+        invoice.invoiceDate = invoiceDate;
+      } else if (invoice.invoiceDate && invoiceDate && invoice.invoiceDate.getTime() !== invoiceDate.getTime()) {
+        warnings.push(`Invoice ${invoiceNumber}: multiple dates found; using first date ${invoice.invoiceDate.toLocaleDateString()}`);
+      }
+      if (!invoice.vin_number && vinNumber) {
+        invoice.vin_number = vinNumber;
+      } else if (vinNumber && invoice.vin_number && invoice.vin_number !== vinNumber) {
+        warnings.push(`Invoice ${invoiceNumber}: multiple VIN values found; kept "${invoice.vin_number}"`);
+      }
+      if (!invoice.vehicle_make && vehicle_make) invoice.vehicle_make = vehicle_make;
+      if (!invoice.vehicle_model && vehicle_model) invoice.vehicle_model = vehicle_model;
+      if (!invoice.unit_number && unit_number) invoice.unit_number = unit_number;
+      if (!invoice.memo && memo) invoice.memo = memo;
+      if (!invoice.productName && productService) invoice.productName = productService;
+      if (!invoice.productDescription && (partDescription || memo)) invoice.productDescription = partDescription || memo;
 
-    const insertInvoice = await client.query(
-      `INSERT INTO invoices (
-          invoice_number, sequence_number, customer_id, sales_order_id, source_sales_order_number,
-          status, invoice_date, due_date, payment_terms_in_days, subtotal, total_gst_amount, total_amount, notes,
-          product_name, product_description, vin_number, unit_number, vehicle_make, vehicle_model
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
-        RETURNING invoice_id`,
-        [
-          invoice.invoiceNumber,
-          invoice.invoiceNumber.slice(-16),
-          customer.customer_id,
-          null,
-          null,
-          invoice.status,
-          invoiceDate,
-          dueDate,
-          customer.terms,
-          subtotal,
-          total_gst_amount,
-          total_amount,
-          invoice.memo || null,
-          invoice.productName || null,
-          invoice.productDescription || null,
-          invoice.vin_number || null,
-          invoice.unit_number || null,
-          invoice.vehicle_make || null,
-          invoice.vehicle_model || null,
-        ]
+      invoice.lines.push({
+        part_number: productService || memo || partDescription || `Line ${invoice.lines.length + 1}`,
+        part_description: partDescription || memo || productService || 'Imported line item',
+        quantity,
+        unit: normalizedRow.unit || 'Each',
+        unit_price: unitPrice,
+        line_amount: round2(amount),
+      });
+      invoice.subtotal = round2(invoice.subtotal + round2(amount));
+    });
+
+    if (errors.length) {
+      fs.unlink(req.file.path, () => undefined);
+      return res.status(400).json({ error: 'Validation failed', errors, warnings });
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const canonicalNames = Array.from(new Set(Array.from(invoiceMap.values()).map((inv) => inv.canonicalName)));
+      const customersRes = await client.query(
+        'SELECT customer_id, canonical_name, default_payment_terms_in_days FROM customermaster WHERE canonical_name = ANY($1)',
+        [canonicalNames]
       );
+      const customerMap = new Map<string, { customer_id: number; terms: number }>();
+      customersRes.rows.forEach((row: any) => {
+        const terms = Number(row.default_payment_terms_in_days);
+        customerMap.set(row.canonical_name, { customer_id: row.customer_id, terms: Number.isFinite(terms) && terms > 0 ? terms : 30 });
+      });
 
-      const invoiceId = insertInvoice.rows[0].invoice_id;
-      for (const line of invoice.lines) {
-        await client.query(
-          `INSERT INTO invoicelineitems
-           (invoice_id, part_id, part_number, part_description, quantity, unit, unit_price, line_amount)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      // Auto-create any missing customers with minimal info so the import never blocks
+      for (const name of canonicalNames) {
+        if (customerMap.has(name)) continue;
+        const original = Array.from(invoiceMap.values()).find((inv) => inv.canonicalName === name);
+        const customerName = original?.customerName || name;
+        const insert = await client.query(
+          `INSERT INTO customermaster (
+            customer_name,
+            canonical_name,
+            street_address,
+            city,
+            province,
+            country,
+            postal_code,
+            contact_person,
+            telephone_number,
+            email,
+            website,
+            general_notes,
+            default_payment_terms_in_days
+          ) VALUES ($1,$2,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,$3,$4) RETURNING customer_id, default_payment_terms_in_days`,
+          [customerName, name, 'Created via invoice import', 30]
+        );
+        const terms = Number(insert.rows[0].default_payment_terms_in_days);
+        customerMap.set(name, { customer_id: insert.rows[0].customer_id, terms: Number.isFinite(terms) && terms > 0 ? terms : 30 });
+        warnings.push(`Customer "${customerName}" was missing and created automatically`);
+      }
+
+      const incomingNumbers = Array.from(invoiceMap.values()).map((inv) => inv.invoiceNumber);
+      const existingRes = await client.query('SELECT invoice_number FROM invoices WHERE invoice_number = ANY($1)', [incomingNumbers]);
+      // Track invoice numbers that already exist or get created in this import to avoid unique violations
+      const existingNumbers = new Set(existingRes.rows.map((r: any) => r.invoice_number));
+      const createdNumbers = new Set<string>();
+
+      const createdInvoices: { invoice_id: number; invoice_number: string }[] = [];
+      const skippedInvoices: string[] = [];
+
+      for (const invoice of invoiceMap.values()) {
+        if (existingNumbers.has(invoice.invoiceNumber) || createdNumbers.has(invoice.invoiceNumber)) {
+          warnings.push(`Invoice ${invoice.invoiceNumber} already exists; skipped to avoid duplicate import`);
+          skippedInvoices.push(invoice.invoiceNumber);
+          continue;
+        }
+
+        const customer = customerMap.get(invoice.canonicalName)!;
+        const invoiceDate = invoice.invoiceDate ?? new Date();
+        const dueDate = new Date(invoiceDate);
+        dueDate.setDate(dueDate.getDate() + customer.terms);
+      const subtotal = round2(invoice.subtotal);
+      const total_gst_amount = round2(subtotal * GST_RATE);
+      const total_amount = round2(subtotal + total_gst_amount);
+
+      const insertInvoice = await client.query(
+        `INSERT INTO invoices (
+            invoice_number, sequence_number, customer_id, sales_order_id, source_sales_order_number,
+            status, invoice_date, due_date, payment_terms_in_days, subtotal, total_gst_amount, total_amount, notes,
+            product_name, product_description, vin_number, unit_number, vehicle_make, vehicle_model
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+          RETURNING invoice_id`,
           [
-            invoiceId,
+            invoice.invoiceNumber,
+            invoice.invoiceNumber.slice(-16),
+            customer.customer_id,
             null,
-            line.part_number,
-            line.part_description,
-            line.quantity,
-            line.unit,
-            line.unit_price,
-            line.line_amount,
+            null,
+            invoice.status,
+            invoiceDate,
+            dueDate,
+            customer.terms,
+            subtotal,
+            total_gst_amount,
+            total_amount,
+            invoice.memo || null,
+            invoice.productName || null,
+            invoice.productDescription || null,
+            invoice.vin_number || null,
+            invoice.unit_number || null,
+            invoice.vehicle_make || null,
+            invoice.vehicle_model || null,
           ]
         );
+
+        const invoiceId = insertInvoice.rows[0].invoice_id;
+        for (const line of invoice.lines) {
+          await client.query(
+            `INSERT INTO invoicelineitems
+             (invoice_id, part_id, part_number, part_description, quantity, unit, unit_price, line_amount)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+            [
+              invoiceId,
+              null,
+              line.part_number,
+              line.part_description,
+              line.quantity,
+              line.unit,
+              line.unit_price,
+              line.line_amount,
+            ]
+          );
+        }
+
+        createdInvoices.push({ invoice_id: invoiceId, invoice_number: invoice.invoiceNumber });
+        createdNumbers.add(invoice.invoiceNumber);
       }
 
-      createdInvoices.push({ invoice_id: invoiceId, invoice_number: invoice.invoiceNumber });
-      createdNumbers.add(invoice.invoiceNumber);
+      await client.query('COMMIT');
+      res.json({
+        message: 'Invoice CSV upload completed',
+        summary: {
+          rowsProcessed: rawRows.length,
+          invoicesCreated: createdInvoices.length,
+          invoicesSkipped: skippedInvoices.length,
+        },
+        createdInvoices,
+        skippedInvoices,
+        errors,
+        warnings,
+      });
+    } catch (error) {
+      await client.query('ROLLBACK');
+      console.error('invoiceRoutes: upload csv error', error);
+      res.status(500).json({ error: 'Failed to import invoices from CSV' });
+    } finally {
+      client.release();
+      fs.unlink(req.file.path, () => undefined);
     }
-
-    await client.query('COMMIT');
-    res.json({
-      message: 'Invoice CSV upload completed',
-      summary: {
-        rowsProcessed: rawRows.length,
-        invoicesCreated: createdInvoices.length,
-        invoicesSkipped: skippedInvoices.length,
-      },
-      createdInvoices,
-      skippedInvoices,
-      errors,
-      warnings,
-    });
-  } catch (error) {
-    await client.query('ROLLBACK');
-    console.error('invoiceRoutes: upload csv error', error);
-    res.status(500).json({ error: 'Failed to import invoices from CSV' });
-  } finally {
-    client.release();
-    fs.unlink(req.file.path, () => undefined);
-  }
+  });
 });
 
 const fetchBusinessProfile = async () => {
