@@ -25,7 +25,7 @@ import {
   downloadInvoiceImportTemplate,
   uploadInvoiceCsv,
 } from '../services/invoiceService';
-import { getCustomers } from '../services/customerService';
+import { getCustomers, getCustomer, updateCustomer } from '../services/customerService';
 import { Invoice } from '../types/invoice';
 import { formatCurrency } from '../utils/formatters';
 import Popover from '@mui/material/Popover';
@@ -33,6 +33,8 @@ import { Checkbox, FormControlLabel, FormGroup, InputAdornment } from '@mui/mate
 import SearchIcon from '@mui/icons-material/Search';
 import Autocomplete from '@mui/material/Autocomplete';
 import { toast } from 'react-toastify';
+import UnifiedCustomerDialog, { CustomerFormValues } from '../components/UnifiedCustomerDialog';
+import { Customer } from '../types/customer';
 
 interface CustomerOption {
   id: number;
@@ -44,9 +46,16 @@ const InvoicesPage: React.FC = () => {
   const [rows, setRows] = useState<any[]>([]);
   const [summary, setSummary] = useState({ totalReceivables: 0, totalOverdue: 0 });
   const [loading, setLoading] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+  const [offset, setOffset] = useState(0);
+  const offsetRef = useRef(0);
+  const PAGE_SIZE = 200;
   const [customers, setCustomers] = useState<CustomerOption[]>([]);
   const [customerValue, setCustomerValue] = useState<CustomerOption | null>(null);
   const [customerInput, setCustomerInput] = useState('');
+  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const [customerDialogOpen, setCustomerDialogOpen] = useState(false);
+  const [customerDialogSaving, setCustomerDialogSaving] = useState(false);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'unpaid' | 'paid'>('unpaid');
   const [statementMonth, setStatementMonth] = useState(() => {
@@ -89,6 +98,23 @@ const InvoicesPage: React.FC = () => {
     })();
   }, []);
 
+  useEffect(() => {
+    const loadCustomerDetail = async () => {
+      if (!customerValue?.id) {
+        setSelectedCustomer(null);
+        return;
+      }
+      try {
+        const detail = await getCustomer(String(customerValue.id));
+        setSelectedCustomer(detail);
+      } catch (e) {
+        console.error('Failed to load customer detail', e);
+        setSelectedCustomer(null);
+      }
+    };
+    loadCustomerDetail();
+  }, [customerValue?.id]);
+
   const handleOpenColumnSelector = (event: React.MouseEvent<HTMLElement>, cols: GridColDef[]) => {
     setColumnSelectorColumns(cols);
     setColumnSelectorAnchor(event.currentTarget);
@@ -96,28 +122,56 @@ const InvoicesPage: React.FC = () => {
 
   const handleCloseColumnSelector = () => setColumnSelectorAnchor(null);
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const data = await fetchInvoices(customerValue ? { customer_id: customerValue.id } : undefined);
-      const withId = data.invoices.map((inv: Invoice) => ({
-        ...inv,
-        id: inv.invoice_id,
-      }));
-      setRows(withId);
-      setSummary(data.summary);
-    } catch (e) {
-      console.error('Failed to load invoices', e);
-      setRows([]);
-      setSummary({ totalReceivables: 0, totalOverdue: 0 });
-    } finally {
-      setLoading(false);
-    }
-  }, [customerValue?.id]);
+  const statusParam = useMemo(() => {
+    if (statusFilter === 'all') return undefined;
+    if (statusFilter === 'paid') return 'Paid';
+    return 'Unpaid';
+  }, [statusFilter]);
+
+  const fetchPage = useCallback(
+    async (reset = false) => {
+      const nextOffset = reset ? 0 : offsetRef.current;
+      if (reset) {
+        offsetRef.current = 0;
+        setOffset(0);
+        setHasMore(true);
+      }
+      setLoading(true);
+      try {
+        const data = await fetchInvoices({
+          customer_id: customerValue?.id,
+          status: statusParam,
+          limit: PAGE_SIZE,
+          offset: nextOffset,
+        });
+        const withId = data.invoices.map((inv: Invoice) => ({
+          ...inv,
+          id: inv.invoice_id,
+        }));
+        setRows((prev) => (reset ? withId : [...prev, ...withId]));
+        setSummary(data.summary);
+        const newOffset = nextOffset + withId.length;
+        offsetRef.current = newOffset;
+        setOffset(newOffset);
+        setHasMore(withId.length === PAGE_SIZE);
+      } catch (e) {
+        console.error('Failed to load invoices', e);
+        if (reset) {
+          setRows([]);
+          setOffset(0);
+        }
+        setHasMore(false);
+        setSummary({ totalReceivables: 0, totalOverdue: 0 });
+      } finally {
+        setLoading(false);
+      }
+    },
+    [customerValue?.id, statusParam]
+  );
 
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    fetchPage(true);
+  }, [fetchPage, customerValue?.id, statusParam]);
 
   const onRowClick: GridEventListener<'rowClick'> = (params) => {
     navigate(`/invoices/${params.row.invoice_id}`);
@@ -130,13 +184,13 @@ const InvoicesPage: React.FC = () => {
       try {
         await deleteInvoice(invoiceId);
         toast.success('Invoice deleted.');
-        fetchData();
+        fetchPage(true);
       } catch (error) {
         console.error('Failed to delete invoice', error);
         toast.error('Failed to delete invoice.');
       }
     },
-    [fetchData]
+    [fetchPage]
   );
 
   const columns = useMemo<GridColDef[]>(() => {
@@ -224,31 +278,24 @@ const InvoicesPage: React.FC = () => {
 
   const filteredRows = useMemo(() => {
     const term = search.toLowerCase();
-    return rows
-      .filter((row) => {
-        const statusValue = String(row.status || '').toLowerCase();
-        if (statusFilter === 'unpaid') return statusValue === 'unpaid';
-        if (statusFilter === 'paid') return statusValue === 'paid';
-        return true;
-      })
-      .filter((row) =>
-        [
-          row.invoice_number,
-          row.sales_order_number,
-          row.customer_name,
-          row.product_name,
-          row.product_description,
-          row.vin_number,
-          row.unit_number,
-          row.vehicle_make,
-          row.vehicle_model,
-          row.invoice_date ? new Date(row.invoice_date).toLocaleDateString() : '',
-          row.due_date ? new Date(row.due_date).toLocaleDateString() : '',
-        ]
-          .filter((value) => value !== undefined && value !== null)
-          .some((value) => value.toString().toLowerCase().includes(term))
-      );
-  }, [rows, search, statusFilter]);
+    return rows.filter((row) =>
+      [
+        row.invoice_number,
+        row.sales_order_number,
+        row.customer_name,
+        row.product_name,
+        row.product_description,
+        row.vin_number,
+        row.unit_number,
+        row.vehicle_make,
+        row.vehicle_model,
+        row.invoice_date ? new Date(row.invoice_date).toLocaleDateString() : '',
+        row.due_date ? new Date(row.due_date).toLocaleDateString() : '',
+      ]
+        .filter((value) => value !== undefined && value !== null)
+        .some((value) => value.toString().toLowerCase().includes(term))
+    );
+  }, [rows, search]);
 
   const overdueCount = useMemo(
     () =>
@@ -315,7 +362,7 @@ const InvoicesPage: React.FC = () => {
       if (result.warnings?.length) {
         console.warn('Invoice CSV upload warnings:', result.warnings);
       }
-      fetchData();
+      fetchPage(true);
     } catch (error: any) {
       console.error('Error uploading invoice CSV', error);
       const message = error?.response?.data?.error || 'Failed to upload CSV';
@@ -345,7 +392,7 @@ const InvoicesPage: React.FC = () => {
           >
             Columns
           </Button>
-          <Button startIcon={<RefreshIcon />} variant="outlined" onClick={fetchData}>
+          <Button startIcon={<RefreshIcon />} variant="outlined" onClick={() => fetchPage(true)}>
             Refresh
           </Button>
           <Button startIcon={<DownloadIcon />} variant="outlined" onClick={handleDownloadTemplate}>
@@ -474,6 +521,60 @@ const InvoicesPage: React.FC = () => {
             <Box sx={{ flexGrow: 1 }} />
           </Stack>
 
+          {selectedCustomer && (
+            <Paper
+              variant="outlined"
+              sx={{
+                p: 2,
+                mb: 2,
+                backgroundColor: '#fafafa',
+                borderColor: 'divider',
+              }}
+            >
+              <Stack
+                direction={{ xs: 'column', md: 'row' }}
+                spacing={2}
+                justifyContent="space-between"
+                alignItems={{ xs: 'flex-start', md: 'center' }}
+              >
+                <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 1.5, flex: 1 }}>
+                  <Box>
+                    <Typography variant="caption" color="text.secondary">Email</Typography>
+                    <Typography variant="body1">{selectedCustomer.email || '—'}</Typography>
+                  </Box>
+                  <Box>
+                    <Typography variant="caption" color="text.secondary">Phone</Typography>
+                    <Typography variant="body1">
+                      {selectedCustomer.phone || selectedCustomer.phone_number || '—'}
+                    </Typography>
+                  </Box>
+                  <Box>
+                    <Typography variant="caption" color="text.secondary">Payment Terms</Typography>
+                    <Typography variant="body1">
+                      {selectedCustomer.default_payment_terms_in_days != null
+                        ? `${selectedCustomer.default_payment_terms_in_days} days`
+                        : '—'}
+                    </Typography>
+                  </Box>
+                  <Box sx={{ gridColumn: '1 / -1' }}>
+                    <Typography variant="caption" color="text.secondary">General Notes</Typography>
+                    <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>
+                      {selectedCustomer.general_notes || '—'}
+                    </Typography>
+                  </Box>
+                </Box>
+                <Button
+                  variant="outlined"
+                  onClick={() => {
+                    setCustomerDialogOpen(true);
+                  }}
+                >
+                  Edit Customer
+                </Button>
+              </Stack>
+            </Paper>
+          )}
+
           <DataGrid
             rows={filteredRows}
             columns={columns}
@@ -511,6 +612,15 @@ const InvoicesPage: React.FC = () => {
               },
             }}
           />
+          <Box sx={{ mt: 2, display: 'flex', justifyContent: 'center' }}>
+            <Button
+              variant="outlined"
+              onClick={() => fetchPage(false)}
+              disabled={loading || !hasMore}
+            >
+              {loading ? 'Loading...' : hasMore ? 'Load More' : 'No more invoices'}
+            </Button>
+          </Box>
         </Box>
       </Paper>
       <Popover
@@ -546,6 +656,59 @@ const InvoicesPage: React.FC = () => {
           </FormGroup>
         </Box>
       </Popover>
+
+      <UnifiedCustomerDialog
+        open={customerDialogOpen}
+        onClose={() => setCustomerDialogOpen(false)}
+        isEditMode
+        loading={customerDialogSaving}
+        initialCustomer={
+          selectedCustomer
+            ? {
+                customer_id: selectedCustomer.customer_id || selectedCustomer.id,
+                customer_name: selectedCustomer.customer_name,
+                contact_person: selectedCustomer.contact_person || '',
+                email: selectedCustomer.email || '',
+                phone_number: selectedCustomer.phone || selectedCustomer.phone_number || '',
+                street_address: selectedCustomer.street_address || selectedCustomer.address || '',
+                city: selectedCustomer.city || '',
+                province: selectedCustomer.province || selectedCustomer.state || '',
+                country: selectedCustomer.country || '',
+                postal_code: selectedCustomer.postal_code || '',
+                default_payment_terms_in_days: selectedCustomer.default_payment_terms_in_days,
+                website: selectedCustomer.website || '',
+                general_notes: selectedCustomer.general_notes || '',
+              }
+            : undefined
+        }
+        onSave={async (cust: CustomerFormValues) => {
+          if (!selectedCustomer) return;
+          setCustomerDialogSaving(true);
+          try {
+            const updated = await updateCustomer(String(selectedCustomer.customer_id || selectedCustomer.id), cust);
+            setSelectedCustomer(updated as Customer);
+            setCustomers((prev) =>
+              prev.map((c) =>
+                c.id === (selectedCustomer.customer_id || selectedCustomer.id)
+                  ? { ...c, label: updated.customer_name }
+                  : c
+              )
+            );
+            if (customerValue) {
+              setCustomerValue({ ...customerValue, label: updated.customer_name });
+            }
+            fetchPage(true);
+            toast.success('Customer updated');
+            setCustomerDialogOpen(false);
+          } catch (e: any) {
+            console.error('Failed to update customer', e);
+            const msg = e?.response?.data?.error || 'Failed to update customer';
+            toast.error(msg);
+          } finally {
+            setCustomerDialogSaving(false);
+          }
+        }}
+      />
     </Container>
   );
 };

@@ -715,9 +715,16 @@ router.get('/', async (req: Request, res: Response) => {
         : 'Unpaid'
       : undefined;
 
+    const limitRaw = req.query.limit ? Number(req.query.limit) : undefined;
+    const offsetRaw = req.query.offset ? Number(req.query.offset) : undefined;
+    const limit = Number.isFinite(limitRaw) ? limitRaw : undefined;
+    const offset = Number.isFinite(offsetRaw) ? offsetRaw : undefined;
+
     const result = await invoiceService.listInvoices({
       customer_id: customerId ?? undefined,
       status,
+      limit,
+      offset,
     });
     res.json(result);
   } catch (error) {

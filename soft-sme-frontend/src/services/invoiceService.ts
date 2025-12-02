@@ -1,7 +1,12 @@
 import api from '../api/axios';
 import { Invoice, InvoiceListResponse } from '../types/invoice';
 
-export const fetchInvoices = async (params?: { customer_id?: number; status?: string }) => {
+export const fetchInvoices = async (params?: {
+  customer_id?: number;
+  status?: string;
+  limit?: number;
+  offset?: number;
+}) => {
   const response = await api.get<InvoiceListResponse>('/api/invoices', { params });
   return response.data;
 };

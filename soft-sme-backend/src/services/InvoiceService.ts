@@ -622,7 +622,7 @@ export class InvoiceService {
     }
   }
 
-  async listInvoices(filters?: { customer_id?: number; status?: InvoiceStatus }): Promise<InvoiceListResult> {
+  async listInvoices(filters?: { customer_id?: number; status?: InvoiceStatus; limit?: number; offset?: number }): Promise<InvoiceListResult> {
     const clauses: string[] = [];
     const params: any[] = [];
 
@@ -637,6 +637,8 @@ export class InvoiceService {
     }
 
     const whereClause = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    const limit = Math.min(Math.max(filters?.limit ?? 200, 1), 500);
+    const offset = Math.max(filters?.offset ?? 0, 0);
     const query = `
       SELECT 
         i.*,
@@ -659,9 +661,11 @@ export class InvoiceService {
       JOIN customermaster c ON i.customer_id = c.customer_id
       LEFT JOIN salesorderhistory so ON i.sales_order_id = so.sales_order_id
       ${whereClause}
-      ORDER BY i.invoice_date DESC, i.invoice_id DESC`;
+      ORDER BY i.invoice_date DESC, i.invoice_id DESC
+      LIMIT $${params.length + 1}
+      OFFSET $${params.length + 2}`;
 
-    const res = await this.pool.query(query, params);
+    const res = await this.pool.query(query, [...params, limit, offset]);
     const invoices = res.rows.map((row) => ({
       ...row,
       product_name: row.invoice_product_name ?? row.so_product_name ?? row.product_name ?? null,
@@ -676,19 +680,22 @@ export class InvoiceService {
       total_amount: toNumber(row.total_amount),
     }));
 
-    const now = new Date();
-    const totalReceivables = invoices
-      .filter((inv) => normalizeStatus(inv.status) === 'Unpaid')
-      .reduce((sum, inv) => sum + toNumber(inv.total_amount), 0);
-    const totalOverdue = invoices
-      .filter((inv) => normalizeStatus(inv.status) === 'Unpaid' && inv.due_date && new Date(inv.due_date) < now)
-      .reduce((sum, inv) => sum + toNumber(inv.total_amount), 0);
+    const summaryQuery = `
+      SELECT
+        COALESCE(SUM(CASE WHEN LOWER(i.status) <> 'paid' THEN i.total_amount ELSE 0 END), 0) AS total_receivables,
+        COALESCE(SUM(CASE WHEN LOWER(i.status) <> 'paid' AND i.due_date < NOW() THEN i.total_amount ELSE 0 END), 0) AS total_overdue
+      FROM invoices i
+      JOIN customermaster c ON i.customer_id = c.customer_id
+      LEFT JOIN salesorderhistory so ON i.sales_order_id = so.sales_order_id
+      ${whereClause}`;
+    const summaryRes = await this.pool.query(summaryQuery, params);
+    const summaryRow = summaryRes.rows[0] || { total_receivables: 0, total_overdue: 0 };
 
     return {
       invoices,
       summary: {
-        totalReceivables: round2(totalReceivables),
-        totalOverdue: round2(totalOverdue),
+        totalReceivables: round2(toNumber(summaryRow.total_receivables)),
+        totalOverdue: round2(toNumber(summaryRow.total_overdue)),
       },
     };
   }

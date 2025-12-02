@@ -16,6 +16,7 @@ import {
   FormGroup,
   FormControlLabel,
   Checkbox,
+  Autocomplete,
 } from '@mui/material';
 import dayjs, { Dayjs } from 'dayjs';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
@@ -382,6 +383,13 @@ const InvoiceDetailPage: React.FC = () => {
   const addLineItem = () => setLineItems((prev) => [...prev, defaultLineItem()]);
   const removeLineItem = (index: number) => setLineItems((prev) => prev.filter((_, idx) => idx !== index));
 
+  const partOptions = useMemo(() => {
+    return inventoryItems.map((inv: any) => ({
+      part_number: inv.part_number,
+      part_description: inv.part_description,
+    }));
+  }, [inventoryItems]);
+
   const handleSave = async () => {
     if (!customer && !invoice.customer_id) {
       toast.error('Please select a customer');
@@ -680,11 +688,49 @@ const InvoiceDetailPage: React.FC = () => {
             {lineItems.map((item, idx) => (
               <React.Fragment key={idx}>
                 <Grid item xs={12} sm={6} md={2.5}>
-                  <TextField
-                    label="Part Number *"
-                    value={item.part_number}
-                    onChange={(e) => updateLineItem(idx, 'part_number', e.target.value)}
-                    fullWidth
+                  <Autocomplete<string, false, false, true>
+                    freeSolo
+                    autoHighlight
+                    options={partOptions.map((p) => p.part_number)}
+                    value={item.part_number || ''}
+                    onInputChange={(_, value) => updateLineItem(idx, 'part_number', value)}
+                    onChange={(_, value) => updateLineItem(idx, 'part_number', value || '')}
+                    filterOptions={(options, params) => {
+                      const input = (params.inputValue || '').toUpperCase();
+                      const filtered = options.filter((opt) => {
+                        const inv = partOptions.find((p) => p.part_number === opt);
+                        const inNumber = opt.toUpperCase().includes(input);
+                        const inDesc = (inv?.part_description || '').toUpperCase().includes(input);
+                        return inNumber || inDesc;
+                      });
+                      if (input && !filtered.some((opt) => opt.toUpperCase() === input)) {
+                        filtered.push(params.inputValue);
+                      }
+                      return filtered;
+                    }}
+                    renderOption={(props, option) => {
+                      const inv = partOptions.find((p) => p.part_number === option);
+                      const { key, ...optionProps } = props;
+                      return (
+                        <li key={key} {...optionProps}>
+                          <Box>
+                            <Typography variant="body2">{option}</Typography>
+                            {inv?.part_description ? (
+                              <Typography variant="caption" color="text.secondary">
+                                {inv.part_description}
+                              </Typography>
+                            ) : null}
+                          </Box>
+                        </li>
+                      );
+                    }}
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        label="Part Number *"
+                        fullWidth
+                      />
+                    )}
                   />
                 </Grid>
                 <Grid item xs={12} sm={6} md={3.5}>
