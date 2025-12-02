@@ -385,15 +385,32 @@ router.post('/upload-csv', upload.single('file'), async (req: Request, res: Resp
       customerMap.set(row.canonical_name, { customer_id: row.customer_id, terms: Number.isFinite(terms) && terms > 0 ? terms : 30 });
     });
 
-    canonicalNames.forEach((name) => {
-      if (!customerMap.has(name)) {
-        errors.push(`Customer "${name}" not found. Create it first or update the CSV.`);
-      }
-    });
-    if (errors.length) {
-      await client.query('ROLLBACK');
-      fs.unlink(req.file.path, () => undefined);
-      return res.status(400).json({ error: 'Missing customers', errors, warnings });
+    // Auto-create any missing customers with minimal info so the import never blocks
+    for (const name of canonicalNames) {
+      if (customerMap.has(name)) continue;
+      const original = Array.from(invoiceMap.values()).find((inv) => inv.canonicalName === name);
+      const customerName = original?.customerName || name;
+      const insert = await client.query(
+        `INSERT INTO customermaster (
+          customer_name,
+          canonical_name,
+          street_address,
+          city,
+          province,
+          country,
+          postal_code,
+          contact_person,
+          telephone_number,
+          email,
+          website,
+          general_notes,
+          default_payment_terms_in_days
+        ) VALUES ($1,$2,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,$3,$4) RETURNING customer_id, default_payment_terms_in_days`,
+        [customerName, name, 'Created via invoice import', 30]
+      );
+      const terms = Number(insert.rows[0].default_payment_terms_in_days);
+      customerMap.set(name, { customer_id: insert.rows[0].customer_id, terms: Number.isFinite(terms) && terms > 0 ? terms : 30 });
+      warnings.push(`Customer "${customerName}" was missing and created automatically`);
     }
 
     const incomingNumbers = Array.from(invoiceMap.values()).map((inv) => inv.invoiceNumber);
