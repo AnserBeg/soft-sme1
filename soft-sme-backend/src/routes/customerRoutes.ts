@@ -94,6 +94,7 @@ router.post('/import-excel', excelUpload.single('file'), async (req: Request, re
   const errors: string[] = [];
   const warnings: string[] = [];
   const createdCustomers: any[] = [];
+  const updatedCustomers: any[] = [];
   let rawRows: Record<string, unknown>[] = [];
 
   try {
@@ -191,12 +192,46 @@ router.post('/import-excel', excelUpload.single('file'), async (req: Request, re
 
       for (const row of normalizedRows) {
         const existing = await client.query(
-          'SELECT customer_id, customer_name FROM customermaster WHERE canonical_name = $1',
+          'SELECT customer_id, customer_name, telephone_number, general_notes FROM customermaster WHERE canonical_name = $1',
           [row.canonicalName]
         );
 
         if (existing.rows.length > 0) {
-          warnings.push(`Row ${row.rowNumber}: "${row.customer_name}" skipped because "${existing.rows[0].customer_name}" already exists`);
+          const phoneProvided = !!row.phone_number;
+          const notesProvided = !!row.general_notes;
+
+          if (!phoneProvided && !notesProvided) {
+            warnings.push(`Row ${row.rowNumber}: "${row.customer_name}" skipped because "${existing.rows[0].customer_name}" already exists and no new phone/general notes were provided`);
+            continue;
+          }
+
+          const updateFields: string[] = [];
+          const params: any[] = [];
+          let idx = 1;
+
+          if (phoneProvided) {
+            updateFields.push(`telephone_number = $${idx++}`);
+            params.push(row.phone_number);
+          }
+          if (notesProvided) {
+            updateFields.push(`general_notes = $${idx++}`);
+            params.push(row.general_notes);
+          }
+
+          params.push(existing.rows[0].customer_id);
+
+          const updatedResult = await client.query(
+            `UPDATE customermaster SET ${updateFields.join(', ')} WHERE customer_id = $${idx} RETURNING *`,
+            params
+          );
+
+          const updated = updatedResult.rows[0];
+          const { canonical_name: _c, ...customerFields } = updated;
+          updatedCustomers.push({
+            ...customerFields,
+            phone_number: updated.telephone_number,
+            id: updated.customer_id
+          });
           continue;
         }
 
@@ -242,13 +277,15 @@ router.post('/import-excel', excelUpload.single('file'), async (req: Request, re
         totalRows: rawRows.length,
         acceptedRows: normalizedRows.length,
         created: createdCustomers.length,
-        skipped: normalizedRows.length - createdCustomers.length,
+        updated: updatedCustomers.length,
+        skipped: normalizedRows.length - createdCustomers.length - updatedCustomers.length,
         errors: errors.length,
         warnings: warnings.length
       },
       warnings,
       errors,
-      createdCustomers
+      createdCustomers,
+      updatedCustomers
     });
   } catch (err) {
     console.error('customerRoutes: Error processing Excel file:', err);

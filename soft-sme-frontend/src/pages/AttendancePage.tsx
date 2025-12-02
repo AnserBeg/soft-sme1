@@ -136,6 +136,7 @@ const AttendancePage: React.FC = () => {
       return;
     }
     try {
+      setSuccessMessage(null);
       const newShift = await clockInShift(selectedProfile as number);
       setShifts([newShift, ...shifts]);
       setError(null);
@@ -144,6 +145,7 @@ const AttendancePage: React.FC = () => {
       setShifts([]);
       showSuccess('Successfully clocked in.');
     } catch (err) {
+      setSuccessMessage(null);
       setError(formatErrorMessage(err, 'Failed to clock in. Please try again.'));
       console.error('Error clocking in:', err);
     }
@@ -151,6 +153,7 @@ const AttendancePage: React.FC = () => {
 
   const handleClockOut = async (id: number) => {
     try {
+      setSuccessMessage(null);
       const updatedShift = await clockOutShift(id);
       setShifts(shifts.map(entry => entry.id === id ? updatedShift : entry));
       setError(null);
@@ -159,6 +162,7 @@ const AttendancePage: React.FC = () => {
       setShifts([]);
       showSuccess('Successfully clocked out.');
     } catch (err) {
+      setSuccessMessage(null);
       setError(formatErrorMessage(err, 'Failed to clock out. Please try again.'));
       console.error('Error clocking out:', err);
     }
@@ -208,7 +212,7 @@ const AttendancePage: React.FC = () => {
       </Typography>
 
       {error && (
-        <Alert severity="error" sx={{ mb: 2 }}>
+        <Alert severity="error" variant="filled" sx={{ mb: 2, fontSize: '1.1rem', fontWeight: 700, py: 2 }}>
           {error}
         </Alert>
       )}
@@ -307,6 +311,12 @@ const AttendancePage: React.FC = () => {
                   variant="contained"
                   sx={{ 
                     backgroundColor: 'green',
+                    px: 4,
+                    py: 2,
+                    fontSize: '1.2rem',
+                    fontWeight: 700,
+                    borderRadius: '12px',
+                    minWidth: 220,
                     '&:hover': {
                       backgroundColor: 'darkgreen',
                     }
@@ -351,16 +361,21 @@ const AttendancePage: React.FC = () => {
                           <TableCell sx={{ fontSize: '1.1rem' }}>{clockOut ? clockOut.toLocaleString() : '-'}</TableCell>
                           <TableCell sx={{ fontSize: '1.1rem' }}>{duration !== null ? `${duration.toFixed(2)} hrs` : '-'}</TableCell>
                           <TableCell sx={{ fontSize: '1.1rem' }}>
-                            {!entry.clock_out && (
-                              <Button
-                                variant="contained"
-                                sx={{ 
-                                  backgroundColor: 'red',
-                                  '&:hover': {
-                                    backgroundColor: 'darkred',
-                                  }
-                                }}
-                                onClick={() => handleClockOut(entry.id)}
+                          {!entry.clock_out && (
+                            <Button
+                              variant="contained"
+                              sx={{ 
+                                backgroundColor: 'red',
+                                px: 3,
+                                py: 1.5,
+                                fontSize: '1.1rem',
+                                fontWeight: 700,
+                                borderRadius: '12px',
+                                '&:hover': {
+                                  backgroundColor: 'darkred',
+                                }
+                              }}
+                              onClick={() => handleClockOut(entry.id)}
                               >
                                 Clock Out
                               </Button>

@@ -162,6 +162,7 @@ const TimeTrackingPage: React.FC = () => {
     }
 
     try {
+      setSuccessMessage(null);
       const newEntry = await clockIn(selectedProfile, selectedSO);
       setTimeEntries([newEntry, ...timeEntries]);
       // Reset profile selection without reloading page
@@ -171,10 +172,11 @@ const TimeTrackingPage: React.FC = () => {
       setError(null);
       showSuccess('Successfully clocked in.');
     } catch (err: any) {
+      setSuccessMessage(null);
       if (err.response && err.response.data && err.response.data.error.includes('attendance')) {
         setError('You must clock in for attendance before you can clock in for a sales order.');
       } else {
-        setError('Failed to clock in. Please try again.');
+        setError(err?.message || 'Failed to clock in. Please try again.');
       }
       console.error('Error clocking in:', err);
     }
@@ -182,6 +184,7 @@ const TimeTrackingPage: React.FC = () => {
 
   const handleClockOut = async (id: number) => {
     try {
+      setSuccessMessage(null);
       const updatedEntry = await clockOut(id);
       setTimeEntries(timeEntries.map(entry => 
         entry.id === id ? updatedEntry : entry
@@ -193,7 +196,8 @@ const TimeTrackingPage: React.FC = () => {
       setError(null);
       showSuccess('Successfully clocked out.');
     } catch (err) {
-      setError('Failed to clock out. Please try again.');
+      setSuccessMessage(null);
+      setError((err as any)?.message || 'Failed to clock out. Please try again.');
       console.error('Error clocking out:', err);
     }
   };
@@ -221,7 +225,7 @@ const TimeTrackingPage: React.FC = () => {
       </Typography>
 
       {error && (
-        <Alert severity="error" sx={{ mb: 2 }}>
+        <Alert severity="error" variant="filled" sx={{ mb: 2, fontSize: '1.1rem', fontWeight: 700, py: 2 }}>
           {error}
         </Alert>
       )}
@@ -318,6 +322,12 @@ const TimeTrackingPage: React.FC = () => {
                   variant="contained"
                   sx={{ 
                     backgroundColor: 'green',
+                    px: 4,
+                    py: 2,
+                    fontSize: '1.2rem',
+                    fontWeight: 700,
+                    borderRadius: '12px',
+                    minWidth: 220,
                     '&:hover': {
                       backgroundColor: 'darkgreen',
                     }
@@ -369,6 +379,11 @@ const TimeTrackingPage: React.FC = () => {
                               variant="contained"
                               sx={{ 
                                 backgroundColor: 'red',
+                                px: 3,
+                                py: 1.5,
+                                fontSize: '1.1rem',
+                                fontWeight: 700,
+                                borderRadius: '12px',
                                 '&:hover': {
                                   backgroundColor: 'darkred',
                                 }

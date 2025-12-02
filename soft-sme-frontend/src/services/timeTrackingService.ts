@@ -157,6 +157,13 @@ export const clockIn = async (profile_id: number, so_id: number): Promise<TimeEn
     if ((err as any)?.response) {
       throw err;
     }
+
+    const canQueueOffline = Boolean((window as any)?.api?.timeEvents?.insert);
+    if (!canQueueOffline) {
+      throw new Error(
+        'Network error: time entry clock-in did not reach the server. Please check your connection and try again.'
+      );
+    }
     const evt = {
       event_id: uuid(),
       user_id: profile_id,
@@ -188,6 +195,12 @@ export const clockOut = async (id: number): Promise<TimeEntry> => {
     const response = await api.post(`/api/time-tracking/time-entries/${id}/clock-out`);
     return response.data;
   } catch (err) {
+    const canQueueOffline = Boolean((window as any)?.api?.timeEvents?.insert);
+    if (!canQueueOffline) {
+      throw new Error(
+        'Network error: time entry clock-out did not reach the server. Please check your connection and try again.'
+      );
+    }
     const evt = {
       event_id: uuid(),
       device_id: localStorage.getItem('deviceId') || 'unknown-device',

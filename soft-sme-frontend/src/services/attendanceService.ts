@@ -87,6 +87,13 @@ export const clockInShift = async (profileId: number) => {
       throw err;
     }
 
+    const canQueueOffline = Boolean((window as any)?.api?.timeEvents?.insert);
+    if (!canQueueOffline) {
+      throw new Error(
+        'Network error: clock-in did not reach the server. Please check your connection and try again.'
+      );
+    }
+
     const evtPayload = { ...payload };
     const evt = {
       event_id: uuid(),
@@ -115,6 +122,13 @@ export const clockOutShift = async (shiftId: number) => {
     const response = await api.post('/api/attendance/clock-out', { shift_id: shiftId });
     return response.data;
   } catch (err) {
+    const canQueueOffline = Boolean((window as any)?.api?.timeEvents?.insert);
+    if (!canQueueOffline) {
+      throw new Error(
+        'Network error: clock-out did not reach the server. Please check your connection and try again.'
+      );
+    }
+
     const evt = {
       event_id: uuid(),
       user_id: undefined,
