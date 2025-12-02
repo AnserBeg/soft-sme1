@@ -415,13 +415,15 @@ router.post('/upload-csv', upload.single('file'), async (req: Request, res: Resp
 
     const incomingNumbers = Array.from(invoiceMap.values()).map((inv) => inv.invoiceNumber);
     const existingRes = await client.query('SELECT invoice_number FROM invoices WHERE invoice_number = ANY($1)', [incomingNumbers]);
+    // Track invoice numbers that already exist or get created in this import to avoid unique violations
     const existingNumbers = new Set(existingRes.rows.map((r: any) => r.invoice_number));
+    const createdNumbers = new Set<string>();
 
     const createdInvoices: { invoice_id: number; invoice_number: string }[] = [];
     const skippedInvoices: string[] = [];
 
     for (const invoice of invoiceMap.values()) {
-      if (existingNumbers.has(invoice.invoiceNumber)) {
+      if (existingNumbers.has(invoice.invoiceNumber) || createdNumbers.has(invoice.invoiceNumber)) {
         warnings.push(`Invoice ${invoice.invoiceNumber} already exists; skipped to avoid duplicate import`);
         skippedInvoices.push(invoice.invoiceNumber);
         continue;
@@ -485,6 +487,7 @@ router.post('/upload-csv', upload.single('file'), async (req: Request, res: Resp
       }
 
       createdInvoices.push({ invoice_id: invoiceId, invoice_number: invoice.invoiceNumber });
+      createdNumbers.add(invoice.invoiceNumber);
     }
 
     await client.query('COMMIT');
