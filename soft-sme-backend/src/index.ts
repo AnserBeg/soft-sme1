@@ -234,7 +234,7 @@ app.use('/api/auth', authRoutes);
 console.log('Registered auth routes at /api/auth');
 
 // Protected routes
-app.use('/api/business-profile', businessProfileRoutes);
+app.use('/api/business-profile', authWithTenant, businessProfileRoutes);
 console.log('Registered business profile routes');
 
 app.use('/api/customers', authWithTenant, customerRoutes);
