@@ -7,6 +7,51 @@ import { authMiddleware } from '../middleware/authMiddleware';
 
 const router = express.Router();
 
+const parseBooleanFlag = (value: any): boolean => {
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    return ['true', '1', 'yes', 'on'].includes(normalized);
+  }
+  return Boolean(value);
+};
+
+const parseGeofenceInput = (body: any) => {
+  const enabled = parseBooleanFlag(body?.geo_fence_enabled);
+  const rawLat = body?.geo_fence_center_latitude;
+  const rawLng = body?.geo_fence_center_longitude;
+  const rawRadius = body?.geo_fence_radius_meters;
+
+  const lat = rawLat === undefined || rawLat === null || rawLat === '' ? null : Number(rawLat);
+  const lng = rawLng === undefined || rawLng === null || rawLng === '' ? null : Number(rawLng);
+  const radius =
+    rawRadius === undefined || rawRadius === null || rawRadius === ''
+      ? null
+      : Math.max(0, Math.round(Number(rawRadius)));
+
+  if (!enabled) {
+    return { enabled: false, lat: null, lng: null, radius: null };
+  }
+
+  if (
+    lat === null ||
+    lng === null ||
+    Number.isNaN(lat) ||
+    Number.isNaN(lng) ||
+    lat < -90 ||
+    lat > 90 ||
+    lng < -180 ||
+    lng > 180
+  ) {
+    throw new Error('INVALID_GEOFENCE_COORDINATES');
+  }
+
+  if (radius === null || Number.isNaN(radius) || radius <= 0) {
+    throw new Error('INVALID_GEOFENCE_RADIUS');
+  }
+
+  return { enabled, lat, lng, radius };
+};
+
 // Helper function to normalize logo URL
 const normalizeLogoUrl = (logoUrl: string | null): string | null => {
   if (!logoUrl) return null;
@@ -73,6 +118,13 @@ router.get('/', authMiddleware, async (req, res) => {
     // Normalize the logo URL before returning
     const profile = result.rows[0];
     profile.logo_url = normalizeLogoUrl(profile.logo_url);
+    profile.geo_fence_enabled = parseBooleanFlag(profile.geo_fence_enabled);
+    profile.geo_fence_center_latitude =
+      profile.geo_fence_center_latitude !== null ? Number(profile.geo_fence_center_latitude) : null;
+    profile.geo_fence_center_longitude =
+      profile.geo_fence_center_longitude !== null ? Number(profile.geo_fence_center_longitude) : null;
+    profile.geo_fence_radius_meters =
+      profile.geo_fence_radius_meters !== null ? Number(profile.geo_fence_radius_meters) : null;
     
     res.json(profile);
   } catch (error: any) {
@@ -150,6 +202,8 @@ router.post('/', authMiddleware, upload.single('logo'), async (req, res) => {
       website
     } = req.body;
 
+    const geofence = parseGeofenceInput(req.body);
+
     // Check if profile exists
     const existingProfile = await client.query('SELECT * FROM business_profile ORDER BY id DESC LIMIT 1');
     
@@ -174,8 +228,9 @@ router.post('/', authMiddleware, upload.single('logo'), async (req, res) => {
       const result = await client.query(
         `INSERT INTO business_profile (
           business_name, street_address, city, province, country, postal_code,
-          telephone_number, email, business_number, website, logo_url
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
+          telephone_number, email, business_number, website, logo_url,
+          geo_fence_enabled, geo_fence_center_latitude, geo_fence_center_longitude, geo_fence_radius_meters
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING *`,
         [
           business_name,
           street_address,
@@ -187,7 +242,11 @@ router.post('/', authMiddleware, upload.single('logo'), async (req, res) => {
           email,
           business_number,
           website,
-          logoUrl
+          logoUrl,
+          geofence.enabled,
+          geofence.lat,
+          geofence.lng,
+          geofence.radius
         ]
       );
       await client.query('COMMIT');
@@ -206,8 +265,12 @@ router.post('/', authMiddleware, upload.single('logo'), async (req, res) => {
           email = $8,
           business_number = $9,
           website = $10,
-          logo_url = $11
-        WHERE id = $12 RETURNING *`,
+          logo_url = $11,
+          geo_fence_enabled = $12,
+          geo_fence_center_latitude = $13,
+          geo_fence_center_longitude = $14,
+          geo_fence_radius_meters = $15
+        WHERE id = $16 RETURNING *`,
         [
           business_name,
           street_address,
@@ -220,6 +283,10 @@ router.post('/', authMiddleware, upload.single('logo'), async (req, res) => {
           business_number,
           website,
           logoUrl,
+          geofence.enabled,
+          geofence.lat,
+          geofence.lng,
+          geofence.radius,
           existingProfile.rows[0].id
         ]
       );
@@ -228,6 +295,21 @@ router.post('/', authMiddleware, upload.single('logo'), async (req, res) => {
     }
   } catch (error: any) {
     await client.query('ROLLBACK');
+
+    if (error?.message === 'INVALID_GEOFENCE_COORDINATES') {
+      return res.status(400).json({
+        error: 'Invalid geofence coordinates',
+        message: 'Please provide a valid latitude (-90 to 90) and longitude (-180 to 180) when enabling the geofence.',
+      });
+    }
+
+    if (error?.message === 'INVALID_GEOFENCE_RADIUS') {
+      return res.status(400).json({
+        error: 'Invalid geofence radius',
+        message: 'Geofence radius must be a positive number of meters.',
+      });
+    }
+
     console.error('Error updating business profile:', error);
     console.error('Error details:', {
       message: error.message,

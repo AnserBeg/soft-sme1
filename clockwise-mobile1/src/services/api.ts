@@ -107,6 +107,32 @@ export const timeTrackingAPI = {
   },
 };
 
+export const attendanceAPI = {
+  getGeofence: async () => {
+    const response = await api.get('/attendance/geofence');
+    return response.data;
+  },
+  getActiveShift: async (profileId: string) => {
+    const response = await api.get('/attendance/active', { params: { profile_id: profileId } });
+    return response.data;
+  },
+  clockIn: async (profileId: string, coords?: { latitude?: number; longitude?: number }) => {
+    const response = await api.post('/attendance/clock-in', {
+      profile_id: profileId,
+      latitude: coords?.latitude,
+      longitude: coords?.longitude,
+    });
+    return response.data;
+  },
+  clockOut: async (shiftId?: string, profileId?: string) => {
+    const response = await api.post('/attendance/clock-out', {
+      shift_id: shiftId,
+      profile_id: profileId,
+    });
+    return response.data;
+  },
+};
+
 // Leave Management API
 export const leaveManagementAPI = {
   submitRequest: async (data: {

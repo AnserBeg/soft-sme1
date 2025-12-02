@@ -4,14 +4,15 @@ import { LoginScreen } from '@/components/screens/LoginScreen';
 import { TimeTrackingScreen } from '@/components/screens/TimeTrackingScreen';
 import { LeaveManagementScreen } from '@/components/screens/LeaveManagementScreen';
 import DocumentsScreen from '@/components/screens/DocumentsScreen';
-import { Loader2, Clock, Calendar, Menu, FileText } from 'lucide-react';
+import { Loader2, Clock, Calendar, Menu, FileText, MapPin } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
 import { LoadingScreen } from '@/components/LoadingScreen';
+import { AttendanceScreen } from '@/components/screens/AttendanceScreen';
 
 const Index = () => {
   const { isAuthenticated, isLoading } = useAuth();
-  const [currentScreen, setCurrentScreen] = useState<'time-tracking' | 'leave-management' | 'documents'>('time-tracking');
+  const [currentScreen, setCurrentScreen] = useState<'attendance' | 'time-tracking' | 'leave-management' | 'documents'>('attendance');
   const [isMenuOpen, setIsMenuOpen] = useState(false);
 
   if (isLoading) {
@@ -22,7 +23,7 @@ const Index = () => {
     return <LoginScreen />;
   }
 
-  const handleScreenChange = (screen: 'time-tracking' | 'leave-management' | 'documents') => {
+  const handleScreenChange = (screen: 'attendance' | 'time-tracking' | 'leave-management' | 'documents') => {
     setCurrentScreen(screen);
     setIsMenuOpen(false);
   };
@@ -36,7 +37,8 @@ const Index = () => {
             <div>
               <h1 className="text-lg font-semibold">Welcome back!</h1>
               <p className="text-sm opacity-90 capitalize">
-                {currentScreen === 'time-tracking' ? 'Time Tracking' : 
+                {currentScreen === 'attendance' ? 'Attendance' :
+                 currentScreen === 'time-tracking' ? 'Time Tracking' : 
                  currentScreen === 'leave-management' ? 'Leave Management' : 'Documents'}
               </p>
             </div>
@@ -63,6 +65,14 @@ const Index = () => {
               <div className="p-4 space-y-4">
                 {/* Navigation Menu Items */}
                 <div className="space-y-2">
+                  <Button
+                    variant={currentScreen === 'attendance' ? 'default' : 'ghost'}
+                    onClick={() => handleScreenChange('attendance')}
+                    className="w-full justify-start h-12"
+                  >
+                    <MapPin className="h-5 w-5 mr-3" />
+                    Attendance
+                  </Button>
                   <Button
                     variant={currentScreen === 'time-tracking' ? 'default' : 'ghost'}
                     onClick={() => handleScreenChange('time-tracking')}
@@ -97,7 +107,9 @@ const Index = () => {
       </div>
 
       {/* Screen Content */}
-      {currentScreen === 'time-tracking' ? (
+      {currentScreen === 'attendance' ? (
+        <AttendanceScreen />
+      ) : currentScreen === 'time-tracking' ? (
         <TimeTrackingScreen />
       ) : currentScreen === 'leave-management' ? (
         <LeaveManagementScreen />

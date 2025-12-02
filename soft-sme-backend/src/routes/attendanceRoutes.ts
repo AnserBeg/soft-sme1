@@ -163,7 +163,75 @@ function calculateEffectiveDuration(
   return Math.round(durationHours * 100) / 100;
 }
 
+type GeoFenceSettings = {
+  enabled: boolean;
+  centerLat: number | null;
+  centerLng: number | null;
+  radiusMeters: number | null;
+};
+
+const toBoolean = (value: any): boolean => {
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    return ['true', '1', 'yes', 'on'].includes(normalized);
+  }
+  return Boolean(value);
+};
+
+async function loadGeoFenceSettings(): Promise<GeoFenceSettings> {
+  const result = await pool.query(
+    `SELECT geo_fence_enabled, geo_fence_center_latitude, geo_fence_center_longitude, geo_fence_radius_meters
+     FROM business_profile
+     ORDER BY id DESC
+     LIMIT 1`
+  );
+
+  if (result.rows.length === 0) {
+    return { enabled: false, centerLat: null, centerLng: null, radiusMeters: null };
+  }
+
+  const row = result.rows[0];
+  return {
+    enabled: toBoolean(row.geo_fence_enabled),
+    centerLat: row.geo_fence_center_latitude !== null ? Number(row.geo_fence_center_latitude) : null,
+    centerLng: row.geo_fence_center_longitude !== null ? Number(row.geo_fence_center_longitude) : null,
+    radiusMeters: row.geo_fence_radius_meters !== null ? Number(row.geo_fence_radius_meters) : null,
+  };
+}
+
+const isGeoFenceActive = (fence: GeoFenceSettings) =>
+  fence.enabled && fence.centerLat !== null && fence.centerLng !== null && fence.radiusMeters !== null;
+
+const haversineDistanceMeters = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
+  const R = 6371000; // meters
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+};
+
 const router = express.Router();
+
+router.get('/geofence', async (_req: Request, res: Response) => {
+  try {
+    const fence = await loadGeoFenceSettings();
+    res.json({
+      enabled: fence.enabled,
+      configured: isGeoFenceActive(fence),
+      center_latitude: fence.centerLat,
+      center_longitude: fence.centerLng,
+      radius_meters: fence.radiusMeters,
+    });
+  } catch (err) {
+    console.error('attendanceRoutes: Error fetching geofence settings:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
 // List/filter shifts
 router.get('/', async (req: Request, res: Response) => {
@@ -205,20 +273,82 @@ router.get('/', async (req: Request, res: Response) => {
 
 // Clock in
 router.post('/clock-in', async (req: Request, res: Response) => {
-  const { profile_id } = req.body;
+  const { profile_id, latitude, longitude } = req.body;
   try {
     // Prevent multiple open shifts
     const open = await pool.query('SELECT * FROM attendance_shifts WHERE profile_id = $1 AND clock_out IS NULL', [profile_id]);
     if (open.rows.length > 0) {
       return res.status(400).json({ error: 'Already clocked in. Please clock out first.' });
     }
+
+    const geofence = await loadGeoFenceSettings();
+    let geofenceCheck: { within: boolean; distance_meters: number; radius_meters: number | null } | null = null;
+    if (isGeoFenceActive(geofence)) {
+      const latNum = latitude === undefined || latitude === null || latitude === '' ? NaN : Number(latitude);
+      const lngNum = longitude === undefined || longitude === null || longitude === '' ? NaN : Number(longitude);
+
+      if (Number.isNaN(latNum) || Number.isNaN(lngNum)) {
+        return res.status(400).json({
+          error: 'Location required',
+          message: 'Location is required to clock in because a geofence is enabled for this business. Please enable location services and try again.',
+        });
+      }
+
+      const distanceMeters = haversineDistanceMeters(latNum, lngNum, geofence.centerLat as number, geofence.centerLng as number);
+      geofenceCheck = {
+        within: distanceMeters <= (geofence.radiusMeters as number),
+        distance_meters: Math.round(distanceMeters),
+        radius_meters: geofence.radiusMeters,
+      };
+
+      if (!geofenceCheck.within) {
+        return res.status(403).json({
+          error: 'Outside geofence',
+          message: 'You are outside the allowed clock-in area. Move inside the geofence and try again.',
+          geofence: {
+            ...geofenceCheck,
+            center_latitude: geofence.centerLat,
+            center_longitude: geofence.centerLng,
+          },
+        });
+      }
+    }
+
     const result = await pool.query(
       'INSERT INTO attendance_shifts (profile_id, clock_in) VALUES ($1, NOW()) RETURNING *',
       [profile_id]
     );
-    res.status(201).json(result.rows[0]);
+    res.status(201).json({ ...result.rows[0], geofence: geofenceCheck });
   } catch (err) {
     console.error('attendanceRoutes: Error clocking in:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get the current open shift for a profile (helper for mobile)
+router.get('/active', async (req: Request, res: Response) => {
+  const profileId = Number(req.query.profile_id);
+  if (!profileId || Number.isNaN(profileId)) {
+    return res.status(400).json({ error: 'A valid profile_id is required' });
+  }
+
+  try {
+    const result = await pool.query(
+      `SELECT *
+       FROM attendance_shifts
+       WHERE profile_id = $1 AND clock_out IS NULL
+       ORDER BY clock_in DESC
+       LIMIT 1`,
+      [profileId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.json(null);
+    }
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('attendanceRoutes: Error fetching active shift:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -316,7 +446,7 @@ router.post('/manual', async (req: Request, res: Response) => {
 });
 // Clock out
 router.post('/clock-out', async (req: Request, res: Response) => {
-  const { shift_id } = req.body;
+  const { shift_id, profile_id } = req.body;
   try {
     const requestTimeZone = req.headers['x-timezone'] as string | undefined;
     // Get daily break times
@@ -326,10 +456,27 @@ router.post('/clock-out', async (req: Request, res: Response) => {
     const dailyBreakEnd = breakEndRes.rows.length > 0 ? breakEndRes.rows[0].value : null;
 
     const clockOutTime = new Date();
-    const shiftRes = await pool.query('SELECT clock_in FROM attendance_shifts WHERE id = $1', [shift_id]);
+    let targetShiftId = shift_id;
+    let shiftRes;
 
-    if (shiftRes.rows.length === 0) {
-      return res.status(404).json({ error: 'Shift not found' });
+    if (!targetShiftId && !profile_id) {
+      return res.status(400).json({ error: 'shift_id or profile_id is required to clock out.' });
+    }
+
+    if (!targetShiftId && profile_id) {
+      shiftRes = await pool.query(
+        'SELECT * FROM attendance_shifts WHERE profile_id = $1 AND clock_out IS NULL ORDER BY clock_in DESC LIMIT 1',
+        [profile_id]
+      );
+      if (shiftRes.rows.length === 0) {
+        return res.status(404).json({ error: 'Shift not found' });
+      }
+      targetShiftId = shiftRes.rows[0].id;
+    } else {
+      shiftRes = await pool.query('SELECT * FROM attendance_shifts WHERE id = $1', [targetShiftId]);
+      if (shiftRes.rows.length === 0) {
+        return res.status(404).json({ error: 'Shift not found' });
+      }
     }
 
     const clockInTime = new Date(shiftRes.rows[0].clock_in);
@@ -351,7 +498,7 @@ router.post('/clock-out', async (req: Request, res: Response) => {
 
     const result = await pool.query(
       'UPDATE attendance_shifts SET clock_out = $1, duration = $2, updated_at = NOW() WHERE id = $3 AND clock_out IS NULL RETURNING *',
-      [clockOutTime, effectiveDuration, shift_id]
+      [clockOutTime, effectiveDuration, targetShiftId]
     );
     if (result.rows.length === 0) {
       return res.status(400).json({ error: 'No open shift found to clock out.' });

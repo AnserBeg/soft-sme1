@@ -11,6 +11,10 @@ export interface BusinessProfile {
   business_number: string;
   logo_url?: string;
   website?: string;
+  geo_fence_enabled?: boolean;
+  geo_fence_center_latitude?: number | string | null;
+  geo_fence_center_longitude?: number | string | null;
+  geo_fence_radius_meters?: number | string | null;
   created_at: string;
   updated_at: string;
-} 
+}

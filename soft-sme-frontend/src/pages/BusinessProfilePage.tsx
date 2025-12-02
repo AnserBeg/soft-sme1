@@ -15,6 +15,9 @@ import {
   Divider,
   Alert,
   IconButton,
+  Switch,
+  FormControlLabel,
+  InputAdornment,
 } from '@mui/material';
 import DeleteIcon from '@mui/icons-material/Delete';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
@@ -43,6 +46,10 @@ const BusinessProfilePage: React.FC = () => {
     business_number: '',
     website: '',
     logo_url: '',
+    geo_fence_enabled: false,
+    geo_fence_center_latitude: '',
+    geo_fence_center_longitude: '',
+    geo_fence_radius_meters: '',
     created_at: '',
     updated_at: '',
   });
@@ -65,6 +72,10 @@ const BusinessProfilePage: React.FC = () => {
     business_number: data.business_number || '',
     website: data.website || '',
     logo_url: data.logo_url || '',
+    geo_fence_enabled: !!data.geo_fence_enabled,
+    geo_fence_center_latitude: data.geo_fence_center_latitude ?? '',
+    geo_fence_center_longitude: data.geo_fence_center_longitude ?? '',
+    geo_fence_radius_meters: data.geo_fence_radius_meters ?? '',
     created_at: data.created_at || '',
     updated_at: data.updated_at || '',
   });
@@ -238,13 +249,17 @@ const BusinessProfilePage: React.FC = () => {
         province: '',
         country: '',
         postal_code: '',
-        telephone_number: '',
-        email: '',
-        business_number: '',
-        logo_url: '',
-        created_at: '',
-        updated_at: '',
-      });
+      telephone_number: '',
+      email: '',
+      business_number: '',
+      logo_url: '',
+      geo_fence_enabled: false,
+      geo_fence_center_latitude: '',
+      geo_fence_center_longitude: '',
+      geo_fence_radius_meters: '',
+      created_at: '',
+      updated_at: '',
+    });
     } else {
       // If there is an existing profile, fetch it to reset to original values
       fetchBusinessProfile();
@@ -400,6 +415,36 @@ const BusinessProfilePage: React.FC = () => {
                       )}
                     </Typography>
                   </Grid>
+                  <Grid item xs={12}>
+                    <Typography variant="subtitle2" color="primary" fontWeight={600} gutterBottom sx={{ fontSize: '1rem' }}>
+                      Attendance Geofence
+                    </Typography>
+                    {profile.geo_fence_enabled ? (
+                      <Box
+                        sx={{
+                          p: 2,
+                          border: '1px solid',
+                          borderColor: 'primary.light',
+                          borderRadius: 2,
+                          bgcolor: 'grey.50',
+                        }}
+                      >
+                        <Typography variant="body1" fontWeight={600}>
+                          Enabled
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          Lat: {profile.geo_fence_center_latitude || '—'} | Lng: {profile.geo_fence_center_longitude || '—'}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          Radius: {profile.geo_fence_radius_meters || '—'} meters
+                        </Typography>
+                      </Box>
+                    ) : (
+                      <Typography variant="body1" fontWeight={500} mb={2}>
+                        Disabled
+                      </Typography>
+                    )}
+                  </Grid>
                 </Grid>
               </>
             )}
@@ -541,6 +586,87 @@ const BusinessProfilePage: React.FC = () => {
                 onChange={handleInputChange}
                 fullWidth
               />
+            </Grid>
+
+            <Grid item xs={12}>
+              <Box
+                sx={{
+                  border: '1px solid',
+                  borderColor: 'divider',
+                  borderRadius: 2,
+                  p: 2,
+                  bgcolor: 'grey.50',
+                }}
+              >
+                <Box display="flex" justifyContent="space-between" alignItems="center" mb={1}>
+                  <Box>
+                    <Typography variant="subtitle1" fontWeight={700}>
+                      Attendance Geofence
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Require staff to be inside this fence to clock in from the mobile app.
+                    </Typography>
+                  </Box>
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        checked={!!profile.geo_fence_enabled}
+                        onChange={(e) => setProfile(prev => ({ ...prev, geo_fence_enabled: e.target.checked }))}
+                      />
+                    }
+                    label={profile.geo_fence_enabled ? 'Enabled' : 'Disabled'}
+                    sx={{ m: 0 }}
+                  />
+                </Box>
+
+                <Grid container spacing={2}>
+                  <Grid item xs={12} sm={4}>
+                    <TextField
+                      label="Latitude"
+                      name="geo_fence_center_latitude"
+                      value={profile.geo_fence_center_latitude ?? ''}
+                      onChange={handleInputChange}
+                      fullWidth
+                      type="number"
+                      inputProps={{ step: '0.000001', min: -90, max: 90 }}
+                      disabled={!profile.geo_fence_enabled}
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={4}>
+                    <TextField
+                      label="Longitude"
+                      name="geo_fence_center_longitude"
+                      value={profile.geo_fence_center_longitude ?? ''}
+                      onChange={handleInputChange}
+                      fullWidth
+                      type="number"
+                      inputProps={{ step: '0.000001', min: -180, max: 180 }}
+                      disabled={!profile.geo_fence_enabled}
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={4}>
+                    <TextField
+                      label="Radius (meters)"
+                      name="geo_fence_radius_meters"
+                      value={profile.geo_fence_radius_meters ?? ''}
+                      onChange={handleInputChange}
+                      fullWidth
+                      type="number"
+                      inputProps={{ min: 1 }}
+                      disabled={!profile.geo_fence_enabled}
+                      InputProps={{
+                        endAdornment: <InputAdornment position="end">m</InputAdornment>
+                      }}
+                    />
+                  </Grid>
+                </Grid>
+
+                {!profile.geo_fence_enabled && (
+                  <Alert severity="info" sx={{ mt: 2 }}>
+                    Geofence is turned off. Clock-in will not check location until you enable it.
+                  </Alert>
+                )}
+              </Box>
             </Grid>
 
             {/* Logo Upload */}
