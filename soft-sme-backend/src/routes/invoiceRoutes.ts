@@ -84,18 +84,38 @@ const headerMap: Record<string, string> = {
   customer_full_name: 'customer_name',
   customer: 'customer_name',
   customer_name: 'customer_name',
+  customerid: 'customer_name',
   memo: 'memo',
   memo_description: 'memo',
   description: 'memo',
+  part_description: 'part_description',
+  part_desc: 'part_description',
   product_service: 'product_service',
+  product: 'product_service',
+  part: 'product_service',
+  part_no: 'product_service',
+  part_number: 'product_service',
   quantity: 'quantity',
   qty: 'quantity',
+  unit: 'unit',
+  unit_of_measure: 'unit',
+  uom: 'unit',
+  unit_price: 'unit_price',
+  unit_cost: 'unit_price',
+  price: 'unit_price',
   amount: 'amount',
+  line_amount: 'line_amount',
+  line_total: 'line_amount',
   vin_no: 'vin_number',
   vin_no_: 'vin_number',
   vin: 'vin_number',
+  vin_number: 'vin_number',
   make_year: 'make_year',
   make: 'make_year',
+  make_model: 'make_year',
+  model: 'vehicle_model',
+  unit_number: 'unit_number',
+  unit_no: 'unit_number',
   a_r_paid: 'payment_status',
   ar_paid: 'payment_status',
   status: 'payment_status',
@@ -203,6 +223,7 @@ router.post('/upload-csv', upload.single('file'), async (req: Request, res: Resp
     vin_number?: string;
     vehicle_make?: string;
     vehicle_model?: string;
+    unit_number?: string;
     memo?: string;
     lines: ImportLine[];
   };
@@ -262,26 +283,36 @@ router.post('/upload-csv', upload.single('file'), async (req: Request, res: Resp
     const rawStatus = (normalizedRow.payment_status || normalizedRow.transaction_type || '').toLowerCase();
     const status: 'Paid' | 'Unpaid' = rawStatus.includes('paid') ? 'Paid' : 'Unpaid';
 
-    const amountRaw = pickFirst(normalizedRow, ['amount']);
-    const amount = toNumberSafe(amountRaw, NaN);
-    if (!Number.isFinite(amount)) {
-      errors.push(`Row ${rowNumber}: Amount is required and must be a number`);
-      return;
-    }
-
     const rawQty = toNumberSafe(normalizedRow.quantity, 1);
     const quantity = rawQty > 0 ? rawQty : 1;
     if (rawQty <= 0) {
       warnings.push(`Row ${rowNumber}: Quantity was ${rawQty}; defaulted to 1`);
     }
 
+    const amountRaw = pickFirst(normalizedRow, ['amount', 'line_amount', 'line_total']);
+    let amount = toNumberSafe(amountRaw, NaN);
+    const unitPriceRaw = normalizedRow.unit_price;
+    let unitPrice = toNumberSafe(unitPriceRaw, NaN);
+    if (!Number.isFinite(amount) && Number.isFinite(unitPrice)) {
+      amount = round2(unitPrice * quantity);
+    }
+    if (!Number.isFinite(unitPrice) && Number.isFinite(amount)) {
+      unitPrice = quantity !== 0 ? round2(amount / quantity) : round2(amount);
+    }
+    if (!Number.isFinite(amount)) {
+      errors.push(`Row ${rowNumber}: Amount/Line Amount is required and must be a number`);
+      return;
+    }
+
     const productService = normalizedRow.product_service;
     const memo = normalizedRow.memo;
+    const partDescription = normalizedRow.part_description;
     const vinNumber = normalizedRow.vin_number;
     const makeYearRaw = normalizedRow.make_year;
     const [firstPart, ...restParts] = makeYearRaw ? makeYearRaw.split('/').map((p) => p.trim()).filter(Boolean) : [];
     const vehicle_make = restParts.length ? firstPart : makeYearRaw || undefined;
     const vehicle_model = restParts.length ? restParts.join('/') : undefined;
+    const unit_number = normalizedRow.unit_number;
 
     const key = `${canonicalName}::${invoiceNumber}`;
     if (!invoiceMap.has(key)) {
@@ -297,6 +328,7 @@ router.post('/upload-csv', upload.single('file'), async (req: Request, res: Resp
         vin_number: vinNumber || undefined,
         vehicle_make,
         vehicle_model,
+        unit_number: unit_number || undefined,
         memo: memo || undefined,
         lines: [],
       });
@@ -321,16 +353,16 @@ router.post('/upload-csv', upload.single('file'), async (req: Request, res: Resp
     }
     if (!invoice.vehicle_make && vehicle_make) invoice.vehicle_make = vehicle_make;
     if (!invoice.vehicle_model && vehicle_model) invoice.vehicle_model = vehicle_model;
+    if (!invoice.unit_number && unit_number) invoice.unit_number = unit_number;
     if (!invoice.memo && memo) invoice.memo = memo;
     if (!invoice.productName && productService) invoice.productName = productService;
-    if (!invoice.productDescription && memo) invoice.productDescription = memo;
+    if (!invoice.productDescription && (partDescription || memo)) invoice.productDescription = partDescription || memo;
 
-    const unitPrice = quantity !== 0 ? round2(amount / quantity) : round2(amount);
     invoice.lines.push({
-      part_number: productService || memo || `Line ${invoice.lines.length + 1}`,
-      part_description: memo || productService || 'Imported line item',
+      part_number: productService || memo || partDescription || `Line ${invoice.lines.length + 1}`,
+      part_description: partDescription || memo || productService || 'Imported line item',
       quantity,
-      unit: 'Each',
+      unit: normalizedRow.unit || 'Each',
       unit_price: unitPrice,
       line_amount: round2(amount),
     });
@@ -414,7 +446,7 @@ router.post('/upload-csv', upload.single('file'), async (req: Request, res: Resp
           invoice.productName || null,
           invoice.productDescription || null,
           invoice.vin_number || null,
-          null,
+          invoice.unit_number || null,
           invoice.vehicle_make || null,
           invoice.vehicle_model || null,
         ]
