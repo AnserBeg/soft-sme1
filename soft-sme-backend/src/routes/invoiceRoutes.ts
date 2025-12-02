@@ -275,10 +275,7 @@ router.post('/upload-csv', upload.single('file'), async (req: Request, res: Resp
     }
 
     const invoiceDate = parseCsvDate(normalizedRow.transaction_date || '');
-    if (!invoiceDate) {
-      errors.push(`Row ${rowNumber}: Invalid transaction date`);
-      return;
-    }
+    const invoiceDate = parseCsvDate(normalizedRow.transaction_date || '') || null;
 
     const rawStatus = (normalizedRow.payment_status || normalizedRow.transaction_type || '').toLowerCase();
     const status: 'Paid' | 'Unpaid' = rawStatus.includes('paid') ? 'Paid' : 'Unpaid';
@@ -300,8 +297,8 @@ router.post('/upload-csv', upload.single('file'), async (req: Request, res: Resp
       unitPrice = quantity !== 0 ? round2(amount / quantity) : round2(amount);
     }
     if (!Number.isFinite(amount)) {
-      errors.push(`Row ${rowNumber}: Amount/Line Amount is required and must be a number`);
-      return;
+      warnings.push(`Row ${rowNumber}: Amount missing/invalid; defaulted to 0`);
+      amount = 0;
     }
 
     const productService = normalizedRow.product_service;
