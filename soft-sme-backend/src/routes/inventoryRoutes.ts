@@ -449,6 +449,7 @@ router.post('/upload-csv', upload.single('csvFile'), async (req: Request, res: R
   const processedItems: { [normalizedKey: string]: any } = {};
   const errors: string[] = [];
   const warnings: string[] = [];
+  let rejectedDuplicates = 0;
   let skippedMissingRequired = 0;
   let rowNumber = 0; // Track actual row number from CSV file
 
@@ -484,8 +485,10 @@ router.post('/upload-csv', upload.single('csvFile'), async (req: Request, res: R
           // Light normalization for processing; no strict validation
           const originalPartNumber = data.part_number.toString();
           const partNumber = originalPartNumber.toString().trim().toUpperCase();
-          const normalizedKey = normalizePartNumberForDuplicateCheck(partNumber);
+          const canonicalPartNumber = canonicalizePartNumber(partNumber) || partNumber;
+          const normalizedKey = canonicalPartNumber; // use strict alphanumeric canonical for all duplicate checks
           const partDescription = data.part_description.toString().trim();
+          const canonicalName = canonicalizeName(partDescription) || partDescription.toUpperCase();
           const unit = data.unit ? data.unit.toString().trim() : 'Each';
           const quantity = parseFloat(data.quantity) || 0;
           
@@ -545,8 +548,8 @@ router.post('/upload-csv', upload.single('csvFile'), async (req: Request, res: R
           // Store processed item
           processedItems[normalizedKey] = {
             visualPartNumber: partNumber, // keep for insert if new
-            canonicalPartNumber: canonicalizePartNumber(partNumber) || partNumber,
-            canonicalName: canonicalizeName(partDescription) || partDescription.toUpperCase(),
+            canonicalPartNumber,
+            canonicalName,
             normalizedKey,
             partDescription,
             unit,
@@ -597,38 +600,18 @@ router.post('/upload-csv', upload.single('csvFile'), async (req: Request, res: R
       try {
         // Check if item exists in database
         const existingResult = await pool.query(
-          `SELECT * FROM inventory WHERE REPLACE(REPLACE(UPPER(part_number), '-', ''), ' ', '') = $1`,
+          `SELECT * FROM inventory 
+           WHERE canonical_part_number = $1 
+              OR REPLACE(REPLACE(REPLACE(UPPER(part_number), '-', ''), ' ', ''), '.', '') = $1`,
           [item.normalizedKey]
         );
 
                  if (existingResult.rows.length > 0) {
            const existing = existingResult.rows[0];
-           
-           // Check if units are different
-           if (existing.unit !== item.unit) {
-             errors.push(`Part "${item.visualPartNumber}": Unit mismatch - database has "${existing.unit}", CSV has "${item.unit}"`);
-             continue;
-           }
-
-           // Update existing item
-           const newQuantity = parseFloat(existing.quantity_on_hand || 0) + item.quantity;
-           const newUnitCost = item.lastUnitCost > 0 ? item.lastUnitCost : parseFloat(existing.last_unit_cost || 0);
-           const newReorderPoint = Math.max(parseFloat(existing.reorder_point || 0), item.reorderPoint);
-
-           await pool.query(
-             `UPDATE inventory 
-              SET quantity_on_hand = $1, 
-                  last_unit_cost = $2, 
-                  reorder_point = $3,
-                  part_description = $4,
-                  category = $5,
-                  updated_at = CURRENT_TIMESTAMP
-             WHERE part_number = $6`,
-             [newQuantity, newUnitCost, newReorderPoint, item.partDescription, item.category, existing.part_number]
-           );
-
-           updatedCount++;
-           warnings.push(`Updated existing part "${existing.part_number}" (normalized match for "${item.visualPartNumber}") - quantities combined, higher unit cost retained`);
+           errors.push(`Part "${item.visualPartNumber}" rejected: canonical part number matches existing "${existing.part_number}"`);
+           rejectedDuplicates++;
+           (item as any).skipVendor = true;
+           continue;
          } else {
            // Insert new item using cleaned part number
            await pool.query(
@@ -650,7 +633,7 @@ router.post('/upload-csv', upload.single('csvFile'), async (req: Request, res: R
            );
 
            processedCount++;
-         }
+        }
       } catch (dbError) {
         console.error(`Error processing item ${item.visualPartNumber}:`, dbError);
         errors.push(`Error processing part "${item.visualPartNumber}": ${dbError instanceof Error ? dbError.message : 'Unknown error'}`);
@@ -661,6 +644,7 @@ router.post('/upload-csv', upload.single('csvFile'), async (req: Request, res: R
     console.log('Processing vendor mappings...');
     let vendorMappingCount = 0;
     for (const item of Object.values(processedItems)) {
+      if ((item as any).skipVendor) continue;
       if (item.vendorName) {
         try {
           // Find or create vendor
@@ -684,7 +668,9 @@ router.post('/upload-csv', upload.single('csvFile'), async (req: Request, res: R
 
           // Get the canonical part number and part_id from inventory
           const partResult = await pool.query(
-            `SELECT part_number, part_id FROM inventory WHERE REPLACE(REPLACE(UPPER(part_number), '-', ''), ' ', '') = $1`,
+            `SELECT part_number, part_id FROM inventory 
+             WHERE canonical_part_number = $1 
+                OR REPLACE(REPLACE(REPLACE(UPPER(part_number), '-', ''), ' ', ''), '.', '') = $1`,
             [item.normalizedKey]
           );
 
@@ -745,11 +731,12 @@ router.post('/upload-csv', upload.single('csvFile'), async (req: Request, res: R
       summary: {
         totalProcessed: Object.keys(processedItems).length,
         newItems: processedCount,
-        updatedItems: updatedCount,
+        updatedItems: updatedCount, // should be 0 now because duplicates are rejected
         vendorMappings: vendorMappingCount,
         errors: errors.length,
         warnings: warnings.length,
-        skippedMissingRequired
+        skippedMissingRequired,
+        rejectedDuplicates
       },
       errors: errors.length > 0 ? errors : undefined,
       warnings: warnings.length > 0 ? warnings : undefined
