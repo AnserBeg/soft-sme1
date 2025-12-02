@@ -545,6 +545,8 @@ router.post('/upload-csv', upload.single('csvFile'), async (req: Request, res: R
           // Store processed item
           processedItems[normalizedKey] = {
             visualPartNumber: partNumber, // keep for insert if new
+            canonicalPartNumber: canonicalizePartNumber(partNumber) || partNumber,
+            canonicalName: canonicalizeName(partDescription) || partDescription.toUpperCase(),
             normalizedKey,
             partDescription,
             unit,
@@ -621,7 +623,7 @@ router.post('/upload-csv', upload.single('csvFile'), async (req: Request, res: R
                   part_description = $4,
                   category = $5,
                   updated_at = CURRENT_TIMESTAMP
-              WHERE part_number = $6`,
+             WHERE part_number = $6`,
              [newQuantity, newUnitCost, newReorderPoint, item.partDescription, item.category, existing.part_number]
            );
 
@@ -631,15 +633,26 @@ router.post('/upload-csv', upload.single('csvFile'), async (req: Request, res: R
            // Insert new item using cleaned part number
            await pool.query(
              `INSERT INTO inventory 
-              (part_number, part_description, unit, last_unit_cost, quantity_on_hand, reorder_point, part_type, category) 
-              VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-             [item.visualPartNumber, item.partDescription, item.unit, item.lastUnitCost, item.quantity, item.reorderPoint, item.partType, item.category]
+              (part_number, canonical_part_number, part_description, canonical_name, unit, last_unit_cost, quantity_on_hand, reorder_point, part_type, category) 
+              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+             [
+               item.visualPartNumber,
+               item.canonicalPartNumber || item.visualPartNumber,
+               item.partDescription,
+               item.canonicalName || item.partDescription?.toUpperCase(),
+               item.unit,
+               item.lastUnitCost,
+               item.quantity,
+               item.reorderPoint,
+               item.partType,
+               item.category
+             ]
            );
 
            processedCount++;
          }
       } catch (dbError) {
-        console.error(`Error processing item ${item.partNumber}:`, dbError);
+        console.error(`Error processing item ${item.visualPartNumber}:`, dbError);
         errors.push(`Error processing part "${item.visualPartNumber}": ${dbError instanceof Error ? dbError.message : 'Unknown error'}`);
       }
     }
