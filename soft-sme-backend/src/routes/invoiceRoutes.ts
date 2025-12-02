@@ -44,8 +44,16 @@ const normalizeId = (value: any) => {
   return Number.isFinite(num) ? num : null;
 };
 
-const normalizeHeader = (value: string) =>
-  value.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/_+/g, '_').replace(/^_+|_+$/g, '');
+const normalizeHeader = (value: string) => {
+  // Preserve '#' so QuickBooks "#" column maps correctly
+  const cleaned = value
+    .toLowerCase()
+    .replace(/[^a-z0-9#]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  if (!cleaned && value.includes('#')) return '#';
+  return cleaned;
+};
 
 const normalizeCell = (value: unknown) => (value == null ? '' : String(value).trim());
 
@@ -56,6 +64,9 @@ const headerMap: Record<string, string> = {
   txn_no: 'invoice_number',
   transaction_no: 'invoice_number',
   transaction_number: 'invoice_number',
+  transaction_: 'invoice_number',
+  transaction: 'invoice_number',
+  '': 'invoice_number',
   transaction_date: 'transaction_date',
   txn_date: 'transaction_date',
   customer_full_name: 'customer_name',
