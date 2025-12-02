@@ -46,16 +46,25 @@ const normalizeId = (value: any) => {
 
 const normalizeHeader = (value: string) => {
   // Preserve '#' so QuickBooks "#" column maps correctly
-  const cleaned = value
+  const trimmed = (value || '').replace(/^\uFEFF/, '').trim();
+  const cleaned = trimmed
     .toLowerCase()
     .replace(/[^a-z0-9#]+/g, '_')
     .replace(/_+/g, '_')
     .replace(/^_+|_+$/g, '');
-  if (!cleaned && value.includes('#')) return '#';
+  if (!cleaned && trimmed.includes('#')) return '#';
+  if (trimmed.includes('#')) return cleaned || '#';
   return cleaned;
 };
 
 const normalizeCell = (value: unknown) => (value == null ? '' : String(value).trim());
+const pickFirst = (row: Record<string, string>, keys: string[]) => {
+  for (const key of keys) {
+    const val = normalizeCell(row[key]);
+    if (val) return val;
+  }
+  return '';
+};
 
 const headerMap: Record<string, string> = {
   '#': 'invoice_number',
@@ -66,6 +75,9 @@ const headerMap: Record<string, string> = {
   transaction_number: 'invoice_number',
   transaction_: 'invoice_number',
   transaction: 'invoice_number',
+  transactio: 'invoice_number', // Some QB exports truncate the header label
+  transactio_: 'invoice_number',
+  txn: 'invoice_number',
   '': 'invoice_number',
   transaction_date: 'transaction_date',
   txn_date: 'transaction_date',
@@ -205,7 +217,20 @@ router.post('/upload-csv', upload.single('file'), async (req: Request, res: Resp
       normalizedRow[mappedKey] = normalizeCell(value);
     });
 
-    const invoiceNumber = normalizedRow.invoice_number;
+    const invoiceNumber = pickFirst(normalizedRow, [
+      'invoice_number',
+      '#',
+      'number',
+      'no',
+      'txn_no',
+      'transaction_no',
+      'transaction_number',
+      'transaction_',
+      'transaction',
+      'transactio',
+      'transactio_',
+      'txn',
+    ]);
     if (!invoiceNumber) {
       errors.push(`Row ${rowNumber}: Missing invoice number (# column)`);
       return;
