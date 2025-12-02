@@ -164,6 +164,48 @@ function calculateEffectiveDuration(
 const router = express.Router();
 const salesOrderService = new SalesOrderService(pool);
 
+/**
+ * Resolve the current user's ID within the tenant-scoped database.
+ * Auth middleware pulls user data from the shared DB, so IDs can drift from tenant copies.
+ */
+async function resolveTenantUserId(user?: Request['user']): Promise<number | null> {
+  if (!user?.id) {
+    return null;
+  }
+
+  const companyId = user.company_id;
+
+  // Prefer exact ID match first
+  const byId = await pool.query(
+    companyId
+      ? 'SELECT id FROM users WHERE id = $1 AND company_id = $2'
+      : 'SELECT id FROM users WHERE id = $1',
+    companyId ? [user.id, companyId] : [user.id]
+  );
+  if (byId.rows.length > 0) {
+    return byId.rows[0].id;
+  }
+
+  // Fallback to email in case IDs differ between shared and tenant DBs
+  if (user.email) {
+    const byEmail = await pool.query(
+      companyId
+        ? 'SELECT id FROM users WHERE email = $1 AND company_id = $2'
+        : 'SELECT id FROM users WHERE email = $1',
+      companyId ? [user.email, companyId] : [user.email]
+    );
+    if (byEmail.rows.length > 0) {
+      return byEmail.rows[0].id;
+    }
+  }
+
+  console.warn(
+    '[user-profile-access] Unable to resolve tenant user ID for requester',
+    { sharedId: user.id, email: user.email, companyId }
+  );
+  return null;
+}
+
 function parseDurationHours(value: unknown): number | null {
   if (value === null || value === undefined) {
     return null;
@@ -873,7 +915,6 @@ router.post('/', async (req: Request, res: Response) => {
 // Frontend profiles endpoint - Admin and Time Tracking users see all profiles
 router.get('/profiles', async (req: Request, res: Response) => {
   try {
-    const userId = req.user?.id;
     const userRole = req.user?.access_role;
 
     let query: string;
@@ -889,6 +930,11 @@ router.get('/profiles', async (req: Request, res: Response) => {
       `;
       params = [];
     } else {
+      const tenantUserId = await resolveTenantUserId(req.user);
+      if (!tenantUserId) {
+        return res.status(403).json({ error: 'User record not found for this tenant' });
+      }
+
       // Mobile users can only see profiles they have access to
       query = `
         SELECT DISTINCT p.id, p.name, p.email 
@@ -897,7 +943,7 @@ router.get('/profiles', async (req: Request, res: Response) => {
         WHERE upa.user_id = $1 AND upa.is_active = true
         ORDER BY p.name
       `;
-      params = [userId];
+      params = [tenantUserId];
     }
 
     const result = await pool.query(query, params);
@@ -911,7 +957,10 @@ router.get('/profiles', async (req: Request, res: Response) => {
 // Mobile profiles endpoint - Mobile users (including admin) only see profiles they have access to
 router.get('/mobile/profiles', async (req: Request, res: Response) => {
   try {
-    const userId = req.user?.id;
+    const userId = await resolveTenantUserId(req.user);
+    if (!userId) {
+      return res.status(403).json({ error: 'User record not found for this tenant' });
+    }
     
     // Mobile users (including admin) can only see profiles they have access to
     const query = `
@@ -1376,13 +1425,20 @@ router.post('/admin/user-profile-access', async (req: Request, res: Response) =>
   }
 
   const { user_id, profile_id } = req.body;
-  const granted_by = req.user.id;
 
   if (!user_id || !profile_id) {
     return res.status(400).json({ error: 'User ID and Profile ID are required' });
   }
 
   try {
+    const grantedBy = await resolveTenantUserId(req.user);
+    if (!grantedBy) {
+      console.warn('[user-profile-access] Granting access with NULL granted_by (admin not found in tenant DB)', {
+        sharedId: req.user?.id,
+        email: req.user?.email,
+      });
+    }
+
     // Check if user exists and is a mobile user
     const userCheck = await pool.query(
       'SELECT id, access_role FROM users WHERE id = $1',
@@ -1418,7 +1474,7 @@ router.post('/admin/user-profile-access', async (req: Request, res: Response) =>
         is_active = true,
         updated_at = CURRENT_TIMESTAMP
       RETURNING *
-    `, [user_id, profile_id, granted_by]);
+    `, [user_id, profile_id, grantedBy]);
 
     res.status(201).json(result.rows[0]);
   } catch (err) {
