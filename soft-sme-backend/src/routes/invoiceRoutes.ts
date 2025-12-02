@@ -287,7 +287,8 @@ router.post('/upload-csv', (req: Request, res: Response) => {
     const invoiceDate = parseCsvDate(normalizedRow.transaction_date || '') || null;
 
     const rawStatus = (normalizedRow.payment_status || normalizedRow.transaction_type || '').toLowerCase();
-    const status: 'Paid' | 'Unpaid' = rawStatus.includes('paid') ? 'Paid' : 'Unpaid';
+    const status: 'Paid' | 'Unpaid' =
+      rawStatus.includes('unpaid') || rawStatus.startsWith('un') || rawStatus === 'no' ? 'Unpaid' : rawStatus.includes('paid') ? 'Paid' : 'Unpaid';
 
     const rawQty = toNumberSafe(normalizedRow.quantity, 1);
     const quantity = rawQty > 0 ? rawQty : 1;

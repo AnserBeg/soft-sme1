@@ -96,7 +96,9 @@ function parseTenantUrlMap(raw?: string): Record<string, string> {
     }, {});
 }
 
+console.log('[TENANT_URLS_RAW]', process.env.TENANT_DATABASE_URLS);
 const tenantUrlMap = parseTenantUrlMap(process.env.TENANT_DATABASE_URLS);
+console.log('[TENANT_URLS_KEYS]', Object.keys(tenantUrlMap));
 const defaultTenantId =
   process.env.DEFAULT_TENANT_ID ||
   Object.keys(tenantUrlMap)[0] ||
