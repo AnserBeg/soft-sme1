@@ -1,5 +1,6 @@
 import express, { Request, Response } from 'express';
-import { pool } from '../db';
+import { Pool } from 'pg';
+import { pool, getTenantPool } from '../db';
 
 async function getDailyBreakTimes() {
   const [breakStartRes, breakEndRes] = await Promise.all([
@@ -178,8 +179,8 @@ const toBoolean = (value: any): boolean => {
   return Boolean(value);
 };
 
-async function loadGeoFenceSettings(): Promise<GeoFenceSettings> {
-  const result = await pool.query(
+async function loadGeoFenceSettings(db: Pool = pool): Promise<GeoFenceSettings> {
+  const result = await db.query(
     `SELECT geo_fence_enabled, geo_fence_center_latitude, geo_fence_center_longitude, geo_fence_radius_meters
      FROM business_profile
      ORDER BY id DESC
@@ -217,9 +218,9 @@ const haversineDistanceMeters = (lat1: number, lon1: number, lat2: number, lon2:
 
 const router = express.Router();
 
-router.get('/geofence', async (_req: Request, res: Response) => {
+router.get('/geofence', async (req: Request, res: Response) => {
   try {
-    const fence = await loadGeoFenceSettings();
+    const fence = await loadGeoFenceSettings(getTenantPool((req.user as any)?.company_id));
     res.json({
       enabled: fence.enabled,
       configured: isGeoFenceActive(fence),
@@ -275,13 +276,18 @@ router.get('/', async (req: Request, res: Response) => {
 router.post('/clock-in', async (req: Request, res: Response) => {
   const { profile_id, latitude, longitude } = req.body;
   try {
+    const tenantPool = getTenantPool((req.user as any)?.company_id);
+
     // Prevent multiple open shifts
-    const open = await pool.query('SELECT * FROM attendance_shifts WHERE profile_id = $1 AND clock_out IS NULL', [profile_id]);
+    const open = await tenantPool.query(
+      'SELECT * FROM attendance_shifts WHERE profile_id = $1 AND clock_out IS NULL',
+      [profile_id]
+    );
     if (open.rows.length > 0) {
       return res.status(400).json({ error: 'Already clocked in. Please clock out first.' });
     }
 
-    const geofence = await loadGeoFenceSettings();
+    const geofence = await loadGeoFenceSettings(tenantPool);
     let geofenceCheck: { within: boolean; distance_meters: number; radius_meters: number | null } | null = null;
     if (isGeoFenceActive(geofence)) {
       const latNum = latitude === undefined || latitude === null || latitude === '' ? NaN : Number(latitude);
@@ -314,7 +320,7 @@ router.post('/clock-in', async (req: Request, res: Response) => {
       }
     }
 
-    const result = await pool.query(
+    const result = await tenantPool.query(
       'INSERT INTO attendance_shifts (profile_id, clock_in) VALUES ($1, NOW()) RETURNING *',
       [profile_id]
     );
