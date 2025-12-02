@@ -218,9 +218,9 @@ const haversineDistanceMeters = (lat1: number, lon1: number, lat2: number, lon2:
 
 const router = express.Router();
 
-router.get('/geofence', async (req: Request, res: Response) => {
+router.get('/geofence', async (_req: Request, res: Response) => {
   try {
-    const fence = await loadGeoFenceSettings(getTenantPool((req.user as any)?.company_id));
+    const fence = await loadGeoFenceSettings(getTenantPool());
     res.json({
       enabled: fence.enabled,
       configured: isGeoFenceActive(fence),
@@ -276,7 +276,7 @@ router.get('/', async (req: Request, res: Response) => {
 router.post('/clock-in', async (req: Request, res: Response) => {
   const { profile_id, latitude, longitude } = req.body;
   try {
-    const tenantPool = getTenantPool((req.user as any)?.company_id);
+    const tenantPool = getTenantPool();
 
     // Prevent multiple open shifts
     const open = await tenantPool.query(
