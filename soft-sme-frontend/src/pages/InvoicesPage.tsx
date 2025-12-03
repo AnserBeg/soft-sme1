@@ -153,7 +153,7 @@ const InvoicesPage: React.FC = () => {
         const newOffset = nextOffset + withId.length;
         offsetRef.current = newOffset;
         setOffset(newOffset);
-        setHasMore(withId.length === PAGE_SIZE);
+        setHasMore(data.hasMore ?? withId.length === PAGE_SIZE);
       } catch (e) {
         console.error('Failed to load invoices', e);
         if (reset) {
@@ -168,6 +168,30 @@ const InvoicesPage: React.FC = () => {
     },
     [customerValue?.id, statusParam]
   );
+
+  const fetchAll = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await fetchInvoices({
+        customer_id: customerValue?.id,
+        status: statusParam,
+      });
+      const withId = data.invoices.map((inv: Invoice) => ({
+        ...inv,
+        id: inv.invoice_id,
+      }));
+      setRows(withId);
+      setSummary(data.summary);
+      offsetRef.current = withId.length;
+      setOffset(withId.length);
+      setHasMore(false);
+    } catch (e) {
+      console.error('Failed to load all invoices', e);
+      toast.error('Failed to load all invoices');
+    } finally {
+      setLoading(false);
+    }
+  }, [customerValue?.id, statusParam]);
 
   useEffect(() => {
     fetchPage(true);
@@ -612,13 +636,20 @@ const InvoicesPage: React.FC = () => {
               },
             }}
           />
-          <Box sx={{ mt: 2, display: 'flex', justifyContent: 'center' }}>
+          <Box sx={{ mt: 2, display: 'flex', justifyContent: 'center', gap: 2, flexWrap: 'wrap' }}>
             <Button
               variant="outlined"
               onClick={() => fetchPage(false)}
               disabled={loading || !hasMore}
             >
               {loading ? 'Loading...' : hasMore ? 'Load More' : 'No more invoices'}
+            </Button>
+            <Button
+              variant="contained"
+              onClick={fetchAll}
+              disabled={loading}
+            >
+              {loading ? 'Loading...' : 'Load All'}
             </Button>
           </Box>
         </Box>
@@ -665,7 +696,7 @@ const InvoicesPage: React.FC = () => {
         initialCustomer={
           selectedCustomer
             ? {
-                customer_id: selectedCustomer.customer_id || selectedCustomer.id,
+                customer_id: String(selectedCustomer.customer_id ?? selectedCustomer.id),
                 customer_name: selectedCustomer.customer_name,
                 contact_person: selectedCustomer.contact_person || '',
                 email: selectedCustomer.email || '',
@@ -684,12 +715,13 @@ const InvoicesPage: React.FC = () => {
         onSave={async (cust: CustomerFormValues) => {
           if (!selectedCustomer) return;
           setCustomerDialogSaving(true);
+          const selectedCustomerId = Number(selectedCustomer.customer_id ?? selectedCustomer.id);
           try {
-            const updated = await updateCustomer(String(selectedCustomer.customer_id || selectedCustomer.id), cust);
+            const updated = await updateCustomer(String(selectedCustomerId), cust);
             setSelectedCustomer(updated as Customer);
             setCustomers((prev) =>
               prev.map((c) =>
-                c.id === (selectedCustomer.customer_id || selectedCustomer.id)
+                c.id === selectedCustomerId
                   ? { ...c, label: updated.customer_name }
                   : c
               )

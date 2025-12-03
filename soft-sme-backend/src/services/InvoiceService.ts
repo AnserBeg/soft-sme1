@@ -38,6 +38,7 @@ export interface InvoiceListResult {
     totalReceivables: number;
     totalOverdue: number;
   };
+  hasMore: boolean;
 }
 
 const round2 = (value: number) => Math.round(value * 100) / 100;
@@ -637,8 +638,16 @@ export class InvoiceService {
     }
 
     const whereClause = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
-    const limit = Math.min(Math.max(filters?.limit ?? 200, 1), 500);
-    const offset = Math.max(filters?.offset ?? 0, 0);
+    const limit =
+      filters?.limit !== undefined
+        ? Math.min(Math.max(filters.limit, 1), 500)
+        : undefined;
+    const offset = filters?.offset !== undefined ? Math.max(filters.offset, 0) : undefined;
+    const effectiveLimit = limit !== undefined ? limit + 1 : undefined; // fetch one extra to detect hasMore
+    const limitClause =
+      effectiveLimit !== undefined
+        ? `LIMIT $${params.length + 1}${offset !== undefined ? ` OFFSET $${params.length + 2}` : ''}`
+        : '';
     const query = `
       SELECT 
         i.*,
@@ -662,11 +671,16 @@ export class InvoiceService {
       LEFT JOIN salesorderhistory so ON i.sales_order_id = so.sales_order_id
       ${whereClause}
       ORDER BY i.invoice_date DESC, i.invoice_id DESC
-      LIMIT $${params.length + 1}
-      OFFSET $${params.length + 2}`;
+      ${limitClause}`;
 
-    const res = await this.pool.query(query, [...params, limit, offset]);
-    const invoices = res.rows.map((row) => ({
+    const queryParams =
+      effectiveLimit !== undefined
+        ? offset !== undefined
+          ? [...params, effectiveLimit, offset]
+          : [...params, effectiveLimit]
+        : params;
+    const res = await this.pool.query(query, queryParams);
+    let invoices = res.rows.map((row) => ({
       ...row,
       product_name: row.invoice_product_name ?? row.so_product_name ?? row.product_name ?? null,
       product_description: row.invoice_product_description ?? row.so_product_description ?? row.product_description ?? null,
@@ -679,6 +693,11 @@ export class InvoiceService {
       total_gst_amount: toNumber(row.total_gst_amount),
       total_amount: toNumber(row.total_amount),
     }));
+    let hasMore = false;
+    if (effectiveLimit !== undefined && limit !== undefined && invoices.length > limit) {
+      hasMore = true;
+      invoices = invoices.slice(0, limit);
+    }
 
     const summaryQuery = `
       SELECT
@@ -697,6 +716,7 @@ export class InvoiceService {
         totalReceivables: round2(toNumber(summaryRow.total_receivables)),
         totalOverdue: round2(toNumber(summaryRow.total_overdue)),
       },
+      hasMore,
     };
   }
 }

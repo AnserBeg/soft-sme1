@@ -42,4 +42,5 @@ export interface InvoiceListResponse {
     totalReceivables: number;
     totalOverdue: number;
   };
+  hasMore?: boolean;
 }
