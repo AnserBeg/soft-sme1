@@ -192,7 +192,126 @@ export const AttendanceScreen: React.FC = () => {
         setLocationError(err?.message || 'Unable to monitor location.');
       }
     }
-      return (
+    return () => {
+      if (watchId !== null && navigator.geolocation.clearWatch) {
+        navigator.geolocation.clearWatch(watchId);
+      }
+    };
+  }, [activeShift, geofence, hasFenceWarning, toast]);
+
+  const handleClockIn = async () => {
+    if (!selectedProfile) {
+      toast({
+        title: 'Select a profile',
+        description: 'Choose a profile before clocking in.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setIsLoading(true);
+    setLocationError(null);
+
+    try {
+      const needsLocation = geofence?.configured;
+      let coords: { latitude?: number; longitude?: number } | undefined;
+      const radius = geofence?.radius_meters ?? null;
+      if (!needsLocation) {
+        setDistanceFromFence(null);
+      }
+
+      if (needsLocation) {
+        const position = await requestLocation();
+        const { latitude, longitude } = position.coords;
+        coords = { latitude, longitude };
+
+        if (
+          geofence?.configured &&
+          geofence.center_latitude !== null &&
+          geofence.center_longitude !== null &&
+          radius !== null
+        ) {
+          const distance = haversineMeters(
+            latitude,
+            longitude,
+            geofence.center_latitude,
+            geofence.center_longitude
+          );
+          setDistanceFromFence(Math.round(distance));
+          if (distance > radius) {
+            toast({
+              title: 'Outside geofence',
+              description: 'Move inside the geofence to clock in.',
+              variant: 'destructive',
+            });
+            setIsLoading(false);
+            return;
+          }
+        }
+      }
+
+      const shift = await attendanceAPI.clockIn(selectedProfile, coords);
+      setActiveShift(shift);
+      toast({
+        title: 'Clocked in',
+        description: 'Attendance shift started successfully.',
+      });
+    } catch (error: any) {
+      console.error('Clock-in failed', error);
+      if (error?.message) {
+        setLocationError(error.message);
+      }
+      toast({
+        title: 'Clock in failed',
+        description: error?.response?.data?.message || error?.message || 'Please try again.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleClockOut = async () => {
+    if (!activeShift && !selectedProfile) {
+      toast({
+        title: 'Nothing to clock out',
+        description: 'No active attendance shift found.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      await attendanceAPI.clockOut(activeShift?.id, selectedProfile);
+      setActiveShift(null);
+      toast({
+        title: 'Clocked out',
+        description: 'Attendance shift closed.',
+      });
+    } catch (error: any) {
+      console.error('Clock-out failed', error);
+      toast({
+        title: 'Clock out failed',
+        description: error?.response?.data?.message || error?.message || 'Please try again.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const formatTime = (value?: string) => {
+    if (!value) return '-';
+    return new Date(value).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  };
+
+  const geofenceConfigured = geofence?.configured;
+  const withinFence = geofenceConfigured && distanceFromFence !== null && geofence?.radius_meters !== null
+    ? distanceFromFence <= geofence.radius_meters
+    : null;
+
+  return (
     <div className="min-h-screen bg-gradient-background">
       <div className="p-4 space-y-6">
         <Card className="shadow-card border-0">
