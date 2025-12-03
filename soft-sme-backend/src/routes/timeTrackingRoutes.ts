@@ -3,6 +3,7 @@ import { pool } from '../db';
 import PDFDocument from 'pdfkit';
 import Papa from 'papaparse';
 import { SalesOrderService } from '../services/SalesOrderService';
+import { resolveTenantUserId } from '../utils/tenantUser';
 
 const DEFAULT_TIMEZONE = process.env.TIME_TRACKING_TIMEZONE || process.env.TZ || 'UTC';
 
@@ -163,48 +164,6 @@ function calculateEffectiveDuration(
 
 const router = express.Router();
 const salesOrderService = new SalesOrderService(pool);
-
-/**
- * Resolve the current user's ID within the tenant-scoped database.
- * Auth middleware pulls user data from the shared DB, so IDs can drift from tenant copies.
- */
-async function resolveTenantUserId(user?: Request['user']): Promise<number | null> {
-  if (!user?.id) {
-    return null;
-  }
-
-  const companyId = user.company_id;
-
-  // Prefer exact ID match first
-  const byId = await pool.query(
-    companyId
-      ? 'SELECT id FROM users WHERE id = $1 AND company_id = $2'
-      : 'SELECT id FROM users WHERE id = $1',
-    companyId ? [user.id, companyId] : [user.id]
-  );
-  if (byId.rows.length > 0) {
-    return byId.rows[0].id;
-  }
-
-  // Fallback to email in case IDs differ between shared and tenant DBs
-  if (user.email) {
-    const byEmail = await pool.query(
-      companyId
-        ? 'SELECT id FROM users WHERE email = $1 AND company_id = $2'
-        : 'SELECT id FROM users WHERE email = $1',
-      companyId ? [user.email, companyId] : [user.email]
-    );
-    if (byEmail.rows.length > 0) {
-      return byEmail.rows[0].id;
-    }
-  }
-
-  console.warn(
-    '[user-profile-access] Unable to resolve tenant user ID for requester',
-    { sharedId: user.id, email: user.email, companyId }
-  );
-  return null;
-}
 
 function parseDurationHours(value: unknown): number | null {
   if (value === null || value === undefined) {
@@ -930,7 +889,7 @@ router.get('/profiles', async (req: Request, res: Response) => {
       `;
       params = [];
     } else {
-      const tenantUserId = await resolveTenantUserId(req.user);
+      const tenantUserId = await resolveTenantUserId(pool, req.user);
       if (!tenantUserId) {
         return res.status(403).json({ error: 'User record not found for this tenant' });
       }
@@ -957,7 +916,7 @@ router.get('/profiles', async (req: Request, res: Response) => {
 // Mobile profiles endpoint - Mobile users (including admin) only see profiles they have access to
 router.get('/mobile/profiles', async (req: Request, res: Response) => {
   try {
-    const userId = await resolveTenantUserId(req.user);
+    const userId = await resolveTenantUserId(pool, req.user);
     if (!userId) {
       return res.status(403).json({ error: 'User record not found for this tenant' });
     }
@@ -1431,7 +1390,7 @@ router.post('/admin/user-profile-access', async (req: Request, res: Response) =>
   }
 
   try {
-    const grantedBy = await resolveTenantUserId(req.user);
+    const grantedBy = await resolveTenantUserId(pool, req.user);
     if (!grantedBy) {
       console.warn('[user-profile-access] Granting access with NULL granted_by (admin not found in tenant DB)', {
         sharedId: req.user?.id,

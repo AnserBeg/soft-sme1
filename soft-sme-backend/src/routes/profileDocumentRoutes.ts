@@ -5,6 +5,7 @@ import fs from 'fs';
 import { pool } from '../db';
 import { authMiddleware, adminAuth } from '../middleware/authMiddleware';
 import { tenantContextMiddleware } from '../middleware/tenantMiddleware';
+import { resolveTenantUserId } from '../utils/tenantUser';
 
 const router = express.Router();
 
@@ -174,7 +175,10 @@ router.get('/profile/:profileId', async (req: Request, res: Response) => {
 // Get documents for current user's accessible profiles (user view)
 router.get('/user-documents', async (req: Request, res: Response) => {
   try {
-    const userId = req.user?.id;
+    const userId = await resolveTenantUserId(pool, req.user);
+    if (!userId) {
+      return res.status(403).json({ error: 'User record not found for this tenant' });
+    }
     console.log(`Fetching documents for user ID: ${userId}`);
     
     // Add cache-busting headers for mobile apps
@@ -232,7 +236,11 @@ router.post('/upload', upload.single('document'), async (req: Request, res: Resp
   }
   try {
     const { customName, visibleToProfiles } = req.body;
-    const userId = req.user?.id;
+    const userId = await resolveTenantUserId(pool, req.user);
+    
+    if (!userId) {
+      return res.status(403).json({ error: 'Admin user not found for this tenant' });
+    }
     
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
@@ -318,7 +326,10 @@ router.post('/upload', upload.single('document'), async (req: Request, res: Resp
 router.post('/:documentId/mark-read', async (req: Request, res: Response) => {
   try {
     const { documentId } = req.params;
-    const userId = req.user?.id;
+    const userId = await resolveTenantUserId(pool, req.user);
+    if (!userId) {
+      return res.status(403).json({ error: 'User record not found for this tenant' });
+    }
     
     // Check if document exists and user has access to it through any profile
     const documentResult = await pool.query(`
@@ -355,7 +366,10 @@ router.post('/:documentId/mark-read', async (req: Request, res: Response) => {
 router.get('/file/:documentId', async (req: Request, res: Response) => {
   try {
     const { documentId } = req.params;
-    const userId = req.user?.id;
+    const userId = await resolveTenantUserId(pool, req.user);
+    if (!userId) {
+      return res.status(403).json({ error: 'User record not found for this tenant' });
+    }
     
     console.log(`File download request - Document ID: ${documentId}, User ID: ${userId}`);
     

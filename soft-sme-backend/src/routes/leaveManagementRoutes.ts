@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { pool } from '../db';
 import { authMiddleware } from '../middleware/authMiddleware';
 import { tenantContextMiddleware } from '../middleware/tenantMiddleware';
+import { resolveTenantUserId } from '../utils/tenantUser';
 
 const router = Router();
 
@@ -12,7 +13,11 @@ router.use(tenantContextMiddleware);
 // Submit leave request
 router.post('/request', async (req: Request, res: Response) => {
   const { profile_id, request_type, start_date, end_date, reason } = req.body;
-  const userId = req.user?.id;
+  const userId = await resolveTenantUserId(pool, req.user);
+
+  if (!userId) {
+    return res.status(403).json({ error: 'User record not found for this tenant' });
+  }
 
   try {
     // Validate user has access to this profile
@@ -79,7 +84,11 @@ router.post('/request', async (req: Request, res: Response) => {
 
 // Get user's own requests
 router.get('/my-requests', async (req: Request, res: Response) => {
-  const userId = req.user?.id;
+  const userId = await resolveTenantUserId(pool, req.user);
+
+  if (!userId) {
+    return res.status(403).json({ error: 'User record not found for this tenant' });
+  }
 
   try {
     const result = await pool.query(
@@ -161,11 +170,15 @@ router.get('/calendar', async (req: Request, res: Response) => {
 router.post('/approve/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
   const { admin_notes, proposed_start_date, proposed_end_date } = req.body;
-  const adminUserId = req.user?.id;
+  const adminUserId = await resolveTenantUserId(pool, req.user);
   const userRole = req.user?.access_role;
 
   if (userRole !== 'Admin') {
     return res.status(403).json({ error: 'Admin access required' });
+  }
+
+  if (!adminUserId) {
+    return res.status(403).json({ error: 'Admin user not found for this tenant' });
   }
 
   try {
@@ -225,11 +238,15 @@ router.post('/approve/:id', async (req: Request, res: Response) => {
 router.post('/deny/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
   const { admin_notes } = req.body;
-  const adminUserId = req.user?.id;
+  const adminUserId = await resolveTenantUserId(pool, req.user);
   const userRole = req.user?.access_role;
 
   if (userRole !== 'Admin') {
     return res.status(403).json({ error: 'Admin access required' });
+  }
+
+  if (!adminUserId) {
+    return res.status(403).json({ error: 'Admin user not found for this tenant' });
   }
 
   try {
@@ -249,11 +266,15 @@ router.post('/deny/:id', async (req: Request, res: Response) => {
 router.post('/propose/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
   const { proposed_start_date, proposed_end_date, admin_notes } = req.body;
-  const adminUserId = req.user?.id;
+  const adminUserId = await resolveTenantUserId(pool, req.user);
   const userRole = req.user?.access_role;
 
   if (userRole !== 'Admin') {
     return res.status(403).json({ error: 'Admin access required' });
+  }
+
+  if (!adminUserId) {
+    return res.status(403).json({ error: 'Admin user not found for this tenant' });
   }
 
   if (!proposed_start_date || !proposed_end_date) {
@@ -562,7 +583,11 @@ router.post('/reset-vacation-days', async (req: Request, res: Response) => {
 // Accept modified request (User action)
 router.post('/accept-modified/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
-  const userId = req.user?.id;
+  const userId = await resolveTenantUserId(pool, req.user);
+
+  if (!userId) {
+    return res.status(403).json({ error: 'User record not found for this tenant' });
+  }
 
   try {
     // Get request details
@@ -612,7 +637,11 @@ router.post('/accept-modified/:id', async (req: Request, res: Response) => {
 router.post('/resend/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
   const { request_type, start_date, end_date, reason } = req.body;
-  const userId = req.user?.id;
+  const userId = await resolveTenantUserId(pool, req.user);
+
+  if (!userId) {
+    return res.status(403).json({ error: 'User record not found for this tenant' });
+  }
 
   try {
     // Get request details
