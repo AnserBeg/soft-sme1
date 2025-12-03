@@ -311,42 +311,6 @@ const AttendancePage: React.FC = () => {
       </Dialog>
 
       <Grid container spacing={3}>
-        <Grid item xs={12}>
-          <Paper sx={{ p: 2 }}>
-            <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
-              <Typography variant="h6">Active Clock Ins</Typography>
-              {activeLoading && <CircularProgress size={24} />}
-            </Box>
-            {activeShifts.length === 0 && !activeLoading ? (
-              <Typography color="text.secondary">No active clock ins.</Typography>
-            ) : (
-              <TableContainer>
-                <Table>
-                  <TableHead>
-                    <TableRow>
-                      <TableCell sx={{ fontSize: '1.1rem' }}>Profile</TableCell>
-                      <TableCell sx={{ fontSize: '1.1rem' }}>Clock In</TableCell>
-                      <TableCell sx={{ fontSize: '1.1rem' }}>Duration</TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {activeShifts.map((entry) => {
-                      const duration = entry.duration !== null && entry.duration !== undefined ? Number(entry.duration) : null;
-                      return (
-                        <TableRow key={entry.id}>
-                          <TableCell sx={{ fontSize: '1.1rem' }}>{entry.profile_name}</TableCell>
-                          <TableCell sx={{ fontSize: '1.1rem' }}>{new Date(entry.clock_in).toLocaleString()}</TableCell>
-                          <TableCell sx={{ fontSize: '1.1rem' }}>{duration !== null ? `${duration.toFixed(2)} hrs` : '-'}</TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
-              </TableContainer>
-            )}
-          </Paper>
-        </Grid>
-
         {/* Profile Selection */}
         <Grid item xs={12} md={6}>
           <Paper sx={{ p: 2 }}>
@@ -367,11 +331,11 @@ const AttendancePage: React.FC = () => {
                 value={selectedProfile}
                 label="Select Profile"
                 onChange={(e) => setSelectedProfile(e.target.value as number)}
-                sx={{ '& .MuiSelect-select': { fontSize: '1.2rem', py: 1.25 } }}
+                sx={{ '& .MuiSelect-select': { fontSize: '1.25rem', py: 1.5, minHeight: 56 } }}
                 MenuProps={{
                   PaperProps: {
                     sx: {
-                      '& .MuiMenuItem-root': { fontSize: '1.2rem', py: 1.25 },
+                      '& .MuiMenuItem-root': { fontSize: '1.25rem', py: 1.5, minHeight: 56 },
                       '& .MuiMenuItem-root.Mui-selected, & .MuiMenuItem-root.Mui-selected:hover': {
                         backgroundColor: 'rgba(25, 118, 210, 0.2)',
                         color: 'primary.main',
@@ -512,6 +476,42 @@ const AttendancePage: React.FC = () => {
             </Paper>
           </Grid>
         )}
+
+        <Grid item xs={12}>
+          <Paper sx={{ p: 2 }}>
+            <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
+              <Typography variant="h6">Active Clock Ins</Typography>
+              {activeLoading && <CircularProgress size={24} />}
+            </Box>
+            {activeShifts.length === 0 && !activeLoading ? (
+              <Typography color="text.secondary">No active clock ins.</Typography>
+            ) : (
+              <TableContainer>
+                <Table>
+                  <TableHead>
+                    <TableRow>
+                      <TableCell sx={{ fontSize: '1.1rem' }}>Profile</TableCell>
+                      <TableCell sx={{ fontSize: '1.1rem' }}>Clock In</TableCell>
+                      <TableCell sx={{ fontSize: '1.1rem' }}>Duration</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {activeShifts.map((entry) => {
+                      const duration = entry.duration !== null && entry.duration !== undefined ? Number(entry.duration) : null;
+                      return (
+                        <TableRow key={entry.id}>
+                          <TableCell sx={{ fontSize: '1.1rem' }}>{entry.profile_name}</TableCell>
+                          <TableCell sx={{ fontSize: '1.1rem' }}>{new Date(entry.clock_in).toLocaleString()}</TableCell>
+                          <TableCell sx={{ fontSize: '1.1rem' }}>{duration !== null ? `${duration.toFixed(2)} hrs` : '-'}</TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            )}
+          </Paper>
+        </Grid>
       </Grid>
 
       {/* Add Profile Dialog */}

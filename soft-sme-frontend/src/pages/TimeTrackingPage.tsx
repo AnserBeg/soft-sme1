@@ -297,41 +297,6 @@ const TimeTrackingPage: React.FC = () => {
       </Dialog>
 
       <Grid container spacing={3}>
-        <Grid item xs={12}>
-          <Paper sx={{ p: 2 }}>
-            <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
-              <Typography variant="h6">Active Clock Ins</Typography>
-              {activeLoading && <CircularProgress size={24} />}
-            </Box>
-            {activeTimeEntries.length === 0 && !activeLoading ? (
-              <Typography color="text.secondary">No active clock ins.</Typography>
-            ) : (
-              <TableContainer>
-                <Table>
-                  <TableHead>
-                    <TableRow>
-                      <TableCell sx={{ fontSize: '1.1rem' }}>Profile</TableCell>
-                      <TableCell sx={{ fontSize: '1.1rem' }}>Sales Order</TableCell>
-                      <TableCell sx={{ fontSize: '1.1rem' }}>Clock In</TableCell>
-                      <TableCell sx={{ fontSize: '1.1rem' }}>Duration</TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {activeTimeEntries.map((entry) => (
-                      <TableRow key={entry.id}>
-                        <TableCell sx={{ fontSize: '1.1rem' }}>{entry.profile_name || profiles.find(p => p.id === entry.profile_id)?.name || 'Unknown'}</TableCell>
-                        <TableCell sx={{ fontSize: '1.1rem' }}>{entry.sales_order_number}</TableCell>
-                        <TableCell sx={{ fontSize: '1.1rem' }}>{new Date(entry.clock_in).toLocaleString()}</TableCell>
-                        <TableCell sx={{ fontSize: '1.1rem' }}>{formatDurationDisplay(entry.duration)}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </TableContainer>
-            )}
-          </Paper>
-        </Grid>
-
         {/* Profile Selection */}
         <Grid item xs={12} md={6}>
           <Paper sx={{ p: 2 }}>
@@ -344,11 +309,11 @@ const TimeTrackingPage: React.FC = () => {
                 value={selectedProfile}
                 label="Select Profile"
                 onChange={(e) => setSelectedProfile(e.target.value as number)}
-                sx={{ '& .MuiSelect-select': { fontSize: '1.2rem', py: 1.25 } }}
+                sx={{ '& .MuiSelect-select': { fontSize: '1.25rem', py: 1.5, minHeight: 56 } }}
                 MenuProps={{
                   PaperProps: {
                     sx: {
-                      '& .MuiMenuItem-root': { fontSize: '1.2rem', py: 1.25 },
+                      '& .MuiMenuItem-root': { fontSize: '1.25rem', py: 1.5, minHeight: 56 },
                       '& .MuiMenuItem-root.Mui-selected, & .MuiMenuItem-root.Mui-selected:hover': {
                         backgroundColor: 'rgba(25, 118, 210, 0.2)',
                         color: 'primary.main',
@@ -379,17 +344,17 @@ const TimeTrackingPage: React.FC = () => {
                 <Typography variant="h6">Sales Order</Typography>
                 
               </Box>
-              <FormControl fullWidth>
-                <InputLabel>Select Sales Order</InputLabel>
-                <Select
-                  value={selectedSO}
-                  label="Select Sales Order"
-                  onChange={(e) => setSelectedSO(e.target.value as number)}
-                  sx={{ '& .MuiSelect-select': { fontSize: '1.2rem', py: 1.25 } }}
+            <FormControl fullWidth>
+              <InputLabel>Select Sales Order</InputLabel>
+              <Select
+                value={selectedSO}
+                label="Select Sales Order"
+                onChange={(e) => setSelectedSO(e.target.value as number)}
+                  sx={{ '& .MuiSelect-select': { fontSize: '1.25rem', py: 1.5, minHeight: 56 } }}
                   MenuProps={{
                     PaperProps: {
                       sx: {
-                        '& .MuiMenuItem-root': { fontSize: '1.2rem', py: 1.25, lineHeight: 1.3 },
+                        '& .MuiMenuItem-root': { fontSize: '1.25rem', py: 1.5, lineHeight: 1.3, minHeight: 56 },
                         '& .MuiMenuItem-root.Mui-selected, & .MuiMenuItem-root.Mui-selected:hover': {
                           backgroundColor: 'rgba(25, 118, 210, 0.2)',
                           color: 'primary.main',
@@ -516,6 +481,41 @@ const TimeTrackingPage: React.FC = () => {
             </Paper>
           </Grid>
         )}
+
+        <Grid item xs={12}>
+          <Paper sx={{ p: 2 }}>
+            <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
+              <Typography variant="h6">Active Clock Ins</Typography>
+              {activeLoading && <CircularProgress size={24} />}
+            </Box>
+            {activeTimeEntries.length === 0 && !activeLoading ? (
+              <Typography color="text.secondary">No active clock ins.</Typography>
+            ) : (
+              <TableContainer>
+                <Table>
+                  <TableHead>
+                    <TableRow>
+                      <TableCell sx={{ fontSize: '1.1rem' }}>Profile</TableCell>
+                      <TableCell sx={{ fontSize: '1.1rem' }}>Sales Order</TableCell>
+                      <TableCell sx={{ fontSize: '1.1rem' }}>Clock In</TableCell>
+                      <TableCell sx={{ fontSize: '1.1rem' }}>Duration</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {activeTimeEntries.map((entry) => (
+                      <TableRow key={entry.id}>
+                        <TableCell sx={{ fontSize: '1.1rem' }}>{entry.profile_name || profiles.find(p => p.id === entry.profile_id)?.name || 'Unknown'}</TableCell>
+                        <TableCell sx={{ fontSize: '1.1rem' }}>{entry.sales_order_number}</TableCell>
+                        <TableCell sx={{ fontSize: '1.1rem' }}>{new Date(entry.clock_in).toLocaleString()}</TableCell>
+                        <TableCell sx={{ fontSize: '1.1rem' }}>{formatDurationDisplay(entry.duration)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            )}
+          </Paper>
+        </Grid>
       </Grid>
 
 
