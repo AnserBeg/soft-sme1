@@ -4,14 +4,14 @@ import { LoginScreen } from '@/components/screens/LoginScreen';
 import { TimeTrackingScreen } from '@/components/screens/TimeTrackingScreen';
 import { LeaveManagementScreen } from '@/components/screens/LeaveManagementScreen';
 import DocumentsScreen from '@/components/screens/DocumentsScreen';
-import { Loader2, Clock, Calendar, Menu, FileText, MapPin } from 'lucide-react';
+import { Clock, Calendar, Menu, FileText, MapPin } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
 import { LoadingScreen } from '@/components/LoadingScreen';
 import { AttendanceScreen } from '@/components/screens/AttendanceScreen';
 
 const Index = () => {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, logout } = useAuth();
   const [currentScreen, setCurrentScreen] = useState<'attendance' | 'time-tracking' | 'leave-management' | 'documents'>('time-tracking');
   const [isMenuOpen, setIsMenuOpen] = useState(false);
 
@@ -33,16 +33,14 @@ const Index = () => {
       {/* Mobile Navigation Header */}
       <div className="bg-gradient-to-r from-gradient-primary-from to-gradient-primary-to text-primary-foreground p-4 shadow-mobile">
         <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-3">
-            <div>
-              <h1 className="text-lg font-semibold">Welcome back!</h1>
-              <p className="text-sm opacity-90 capitalize">
-                {currentScreen === 'attendance' ? 'Attendance' :
-                 currentScreen === 'time-tracking' ? 'Time Tracking' : 
-                 currentScreen === 'leave-management' ? 'Leave Management' : 'Documents'}
-              </p>
-            </div>
-          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-10 px-3 text-primary-foreground hover:bg-white/20"
+            onClick={logout}
+          >
+            Log out
+          </Button>
           
           {/* Burger Menu on the Right */}
           <Sheet open={isMenuOpen} onOpenChange={setIsMenuOpen}>
