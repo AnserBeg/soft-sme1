@@ -765,8 +765,13 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
     items
       .filter((item) => (item.description && item.description.trim().length > 0) || (item.partNumber && item.partNumber.trim().length > 0))
       .forEach((item) => {
-        const quantityValue = item.quantity ?? 0;
-        const matchedUnitCost = item.match?.lastUnitCost ?? item.unitCost ?? 0;
+        const quantityValue = parseNumericInput(item.quantity ?? 0);
+        // Prefer the OCR-extracted unit cost; fall back to inventory match only if OCR is missing
+        const hasOcrUnitCost = item.unitCost !== null && item.unitCost !== undefined && String(item.unitCost).trim() !== '';
+        const parsedOcrUnitCost = hasOcrUnitCost ? parseNumericInput(item.unitCost) : 0;
+        const matchedUnitCost = hasOcrUnitCost
+          ? parsedOcrUnitCost
+          : parseNumericInput(item.match?.lastUnitCost ?? 0);
         const resolvedPartNumber = item.match?.status === 'existing'
           ? normalizePartNumber(item.match?.matchedPartNumber || item.partNumber || item.match?.normalizedPartNumber || '')
           : normalizePartNumber(item.match?.suggestedPartNumber || item.partNumber || item.normalizedPartNumber || '');
@@ -775,7 +780,9 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
           ? (item.match?.unit || item.unit || UNIT_OPTIONS[0])
           : (item.unit || UNIT_OPTIONS[0]);
         const resolvedUnitCost = item.match?.status === 'existing'
-          ? (item.match?.lastUnitCost != null ? String(item.match.lastUnitCost) : (item.unitCost != null ? String(item.unitCost) : ''))
+          ? (hasOcrUnitCost
+              ? String(item.unitCost)
+              : (item.match?.lastUnitCost != null ? String(item.match.lastUnitCost) : ''))
           : (item.unitCost != null ? String(item.unitCost) : '');
 
         const purchaseLine: PurchaseOrderLineItem = {
