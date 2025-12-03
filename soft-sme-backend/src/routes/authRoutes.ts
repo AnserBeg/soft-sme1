@@ -274,8 +274,10 @@ router.post('/refresh', async (req: Request, res: Response) => {
       path: '/api/auth',
     });
 
+    // Return both tokens so the client can persist the rotated refresh token
     res.json({
       sessionToken: result.sessionToken,
+      refreshToken: result.refreshToken,
     });
   } catch (error) {
     console.error('Refresh token error:', error);
