@@ -325,10 +325,13 @@ export const TimeTrackingScreen: React.FC = () => {
     return profiles.find(p => p.id === profileId)?.name || 'Unknown Profile';
   };
 
+  const displayOrderNumber = (orderNumber?: string) =>
+    orderNumber ? orderNumber.replace(/^SO-?/i, '').trim() : 'Unknown Order';
+
   const formatSalesOrderLabel = (salesOrder?: SalesOrder) => {
     if (!salesOrder) return 'Unknown Order';
     const parts = [
-      salesOrder.number,
+      displayOrderNumber(salesOrder.number),
       salesOrder.customer_name,
       salesOrder.product_name || salesOrder.name
     ].filter(Boolean);
@@ -410,12 +413,13 @@ export const TimeTrackingScreen: React.FC = () => {
             <div className="space-y-3">
               <p className="text-lg font-semibold text-center">Select your sales order</p>
               <Select value={selectedSalesOrder} onValueChange={setSelectedSalesOrder} disabled={!selectedProfile}>
-                <SelectTrigger className="h-auto min-h-[3.5rem] items-start py-3 text-left text-base border-2 border-primary bg-white/90 shadow-md">
-                  <SelectValue className="sr-only" placeholder="" />
-                  <div className="flex flex-col text-left">
+                <SelectTrigger className="h-auto min-h-[3.5rem] items-start py-3 px-4 text-left text-base border-2 border-primary bg-white/90 shadow-md">
+                  <div className="flex flex-col text-left w-full">
                     {selectedSalesOrderDetails ? (
                       <>
-                        <span className="font-semibold leading-tight">{selectedSalesOrderDetails.number}</span>
+                        <span className="font-semibold leading-tight">
+                          {displayOrderNumber(selectedSalesOrderDetails.number)}
+                        </span>
                         <span className="text-xs text-muted-foreground leading-tight">
                           {[selectedSalesOrderDetails.customer_name, selectedSalesOrderDetails.product_name].filter(Boolean).join(' | ') || 'No additional details'}
                         </span>
@@ -434,19 +438,20 @@ export const TimeTrackingScreen: React.FC = () => {
                       entry => entry.profile_id?.toString() === selectedProfile?.toString() && entry.sales_order_id?.toString() === so.id?.toString() && !entry.clock_out
                     ));
                     const label = formatSalesOrderLabel(so);
+                    const numberDisplay = displayOrderNumber(so.number);
                     return (
                       <SelectItem
                         key={so.id}
                         value={so.id}
                         textValue={label}
-                        className="items-start gap-2 whitespace-normal py-3 pl-10 pr-3 text-left leading-5 hover:bg-primary/5"
+                        className="items-start gap-2 whitespace-normal py-3 px-4 text-left leading-5 hover:bg-primary/5"
                         disabled={isClockedInForSO}
                       >
-                        <div className="flex flex-col gap-1 text-left">
-                          <div className="flex items-start justify-between gap-2">
-                            <span className="font-semibold text-sm">{so.number}</span>
+                        <div className="flex flex-col gap-1 text-left w-full">
+                          <div className="flex items-start gap-2">
+                            <span className="font-semibold text-sm">{numberDisplay}</span>
                             {so.customer_name && (
-                              <span className="text-xs text-muted-foreground truncate max-w-[50%]">
+                              <span className="text-xs text-muted-foreground truncate">
                                 {so.customer_name}
                               </span>
                             )}
