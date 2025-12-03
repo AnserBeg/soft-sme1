@@ -179,25 +179,38 @@ export class SessionManager {
   /**
    * Refresh a session using refresh token
    */
-  static async refreshSession(refreshToken: string): Promise<{ sessionToken: string; refreshToken: string } | null> {
+  static async refreshSession(refreshToken: string): Promise<
+    | { success: true; sessionToken: string; refreshToken: string }
+    | { success: false; reason: 'not_found' | 'inactive' | 'expired' | 'error' }
+  > {
     const client = await pool.connect();
     
     try {
       await client.query('BEGIN');
 
-      const result = await client.query(
+      // Fetch the session regardless of status to provide detailed reason codes
+      const lookupResult = await client.query(
         `SELECT * FROM user_sessions 
-         WHERE refresh_token = $1 
-         AND is_active = TRUE 
-         AND refresh_expires_at > CURRENT_TIMESTAMP`,
+         WHERE refresh_token = $1`,
         [refreshToken]
       );
 
-      if (result.rows.length === 0) {
-        return null;
+      if (lookupResult.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return { success: false, reason: 'not_found' };
       }
 
-      const session = result.rows[0];
+      const session = lookupResult.rows[0];
+
+      if (!session.is_active) {
+        await client.query('ROLLBACK');
+        return { success: false, reason: 'inactive' };
+      }
+
+      if (new Date(session.refresh_expires_at) <= new Date()) {
+        await client.query('ROLLBACK');
+        return { success: false, reason: 'expired' };
+      }
 
       // Generate new tokens
       const newSessionToken = this.generateSessionToken(session.user_id);
@@ -228,13 +241,14 @@ export class SessionManager {
       await client.query('COMMIT');
 
       return {
+        success: true,
         sessionToken: newSessionToken,
         refreshToken: newRefreshToken
       };
     } catch (error) {
       await client.query('ROLLBACK');
       console.error('Error refreshing session:', error);
-      return null;
+      return { success: false, reason: 'error' };
     } finally {
       client.release();
     }

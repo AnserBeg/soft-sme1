@@ -256,14 +256,18 @@ router.post('/refresh', async (req: Request, res: Response) => {
   try {
     const result = await SessionManager.refreshSession(refreshToken);
 
-    if (!result) {
-      // Log failed refresh
-      console.log(`[SESSION] Invalid or expired refresh token used at ${new Date().toISOString()}`);
+    if (!result.success) {
+      // Log failed refresh with reason and a short prefix of the token for traceability
+      const tokenPrefix = refreshToken ? refreshToken.slice(0, 8) : 'none';
+      console.log(`[SESSION] Invalid refresh token (${result.reason}) used at ${new Date().toISOString()} token=${tokenPrefix}...`);
+      // Clear refresh token cookie so the client stops retrying with a bad token
+      res.clearCookie('refreshToken', { path: '/api/auth' });
       return res.status(401).json({ message: 'Invalid or expired refresh token' });
     }
 
-    // Log session refresh
-    console.log(`[SESSION] Session refreshed at ${new Date().toISOString()}`);
+    // Log session refresh with token prefix
+    const tokenPrefix = result.refreshToken.slice(0, 8);
+    console.log(`[SESSION] Session refreshed at ${new Date().toISOString()} token=${tokenPrefix}...`);
 
     // Set new refresh token as httpOnly, secure cookie
     res.cookie('refreshToken', result.refreshToken, {
