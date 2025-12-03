@@ -1,19 +1,17 @@
-import React, { useCallback, useEffect, useState } from 'react';
+﻿import React, { useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { attendanceAPI, timeTrackingAPI } from '@/services/api';
 import { useToast } from '@/hooks/use-toast';
-import { useAuth } from '@/hooks/useAuth';
 import {
   AlertTriangle,
   CheckCircle,
   Clock,
   Loader2,
-  MapPin,
   ShieldCheck,
   Satellite,
+  RefreshCw,
 } from 'lucide-react';
 
 type Profile = { id: string; name: string };
@@ -61,7 +59,6 @@ const requestLocation = (): Promise<GeolocationPosition> => {
 };
 
 export const AttendanceScreen: React.FC = () => {
-  const { user } = useAuth();
   const { toast } = useToast();
 
   const [profiles, setProfiles] = useState<Profile[]>([]);
@@ -195,209 +192,28 @@ export const AttendanceScreen: React.FC = () => {
         setLocationError(err?.message || 'Unable to monitor location.');
       }
     }
-    return () => {
-      if (watchId !== null && navigator.geolocation.clearWatch) {
-        navigator.geolocation.clearWatch(watchId);
-      }
-    };
-  }, [activeShift, geofence, hasFenceWarning, toast]);
-
-  const handleClockIn = async () => {
-    if (!selectedProfile) {
-      toast({
-        title: 'Select a profile',
-        description: 'Choose a profile before clocking in.',
-        variant: 'destructive',
-      });
-      return;
-    }
-
-    setIsLoading(true);
-    setLocationError(null);
-
-    try {
-      const needsLocation = geofence?.configured;
-      let coords: { latitude?: number; longitude?: number } | undefined;
-      const radius = geofence?.radius_meters ?? null;
-      if (!needsLocation) {
-        setDistanceFromFence(null);
-      }
-
-      if (needsLocation) {
-        const position = await requestLocation();
-        const { latitude, longitude } = position.coords;
-        coords = { latitude, longitude };
-
-        if (
-          geofence?.configured &&
-          geofence.center_latitude !== null &&
-          geofence.center_longitude !== null &&
-          radius !== null
-        ) {
-          const distance = haversineMeters(
-            latitude,
-            longitude,
-            geofence.center_latitude,
-            geofence.center_longitude
-          );
-          setDistanceFromFence(Math.round(distance));
-          if (distance > radius) {
-            toast({
-              title: 'Outside geofence',
-              description: 'Move inside the geofence to clock in.',
-              variant: 'destructive',
-            });
-            setIsLoading(false);
-            return;
-          }
-        }
-      }
-
-      const shift = await attendanceAPI.clockIn(selectedProfile, coords);
-      setActiveShift(shift);
-      toast({
-        title: 'Clocked in',
-        description: 'Attendance shift started successfully.',
-      });
-    } catch (error: any) {
-      console.error('Clock-in failed', error);
-      if (error?.message) {
-        setLocationError(error.message);
-      }
-      toast({
-        title: 'Clock in failed',
-        description: error?.response?.data?.message || error?.message || 'Please try again.',
-        variant: 'destructive',
-      });
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleClockOut = async () => {
-    if (!activeShift && !selectedProfile) {
-      toast({
-        title: 'Nothing to clock out',
-        description: 'No active attendance shift found.',
-        variant: 'destructive',
-      });
-      return;
-    }
-
-    setIsLoading(true);
-    try {
-      await attendanceAPI.clockOut(activeShift?.id, selectedProfile);
-      setActiveShift(null);
-      toast({
-        title: 'Clocked out',
-        description: 'Attendance shift closed.',
-      });
-    } catch (error: any) {
-      console.error('Clock-out failed', error);
-      toast({
-        title: 'Clock out failed',
-        description: error?.response?.data?.message || error?.message || 'Please try again.',
-        variant: 'destructive',
-      });
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const formatTime = (value?: string) => {
-    if (!value) return '-';
-    return new Date(value).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
-  };
-
-  const geofenceConfigured = geofence?.configured;
-  const withinFence = geofenceConfigured && distanceFromFence !== null && geofence?.radius_meters !== null
-    ? distanceFromFence <= geofence.radius_meters
-    : null;
-
-  return (
+      return (
     <div className="min-h-screen bg-gradient-background">
-      <div className="bg-gradient-to-r from-gradient-primary-from to-gradient-primary-to text-primary-foreground p-4 shadow-mobile">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-xs opacity-80">Attendance</p>
-            <h1 className="text-lg font-semibold">{user?.email}</h1>
-          </div>
-          <Badge variant="secondary" className="bg-white/15 text-white border-white/30">
-            <MapPin className="h-4 w-4 mr-1" />
-            {geofenceConfigured ? 'Geofence On' : 'Geofence Off'}
-          </Badge>
-        </div>
-      </div>
-
-      <div className="p-4 space-y-4">
+      <div className="p-4 space-y-6">
         <Card className="shadow-card border-0">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-lg flex items-center">
-              <ShieldCheck className="h-5 w-5 mr-2 text-primary" />
-              Geofence
-            </CardTitle>
-            <CardDescription>
-              Clock-in is limited to the configured fence.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {geofenceConfigured ? (
-              <>
-                <div className="flex flex-wrap gap-2 text-sm">
-                  <Badge variant="outline" className="border-success text-success">
-                    Enabled
-                  </Badge>
-                  <span className="text-muted-foreground">
-                    {geofence?.center_latitude}, {geofence?.center_longitude} · Radius {geofence?.radius_meters} m
-                  </span>
-                </div>
-                {distanceFromFence !== null && geofence?.radius_meters && (
-                  <div className="flex items-center gap-2 text-sm">
-                    <Satellite className="h-4 w-4 text-muted-foreground" />
-                    <span className={withinFence ? 'text-success' : 'text-warning'}>
-                      {withinFence ? 'Inside fence' : 'Outside fence'} ({distanceFromFence} m away)
-                    </span>
-                  </div>
-                )}
-                {locationError && (
-                  <div className="flex items-center gap-2 text-sm text-warning">
-                    <AlertTriangle className="h-4 w-4" />
-                    {locationError}
-                  </div>
-                )}
-              </>
-            ) : (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <AlertTriangle className="h-4 w-4" />
-                Geofence is not configured. Clock-ins will skip the location check.
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card className="shadow-card border-0">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-lg flex items-center">
-              <Clock className="h-5 w-5 mr-2 text-primary" />
-              Attendance
-            </CardTitle>
-            <CardDescription>Select your profile and clock in or out.</CardDescription>
-          </CardHeader>
           <CardContent className="space-y-4">
-            <div>
-              <label className="text-sm font-medium text-muted-foreground mb-2 block">Profile</label>
-              <Select value={selectedProfile} onValueChange={setSelectedProfile}>
-                <SelectTrigger className="h-12">
-                  <SelectValue placeholder="Select profile" />
-                </SelectTrigger>
-                <SelectContent className="bg-white">
-                  {profiles.map((p) => (
-                    <SelectItem key={p.id} value={p.id}>
-                      {p.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-muted-foreground">Assigned profile</p>
+                <p className="text-base font-semibold">
+                  {profiles.length === 0
+                    ? 'No profile assigned. You can view time entries but cannot clock in.'
+                    : profiles.find(p => p.id?.toString() === selectedProfile?.toString())?.name || 'Loading...'}
+                </p>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => loadData()}
+                disabled={isLoading}
+              >
+                <RefreshCw className={`${isLoading ? 'animate-spin ' : ''}h-4 w-4`} />
+              </Button>
             </div>
 
             {activeShift ? (
@@ -451,9 +267,55 @@ export const AttendanceScreen: React.FC = () => {
             )}
           </CardContent>
         </Card>
+
+        <Card className="shadow-card border-0">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-lg flex items-center">
+              <ShieldCheck className="h-5 w-5 mr-2 text-primary" />
+              Geofence
+            </CardTitle>
+            <CardDescription>
+              Clock-in is limited to the configured fence.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {geofenceConfigured ? (
+              <>
+                <div className="flex flex-wrap gap-2 text-sm">
+                  <Badge variant="outline" className="border-success text-success">
+                    Enabled
+                  </Badge>
+                  <span className="text-muted-foreground">
+                    {geofence?.center_latitude}, {geofence?.center_longitude} – Radius {geofence?.radius_meters} m
+                  </span>
+                </div>
+                {distanceFromFence !== null && geofence?.radius_meters && (
+                  <div className="flex items-center gap-2 text-sm">
+                    <Satellite className="h-4 w-4 text-muted-foreground" />
+                    <span className={withinFence ? 'text-success' : 'text-warning'}>
+                      {withinFence ? 'Inside fence' : 'Outside fence'} ({distanceFromFence} m away)
+                    </span>
+                  </div>
+                )}
+                {locationError && (
+                  <div className="flex items-center gap-2 text-sm text-warning">
+                    <AlertTriangle className="h-4 w-4" />
+                    {locationError}
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <AlertTriangle className="h-4 w-4" />
+                Geofence is not configured. Clock-ins will skip the location check.
+              </div>
+            )}
+          </CardContent>
+        </Card>
       </div>
     </div>
   );
 };
 
 export default AttendanceScreen;
+

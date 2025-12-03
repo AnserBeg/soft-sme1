@@ -140,6 +140,12 @@ function dispatch(action: Action) {
 type Toast = Omit<ToasterToast, "id">
 
 function toast({ ...props }: Toast) {
+  // Only surface error/destructive toasts; ignore everything else to avoid non-error banners
+  if (props.variant !== "destructive") {
+    const noop = () => {};
+    return { id: "ignored", dismiss: noop, update: noop };
+  }
+
   const id = genId()
 
   const update = (props: ToasterToast) =>
