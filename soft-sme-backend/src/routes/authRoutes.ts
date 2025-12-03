@@ -256,7 +256,7 @@ router.post('/refresh', async (req: Request, res: Response) => {
   try {
     const result = await SessionManager.refreshSession(refreshToken);
 
-    if (!result.success) {
+    if (result.success === false) {
       // Log failed refresh with reason and a short prefix of the token for traceability
       const tokenPrefix = refreshToken ? refreshToken.slice(0, 8) : 'none';
       console.log(`[SESSION] Invalid refresh token (${result.reason}) used at ${new Date().toISOString()} token=${tokenPrefix}...`);
@@ -265,7 +265,7 @@ router.post('/refresh', async (req: Request, res: Response) => {
       return res.status(401).json({ message: 'Invalid or expired refresh token' });
     }
 
-    // Log session refresh with token prefix
+    // At this point result is a success payload
     const tokenPrefix = result.refreshToken.slice(0, 8);
     console.log(`[SESSION] Session refreshed at ${new Date().toISOString()} token=${tokenPrefix}...`);
 
