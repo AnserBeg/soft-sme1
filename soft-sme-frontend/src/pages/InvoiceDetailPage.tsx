@@ -70,6 +70,7 @@ const InvoiceDetailPage: React.FC = () => {
   const [overheadChargeRate, setOverheadChargeRate] = useState<number | null>(null);
   const [customers, setCustomers] = useState<CustomerOption[]>([]);
   const [customer, setCustomer] = useState<CustomerOption | null>(null);
+  const [customerInput, setCustomerInput] = useState('');
   const [customersLoading, setCustomersLoading] = useState(false);
   const [invoiceDate, setInvoiceDate] = useState<Dayjs | null>(dayjs());
   const [dueDate, setDueDate] = useState<Dayjs | null>(dayjs().add(30, 'day'));
@@ -181,11 +182,11 @@ const InvoiceDetailPage: React.FC = () => {
         setLoading(true);
         try {
           const res = await getInvoice(id);
-          const header = res.invoice;
-          const items = (res.lineItems || []).map((li: any) => ({
-            invoice_line_item_id: li.invoice_line_item_id,
-            part_id: li.part_id ?? null,
-            part_number: li.part_number || '',
+      const header = res.invoice;
+      const items = (res.lineItems || []).map((li: any) => ({
+        invoice_line_item_id: li.invoice_line_item_id,
+        part_id: li.part_id ?? null,
+        part_number: li.part_number || '',
             part_description: li.part_description || '',
             quantity: Number(li.quantity) || 0,
             unit: li.unit || '',
@@ -193,26 +194,27 @@ const InvoiceDetailPage: React.FC = () => {
             line_amount: Number(li.line_amount) || 0,
           })) as InvoiceLineItem[];
           setInvoice(header);
-          setLineItems(items.length ? items : [defaultLineItem()]);
-          const match = customers.find((c) => c.id === header.customer_id);
-          const option =
-            match ||
-            (header.customer_id
-              ? {
-                  id: header.customer_id,
-                  label: header.customer_name || `Customer ${header.customer_id}`,
-                  defaultTerms:
-                    Number(header.payment_terms_in_days) ||
-                    Number(header.default_payment_terms_in_days) ||
-                    30,
-                }
-              : null);
-          setCustomer(option || null);
-          setInvoiceDate(header.invoice_date ? dayjs(header.invoice_date) : dayjs());
-          setDueDate(header.due_date ? dayjs(header.due_date) : dayjs().add(option?.defaultTerms || 30, 'day'));
-          if (header.sales_order_id) {
-            applySalesOrderDefaults(header.sales_order_id);
-          }
+        setLineItems(items.length ? items : [defaultLineItem()]);
+        const match = customers.find((c) => c.id === header.customer_id);
+        const option =
+          match ||
+          (header.customer_id
+            ? {
+                id: header.customer_id,
+                label: header.customer_name || `Customer ${header.customer_id}`,
+                defaultTerms:
+                  Number(header.payment_terms_in_days) ||
+                  Number(header.default_payment_terms_in_days) ||
+                  30,
+              }
+            : null);
+        setCustomer(option || null);
+        setCustomerInput(option?.label || '');
+        setInvoiceDate(header.invoice_date ? dayjs(header.invoice_date) : dayjs());
+        setDueDate(header.due_date ? dayjs(header.due_date) : dayjs().add(option?.defaultTerms || 30, 'day'));
+        if (header.sales_order_id) {
+          applySalesOrderDefaults(header.sales_order_id);
+        }
         } catch (e) {
           console.error('Failed to load invoice', e);
           setError('Failed to load invoice');
@@ -568,25 +570,31 @@ const InvoiceDetailPage: React.FC = () => {
           <Grid container spacing={2}>
             {/* Customer aligned to top left like SO */}
             <Grid item xs={12} sm={6}>
-              <TextField
-                select
-                SelectProps={{ native: true }}
-                label="Customer"
+              <Autocomplete<CustomerOption, false, false, true>
+                options={customers}
+                value={customer}
+                inputValue={customerInput}
+                onInputChange={(_, val) => setCustomerInput(val)}
                 onFocus={loadCustomers}
-                value={customer?.id || invoice.customer_id || ''}
-                onChange={(e) => {
-                  const idVal = Number(e.target.value);
-                  const found = customers.find((c) => c.id === idVal) || null;
-                  setCustomer(found);
-                  setInvoice((prev: any) => ({ ...prev, customer_id: idVal }));
+                onChange={(_, val) => {
+                  if (!val) {
+                    setCustomer(null);
+                    setInvoice((prev: any) => ({ ...prev, customer_id: null }));
+                    return;
+                  }
+                  const chosen = typeof val === 'string' ? customers.find((c) => c.label === val) || null : (val as CustomerOption);
+                  setCustomer(chosen);
+                  setCustomerInput(chosen?.label || '');
+                  if (chosen?.id) {
+                    setInvoice((prev: any) => ({ ...prev, customer_id: chosen.id }));
+                  }
                 }}
-                fullWidth
-              >
-                <option value=""></option>
-                {customers.map((c) => (
-                  <option key={c.id} value={c.id}>{c.label}</option>
-                ))}
-              </TextField>
+                getOptionLabel={(option) => (typeof option === 'string' ? option : option.label)}
+                isOptionEqualToValue={(o, v) => o.id === v.id}
+                renderInput={(params) => (
+                  <TextField {...params} label="Customer" fullWidth />
+                )}
+              />
             </Grid>
             {/* Keep dates on the right similar to SO layout */}
             <Grid item xs={12} sm={3}>
