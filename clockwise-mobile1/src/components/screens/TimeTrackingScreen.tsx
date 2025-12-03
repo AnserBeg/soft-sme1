@@ -3,17 +3,13 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { useAuth } from '@/hooks/useAuth';
 import { timeTrackingAPI } from '@/services/api';
 import { useToast } from '@/hooks/use-toast';
 import { 
   Clock, 
   Play, 
   Square, 
-  LogOut, 
   RefreshCw, 
-  User,
-  Calendar,
   Timer,
   CheckCircle
 } from 'lucide-react';
@@ -46,7 +42,6 @@ interface SalesOrder {
 }
 
 export const TimeTrackingScreen: React.FC = () => {
-  const { user, logout } = useAuth();
   const { toast } = useToast();
   
   const [timeEntries, setTimeEntries] = useState<TimeEntry[]>([]);
@@ -68,8 +63,6 @@ export const TimeTrackingScreen: React.FC = () => {
     try {
       console.log('=== FETCHING DATA ===');
       console.log('Date being fetched:', today);
-      console.log('User ID:', user?.id);
-      console.log('User role:', user?.access_role);
       
       const [entriesData, profilesData, salesOrdersData] = await Promise.all([
         timeTrackingAPI.getTimeEntries(today),
@@ -207,7 +200,7 @@ export const TimeTrackingScreen: React.FC = () => {
       setIsLoading(false);
       setIsRefreshing(false);
     }
-  }, [currentActiveEntry, selectedProfile, today, toast, user]);
+  }, [currentActiveEntry, selectedProfile, today, toast]);
 
   useEffect(() => {
     fetchData();
@@ -391,50 +384,18 @@ export const TimeTrackingScreen: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gradient-background">
-      {/* User Info and Logout */}
-      <div className="bg-gradient-to-r from-gradient-primary-from to-gradient-primary-to text-primary-foreground p-4 shadow-mobile">
-        <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center space-x-3">
-            <div className="bg-white/20 p-2 rounded-lg">
-              <User className="h-5 w-5" />
-            </div>
-            <div>
-              <h1 className="text-lg font-semibold">Welcome back!</h1>
-              <p className="text-sm opacity-90">{user?.email}</p>
-            </div>
-          </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={logout}
-            className="text-primary-foreground hover:bg-white/20"
-          >
-            <LogOut className="h-4 w-4" />
-          </Button>
-        </div>
-        
-        <div className="flex items-center space-x-2 text-sm opacity-90">
-          <Calendar className="h-4 w-4" />
-          <span>{new Date().toLocaleDateString('en-US', { 
-            weekday: 'long', 
-            year: 'numeric', 
-            month: 'long', 
-            day: 'numeric' 
-          })}</span>
-        </div>
-      </div>
-
       <div className="p-4 space-y-6">
-        {/* Clock In Section */}
+        {/* Core selection focus */}
         <Card className="shadow-card border-0">
-          <CardHeader className="pb-3">
+          <CardContent className="space-y-4">
             <div className="flex items-center justify-between">
               <div>
-                <CardTitle className="text-lg flex items-center">
-                  <Play className="h-5 w-5 mr-2 text-primary" />
-                  Clock In
-                </CardTitle>
-                <CardDescription>Start tracking your time</CardDescription>
+                <p className="text-xs text-muted-foreground">Assigned profile</p>
+                <p className="text-base font-semibold">
+                  {profiles.length === 0
+                    ? 'No profile assigned. You can view time entries but cannot clock in.'
+                    : profiles.find(p => p.id?.toString() === selectedProfile?.toString())?.name || 'Loading...'}
+                </p>
               </div>
               <Button
                 variant="ghost"
@@ -445,85 +406,61 @@ export const TimeTrackingScreen: React.FC = () => {
                 <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
               </Button>
             </div>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-1 gap-3">
-              <div>
-                <label className="text-sm font-medium text-muted-foreground mb-2 block">
-                  Your Profile
-                </label>
-                {profiles.length === 0 ? (
-                  <div className="h-12 flex items-center justify-center border border-dashed border-muted-foreground/25 rounded-md bg-muted/5">
-                    <p className="text-sm text-muted-foreground text-center">
-                      No profile assigned. You can view time entries but cannot clock in.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="h-12 flex items-center px-3 border border-input bg-background rounded-md">
-                    <span className="font-medium">
-                      {profiles.find(p => p.id?.toString() === selectedProfile?.toString())?.name || 'Loading...'}
-                    </span>
-                  </div>
-                )}
-              </div>
-              
-              <div>
-                <label className="text-sm font-medium text-muted-foreground mb-2 block">
-                  Select Sales Order
-                </label>
-                <Select value={selectedSalesOrder} onValueChange={setSelectedSalesOrder} disabled={!selectedProfile}>
-                  <SelectTrigger className="h-auto min-h-[3rem] items-start py-3 text-left text-base [&>span]:line-clamp-2 [&>span]:text-left">
-                    <SelectValue className="sr-only" placeholder={selectedProfile ? "Select a sales order" : "Select a profile first"} />
-                    <div className="flex flex-col text-left">
-                      {selectedSalesOrderDetails ? (
-                        <>
-                          <span className="font-semibold leading-tight">{selectedSalesOrderDetails.number}</span>
-                          <span className="text-xs text-muted-foreground leading-tight">
-                            {[selectedSalesOrderDetails.customer_name, selectedSalesOrderDetails.product_name].filter(Boolean).join(' | ') || 'No additional details'}
-                          </span>
-                        </>
-                      ) : (
-                        <span className="text-sm text-muted-foreground">
-                          {selectedProfile ? "Select a sales order" : "Select a profile first"}
+
+            <div className="space-y-3">
+              <p className="text-lg font-semibold text-center">Select your sales order</p>
+              <Select value={selectedSalesOrder} onValueChange={setSelectedSalesOrder} disabled={!selectedProfile}>
+                <SelectTrigger className="h-auto min-h-[3.5rem] items-start py-3 text-left text-base border-2 border-primary bg-white/90 shadow-md">
+                  <SelectValue className="sr-only" placeholder="" />
+                  <div className="flex flex-col text-left">
+                    {selectedSalesOrderDetails ? (
+                      <>
+                        <span className="font-semibold leading-tight">{selectedSalesOrderDetails.number}</span>
+                        <span className="text-xs text-muted-foreground leading-tight">
+                          {[selectedSalesOrderDetails.customer_name, selectedSalesOrderDetails.product_name].filter(Boolean).join(' | ') || 'No additional details'}
                         </span>
-                      )}
-                    </div>
-                  </SelectTrigger>
-                  <SelectContent className="max-h-80 bg-white shadow-lg border min-w-[18rem]">
-                    {salesOrders.map((so) => {
-                      // Only disable SO if the selected profile has an open entry for this SO
-                      const isClockedInForSO = !!(selectedProfile && allEntries.find(
-                        entry => entry.profile_id?.toString() === selectedProfile?.toString() && entry.sales_order_id?.toString() === so.id?.toString() && !entry.clock_out
-                      ));
-                      const label = formatSalesOrderLabel(so);
-                      return (
-                        <SelectItem
-                          key={so.id}
-                          value={so.id}
-                          textValue={label}
-                          className="items-start gap-2 whitespace-normal py-3 pl-10 pr-3 text-left leading-5 hover:bg-primary/5"
-                          disabled={isClockedInForSO}
-                        >
-                          <div className="flex flex-col gap-1 text-left">
-                            <div className="flex items-start justify-between gap-2">
-                              <span className="font-semibold text-sm">{so.number}</span>
-                              {so.customer_name && (
-                                <span className="text-xs text-muted-foreground truncate max-w-[50%]">
-                                  {so.customer_name}
-                                </span>
-                              )}
-                            </div>
-                            {so.product_name && (
-                              <span className="text-xs text-muted-foreground leading-tight">{so.product_name}</span>
+                      </>
+                    ) : (
+                      <span className="text-base font-semibold text-primary">
+                        {selectedProfile ? "Select a sales order" : "No profile assigned"}
+                      </span>
+                    )}
+                  </div>
+                </SelectTrigger>
+                <SelectContent className="max-h-80 bg-white shadow-lg border min-w-[18rem]">
+                  {salesOrders.map((so) => {
+                    // Only disable SO if the selected profile has an open entry for this SO
+                    const isClockedInForSO = !!(selectedProfile && allEntries.find(
+                      entry => entry.profile_id?.toString() === selectedProfile?.toString() && entry.sales_order_id?.toString() === so.id?.toString() && !entry.clock_out
+                    ));
+                    const label = formatSalesOrderLabel(so);
+                    return (
+                      <SelectItem
+                        key={so.id}
+                        value={so.id}
+                        textValue={label}
+                        className="items-start gap-2 whitespace-normal py-3 pl-10 pr-3 text-left leading-5 hover:bg-primary/5"
+                        disabled={isClockedInForSO}
+                      >
+                        <div className="flex flex-col gap-1 text-left">
+                          <div className="flex items-start justify-between gap-2">
+                            <span className="font-semibold text-sm">{so.number}</span>
+                            {so.customer_name && (
+                              <span className="text-xs text-muted-foreground truncate max-w-[50%]">
+                                {so.customer_name}
+                              </span>
                             )}
-                            {isClockedInForSO ? <span className="text-[11px] font-medium text-warning">Already Clocked In</span> : ''}
                           </div>
-                        </SelectItem>
-                      );
-                    })}
-                  </SelectContent>
-                </Select>
-              </div>
+                          {so.product_name && (
+                            <span className="text-xs text-muted-foreground leading-tight">{so.product_name}</span>
+                          )}
+                          {isClockedInForSO ? <span className="text-[11px] font-medium text-warning">Already Clocked In</span> : ''}
+                        </div>
+                      </SelectItem>
+                    );
+                  })}
+                </SelectContent>
+              </Select>
             </div>
             
             {!hasActiveEntries ? (
