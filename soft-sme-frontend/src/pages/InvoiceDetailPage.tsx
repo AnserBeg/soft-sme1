@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   Box,
@@ -74,6 +74,7 @@ const InvoiceDetailPage: React.FC = () => {
   const [customer, setCustomer] = useState<CustomerOption | null>(null);
   const [customerInput, setCustomerInput] = useState('');
   const [customersLoading, setCustomersLoading] = useState(false);
+  const customersLoadingRef = useRef(false);
   const [isAddCustomerModalOpen, setIsAddCustomerModalOpen] = useState(false);
   const [newCustomerName, setNewCustomerName] = useState('');
   const [invoiceDate, setInvoiceDate] = useState<Dayjs | null>(dayjs());
@@ -114,7 +115,8 @@ const InvoiceDetailPage: React.FC = () => {
   }, [lineItems]);
 
   const loadCustomers = useCallback(async () => {
-    if (customersLoading) return;
+    if (customersLoadingRef.current) return;
+    customersLoadingRef.current = true;
     setCustomersLoading(true);
     try {
       const customerData = await getCustomers();
@@ -124,19 +126,13 @@ const InvoiceDetailPage: React.FC = () => {
         defaultTerms: Number(c.default_payment_terms_in_days) || 30,
       }));
       setCustomers(options);
-      if (customer) {
-        const match = options.find((c) => c.id === customer.id);
-        if (match) {
-          setCustomer(match);
-          setCustomerInput(match.label);
-        }
-      }
     } catch (e) {
       console.error('Failed to load customers', e);
     } finally {
+      customersLoadingRef.current = false;
       setCustomersLoading(false);
     }
-  }, [customersLoading, customer]);
+  }, []);
 
   useEffect(() => {
     loadCustomers();
@@ -191,25 +187,23 @@ const InvoiceDetailPage: React.FC = () => {
     if (!isNew && id) {
       (async () => {
         setLoading(true);
-        try {
-          const res = await getInvoice(id);
-      const header = res.invoice;
-      const items = (res.lineItems || []).map((li: any) => ({
-        invoice_line_item_id: li.invoice_line_item_id,
-        part_id: li.part_id ?? null,
-        part_number: li.part_number || '',
-            part_description: li.part_description || '',
-            quantity: Number(li.quantity) || 0,
-            unit: li.unit || '',
-            unit_price: Number(li.unit_price) || 0,
-            line_amount: Number(li.line_amount) || 0,
-          })) as InvoiceLineItem[];
-          setInvoice(header);
+      try {
+        const res = await getInvoice(id);
+        const header = res.invoice;
+        const items = (res.lineItems || []).map((li: any) => ({
+          invoice_line_item_id: li.invoice_line_item_id,
+          part_id: li.part_id ?? null,
+          part_number: li.part_number || '',
+          part_description: li.part_description || '',
+          quantity: Number(li.quantity) || 0,
+          unit: li.unit || '',
+          unit_price: Number(li.unit_price) || 0,
+          line_amount: Number(li.line_amount) || 0,
+        })) as InvoiceLineItem[];
+        setInvoice(header);
         setLineItems(items.length ? items : [defaultLineItem()]);
-        const match = customers.find((c) => c.id === header.customer_id);
         const option =
-          match ||
-          (header.customer_id
+          header.customer_id
             ? {
                 id: header.customer_id,
                 label: header.customer_name || `Customer ${header.customer_id}`,
@@ -218,7 +212,7 @@ const InvoiceDetailPage: React.FC = () => {
                   Number(header.default_payment_terms_in_days) ||
                   30,
               }
-            : null);
+            : null;
         setCustomer(option || null);
         setCustomerInput(option?.label || '');
         setInvoiceDate(header.invoice_date ? dayjs(header.invoice_date) : dayjs());
@@ -234,7 +228,16 @@ const InvoiceDetailPage: React.FC = () => {
         }
       })();
     }
-  }, [id, isNew, customers]);
+  }, [id, isNew]);
+
+  useEffect(() => {
+    if (!customers.length || !invoice.customer_id) return;
+    const match = customers.find((c) => c.id === invoice.customer_id);
+    if (match) {
+      setCustomer(match);
+      setCustomerInput(match.label);
+    }
+  }, [customers, invoice.customer_id]);
 
   useEffect(() => {
     if (isNew && !dueDateTouched && invoiceDate && customer?.defaultTerms) {
@@ -587,6 +590,7 @@ const InvoiceDetailPage: React.FC = () => {
                 value={customer}
                 inputValue={customerInput}
                 onInputChange={(_, val) => setCustomerInput(val)}
+                loading={customersLoading}
                 onFocus={loadCustomers}
                 onChange={(_, val) => {
                   if (!val) {
