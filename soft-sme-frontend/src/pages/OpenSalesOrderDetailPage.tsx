@@ -157,7 +157,6 @@ const SalesOrderDetailPage: React.FC = () => {
   const [customers, setCustomers] = useState<CustomerOption[]>([]);
   const [products, setProducts] = useState<ProductOption[]>([]);
   const [inventoryItems, setInventoryItems] = useState<any[]>([]);
-  const [customersLoading, setCustomersLoading] = useState(false);
   const [globalLabourRate, setGlobalLabourRate] = useState<number | null>(null);
   const [globalOverheadRate, setGlobalOverheadRate] = useState<number | null>(null);
   const [globalSupplyRate, setGlobalSupplyRate] = useState<number | null>(null);
