@@ -532,7 +532,8 @@ const InvoiceDetailPage: React.FC = () => {
   const isOverdue = invoice.status === 'Unpaid' && dueDate && dueDate.isBefore(dayjs(), 'day');
 
   return (
-    <LocalizationProvider dateAdapter={AdapterDayjs}>
+    <>
+      <LocalizationProvider dateAdapter={AdapterDayjs}>
       <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
         <Box display="flex" justifyContent="space-between" alignItems="center" mb={3} flexWrap="wrap" gap={2}>
           <Box>
@@ -882,27 +883,28 @@ const InvoiceDetailPage: React.FC = () => {
           </Button>
         </Stack>
       </Container>
-    </LocalizationProvider>
-    <UnifiedCustomerDialog
-      open={isAddCustomerModalOpen}
-      onClose={() => setIsAddCustomerModalOpen(false)}
-      onSave={async (cust: CustomerFormValues) => {
-        try {
-          const res = await api.post('/api/customers', cust);
-          const opt = { id: res.data.customer_id, label: cust.customer_name, defaultTerms: Number(res.data.default_payment_terms_in_days) || 30 };
-          setCustomers((prev) => [...prev, opt]);
-          setCustomer(opt);
-          setCustomerInput(opt.label);
-          setInvoice((prev: any) => ({ ...prev, customer_id: opt.id }));
-          setIsAddCustomerModalOpen(false);
-          toast.success('Customer added successfully!');
-        } catch {
-          toast.error('Failed to add customer.');
-        }
-      }}
-      initialCustomer={{ customer_name: newCustomerName }}
-      isEditMode={false}
-    />
+      </LocalizationProvider>
+      <UnifiedCustomerDialog
+        open={isAddCustomerModalOpen}
+        onClose={() => setIsAddCustomerModalOpen(false)}
+        onSave={async (cust: CustomerFormValues) => {
+          try {
+            const res = await api.post('/api/customers', cust);
+            const opt = { id: res.data.customer_id, label: cust.customer_name, defaultTerms: Number(res.data.default_payment_terms_in_days) || 30 };
+            setCustomers((prev) => [...prev, opt]);
+            setCustomer(opt);
+            setCustomerInput(opt.label);
+            setInvoice((prev: any) => ({ ...prev, customer_id: opt.id }));
+            setIsAddCustomerModalOpen(false);
+            toast.success('Customer added successfully!');
+          } catch {
+            toast.error('Failed to add customer.');
+          }
+        }}
+        initialCustomer={{ customer_name: newCustomerName }}
+        isEditMode={false}
+      />
+    </>
   );
 };
 
