@@ -30,7 +30,7 @@ import { getProfiles, createProfile, Profile } from '../services/timeTrackingSer
 import { Delete as DeleteIcon } from '@mui/icons-material';
 import api from '../api/axios';
 import { toast } from 'react-toastify';
-import { getShifts, clockInShift, clockOutShift } from '../services/attendanceService';
+import { getShifts, clockInShift, clockOutShift, getActiveShift } from '../services/attendanceService';
 import { useAuth } from '../contexts/AuthContext';
 
 interface ShiftEntry {
@@ -41,12 +41,18 @@ interface ShiftEntry {
   duration?: number;
 }
 
+interface ActiveShift extends ShiftEntry {
+  profile_name: string;
+}
+
 const AttendancePage: React.FC = () => {
   const { user } = useAuth();
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [shifts, setShifts] = useState<ShiftEntry[]>([]);
+  const [activeShifts, setActiveShifts] = useState<ActiveShift[]>([]);
   const [selectedProfile, setSelectedProfile] = useState<number | ''>('');
   const [loading, setLoading] = useState(true);
+  const [activeLoading, setActiveLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [openProfileDialog, setOpenProfileDialog] = useState(false);
   const [newProfile, setNewProfile] = useState({ name: '', email: '' });
@@ -95,11 +101,41 @@ const AttendancePage: React.FC = () => {
     }
   }, [selectedProfile]);
 
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setShifts(prev =>
+        prev.map(entry => {
+          if (!entry.clock_out) {
+            const now = new Date();
+            const clockIn = new Date(entry.clock_in);
+            const duration = (now.getTime() - clockIn.getTime()) / (1000 * 60 * 60);
+            return { ...entry, duration };
+          }
+          return entry;
+        })
+      );
+      setActiveShifts(prev =>
+        prev.map(entry => {
+          if (!entry.clock_out) {
+            const now = new Date();
+            const clockIn = new Date(entry.clock_in);
+            const duration = (now.getTime() - clockIn.getTime()) / (1000 * 60 * 60);
+            return { ...entry, duration };
+          }
+          return entry;
+        })
+      );
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, []);
+
   const fetchData = async () => {
     try {
       setLoading(true);
       const profilesData = await getProfiles();
       setProfiles(profilesData);
+      fetchActiveShifts(profilesData);
       setError(null);
     } catch (err) {
       setError('Failed to fetch data. Please try again.');
@@ -125,6 +161,38 @@ const AttendancePage: React.FC = () => {
     }
   };
 
+  const fetchActiveShifts = async (profileList?: Profile[]) => {
+    const list = profileList || profiles;
+    if (!list.length) {
+      setActiveShifts([]);
+      return;
+    }
+    try {
+      setActiveLoading(true);
+      const entries: ActiveShift[] = [];
+      await Promise.all(
+        list.map(async (profile) => {
+          try {
+            const active = await getActiveShift(profile.id);
+            if (active) {
+              entries.push({
+                ...active,
+                profile_name: profile.name
+              });
+            }
+          } catch (err) {
+            console.error(`Failed to fetch active shift for profile ${profile.id}`, err);
+          }
+        })
+      );
+      setActiveShifts(entries);
+    } catch (err) {
+      console.error('Error fetching active shifts:', err);
+    } finally {
+      setActiveLoading(false);
+    }
+  };
+
   const handleClockIn = async () => {
     if (!selectedProfile) {
       setError('Please select a profile');
@@ -144,6 +212,7 @@ const AttendancePage: React.FC = () => {
       setSelectedProfile('');
       setShifts([]);
       showSuccess('Successfully clocked in.');
+      fetchActiveShifts();
     } catch (err) {
       setSuccessMessage(null);
       setError(formatErrorMessage(err, 'Failed to clock in. Please try again.'));
@@ -161,6 +230,7 @@ const AttendancePage: React.FC = () => {
       setSelectedProfile('');
       setShifts([]);
       showSuccess('Successfully clocked out.');
+      fetchActiveShifts();
     } catch (err) {
       setSuccessMessage(null);
       setError(formatErrorMessage(err, 'Failed to clock out. Please try again.'));
@@ -241,6 +311,42 @@ const AttendancePage: React.FC = () => {
       </Dialog>
 
       <Grid container spacing={3}>
+        <Grid item xs={12}>
+          <Paper sx={{ p: 2 }}>
+            <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
+              <Typography variant="h6">Active Clock Ins</Typography>
+              {activeLoading && <CircularProgress size={24} />}
+            </Box>
+            {activeShifts.length === 0 && !activeLoading ? (
+              <Typography color="text.secondary">No active clock ins.</Typography>
+            ) : (
+              <TableContainer>
+                <Table>
+                  <TableHead>
+                    <TableRow>
+                      <TableCell sx={{ fontSize: '1.1rem' }}>Profile</TableCell>
+                      <TableCell sx={{ fontSize: '1.1rem' }}>Clock In</TableCell>
+                      <TableCell sx={{ fontSize: '1.1rem' }}>Duration</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {activeShifts.map((entry) => {
+                      const duration = entry.duration !== null && entry.duration !== undefined ? Number(entry.duration) : null;
+                      return (
+                        <TableRow key={entry.id}>
+                          <TableCell sx={{ fontSize: '1.1rem' }}>{entry.profile_name}</TableCell>
+                          <TableCell sx={{ fontSize: '1.1rem' }}>{new Date(entry.clock_in).toLocaleString()}</TableCell>
+                          <TableCell sx={{ fontSize: '1.1rem' }}>{duration !== null ? `${duration.toFixed(2)} hrs` : '-'}</TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            )}
+          </Paper>
+        </Grid>
+
         {/* Profile Selection */}
         <Grid item xs={12} md={6}>
           <Paper sx={{ p: 2 }}>
@@ -261,7 +367,22 @@ const AttendancePage: React.FC = () => {
                 value={selectedProfile}
                 label="Select Profile"
                 onChange={(e) => setSelectedProfile(e.target.value as number)}
-                sx={{ '& .MuiSelect-select': { fontSize: '1.1rem' } }}
+                sx={{ '& .MuiSelect-select': { fontSize: '1.2rem', py: 1.25 } }}
+                MenuProps={{
+                  PaperProps: {
+                    sx: {
+                      '& .MuiMenuItem-root': { fontSize: '1.2rem', py: 1.25 },
+                      '& .MuiMenuItem-root.Mui-selected, & .MuiMenuItem-root.Mui-selected:hover': {
+                        backgroundColor: 'rgba(25, 118, 210, 0.2)',
+                        color: 'primary.main',
+                        fontWeight: 700
+                      },
+                      '& .MuiMenuItem-root:hover': {
+                        backgroundColor: 'rgba(25, 118, 210, 0.15)'
+                      }
+                    }
+                  }
+                }}
                 renderValue={(val) => {
                   const p = profiles.find(pr => pr.id === val);
                   return p ? p.name : '';

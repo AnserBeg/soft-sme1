@@ -47,9 +47,11 @@ const TimeTrackingPage: React.FC = () => {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [salesOrders, setSalesOrders] = useState<SalesOrder[]>([]);
   const [timeEntries, setTimeEntries] = useState<TimeEntry[]>([]);
+  const [activeTimeEntries, setActiveTimeEntries] = useState<TimeEntry[]>([]);
   const [selectedProfile, setSelectedProfile] = useState<number | ''>('');
   const [selectedSO, setSelectedSO] = useState<number | ''>('');
   const [loading, setLoading] = useState(true);
+  const [activeLoading, setActiveLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const successTimeoutRef = useRef<number | null>(null);
@@ -102,6 +104,17 @@ const TimeTrackingPage: React.FC = () => {
           return entry;
         })
       );
+      setActiveTimeEntries(prevEntries =>
+        prevEntries.map(entry => {
+          if (!entry.clock_out) {
+            const now = new Date();
+            const clockIn = new Date(entry.clock_in);
+            const duration = (now.getTime() - clockIn.getTime()) / (1000 * 60 * 60); // in hours
+            return { ...entry, duration };
+          }
+          return entry;
+        })
+      );
     }, 1000); // Update every second
 
     return () => clearInterval(interval);
@@ -117,6 +130,7 @@ const TimeTrackingPage: React.FC = () => {
       console.log('Sales orders data received:', salesOrdersData);
       setProfiles(profilesData);
       setSalesOrders(salesOrdersData);
+      fetchActiveTimeEntries(profilesData);
       setError(null);
     } catch (err) {
       setError('Failed to fetch data. Please try again.');
@@ -142,6 +156,38 @@ const TimeTrackingPage: React.FC = () => {
     } catch (err) {
       setError('Failed to fetch time entries. Please try again.');
       console.error('Error fetching time entries:', err);
+    }
+  };
+
+  const fetchActiveTimeEntries = async (profileList?: Profile[]) => {
+    const list = profileList || profiles;
+    if (!list.length) {
+      setActiveTimeEntries([]);
+      return;
+    }
+    try {
+      setActiveLoading(true);
+      const entries: TimeEntry[] = [];
+      await Promise.all(
+        list.map(async (profile) => {
+          try {
+            const openEntries = await getOpenTimeEntries(profile.id);
+            openEntries.forEach((entry) => {
+              entries.push({
+                ...entry,
+                profile_name: profile.name
+              });
+            });
+          } catch (err) {
+            console.error(`Failed to fetch open time entries for profile ${profile.id}`, err);
+          }
+        })
+      );
+      setActiveTimeEntries(entries);
+    } catch (err) {
+      console.error('Error fetching active time entries:', err);
+    } finally {
+      setActiveLoading(false);
     }
   };
 
@@ -171,6 +217,7 @@ const TimeTrackingPage: React.FC = () => {
       setTimeEntries([]);
       setError(null);
       showSuccess('Successfully clocked in.');
+      fetchActiveTimeEntries();
     } catch (err: any) {
       setSuccessMessage(null);
       if (err.response && err.response.data && err.response.data.error.includes('attendance')) {
@@ -195,6 +242,7 @@ const TimeTrackingPage: React.FC = () => {
       setTimeEntries([]);
       setError(null);
       showSuccess('Successfully clocked out.');
+      fetchActiveTimeEntries();
     } catch (err) {
       setSuccessMessage(null);
       setError((err as any)?.message || 'Failed to clock out. Please try again.');
@@ -249,6 +297,41 @@ const TimeTrackingPage: React.FC = () => {
       </Dialog>
 
       <Grid container spacing={3}>
+        <Grid item xs={12}>
+          <Paper sx={{ p: 2 }}>
+            <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
+              <Typography variant="h6">Active Clock Ins</Typography>
+              {activeLoading && <CircularProgress size={24} />}
+            </Box>
+            {activeTimeEntries.length === 0 && !activeLoading ? (
+              <Typography color="text.secondary">No active clock ins.</Typography>
+            ) : (
+              <TableContainer>
+                <Table>
+                  <TableHead>
+                    <TableRow>
+                      <TableCell sx={{ fontSize: '1.1rem' }}>Profile</TableCell>
+                      <TableCell sx={{ fontSize: '1.1rem' }}>Sales Order</TableCell>
+                      <TableCell sx={{ fontSize: '1.1rem' }}>Clock In</TableCell>
+                      <TableCell sx={{ fontSize: '1.1rem' }}>Duration</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {activeTimeEntries.map((entry) => (
+                      <TableRow key={entry.id}>
+                        <TableCell sx={{ fontSize: '1.1rem' }}>{entry.profile_name || profiles.find(p => p.id === entry.profile_id)?.name || 'Unknown'}</TableCell>
+                        <TableCell sx={{ fontSize: '1.1rem' }}>{entry.sales_order_number}</TableCell>
+                        <TableCell sx={{ fontSize: '1.1rem' }}>{new Date(entry.clock_in).toLocaleString()}</TableCell>
+                        <TableCell sx={{ fontSize: '1.1rem' }}>{formatDurationDisplay(entry.duration)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            )}
+          </Paper>
+        </Grid>
+
         {/* Profile Selection */}
         <Grid item xs={12} md={6}>
           <Paper sx={{ p: 2 }}>
@@ -261,10 +344,25 @@ const TimeTrackingPage: React.FC = () => {
                 value={selectedProfile}
                 label="Select Profile"
                 onChange={(e) => setSelectedProfile(e.target.value as number)}
-                sx={{ '& .MuiSelect-select': { fontSize: '1.1rem' } }}
+                sx={{ '& .MuiSelect-select': { fontSize: '1.2rem', py: 1.25 } }}
+                MenuProps={{
+                  PaperProps: {
+                    sx: {
+                      '& .MuiMenuItem-root': { fontSize: '1.2rem', py: 1.25 },
+                      '& .MuiMenuItem-root.Mui-selected, & .MuiMenuItem-root.Mui-selected:hover': {
+                        backgroundColor: 'rgba(25, 118, 210, 0.2)',
+                        color: 'primary.main',
+                        fontWeight: 700
+                      },
+                      '& .MuiMenuItem-root:hover': {
+                        backgroundColor: 'rgba(25, 118, 210, 0.15)'
+                      }
+                    }
+                  }
+                }}
               >
                 {profiles.map((profile) => (
-                  <MenuItem key={profile.id} value={profile.id} sx={{ fontSize: '1.1rem' }}>
+                  <MenuItem key={profile.id} value={profile.id} sx={{ fontSize: '1.2rem', py: 1.25 }}>
                     {profile.name}
                   </MenuItem>
                 ))}
@@ -287,7 +385,22 @@ const TimeTrackingPage: React.FC = () => {
                   value={selectedSO}
                   label="Select Sales Order"
                   onChange={(e) => setSelectedSO(e.target.value as number)}
-                  sx={{ '& .MuiSelect-select': { fontSize: '1.1rem' } }}
+                  sx={{ '& .MuiSelect-select': { fontSize: '1.2rem', py: 1.25 } }}
+                  MenuProps={{
+                    PaperProps: {
+                      sx: {
+                        '& .MuiMenuItem-root': { fontSize: '1.2rem', py: 1.25, lineHeight: 1.3 },
+                        '& .MuiMenuItem-root.Mui-selected, & .MuiMenuItem-root.Mui-selected:hover': {
+                          backgroundColor: 'rgba(25, 118, 210, 0.2)',
+                          color: 'primary.main',
+                          fontWeight: 700
+                        },
+                        '& .MuiMenuItem-root:hover': {
+                          backgroundColor: 'rgba(25, 118, 210, 0.15)'
+                        }
+                      }
+                    }
+                  }}
                 >
                   {salesOrders.map((so) => {
                     // Check if profile is already clocked in for this SO
