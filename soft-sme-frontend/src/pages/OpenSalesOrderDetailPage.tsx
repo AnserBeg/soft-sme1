@@ -157,6 +157,7 @@ const SalesOrderDetailPage: React.FC = () => {
   const [customers, setCustomers] = useState<CustomerOption[]>([]);
   const [products, setProducts] = useState<ProductOption[]>([]);
   const [inventoryItems, setInventoryItems] = useState<any[]>([]);
+  const [customersLoading, setCustomersLoading] = useState(false);
   const [globalLabourRate, setGlobalLabourRate] = useState<number | null>(null);
   const [globalOverheadRate, setGlobalOverheadRate] = useState<number | null>(null);
   const [globalSupplyRate, setGlobalSupplyRate] = useState<number | null>(null);
@@ -498,6 +499,7 @@ const SalesOrderDetailPage: React.FC = () => {
   const [exportError, setExportError] = useState<string | null>(null);
   const [exportSuccess, setExportSuccess] = useState<string | null>(null);
   const [invoiceCreating, setInvoiceCreating] = useState(false);
+  const [customersLoading, setCustomersLoading] = useState(false);
 
   const [inventoryAlert, setInventoryAlert] = useState<string | null>(null);
 
@@ -538,6 +540,19 @@ const SalesOrderDetailPage: React.FC = () => {
       } catch {}
     })();
   }, []);
+
+  const reloadCustomersIfNeeded = useCallback(async () => {
+    if (customersLoading || customers.length > 0) return;
+    setCustomersLoading(true);
+    try {
+      const res = await api.get('/api/customers');
+      setCustomers(res.data.map((c: any) => ({ label: c.customer_name, id: c.customer_id })));
+    } catch (e) {
+      console.error('Failed to reload customers', e);
+    } finally {
+      setCustomersLoading(false);
+    }
+  }, [customers.length, customersLoading]);
 
   // ---------- Mode-specific fetch ----------
   useEffect(() => {
@@ -1645,6 +1660,7 @@ const SalesOrderDetailPage: React.FC = () => {
                     {...params}
                     label="Customer"
                     required
+                    onFocus={reloadCustomersIfNeeded}
                     onKeyDown={handleCustomerKeyDown}
                     onBlur={() => {
                       if (!customer) {

@@ -167,6 +167,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
   const [vendorTypingTimer, setVendorTypingTimer] = useState<number | null>(null);
   const [highlightedVendor, setHighlightedVendor] = useState<VendorOption | null>(null);
   const [vendorEnterPressed, setVendorEnterPressed] = useState(false);
+  const [vendorsLoading, setVendorsLoading] = useState(false);
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
   const [vendorPartMap, setVendorPartMap] = useState<Record<string, InventoryVendorLink[]>>({});
   const [callSessionId, setCallSessionId] = useState<number | null>(null);
@@ -179,6 +180,19 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
   const [isInitialLoad, setIsInitialLoad] = useState(true);
 
   type PartOption = string | { label: string; isNew?: true; inputValue?: string };
+
+  const reloadVendorsIfNeeded = useCallback(async () => {
+    if (vendorsLoading || vendors.length > 0) return;
+    setVendorsLoading(true);
+    try {
+      const res = await api.get('/api/vendors');
+      setVendors(res.data.map((v: any) => ({ label: v.vendor_name, id: v.vendor_id, vendor_code: v.vendor_code || '', isNew: false })));
+    } catch (e) {
+      console.error('Failed to reload vendors', e);
+    } finally {
+      setVendorsLoading(false);
+    }
+  }, [vendors.length, vendorsLoading]);
 
   const partDescriptionLookup = useMemo(() => {
     const map: Record<string, string> = {};
@@ -2650,6 +2664,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
                       label="Vendor" 
                       error={!!errors.vendor} 
                       helperText={errors.vendor}
+                      onFocus={reloadVendorsIfNeeded}
                       onKeyDown={handleVendorKeyDown}
                       onBlur={() => {
                         setVendorOpen(false);

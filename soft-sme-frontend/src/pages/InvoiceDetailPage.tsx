@@ -70,6 +70,7 @@ const InvoiceDetailPage: React.FC = () => {
   const [overheadChargeRate, setOverheadChargeRate] = useState<number | null>(null);
   const [customers, setCustomers] = useState<CustomerOption[]>([]);
   const [customer, setCustomer] = useState<CustomerOption | null>(null);
+  const [customersLoading, setCustomersLoading] = useState(false);
   const [invoiceDate, setInvoiceDate] = useState<Dayjs | null>(dayjs());
   const [dueDate, setDueDate] = useState<Dayjs | null>(dayjs().add(30, 'day'));
   const [dueDateTouched, setDueDateTouched] = useState(false);
@@ -107,21 +108,27 @@ const InvoiceDetailPage: React.FC = () => {
     return { subtotal, gst, total };
   }, [lineItems]);
 
+  const loadCustomers = useCallback(async () => {
+    if (customersLoading) return;
+    setCustomersLoading(true);
+    try {
+      const customerData = await getCustomers();
+      const options = customerData.map((c: any) => ({
+        id: c.customer_id || c.id,
+        label: c.customer_name,
+        defaultTerms: Number(c.default_payment_terms_in_days) || 30,
+      }));
+      setCustomers(options);
+    } catch (e) {
+      console.error('Failed to load customers', e);
+    } finally {
+      setCustomersLoading(false);
+    }
+  }, [customersLoading]);
+
   useEffect(() => {
-    (async () => {
-      try {
-        const customerData = await getCustomers();
-        const options = customerData.map((c: any) => ({
-          id: c.customer_id || c.id,
-          label: c.customer_name,
-          defaultTerms: Number(c.default_payment_terms_in_days) || 30,
-        }));
-        setCustomers(options);
-      } catch (e) {
-        console.error('Failed to load customers', e);
-      }
-    })();
-  }, []);
+    loadCustomers();
+  }, [loadCustomers]);
 
   useEffect(() => {
     (async () => {
@@ -565,6 +572,7 @@ const InvoiceDetailPage: React.FC = () => {
                 select
                 SelectProps={{ native: true }}
                 label="Customer"
+                onFocus={loadCustomers}
                 value={customer?.id || invoice.customer_id || ''}
                 onChange={(e) => {
                   const idVal = Number(e.target.value);
