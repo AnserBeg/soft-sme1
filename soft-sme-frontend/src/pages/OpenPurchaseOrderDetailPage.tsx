@@ -180,6 +180,38 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
 
   type PartOption = string | { label: string; isNew?: true; inputValue?: string };
 
+  const partDescriptionLookup = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const inv of inventoryItems || []) {
+      if (inv?.part_number) {
+        map[String(inv.part_number)] = inv.part_description || '';
+      }
+    }
+    return map;
+  }, [inventoryItems]);
+
+  const filterPartOptions = useCallback(
+    (options: string[], params: any, allowAddNew = false) => {
+      const input = (params.inputValue || '').toUpperCase();
+      const max = 50;
+      const results: any[] = [];
+      for (const partNumber of options) {
+        const pnUpper = String(partNumber).toUpperCase();
+        const descUpper = (partDescriptionLookup[partNumber] || '').toUpperCase();
+        if (!input || pnUpper.includes(input) || descUpper.includes(input)) {
+          results.push(partNumber);
+          if (results.length >= max) break;
+        }
+      }
+      const hasExact = results.some((opt) => String(typeof opt === 'string' ? opt : (opt as any)?.label || '').toUpperCase() === input);
+      if (allowAddNew && input && !hasExact) {
+        results.push({ label: `Add "${params.inputValue}" as New Part`, isNew: true, inputValue: params.inputValue } as any);
+      }
+      return results as any;
+    },
+    [partDescriptionLookup]
+  );
+
   // State for new part modal
   const [openPartDialog, setOpenPartDialog] = useState(false);
   const [partToAddIndex, setPartToAddIndex] = useState<number | null>(null);
@@ -2790,10 +2822,10 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
                               <Box>
                                 <Typography variant="body2">{option}</Typography>
                                 {(() => {
-                                  const inv = inventoryItems.find(inv => inv.part_number === option);
-                                  return inv?.part_description ? (
+                                  const desc = partDescriptionLookup[String(option)] || '';
+                                  return desc ? (
                                     <Typography variant="caption" color="text.secondary">
-                                      {inv.part_description}
+                                      {desc}
                                     </Typography>
                                   ) : null;
                                 })()}
@@ -2804,22 +2836,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
                           </li>
                         );
                       }}
-                      filterOptions={(options, params) => {
-                        const text = (params.inputValue || '').toUpperCase();
-                        // Filter by both part number and description
-                        const filtered = (options as string[]).filter(partNumber => {
-                          const inv = inventoryItems.find(inv => inv.part_number === partNumber);
-                          if (!inv) return String(partNumber).toUpperCase().includes(text);
-                          return String(partNumber).toUpperCase().includes(text) || 
-                                 String(inv.part_description || '').toUpperCase().includes(text);
-                        });
-                        const hasExact = filtered.some(o => String(o).toUpperCase() === text);
-                        const result: PartOption[] = [...filtered] as any;
-                        if (text && !hasExact) {
-                          result.push({ inputValue: params.inputValue, label: `Add "${params.inputValue}" as New Part`, isNew: true });
-                        }
-                        return result as any;
-                      }}
+                      filterOptions={(options, params) => filterPartOptions(options as string[], params, true)}
                       ListboxProps={{ role: 'listbox', style: { maxHeight: 320, overflowY: 'auto' } }}
                       renderInput={(params) => (
                         <TextField

@@ -372,6 +372,38 @@ const SalesOrderDetailPage: React.FC = () => {
     );
   }, [lineItems]);
 
+  const partDescriptionLookup = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const inv of inventoryItems || []) {
+      if (inv?.part_number) {
+        map[String(inv.part_number)] = inv.part_description || '';
+      }
+    }
+    return map;
+  }, [inventoryItems]);
+
+  const filterPartOptions = useCallback(
+    (options: string[], params: any, allowAddNew = false) => {
+      const input = (params.inputValue || '').toUpperCase();
+      const max = 50;
+      const results: any[] = [];
+      for (const partNumber of options) {
+        const pnUpper = String(partNumber).toUpperCase();
+        const descUpper = (partDescriptionLookup[partNumber] || '').toUpperCase();
+        if (!input || pnUpper.includes(input) || descUpper.includes(input)) {
+          results.push(partNumber);
+          if (results.length >= max) break;
+        }
+      }
+      const hasExact = results.some((opt) => String(typeof opt === 'string' ? opt : (opt as any)?.label || '').toUpperCase() === input);
+      if (allowAddNew && input && !hasExact) {
+        results.push({ label: `Add "${params.inputValue}" as New Part`, isNew: true, inputValue: params.inputValue } as any);
+      }
+      return results as any;
+    },
+    [partDescriptionLookup]
+  );
+
   // Handle Ctrl+Enter and Enter/Tab on part input similar to PO page
   const handleLinePartKeyDown = (idx: number, event: React.KeyboardEvent) => {
     const inputValue = (lineItems[idx]?.part_number || '').trim();
@@ -2007,22 +2039,7 @@ const SalesOrderDetailPage: React.FC = () => {
                     }}
                     options={inventoryItems.filter((inv:any) => inv.part_type !== 'supply').map((inv:any) => inv.part_number)}
                     freeSolo selectOnFocus clearOnBlur handleHomeEndKeys
-                    filterOptions={(options, params) => {
-                      const text = (params.inputValue || '').toUpperCase();
-                      // Filter by both part number and description
-                      const filtered = (options as string[]).filter(partNumber => {
-                        const inv = inventoryItems.find(inv => inv.part_number === partNumber);
-                        if (!inv) return String(partNumber).toUpperCase().includes(text);
-                        return String(partNumber).toUpperCase().includes(text) || 
-                               String(inv.part_description || '').toUpperCase().includes(text);
-                      });
-                      const hasExact = filtered.some(o => String(o).toUpperCase() === text);
-                      const out: PartOption[] = [...filtered] as any;
-                      if (text && !hasExact) {
-                        out.push({ label: `Add "${params.inputValue}" as New Part`, isNew: true, inputValue: params.inputValue } as any);
-                      }
-                      return out as any;
-                    }}
+                    filterOptions={(options, params) => filterPartOptions(options as string[], params, true)}
                     renderOption={(props, option) => {
                       const isNew = typeof option === 'object' && (option as any).isNew;
                       const label = typeof option === 'string' ? option : (option as any).label;
@@ -2034,10 +2051,10 @@ const SalesOrderDetailPage: React.FC = () => {
                             <Box>
                               <Typography variant="body2">{option}</Typography>
                               {(() => {
-                                const inv = inventoryItems.find(inv => inv.part_number === option);
-                                return inv?.part_description ? (
+                                const desc = partDescriptionLookup[String(option)] || '';
+                                return desc ? (
                                   <Typography variant="caption" color="text.secondary">
-                                    {inv.part_description}
+                                    {desc}
                                   </Typography>
                                 ) : null;
                               })()}
@@ -2210,22 +2227,7 @@ const SalesOrderDetailPage: React.FC = () => {
                       }}
                       options={inventoryItems.filter((inv:any)=>inv.part_type!=='supply').map((inv:any)=>inv.part_number)}
                       freeSolo selectOnFocus clearOnBlur
-                       filterOptions={(options, params) => {
-                         const text = (params.inputValue || '').toUpperCase();
-                         // Filter by both part number and description
-                         const filtered = (options as string[]).filter(partNumber => {
-                           const inv = inventoryItems.find(inv => inv.part_number === partNumber);
-                           if (!inv) return String(partNumber).toUpperCase().includes(text);
-                           return String(partNumber).toUpperCase().includes(text) || 
-                                  String(inv.part_description || '').toUpperCase().includes(text);
-                         });
-                         const hasExact = filtered.some(o => String(o).toUpperCase() === text);
-                         const out: PartOption[] = [...filtered] as any;
-                         if (text && !hasExact) {
-                           out.push({ label: `Add "${params.inputValue}" as New Part`, isNew: true, inputValue: params.inputValue } as any);
-                         }
-                         return out as any;
-                       }}
+                       filterOptions={(options, params) => filterPartOptions(options as string[], params, true)}
                         renderOption={(props, option) => {
                           const isNew = typeof option === 'object' && (option as any).isNew;
                           const label = typeof option === 'string' ? option : (option as any).label;
@@ -2237,10 +2239,10 @@ const SalesOrderDetailPage: React.FC = () => {
                                 <Box>
                                   <Typography variant="body2">{option}</Typography>
                                   {(() => {
-                                    const inv = inventoryItems.find(inv => inv.part_number === option);
-                                    return inv?.part_description ? (
+                                    const desc = partDescriptionLookup[String(option)] || '';
+                                    return desc ? (
                                       <Typography variant="caption" color="text.secondary">
-                                        {inv.part_description}
+                                        {desc}
                                       </Typography>
                                     ) : null;
                                   })()}

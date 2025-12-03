@@ -390,6 +390,36 @@ const InvoiceDetailPage: React.FC = () => {
     }));
   }, [inventoryItems]);
 
+  const partDescriptionLookup = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const inv of inventoryItems || []) {
+      if (inv?.part_number) {
+        map[String(inv.part_number)] = inv.part_description || '';
+      }
+    }
+    return map;
+  }, [inventoryItems]);
+
+  const filterPartOptions = useCallback(
+    (options: string[], params: any) => {
+      const input = (params.inputValue || '').toUpperCase();
+      const results: string[] = [];
+      for (const opt of options) {
+        const pnUpper = String(opt).toUpperCase();
+        const descUpper = (partDescriptionLookup[opt] || '').toUpperCase();
+        if (!input || pnUpper.includes(input) || descUpper.includes(input)) {
+          results.push(opt);
+          if (results.length >= 50) break;
+        }
+      }
+      if (input && !results.some((opt) => opt.toUpperCase() === input)) {
+        results.push(params.inputValue);
+      }
+      return results;
+    },
+    [partDescriptionLookup]
+  );
+
   const handleSave = async () => {
     if (!customer && !invoice.customer_id) {
       toast.error('Please select a customer');
@@ -695,29 +725,17 @@ const InvoiceDetailPage: React.FC = () => {
                     value={item.part_number || ''}
                     onInputChange={(_, value) => updateLineItem(idx, 'part_number', value)}
                     onChange={(_, value) => updateLineItem(idx, 'part_number', value || '')}
-                    filterOptions={(options, params) => {
-                      const input = (params.inputValue || '').toUpperCase();
-                      const filtered = options.filter((opt) => {
-                        const inv = partOptions.find((p) => p.part_number === opt);
-                        const inNumber = opt.toUpperCase().includes(input);
-                        const inDesc = (inv?.part_description || '').toUpperCase().includes(input);
-                        return inNumber || inDesc;
-                      });
-                      if (input && !filtered.some((opt) => opt.toUpperCase() === input)) {
-                        filtered.push(params.inputValue);
-                      }
-                      return filtered;
-                    }}
+                    filterOptions={filterPartOptions}
                     renderOption={(props, option) => {
-                      const inv = partOptions.find((p) => p.part_number === option);
+                      const desc = partDescriptionLookup[option] || '';
                       const { key, ...optionProps } = props;
                       return (
                         <li key={key} {...optionProps}>
                           <Box>
                             <Typography variant="body2">{option}</Typography>
-                            {inv?.part_description ? (
+                            {desc ? (
                               <Typography variant="caption" color="text.secondary">
-                                {inv.part_description}
+                                {desc}
                               </Typography>
                             ) : null}
                           </Box>
