@@ -31,11 +31,13 @@ import { createInvoice, getInvoice, updateInvoice } from '../services/invoiceSer
 import { InvoiceLineItem } from '../types/invoice';
 import { formatCurrency } from '../utils/formatters';
 import api from '../api/axios';
+import UnifiedCustomerDialog, { CustomerFormValues } from '../components/UnifiedCustomerDialog';
 
 interface CustomerOption {
   id: number;
   label: string;
   defaultTerms?: number;
+  isNew?: true;
 }
 
 const defaultLineItem = (): InvoiceLineItem => ({
@@ -72,6 +74,8 @@ const InvoiceDetailPage: React.FC = () => {
   const [customer, setCustomer] = useState<CustomerOption | null>(null);
   const [customerInput, setCustomerInput] = useState('');
   const [customersLoading, setCustomersLoading] = useState(false);
+  const [isAddCustomerModalOpen, setIsAddCustomerModalOpen] = useState(false);
+  const [newCustomerName, setNewCustomerName] = useState('');
   const [invoiceDate, setInvoiceDate] = useState<Dayjs | null>(dayjs());
   const [dueDate, setDueDate] = useState<Dayjs | null>(dayjs().add(30, 'day'));
   const [dueDateTouched, setDueDateTouched] = useState(false);
@@ -120,12 +124,19 @@ const InvoiceDetailPage: React.FC = () => {
         defaultTerms: Number(c.default_payment_terms_in_days) || 30,
       }));
       setCustomers(options);
+      if (customer) {
+        const match = options.find((c) => c.id === customer.id);
+        if (match) {
+          setCustomer(match);
+          setCustomerInput(match.label);
+        }
+      }
     } catch (e) {
       console.error('Failed to load customers', e);
     } finally {
       setCustomersLoading(false);
     }
-  }, [customersLoading]);
+  }, [customersLoading, customer]);
 
   useEffect(() => {
     loadCustomers();
@@ -582,6 +593,12 @@ const InvoiceDetailPage: React.FC = () => {
                     setInvoice((prev: any) => ({ ...prev, customer_id: null }));
                     return;
                   }
+                  if (typeof val === 'object' && (val as any).isNew) {
+                    const typed = (val as any).inputValue || customerInput || '';
+                    setNewCustomerName(typed);
+                    setIsAddCustomerModalOpen(true);
+                    return;
+                  }
                   const chosen = typeof val === 'string' ? customers.find((c) => c.label === val) || null : (val as CustomerOption);
                   setCustomer(chosen);
                   setCustomerInput(chosen?.label || '');
@@ -591,6 +608,16 @@ const InvoiceDetailPage: React.FC = () => {
                 }}
                 getOptionLabel={(option) => (typeof option === 'string' ? option : option.label)}
                 isOptionEqualToValue={(o, v) => o.id === v.id}
+                filterOptions={(options, params) => {
+                  const input = (params.inputValue || '').trim();
+                  const base = options;
+                  const hasExact = base.some((opt) => opt.label.toLowerCase() === input.toLowerCase());
+                  const out: CustomerOption[] = [...base];
+                  if (input && !hasExact) {
+                    out.push({ label: `Add "${params.inputValue}"`, isNew: true, id: -1 });
+                  }
+                  return out;
+                }}
                 renderInput={(params) => (
                   <TextField {...params} label="Customer" fullWidth />
                 )}
@@ -856,6 +883,26 @@ const InvoiceDetailPage: React.FC = () => {
         </Stack>
       </Container>
     </LocalizationProvider>
+    <UnifiedCustomerDialog
+      open={isAddCustomerModalOpen}
+      onClose={() => setIsAddCustomerModalOpen(false)}
+      onSave={async (cust: CustomerFormValues) => {
+        try {
+          const res = await api.post('/api/customers', cust);
+          const opt = { id: res.data.customer_id, label: cust.customer_name, defaultTerms: Number(res.data.default_payment_terms_in_days) || 30 };
+          setCustomers((prev) => [...prev, opt]);
+          setCustomer(opt);
+          setCustomerInput(opt.label);
+          setInvoice((prev: any) => ({ ...prev, customer_id: opt.id }));
+          setIsAddCustomerModalOpen(false);
+          toast.success('Customer added successfully!');
+        } catch {
+          toast.error('Failed to add customer.');
+        }
+      }}
+      initialCustomer={{ customer_name: newCustomerName }}
+      isEditMode={false}
+    />
   );
 };
 
