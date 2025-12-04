@@ -198,7 +198,7 @@ const InvoiceDetailPage: React.FC = () => {
           quantity: Number(li.quantity) || 0,
           unit: li.unit || '',
           unit_price: Number(li.unit_price) || 0,
-          line_amount: Number(li.line_amount) || 0,
+          line_amount: Number(li.line_amount) || Math.round((Number(li.quantity) * Number(li.unit_price)) * 100) / 100,
         })) as InvoiceLineItem[];
         setInvoice(header);
         setLineItems(items.length ? items : [defaultLineItem()]);
@@ -334,17 +334,17 @@ const InvoiceDetailPage: React.FC = () => {
   );
 
   useEffect(() => {
-    if (!isNew) return;
-    if (!inventoryItems.length) return;
-    setLineItems((prev) =>
-      prev.map((item) => {
-        const inv = item.part_number ? findInventoryPart(item.part_number) : null;
-        if (!inv) return item;
-        if (item.unit_price && item.unit_price > 0 && item.part_id) return item;
-        return applyMarginPricing(item, inv);
-      })
-    );
-  }, [applyMarginPricing, findInventoryPart, inventoryItems, isNew]);
+      if (!isNew) return;
+      if (!inventoryItems.length) return;
+      setLineItems((prev) =>
+        prev.map((item) => {
+          const inv = item.part_number ? findInventoryPart(item.part_number) : null;
+          if (!inv) return item;
+          if (item.unit_price && item.unit_price > 0 && item.part_id) return item;
+          return applyMarginPricing(item, inv);
+        })
+      );
+    }, [applyMarginPricing, findInventoryPart, inventoryItems, isNew]);
 
   const updateLineItem = (index: number, field: keyof InvoiceLineItem, value: any) => {
     setLineItems((prev) => {

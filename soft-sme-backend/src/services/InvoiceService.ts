@@ -634,8 +634,7 @@ export class InvoiceService {
         `SELECT 
             li.*,
             inv.part_description AS inventory_part_description,
-            inv.unit AS inventory_unit,
-            inv.last_unit_cost AS inventory_last_unit_cost
+            inv.unit AS inventory_unit
          FROM invoicelineitems li
          LEFT JOIN inventory inv
            ON (li.part_id IS NOT NULL AND inv.part_id = li.part_id)
@@ -659,32 +658,24 @@ export class InvoiceService {
         total_gst_amount: toNumber(invoice.total_gst_amount),
         total_amount: toNumber(invoice.total_amount),
       };
-      const normalizedLineItems = this.normalizeLineItems(
-        linesRes.rows.map((row) => {
-          const quantity = toNullableNumber(row.quantity) ?? 0;
-          const unitPriceFromInvoice = toNullableNumber(row.unit_price);
-          const lineAmountFromInvoice = toNullableNumber(row.line_amount);
-          const inventoryCost = toNullableNumber(row.inventory_last_unit_cost);
-          const inferredUnitPrice =
-            unitPriceFromInvoice ??
-            (lineAmountFromInvoice !== null && quantity > 0 ? round2(lineAmountFromInvoice / quantity) : null) ??
-            inventoryCost ??
-            0;
-          const lineAmount = lineAmountFromInvoice ?? round2(inferredUnitPrice * quantity);
+      const normalizedLineItems = linesRes.rows.map((row) => {
+        const quantity = toNumber(row.quantity);
+        const unitPrice = toNumber(row.unit_price);
+        const lineAmountRaw = row.line_amount !== undefined && row.line_amount !== null ? toNumber(row.line_amount) : null;
+        const lineAmount = lineAmountRaw !== null ? lineAmountRaw : round2(unitPrice * quantity);
 
-          return {
-            invoice_line_item_id: row.invoice_line_item_id,
-            part_id: row.part_id ?? null,
-            part_number: row.part_number,
-            part_description:
-              ((row.part_description || row.inventory_part_description || '').trim() || row.part_number || '').trim(),
-            quantity,
-            unit: (row.unit || row.inventory_unit || '').trim(),
-            unit_price: inferredUnitPrice,
-            line_amount: lineAmount,
-          };
-        })
-      );
+        return {
+          invoice_line_item_id: row.invoice_line_item_id,
+          part_id: row.part_id ?? null,
+          part_number: row.part_number || '',
+          part_description:
+            ((row.part_description || row.inventory_part_description || '').trim() || row.part_number || '').trim(),
+          quantity,
+          unit: (row.unit || row.inventory_unit || '').trim(),
+          unit_price: unitPrice,
+          line_amount: lineAmount,
+        };
+      });
       return { invoice: mergedInvoice, lineItems: normalizedLineItems };
     } finally {
       client.release();
