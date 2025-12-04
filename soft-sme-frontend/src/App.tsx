@@ -54,9 +54,9 @@ import TaskDetailPage from './pages/TaskDetailPage';
 import TasksDashboardPage from './pages/TasksDashboardPage';
 import ReturnOrdersPage from './pages/ReturnOrdersPage';
 import ReturnOrderDetailPage from './pages/ReturnOrderDetailPage';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { syncPending, getPendingCount } from './services/offlineSync';
-import { ToastContainer } from 'react-toastify';
+import { ToastContainer, toast } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 
 // Protected Route Component
@@ -241,12 +241,25 @@ const AppRoutes: React.FC = () => {
 
 const App: React.FC = () => {
   const [pending, setPending] = useState<number>(0);
+  const [backendUnavailable, setBackendUnavailable] = useState<boolean>(Boolean((window as any).__backendUnavailableSince));
+  const [isOffline, setIsOffline] = useState<boolean>(typeof navigator !== 'undefined' ? navigator.onLine === false : false);
+  const lastErrorAtRef = useRef<number>(0);
+  const backendUnavailableRef = useRef<boolean>(backendUnavailable);
+  const offlineRef = useRef<boolean>(isOffline);
+
+  useEffect(() => {
+    backendUnavailableRef.current = backendUnavailable;
+  }, [backendUnavailable]);
+
+  useEffect(() => {
+    offlineRef.current = isOffline;
+  }, [isOffline]);
 
   useEffect(() => {
     (window as any).__triggerSync = async () => {
       try {
         const count = await getPendingCount();
-        if (count > 0 && !(window as any).__backendUnavailableSince) {
+        if (count > 0 && !(window as any).__backendUnavailableSince && !backendUnavailableRef.current && !offlineRef.current) {
           await syncPending();
           setPending(await getPendingCount());
         }
@@ -258,7 +271,7 @@ const App: React.FC = () => {
         const count = await getPendingCount();
         if (mounted) setPending(count);
         // Try to sync if backend is available
-        if (!(window as any).__backendUnavailableSince && count > 0) {
+        if (!(window as any).__backendUnavailableSince && !backendUnavailableRef.current && !offlineRef.current && count > 0) {
           await syncPending();
           const after = await getPendingCount();
           if (mounted) setPending(after);
@@ -269,6 +282,58 @@ const App: React.FC = () => {
     poll();
     return () => { mounted = false; clearInterval(id); };
   }, []);
+
+  useEffect(() => {
+    const now = () => Date.now();
+    const shouldToast = () => {
+      const last = lastErrorAtRef.current || 0;
+      const current = now();
+      if (current - last < 3000) return false;
+      lastErrorAtRef.current = current;
+      return true;
+    };
+    const handleOffline = () => {
+      setIsOffline(true);
+      if (shouldToast()) toast.warn('You appear to be offline. We will retry automatically.');
+    };
+    const handleOnline = () => {
+      setIsOffline(false);
+      setBackendUnavailable(false);
+      if (shouldToast()) toast.success('Connection restored.');
+    };
+    const handleBackendDown = () => {
+      setBackendUnavailable(true);
+      if (shouldToast()) toast.error('Cannot reach the server. We will keep retrying.');
+    };
+    const handleBackendUp = () => {
+      setBackendUnavailable(false);
+      if (!isOffline && shouldToast()) toast.info('Back in sync with the server.');
+    };
+    const handleAppError = (event: Event) => {
+      const detail = (event as CustomEvent)?.detail as { message?: string } | undefined;
+      if (detail?.message && shouldToast()) {
+        toast.error(detail.message);
+      }
+    };
+    const handleAuthExpired = () => {
+      if (shouldToast()) toast.error('Session expired. Please sign in again.');
+    };
+
+    window.addEventListener('offline', handleOffline);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('backend:unavailable', handleBackendDown as EventListener);
+    window.addEventListener('backend:available', handleBackendUp as EventListener);
+    window.addEventListener('app:error', handleAppError as EventListener);
+    window.addEventListener('auth:expired', handleAuthExpired as EventListener);
+    return () => {
+      window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('backend:unavailable', handleBackendDown as EventListener);
+      window.removeEventListener('backend:available', handleBackendUp as EventListener);
+      window.removeEventListener('app:error', handleAppError as EventListener);
+      window.removeEventListener('auth:expired', handleAuthExpired as EventListener);
+    };
+  }, [isOffline]);
 
   return (
     <ThemeProvider theme={theme}>

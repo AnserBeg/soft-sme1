@@ -23,6 +23,7 @@ const LoginPage: React.FC = () => {
     password: '',
   });
   const [error, setError] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
 
@@ -32,6 +33,11 @@ const LoginPage: React.FC = () => {
     if (storedEmail && storedPassword) {
       setFormData({ email: storedEmail, password: storedPassword });
       setRememberMe(true);
+    }
+    const redirectMessage = localStorage.getItem('authRedirectMessage');
+    if (redirectMessage) {
+      setInfo(redirectMessage);
+      localStorage.removeItem('authRedirectMessage');
     }
   }, []);
 
@@ -46,6 +52,7 @@ const LoginPage: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    setInfo(null);
     setLoading(true);
 
     if (rememberMe) {
@@ -77,7 +84,11 @@ const LoginPage: React.FC = () => {
           return;
         }
       } catch {/* ignore */}
-      setError(err.response?.data?.message || 'Failed to login. Please try again.');
+      if (navigator.onLine === false) {
+        setError('You appear to be offline. Reconnect to sign in or try again once you have internet.');
+      } else {
+        setError(err.response?.data?.message || 'Failed to login. Please try again.');
+      }
     } finally {
       setLoading(false);
     }
@@ -107,6 +118,11 @@ const LoginPage: React.FC = () => {
             Sign In
           </Typography>
 
+          {info && (
+            <Alert severity="info" sx={{ width: '100%', mb: 2 }}>
+              {info}
+            </Alert>
+          )}
           {error && (
             <Alert severity="error" sx={{ width: '100%', mb: 2 }}>
               {error}

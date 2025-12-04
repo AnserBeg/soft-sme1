@@ -3,6 +3,14 @@ import { getApiConfig } from '../config/api';
 
 const apiConfig = getApiConfig();
 
+const safeDispatch = (name: string, detail?: Record<string, unknown>) => {
+  try {
+    window.dispatchEvent(new CustomEvent(name, { detail }));
+  } catch {
+    // Ignore dispatch failures (e.g., during SSR or restricted envs)
+  }
+};
+
 const api = axios.create({
   baseURL: apiConfig.baseURL,
   timeout: apiConfig.timeout,
@@ -43,6 +51,8 @@ api.interceptors.response.use(
   (response) => {
     try {
       (window as any).__backendUnavailableSince = undefined;
+      safeDispatch('backend:available');
+      safeDispatch('connectivity:online');
       // Kick a background sync if hookup exists
       const trigger = (window as any).__triggerSync;
       if (typeof trigger === 'function') {
@@ -60,6 +70,11 @@ api.interceptors.response.use(
       const networkDown = !error.response && (error.code === 'ECONNABORTED' || error.message?.includes('Network Error'));
       if ((typeof status === 'number' && status >= 500) || networkDown) {
         (window as any).__backendUnavailableSince = (window as any).__backendUnavailableSince || Date.now();
+        safeDispatch('backend:unavailable', { status, networkDown });
+        safeDispatch('connectivity:offline', { reason: 'backend' });
+      }
+      if (typeof navigator !== 'undefined' && navigator && navigator.onLine === false) {
+        safeDispatch('connectivity:offline', { reason: 'network' });
       }
     } catch { /* noop */ }
     const originalRequest = error.config;
@@ -80,6 +95,8 @@ api.interceptors.response.use(
           return api(originalRequest);
         } catch (refreshError) {
           // Refresh failed, logout user
+          localStorage.setItem('authRedirectMessage', 'Your session expired. Please sign in again.');
+          safeDispatch('auth:expired');
           localStorage.removeItem('sessionToken');
           localStorage.removeItem('refreshToken');
           localStorage.removeItem('user');
@@ -88,14 +105,22 @@ api.interceptors.response.use(
         }
       } else {
         // No refresh token, logout user
+        localStorage.setItem('authRedirectMessage', 'Your session expired. Please sign in again.');
+        safeDispatch('auth:expired');
         localStorage.removeItem('sessionToken');
         localStorage.removeItem('refreshToken');
         localStorage.removeItem('user');
         window.location.href = '/login';
       }
     }
+    // Surface meaningful errors to the UI
+    const message =
+      error?.response?.data?.message ||
+      error?.message ||
+      'Request failed. Please check your connection and try again.';
+    safeDispatch('app:error', { message });
     return Promise.reject(error);
   }
 );
 
-export default api; 
+export default api;

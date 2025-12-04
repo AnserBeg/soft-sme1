@@ -89,6 +89,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.setItem('sessionToken', sessionToken);
     localStorage.setItem('refreshToken', refreshToken);
     localStorage.setItem('user', JSON.stringify(userData));
+    api.defaults.headers.common['Authorization'] = `Bearer ${sessionToken}`;
+    const deviceId = localStorage.getItem('deviceId');
+    if (deviceId) {
+      api.defaults.headers.common['x-device-id'] = deviceId;
+    }
     setUser(userData);
     setIsAuthenticated(true);
   };
@@ -97,6 +102,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.removeItem('sessionToken');
     localStorage.removeItem('refreshToken');
     localStorage.removeItem('user');
+    delete api.defaults.headers.common['Authorization'];
     setUser(null);
     setIsAuthenticated(false);
   };
@@ -124,6 +130,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       localStorage.setItem('sessionToken', sessionToken);
       localStorage.setItem('refreshToken', newRefreshToken);
+      api.defaults.headers.common['Authorization'] = `Bearer ${sessionToken}`;
 
       return true;
     } catch (error) {

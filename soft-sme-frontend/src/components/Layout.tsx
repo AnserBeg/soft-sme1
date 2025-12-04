@@ -67,6 +67,8 @@ const Layout: React.FC = () => {
   const [pendingCount, setPendingCount] = useState<number>(0);
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [assistantWidth, setAssistantWidth] = useState(defaultAssistantWidth);
+  const [backendUnavailable, setBackendUnavailable] = useState<boolean>(Boolean((window as any).__backendUnavailableSince));
+  const [isOffline, setIsOffline] = useState<boolean>(typeof navigator !== 'undefined' ? navigator.onLine === false : false);
 
   useEffect(() => {
     let mounted = true;
@@ -83,6 +85,23 @@ const Layout: React.FC = () => {
     return () => {
       mounted = false;
       clearInterval(id);
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleOffline = () => setIsOffline(true);
+    const handleOnline = () => setIsOffline(false);
+    const handleBackendDown = () => setBackendUnavailable(true);
+    const handleBackendUp = () => setBackendUnavailable(false);
+    window.addEventListener('offline', handleOffline);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('backend:unavailable', handleBackendDown);
+    window.addEventListener('backend:available', handleBackendUp);
+    return () => {
+      window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('backend:unavailable', handleBackendDown);
+      window.removeEventListener('backend:available', handleBackendUp);
     };
   }, []);
 
@@ -278,10 +297,10 @@ const Layout: React.FC = () => {
             <MenuIcon />
           </IconButton>
           <Box sx={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 2 }}>
-            {Boolean((window as any).__backendUnavailableSince) && (
-              <Tooltip title="Backend unavailable; pending events will sync automatically when online.">
+            {(backendUnavailable || isOffline) && (
+              <Tooltip title="We could not reach the server. Check your connection; pending events will sync automatically when back online.">
                 <Box sx={{ bgcolor: 'orange', color: 'black', px: 1.5, py: 0.5, borderRadius: 1, fontSize: 12 }}>
-                  Offline{pendingCount ? ` • Pending: ${pendingCount}` : ''}
+                  Offline{pendingCount ? ` - Pending: ${pendingCount}` : ''}
                 </Box>
               </Tooltip>
             )}
@@ -350,3 +369,5 @@ const Layout: React.FC = () => {
 };
 
 export default Layout;
+
+
