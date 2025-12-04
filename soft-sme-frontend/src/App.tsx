@@ -307,7 +307,6 @@ const App: React.FC = () => {
     };
     const handleBackendUp = () => {
       setBackendUnavailable(false);
-      if (!isOffline && shouldToast()) toast.info('Back in sync with the server.');
     };
     const handleAppError = (event: Event) => {
       const detail = (event as CustomEvent)?.detail as { message?: string } | undefined;
