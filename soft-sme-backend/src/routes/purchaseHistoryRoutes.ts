@@ -1,6 +1,11 @@
 import express, { Request, Response } from 'express';
 import { pool } from '../db';
 import PDFDocument from 'pdfkit';
+import multer from 'multer';
+import csv from 'csv-parser';
+import fs from 'fs';
+import path from 'path';
+import { canonicalizeName } from '../lib/normalize';
 import { getLogoImageSource } from '../utils/pdfLogoHelper';
 import { SalesOrderService } from '../services/SalesOrderService';
 
@@ -27,6 +32,368 @@ const formatUnitCost = (value: any): string => {
 
 const router = express.Router();
 const salesOrderService = new SalesOrderService(pool);
+const uploadsDir = path.join(__dirname, '../../uploads');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+const upload = multer({
+  dest: uploadsDir,
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype === 'text/csv' || file.originalname.toLowerCase().endsWith('.csv')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only CSV files are allowed'));
+    }
+  },
+  limits: {
+    fileSize: 20 * 1024 * 1024, // allow larger historical imports
+  },
+});
+
+const normalizeHeader = (value: string) => {
+  const trimmed = (value || '').replace(/^\uFEFF/, '').trim();
+  const cleaned = trimmed
+    .toLowerCase()
+    .replace(/[^a-z0-9#]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  if (!cleaned && trimmed.includes('#')) return '#';
+  if (trimmed.includes('#')) return cleaned || '#';
+  return cleaned;
+};
+const normalizeCell = (value: unknown) => (value == null ? '' : String(value).trim());
+const pickFirst = (row: Record<string, string>, keys: string[]) => {
+  for (const key of keys) {
+    const val = normalizeCell(row[key]);
+    if (val) return val;
+  }
+  return '';
+};
+const headerMap: Record<string, string> = {
+  '#': 'purchase_number',
+  number: 'purchase_number',
+  txn_no: 'purchase_number',
+  transaction_no: 'purchase_number',
+  transaction_number: 'purchase_number',
+  po_number: 'purchase_number',
+  transaction_date: 'transaction_date',
+  txn_date: 'transaction_date',
+  date: 'transaction_date',
+  supplier: 'vendor_name',
+  supplier_name: 'vendor_name',
+  vendor: 'vendor_name',
+  vendor_name: 'vendor_name',
+  product_service: 'product_service',
+  product_service_full_name: 'product_service',
+  product_service_full: 'product_service',
+  product: 'product_service',
+  item: 'product_service',
+  part_number: 'product_service',
+  memo: 'memo',
+  memo_description: 'memo',
+  description: 'memo',
+  quantity: 'quantity',
+  qty: 'quantity',
+  rate: 'unit_cost',
+  unit_cost: 'unit_cost',
+  cost: 'unit_cost',
+  amount: 'line_total',
+  line_amount: 'line_total',
+  line_total: 'line_total',
+};
+const round2 = (value: number) => Math.round(value * 100) / 100;
+const toNumberSafe = (value: unknown, defaultValue = 0) => {
+  if (value == null || value === '') return defaultValue;
+  const cleaned = typeof value === 'string' ? value.replace(/[^0-9.\-]+/g, '') : value;
+  const num = Number(cleaned);
+  return Number.isFinite(num) ? num : defaultValue;
+};
+const parseCsvDate = (value: string): Date | null => {
+  if (!value) return null;
+  const direct = new Date(value);
+  if (!isNaN(direct.getTime())) return direct;
+  const parts = value.split(/[/-]/).map((p) => Number(p));
+  if (parts.length === 3 && parts.every((n) => Number.isFinite(n) && n > 0)) {
+    const [a, b, c] = parts;
+    const year = c < 100 ? 2000 + c : c;
+    const month = a > 12 ? b : a;
+    const day = a > 12 ? a : b;
+    const parsed = new Date(year, month - 1, day);
+    if (!isNaN(parsed.getTime())) return parsed;
+  }
+  return null;
+};
+
+// Download CSV template for historical purchase order import
+router.get('/csv-template', (_req: Request, res: Response) => {
+  const csvTemplate = `Supplier,Transaction date,#,Product/Service full name,Memo/Description,Quantity,Rate,Amount
+ABC Supply,02/12/2024,17780243,2401225AL,2401225AL FRTL RADIATOR,1,799,799
+ABC Supply,02/12/2024,17780243,2401225AL,Second line example,2,10,20`;
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', 'attachment; filename="purchase_order_import_template.csv"');
+  res.send(csvTemplate);
+});
+
+// Bulk import historical purchase orders from CSV (non-impacting, no vendor creation, no inventory updates)
+router.post('/upload-csv', (req: Request, res: Response) => {
+  upload.single('file')(req, res, async (err: any) => {
+    if (err) {
+      console.error('purchaseHistoryRoutes: upload csv multer error', err);
+      if (err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({ error: 'CSV file too large (max 20MB)' });
+      }
+      return res.status(400).json({ error: err.message || 'File upload failed' });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ error: 'No CSV file uploaded' });
+    }
+
+    const errors: string[] = [];
+    const warnings: string[] = [];
+    const rawRows: any[] = [];
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        fs.createReadStream(req.file!.path)
+          .pipe(csv())
+          .on('data', (data) => rawRows.push(data))
+          .on('end', () => resolve())
+          .on('error', (readErr) => reject(readErr));
+      });
+    } catch (readErr) {
+      console.error('purchaseHistoryRoutes: failed to read CSV', readErr);
+      fs.unlink(req.file.path, () => undefined);
+      return res.status(400).json({ error: 'Unable to read CSV file' });
+    }
+
+    if (rawRows.length === 0) {
+      fs.unlink(req.file.path, () => undefined);
+      return res.status(400).json({ error: 'CSV file is empty' });
+    }
+
+    type ImportLine = {
+      part_number: string;
+      part_description: string;
+      quantity: number;
+      unit: string;
+      unit_cost: number;
+      line_total: number;
+    };
+
+    type ImportPurchase = {
+      purchaseNumber: string;
+      billNumber?: string;
+      vendorName: string;
+      canonicalVendor: string;
+      purchaseDate: Date | null;
+      subtotal: number;
+      lines: ImportLine[];
+    };
+
+    const purchaseMap = new Map<string, ImportPurchase>();
+
+    rawRows.forEach((row, idx) => {
+      const rowNumber = idx + 2; // account for header row
+      const normalizedRow: Record<string, string> = {};
+      Object.entries(row).forEach(([key, value]) => {
+        const mappedKey = headerMap[normalizeHeader(key)] || normalizeHeader(key);
+        normalizedRow[mappedKey] = normalizeCell(value);
+      });
+
+      const hasAnyValue = Object.values(normalizedRow).some((v) => normalizeCell(v));
+      if (!hasAnyValue) {
+        return;
+      }
+
+      const purchaseNumber = pickFirst(normalizedRow, ['purchase_number', '#', 'number', 'txn_no', 'transaction_no', 'po_number']);
+      if (!purchaseNumber) {
+        errors.push(`Row ${rowNumber}: Missing purchase order number (# column)`);
+        return;
+      }
+
+      const vendorName = pickFirst(normalizedRow, ['vendor_name', 'supplier', 'supplier_name', 'vendor']);
+      if (!vendorName) {
+        errors.push(`Row ${rowNumber}: Missing vendor/supplier name`);
+        return;
+      }
+      const canonicalVendor = canonicalizeName(vendorName);
+      if (!canonicalVendor) {
+        errors.push(`Row ${rowNumber}: Vendor name could not be normalized`);
+        return;
+      }
+
+      const purchaseDate = parseCsvDate(normalizedRow.transaction_date || normalizedRow.date || '') || null;
+
+      const quantityRaw = toNumberSafe(normalizedRow.quantity, NaN);
+      const quantity = Number.isFinite(quantityRaw) ? quantityRaw : 1;
+      if (!Number.isFinite(quantityRaw)) {
+        warnings.push(`Row ${rowNumber}: Quantity missing/invalid; defaulted to 1`);
+      }
+
+      const unitCostRaw = normalizedRow.unit_cost || normalizedRow.rate || '';
+      let unit_cost = toNumberSafe(unitCostRaw, NaN);
+      const amountRaw = pickFirst(normalizedRow, ['line_total', 'line_amount', 'amount']);
+      let line_total = toNumberSafe(amountRaw, NaN);
+      if (!Number.isFinite(line_total) && Number.isFinite(unit_cost)) {
+        line_total = round2(unit_cost * quantity);
+      }
+      if (!Number.isFinite(unit_cost) && Number.isFinite(line_total) && quantity !== 0) {
+        unit_cost = round2(line_total / quantity);
+      }
+      if (!Number.isFinite(line_total)) {
+        warnings.push(`Row ${rowNumber}: Amount missing/invalid; defaulted to 0`);
+        line_total = 0;
+      }
+      if (!Number.isFinite(unit_cost)) {
+        unit_cost = 0;
+      }
+
+      const productService = pickFirst(normalizedRow, ['product_service', 'item', 'product', 'part_number']);
+      const memo = normalizedRow.memo;
+
+      if (!purchaseMap.has(purchaseNumber)) {
+        purchaseMap.set(purchaseNumber, {
+          purchaseNumber,
+          billNumber: purchaseNumber,
+          vendorName,
+          canonicalVendor,
+          purchaseDate,
+          subtotal: 0,
+          lines: [],
+        });
+      }
+
+      const po = purchaseMap.get(purchaseNumber)!;
+      if (po.canonicalVendor !== canonicalVendor) {
+        warnings.push(`Purchase ${purchaseNumber}: multiple vendors found; using ${po.vendorName}`);
+      }
+      if (!po.purchaseDate && purchaseDate) {
+        po.purchaseDate = purchaseDate;
+      } else if (po.purchaseDate && purchaseDate && po.purchaseDate.getTime() !== purchaseDate.getTime()) {
+        warnings.push(`Purchase ${purchaseNumber}: multiple dates found; using first date ${po.purchaseDate.toLocaleDateString()}`);
+      }
+
+      po.lines.push({
+        part_number: productService || memo || `Line ${po.lines.length + 1}`,
+        part_description: memo || productService || 'Imported line item',
+        quantity,
+        unit: normalizedRow.unit || 'Each',
+        unit_cost,
+        line_total: round2(line_total),
+      });
+      po.subtotal = round2(po.subtotal + round2(line_total));
+    });
+
+    if (errors.length) {
+      fs.unlink(req.file.path, () => undefined);
+      return res.status(400).json({ error: 'Validation failed', errors, warnings });
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const canonicalVendors = Array.from(new Set(Array.from(purchaseMap.values()).map((po) => po.canonicalVendor)));
+      const vendorsRes = canonicalVendors.length
+        ? await client.query('SELECT vendor_id, canonical_name FROM vendormaster WHERE canonical_name = ANY($1)', [canonicalVendors])
+        : { rows: [] as any[] };
+      const vendorMap = new Map<string, number>();
+      vendorsRes.rows.forEach((row: any) => vendorMap.set(row.canonical_name, row.vendor_id));
+
+      const incomingNumbers = Array.from(purchaseMap.values()).map((po) => po.purchaseNumber);
+      const existingRes =
+        incomingNumbers.length > 0
+          ? await client.query('SELECT purchase_number FROM purchasehistory WHERE purchase_number = ANY($1)', [incomingNumbers])
+          : { rows: [] as any[] };
+      const existingNumbers = new Set(existingRes.rows.map((r: any) => r.purchase_number));
+
+      const createdPurchaseOrders: { purchase_id: number; purchase_number: string }[] = [];
+      const skippedPurchaseOrders: string[] = [];
+
+      for (const po of purchaseMap.values()) {
+        if (existingNumbers.has(po.purchaseNumber)) {
+          warnings.push(`Purchase order ${po.purchaseNumber} already exists; skipped to avoid duplicate import`);
+          skippedPurchaseOrders.push(po.purchaseNumber);
+          continue;
+        }
+
+        const vendorId = vendorMap.get(po.canonicalVendor) ?? null;
+        if (!vendorId) {
+          warnings.push(`Vendor "${po.vendorName}" not found; imported without linking to a vendor record`);
+        }
+
+        const purchaseDate = po.purchaseDate ?? new Date();
+        const subtotal = round2(po.subtotal);
+        const gstRate = 0; // keep historical imports non-impacting
+        const total_gst_amount = 0;
+        const total_amount = subtotal;
+
+        const insertPo = await client.query(
+          `INSERT INTO purchasehistory (
+            purchase_number, bill_number, vendor_id, purchase_date, subtotal, total_gst_amount, total_amount, gst_rate, status, created_at, updated_at
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW(),NOW())
+          RETURNING purchase_id`,
+          [
+            po.purchaseNumber,
+            po.billNumber || po.purchaseNumber,
+            vendorId,
+            purchaseDate,
+            subtotal,
+            total_gst_amount,
+            total_amount,
+            gstRate,
+            'Closed',
+          ]
+        );
+
+        const purchaseId = insertPo.rows[0].purchase_id;
+        for (const line of po.lines) {
+          await client.query(
+            `INSERT INTO purchaselineitems (
+              purchase_id, part_id, part_number, part_description, quantity, unit, unit_cost, gst_amount, line_total
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+            [
+              purchaseId,
+              null,
+              line.part_number,
+              line.part_description,
+              line.quantity,
+              line.unit,
+              line.unit_cost,
+              0,
+              line.line_total,
+            ]
+          );
+        }
+
+        createdPurchaseOrders.push({ purchase_id: purchaseId, purchase_number: po.purchaseNumber });
+        existingNumbers.add(po.purchaseNumber);
+      }
+
+      await client.query('COMMIT');
+      res.json({
+        message: 'Purchase order CSV upload completed',
+        summary: {
+          rowsProcessed: rawRows.length,
+          purchaseOrdersCreated: createdPurchaseOrders.length,
+          purchaseOrdersSkipped: skippedPurchaseOrders.length,
+        },
+        createdPurchaseOrders,
+        skippedPurchaseOrders,
+        errors,
+        warnings,
+      });
+    } catch (error) {
+      await client.query('ROLLBACK');
+      console.error('purchaseHistoryRoutes: upload csv error', error);
+      res.status(500).json({ error: 'Failed to import purchase orders from CSV' });
+    } finally {
+      client.release();
+      fs.unlink(req.file.path, () => undefined);
+    }
+  });
+});
 
 // Get all closed purchase history records
 router.get('/', async (req: Request, res: Response) => {
