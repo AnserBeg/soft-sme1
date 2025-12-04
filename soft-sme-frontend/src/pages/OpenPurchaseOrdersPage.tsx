@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Typography, Box, TextField, Stack, Button, Container, Paper, Chip, IconButton, InputAdornment, CircularProgress, Alert } from '@mui/material';
 import {
   DataGrid,
@@ -14,6 +14,7 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import AddIcon from '@mui/icons-material/Add';
 import SearchIcon from '@mui/icons-material/Search';
 import DownloadIcon from '@mui/icons-material/Download';
+import UploadIcon from '@mui/icons-material/Upload';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ErrorIcon from '@mui/icons-material/Error';
 import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty';
@@ -21,7 +22,7 @@ import { toast } from 'react-toastify';
 import { AxiosError } from 'axios';
 import dayjs from 'dayjs';
 import Papa from 'papaparse';
-import { getPurchaseOrders, PurchaseOrder } from '../services/purchaseOrderService';
+import { getPurchaseOrders, PurchaseOrder, downloadPurchaseOrderImportTemplate, uploadPurchaseOrderCsv } from '../services/purchaseOrderService';
 import { useAuth } from '../contexts/AuthContext';
 
 const OpenPurchaseOrdersPage: React.FC = () => {
@@ -33,6 +34,8 @@ const OpenPurchaseOrdersPage: React.FC = () => {
     page: 0,
     pageSize: 10,
   });
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const navigate = useNavigate();
   const location = useLocation();
@@ -116,6 +119,49 @@ const OpenPurchaseOrdersPage: React.FC = () => {
     const statusParam = selectedStatus === 'all' ? '' : selectedStatus;
     const url = `/api/purchase-history/export/pdf?status=${statusParam}`;
     window.open(url, '_blank');
+  };
+
+  const handleDownloadTemplate = async () => {
+    try {
+      const response = await downloadPurchaseOrderImportTemplate();
+      const blob = new Blob([response.data], { type: 'text/csv' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', 'purchase_order_import_template.csv');
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Error downloading template', error);
+      toast.error('Failed to download template');
+    }
+  };
+
+  const handleUploadClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    try {
+      const result = await uploadPurchaseOrderCsv(file);
+      toast.success(result?.message || 'Purchase order CSV uploaded');
+      if (result?.warnings?.length) {
+        toast.warn(result.warnings.join('; '));
+      }
+      fetchPurchaseOrders();
+    } catch (error: any) {
+      console.error('Error uploading purchase order CSV', error);
+      const message = error?.response?.data?.error || 'Failed to upload purchase order CSV';
+      toast.error(message);
+    } finally {
+      setUploading(false);
+      event.target.value = '';
+    }
   };
 
   const columns: GridColDef[] = [
@@ -220,6 +266,28 @@ const OpenPurchaseOrdersPage: React.FC = () => {
             }
         </Typography>
         <Stack direction="row" spacing={2} sx={{ mb: 2, justifyContent: 'flex-end' }}>
+          <input
+            type="file"
+            accept=".csv,text/csv"
+            ref={fileInputRef}
+            style={{ display: 'none' }}
+            onChange={handleFileChange}
+          />
+          <Button
+            variant="outlined"
+            startIcon={<DownloadIcon />}
+            onClick={handleDownloadTemplate}
+          >
+            PO Template
+          </Button>
+          <Button
+            variant="outlined"
+            startIcon={<UploadIcon />}
+            onClick={handleUploadClick}
+            disabled={uploading}
+          >
+            {uploading ? 'Uploading...' : 'Upload PO CSV'}
+          </Button>
           <Button
             variant="contained"
             startIcon={<AddIcon />}
