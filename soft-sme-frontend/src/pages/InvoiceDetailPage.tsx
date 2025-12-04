@@ -380,9 +380,13 @@ const InvoiceDetailPage: React.FC = () => {
             clone[index] = withMargin;
             return clone;
           }
-          target.part_description = '';
-          target.unit_price = 0;
-          target.line_amount = 0;
+          // When the part isn't in inventory, keep any existing description/price for loaded invoices.
+          // This avoids wiping data on initial render before inventory items finish loading.
+          if (!target.part_description && !target.unit_price) {
+            target.part_description = '';
+            target.unit_price = 0;
+            target.line_amount = 0;
+          }
         }
       } else if (field === 'quantity' || field === 'unit_price') {
         const numeric = Number(value);
