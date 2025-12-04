@@ -46,6 +46,10 @@ const toNumber = (value: any) => {
   const num = Number(value);
   return Number.isFinite(num) ? num : 0;
 };
+const toNullableNumber = (value: any): number | null => {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+};
 
 const normalizeStatus = (value: any): InvoiceStatus => {
   if (typeof value === 'string' && value.trim().toLowerCase() === 'paid') return 'Paid';
@@ -284,22 +288,50 @@ export class InvoiceService {
       const terms = await this.getCustomerTerms(client, salesOrder.customer_id);
 
       const lineItemsRes = await client.query(
-        `SELECT part_id, part_number, part_description, quantity_sold, unit, unit_price, line_amount
-         FROM salesorderlineitems
-         WHERE sales_order_id = $1`,
+        `SELECT 
+            soli.part_id,
+            soli.part_number,
+            soli.part_description,
+            soli.quantity_sold,
+            soli.unit,
+            soli.unit_price,
+            soli.line_amount,
+            inv.part_description AS inventory_part_description,
+            inv.unit AS inventory_unit,
+            inv.last_unit_cost AS inventory_last_unit_cost
+         FROM salesorderlineitems soli
+         LEFT JOIN inventory inv
+           ON (soli.part_id IS NOT NULL AND inv.part_id = soli.part_id)
+           OR (soli.part_id IS NULL AND inv.part_number = soli.part_number)
+         WHERE soli.sales_order_id = $1`,
         [salesOrderId]
       );
 
+      // Preserve sales order details; fall back to inventory data/line totals if a field is missing
       const lineItems = this.normalizeLineItems(
-        lineItemsRes.rows.map((row) => ({
-          part_id: row.part_id ?? null,
-          part_number: row.part_number,
-          part_description: row.part_description,
-          quantity: row.quantity_sold,
-          unit: row.unit,
-          unit_price: row.unit_price,
-          line_amount: row.line_amount,
-        }))
+        lineItemsRes.rows.map((row) => {
+          const quantity = toNullableNumber(row.quantity_sold) ?? 0;
+          const unitPriceFromSO = toNullableNumber(row.unit_price);
+          const lineAmountFromSO = toNullableNumber(row.line_amount);
+          const inventoryCost = toNullableNumber(row.inventory_last_unit_cost);
+          const inferredUnitPrice =
+            unitPriceFromSO ??
+            (lineAmountFromSO !== null && quantity > 0 ? round2(lineAmountFromSO / quantity) : null) ??
+            inventoryCost ??
+            0;
+          const lineAmount = lineAmountFromSO ?? round2(inferredUnitPrice * quantity);
+
+          return {
+            part_id: row.part_id ?? null,
+            part_number: row.part_number,
+            part_description:
+              ((row.part_description || row.inventory_part_description || '').trim() || row.part_number || '').trim(),
+            quantity,
+            unit: (row.unit || row.inventory_unit || '').trim(),
+            unit_price: inferredUnitPrice,
+            line_amount: lineAmount,
+          };
+        })
       );
 
       const marginAdjustedItems = await this.applyMarginToLineItems(client, lineItems);
@@ -570,10 +602,10 @@ export class InvoiceService {
   async getInvoice(invoiceId: number) {
     const client = await this.pool.connect();
     try {
-    const invoiceRes = await client.query(
-      `SELECT i.*, 
-              c.customer_name, 
-              c.default_payment_terms_in_days,
+      const invoiceRes = await client.query(
+        `SELECT i.*, 
+                c.customer_name, 
+                c.default_payment_terms_in_days,
               c.street_address,
               c.city,
               c.province,
@@ -599,7 +631,17 @@ export class InvoiceService {
         throw new Error('Invoice not found');
       }
       const linesRes = await client.query(
-        `SELECT * FROM invoicelineitems WHERE invoice_id = $1 ORDER BY invoice_line_item_id`,
+        `SELECT 
+            li.*,
+            inv.part_description AS inventory_part_description,
+            inv.unit AS inventory_unit,
+            inv.last_unit_cost AS inventory_last_unit_cost
+         FROM invoicelineitems li
+         LEFT JOIN inventory inv
+           ON (li.part_id IS NOT NULL AND inv.part_id = li.part_id)
+           OR (li.part_id IS NULL AND inv.part_number = li.part_number)
+         WHERE li.invoice_id = $1
+         ORDER BY li.invoice_line_item_id`,
         [invoiceId]
       );
       const invoice = invoiceRes.rows[0];
@@ -617,7 +659,33 @@ export class InvoiceService {
         total_gst_amount: toNumber(invoice.total_gst_amount),
         total_amount: toNumber(invoice.total_amount),
       };
-      return { invoice: mergedInvoice, lineItems: linesRes.rows };
+      const normalizedLineItems = this.normalizeLineItems(
+        linesRes.rows.map((row) => {
+          const quantity = toNullableNumber(row.quantity) ?? 0;
+          const unitPriceFromInvoice = toNullableNumber(row.unit_price);
+          const lineAmountFromInvoice = toNullableNumber(row.line_amount);
+          const inventoryCost = toNullableNumber(row.inventory_last_unit_cost);
+          const inferredUnitPrice =
+            unitPriceFromInvoice ??
+            (lineAmountFromInvoice !== null && quantity > 0 ? round2(lineAmountFromInvoice / quantity) : null) ??
+            inventoryCost ??
+            0;
+          const lineAmount = lineAmountFromInvoice ?? round2(inferredUnitPrice * quantity);
+
+          return {
+            invoice_line_item_id: row.invoice_line_item_id,
+            part_id: row.part_id ?? null,
+            part_number: row.part_number,
+            part_description:
+              ((row.part_description || row.inventory_part_description || '').trim() || row.part_number || '').trim(),
+            quantity,
+            unit: (row.unit || row.inventory_unit || '').trim(),
+            unit_price: inferredUnitPrice,
+            line_amount: lineAmount,
+          };
+        })
+      );
+      return { invoice: mergedInvoice, lineItems: normalizedLineItems };
     } finally {
       client.release();
     }
