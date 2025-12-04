@@ -208,13 +208,13 @@ router.post('/upload-csv', (req: Request, res: Response) => {
 
       const purchaseNumber = pickFirst(normalizedRow, ['purchase_number', '#', 'number', 'txn_no', 'transaction_no', 'po_number']);
       if (!purchaseNumber) {
-        errors.push(`Row ${rowNumber}: Missing purchase order number (# column)`);
+        warnings.push(`Row ${rowNumber}: Skipped because purchase order number (#) is missing`);
         return;
       }
 
       const vendorName = pickFirst(normalizedRow, ['vendor_name', 'supplier', 'supplier_name', 'vendor']);
       if (!vendorName) {
-        errors.push(`Row ${rowNumber}: Missing vendor/supplier name`);
+        warnings.push(`Row ${rowNumber}: Skipped because vendor/supplier name is missing`);
         return;
       }
       const canonicalVendor = canonicalizeName(vendorName);
