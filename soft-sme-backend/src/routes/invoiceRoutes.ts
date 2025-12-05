@@ -290,10 +290,10 @@ router.post('/upload-csv', (req: Request, res: Response) => {
     const status: 'Paid' | 'Unpaid' =
       rawStatus.includes('unpaid') || rawStatus.startsWith('un') || rawStatus === 'no' ? 'Unpaid' : rawStatus.includes('paid') ? 'Paid' : 'Unpaid';
 
-    const rawQty = toNumberSafe(normalizedRow.quantity, 1);
-    const quantity = rawQty > 0 ? rawQty : 1;
+    const rawQty = toNumberSafe(normalizedRow.quantity, 0);
+    const quantity = rawQty;
     if (rawQty <= 0) {
-      warnings.push(`Row ${rowNumber}: Quantity was ${rawQty}; defaulted to 1`);
+      warnings.push(`Row ${rowNumber}: Quantity was ${rawQty}; kept as provided`);
     }
 
     const amountRaw = pickFirst(normalizedRow, ['amount', 'line_amount', 'line_total']);
