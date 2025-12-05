@@ -8,6 +8,7 @@ export interface PurchaseOrder {
   vendor_name: string;
   bill_date: string;
   bill_number: string;
+  date?: string;
   subtotal: number;
   total_gst_amount: number;
   total_amount: number;

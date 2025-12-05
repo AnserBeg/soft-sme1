@@ -168,8 +168,8 @@ const OpenPurchaseOrdersPage: React.FC = () => {
     { field: 'purchase_number', headerName: 'Purchase #', flex: 1, minWidth: 120, valueFormatter: (params) => params.value ? String(params.value).replace('PO-', '') : '' },
     { field: 'vendor_name', headerName: 'Vendor', flex: 1.3, minWidth: 150 },
     {
-      field: 'created_at',
-      headerName: 'Created On',
+      field: 'date',
+      headerName: 'Date',
       flex: 0.9,
       minWidth: 130,
       valueFormatter: (params) => params.value ? new Date(params.value as string).toLocaleDateString() : '',

@@ -172,14 +172,14 @@ router.post('/upload-csv', (req: Request, res: Response) => {
       return res.status(400).json({ error: 'CSV file is empty' });
     }
 
-    type ImportLine = {
-      part_number: string;
-      part_description: string;
-      quantity: number;
-      unit: string;
-      unit_cost: number;
-      line_total: number;
-    };
+  type ImportLine = {
+    part_number: string;
+    part_description: string;
+    quantity: number;
+    unit: string;
+    unit_cost: number;
+    line_total: number;
+  };
 
     type ImportPurchase = {
       purchaseNumber: string;
@@ -223,7 +223,7 @@ router.post('/upload-csv', (req: Request, res: Response) => {
         return;
       }
 
-      const purchaseDate = parseCsvDate(normalizedRow.transaction_date || normalizedRow.date || '') || null;
+    const transactionDate = parseCsvDate(normalizedRow.transaction_date || normalizedRow.date || '') || null;
 
       const quantityRaw = toNumberSafe(normalizedRow.quantity, NaN);
       const quantity = Number.isFinite(quantityRaw) ? quantityRaw : 1;
@@ -268,9 +268,9 @@ router.post('/upload-csv', (req: Request, res: Response) => {
       if (po.canonicalVendor !== canonicalVendor) {
         warnings.push(`Purchase ${purchaseNumber}: multiple vendors found; using ${po.vendorName}`);
       }
-      if (!po.purchaseDate && purchaseDate) {
-        po.purchaseDate = purchaseDate;
-      } else if (po.purchaseDate && purchaseDate && po.purchaseDate.getTime() !== purchaseDate.getTime()) {
+      if (!po.purchaseDate && transactionDate) {
+        po.purchaseDate = transactionDate;
+      } else if (po.purchaseDate && transactionDate && po.purchaseDate.getTime() !== transactionDate.getTime()) {
         warnings.push(`Purchase ${purchaseNumber}: multiple dates found; using first date ${po.purchaseDate.toLocaleDateString()}`);
       }
 
@@ -331,13 +331,14 @@ router.post('/upload-csv', (req: Request, res: Response) => {
 
         const insertPo = await client.query(
           `INSERT INTO purchasehistory (
-            purchase_number, bill_number, vendor_id, purchase_date, subtotal, total_gst_amount, total_amount, gst_rate, status, created_at, updated_at
-          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW(),NOW())
+            purchase_number, bill_number, vendor_id, purchase_date, date, subtotal, total_gst_amount, total_amount, gst_rate, status, created_at, updated_at
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW(),NOW())
           RETURNING purchase_id`,
           [
             po.purchaseNumber,
             po.billNumber || po.purchaseNumber,
             vendorId,
+            purchaseDate,
             purchaseDate,
             subtotal,
             total_gst_amount,

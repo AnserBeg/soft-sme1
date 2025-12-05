@@ -72,6 +72,7 @@ interface PurchaseOrderData {
   vendor_id: number;
   vendor_name: string;
   purchase_date: string;
+  date?: string;
   bill_number: string;
   total_amount: number;
   subtotal: number;
@@ -149,6 +150,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
   const [purchaseOrder, setPurchaseOrder] = useState<PurchaseOrderData | null>(null);
   const [vendor, setVendor] = useState<VendorOption | null>(null);
   const [date, setDate] = useState<Dayjs | null>(dayjs());
+  const [transactionDate, setTransactionDate] = useState<string | null>(dayjs().toISOString());
   const [billNumber, setBillNumber] = useState('');
   const [liveLineItems, setLiveLineItems] = useState<PurchaseOrderLineItem[]>([]);
   const debouncedLineItems = useDebounce(liveLineItems, 300);
@@ -268,6 +270,13 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
   const [initialSignature, setInitialSignature] = useState<string>('');
   const [isDataFullyLoaded, setIsDataFullyLoaded] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+
+  // Keep transaction date in sync for new POs; for existing ones we use the fetched value
+  useEffect(() => {
+    if (isCreationMode && date) {
+      setTransactionDate(date.toISOString());
+    }
+  }, [date, isCreationMode]);
 
   const fetchAggregateQuantities = async () => {
     try {
@@ -428,6 +437,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
         }
       }
       setDate(dayjs(fetchedOrder.purchase_date));
+      setTransactionDate(fetchedOrder.date || fetchedOrder.purchase_date || null);
       setBillNumber(fetchedOrder.bill_number || '');
       
       // Debug line items mapping
@@ -1179,6 +1189,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
         const newPurchaseOrder = {
           vendor_id: vendor?.id,
           purchase_date: date?.toISOString(),
+          date: transactionDate || date?.toISOString(),
           bill_number: billNumber.trim(),
           lineItems: lineItems.map(item => ({
             part_number: item.part_number.trim(),
@@ -1245,6 +1256,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
           ...purchaseOrder,
           vendor_id: vendor?.id,
           purchase_date: date?.toISOString(),
+          date: transactionDate || date?.toISOString() || purchaseOrder?.date,
           bill_number: billNumber.trim(),
           lineItems: lineItems.map(item => ({
             ...item,
@@ -2084,7 +2096,8 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
             <Grid container spacing={{ xs:2, md:3 }}>
               <Grid item xs={12} sm={6}><b>Purchase Order #:</b> {purchaseOrder.purchase_number}</Grid>
               <Grid item xs={12} sm={6}><b>Vendor:</b> {purchaseOrder.vendor_name || 'N/A'}</Grid>
-              <Grid item xs={12} sm={6}><b>Purchase Date:</b> {purchaseOrder.purchase_date ? new Date(purchaseOrder.purchase_date).toLocaleDateString() : ''}</Grid>
+          <Grid item xs={12} sm={6}><b>Purchase Date:</b> {purchaseOrder.purchase_date ? new Date(purchaseOrder.purchase_date).toLocaleDateString() : ''}</Grid>
+          <Grid item xs={12} sm={6}><b>Transaction Date:</b> {transactionDate ? new Date(transactionDate).toLocaleDateString() : ''}</Grid>
               <Grid item xs={12} sm={6}><b>Created On:</b> {purchaseOrder.created_at ? new Date(purchaseOrder.created_at).toLocaleDateString() : 'N/A'}</Grid>
               <Grid item xs={12} sm={6}><b>Status:</b> {purchaseOrder.status?.toUpperCase() || 'N/A'}</Grid>
               <Grid item xs={12} sm={6}><b>Bill Number:</b> {purchaseOrder.bill_number || 'N/A'}</Grid>

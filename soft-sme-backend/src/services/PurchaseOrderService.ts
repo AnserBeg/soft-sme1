@@ -124,13 +124,14 @@ export class PurchaseOrderService {
 
       const purchaseResult = await client.query(
         `INSERT INTO purchasehistory (
-          vendor_id, purchase_number, purchase_date, bill_number, status, subtotal, total_gst_amount,
+          vendor_id, purchase_number, purchase_date, date, bill_number, status, subtotal, total_gst_amount,
           total_amount, gst_rate, pickup_notes, pickup_time, pickup_location, pickup_contact_person,
           pickup_phone, pickup_instructions, created_at, updated_at
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,NOW(),NOW()) RETURNING purchase_id`,
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,NOW(),NOW()) RETURNING purchase_id`,
         [
           vendorId,
           purchaseNumber,
+          purchaseDate,
           purchaseDate,
           billNumber,
           'Open',
