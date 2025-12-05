@@ -258,7 +258,7 @@ router.post('/upload-csv', (req: Request, res: Response) => {
           billNumber: purchaseNumber,
           vendorName,
           canonicalVendor,
-          purchaseDate,
+          purchaseDate: transactionDate,
           subtotal: 0,
           lines: [],
         });
