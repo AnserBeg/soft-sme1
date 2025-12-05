@@ -11,6 +11,17 @@ const safeDispatch = (name: string, detail?: Record<string, unknown>) => {
   }
 };
 
+const handleSessionExpiry = () => {
+  localStorage.setItem('authRedirectMessage', 'Your session expired. Please sign in again.');
+  safeDispatch('auth:expired');
+  localStorage.removeItem('sessionToken');
+  localStorage.removeItem('refreshToken');
+  localStorage.removeItem('user');
+  window.location.href = '/login';
+};
+
+let refreshPromise: Promise<string | null> | null = null;
+
 const api = axios.create({
   baseURL: apiConfig.baseURL,
   timeout: apiConfig.timeout,
@@ -79,38 +90,45 @@ api.interceptors.response.use(
     } catch { /* noop */ }
     const originalRequest = error.config;
 
+    // If refresh itself is rejected with 401, stop the loop and force logout
+    if (error.response?.status === 401 && originalRequest?.url?.includes('/api/auth/refresh')) {
+      handleSessionExpiry();
+      return Promise.reject(error);
+    }
+
     if (error.response?.status === 401 && !originalRequest._retry) {
       originalRequest._retry = true;
 
       const refreshToken = localStorage.getItem('refreshToken');
       if (refreshToken) {
         try {
-          const response = await api.post('/api/auth/refresh', { refreshToken });
-          const { sessionToken, refreshToken: newRefreshToken } = response.data;
+          if (!refreshPromise) {
+            refreshPromise = api
+              .post('/api/auth/refresh', { refreshToken })
+              .then((response) => {
+                const { sessionToken, refreshToken: newRefreshToken } = response.data;
+                localStorage.setItem('sessionToken', sessionToken);
+                localStorage.setItem('refreshToken', newRefreshToken);
+                api.defaults.headers.common['Authorization'] = `Bearer ${sessionToken}`;
+                return sessionToken;
+              })
+              .catch((refreshError) => {
+                handleSessionExpiry();
+                throw refreshError;
+              })
+              .finally(() => {
+                refreshPromise = null;
+              });
+          }
 
-          localStorage.setItem('sessionToken', sessionToken);
-          localStorage.setItem('refreshToken', newRefreshToken);
-          api.defaults.headers.common['Authorization'] = `Bearer ${sessionToken}`;
-
+          await refreshPromise;
           return api(originalRequest);
         } catch (refreshError) {
-          // Refresh failed, logout user
-          localStorage.setItem('authRedirectMessage', 'Your session expired. Please sign in again.');
-          safeDispatch('auth:expired');
-          localStorage.removeItem('sessionToken');
-          localStorage.removeItem('refreshToken');
-          localStorage.removeItem('user');
-          window.location.href = '/login';
           return Promise.reject(refreshError);
         }
       } else {
         // No refresh token, logout user
-        localStorage.setItem('authRedirectMessage', 'Your session expired. Please sign in again.');
-        safeDispatch('auth:expired');
-        localStorage.removeItem('sessionToken');
-        localStorage.removeItem('refreshToken');
-        localStorage.removeItem('user');
-        window.location.href = '/login';
+        handleSessionExpiry();
       }
     }
     // Surface meaningful errors to the UI
