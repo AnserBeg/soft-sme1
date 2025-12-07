@@ -139,7 +139,30 @@ export default function PartFinderDialog(props: PartFinderDialogProps) {
     const normalizeToken = (w: string) => synonymMap[w] || w;
     const add = (t: string, w: number) => { const tok = t.trim(); if (!tok || selectedSet.has(tok)) return; counts[tok] = (counts[tok] || 0) + w; };
     const makeDecimal = (f: string) => { const [a,b] = f.split('/').map(Number); if(!a||!b) return null; return (a/b).toFixed(4).replace(/0+$/,'').replace(/\.$/,''); };
-    const parseDims = (pn: string) => { const out: string[] = []; if(!pn) return out; let s = pn.toUpperCase().replace(/[\s-]+/g,'').replace(/×/g,'X').replace(/[()]/g,''); const fr = s.match(/\d+\/\d+/g)||[]; if(s.includes('X')){ const seg=s.split('X'); if(seg.length>=2&&seg.length<=4){ out.push(seg.slice(0,2).join('X')); out.push(seg.join('X')); } } fr.forEach(f=>{ out.push(f); const dec=makeDecimal(f); if(dec) out.push(dec); }); (s.match(/(\d+)GA/g)||[]).forEach(g=>out.push(g)); (s.match(/SCH\s*\d+/g)||[]).forEach(m=>out.push(m.replace(/\s+/g,''))); (s.match(/OD\d+(?:\.\d+)?/g)||[]).forEach(v=>out.push(v)); (s.match(/ID\d+(?:\.\d+)?/g)||[]).forEach(v=>out.push(v)); (s.match(/\d+(?:\.\d+)?/g)||[]).slice(0,3).forEach(d=>out.push(d)); return Array.from(new Set(out)); };
+    const parseDims = (pn: string) => {
+      const out: string[] = [];
+      if (!pn) return out;
+      const s = pn.toUpperCase().replace(/[\s-]+/g, '').replace(/×/g, 'X').replace(/[()]/g, '');
+      const fr: string[] = (s.match(/\d+\/\d+/g) ?? []) as string[];
+      if (s.includes('X')) {
+        const seg = s.split('X');
+        if (seg.length >= 2 && seg.length <= 4) {
+          out.push(seg.slice(0, 2).join('X'));
+          out.push(seg.join('X'));
+        }
+      }
+      fr.forEach((f) => {
+        out.push(f);
+        const dec = makeDecimal(f);
+        if (dec) out.push(dec);
+      });
+      ((s.match(/(\d+)GA/g) ?? []) as string[]).forEach((g) => out.push(g));
+      ((s.match(/SCH\s*\d+/g) ?? []) as string[]).forEach((m) => out.push(m.replace(/\s+/g, '')));
+      ((s.match(/OD\d+(?:\.\d+)?/g) ?? []) as string[]).forEach((v) => out.push(v));
+      ((s.match(/ID\d+(?:\.\d+)?/g) ?? []) as string[]).forEach((v) => out.push(v));
+      ((s.match(/\d+(?:\.\d+)?/g) ?? []) as string[]).slice(0, 3).forEach((d) => out.push(d));
+      return Array.from(new Set(out));
+    };
 
     for (const it of candidateItems) {
       const wordsRaw = String(it.part_description || '').toUpperCase().split(/[^A-Z0-9]+/).filter(w=>w.length>=2 && !selectedSet.has(w));

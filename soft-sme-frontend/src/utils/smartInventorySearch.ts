@@ -76,11 +76,13 @@ const EXPANSION_MAP = buildExpansionMap(PART_SEARCH_DICTIONARY);
 const normalizeDescription = (value: string, dictionary: PartSearchDictionary = PART_SEARCH_DICTIONARY): string => {
   if (!value) return '';
   let out = String(value);
-  const replacements = dictionary.description_normalization?.replace_characters || {};
+  const replacements: Record<string, string> = dictionary.description_normalization?.replace_characters || {};
   Object.entries(replacements).forEach(([from, to]) => {
-    out = out.split(from).join(to);
+    const fromStr = String(from);
+    const toStr = String(to);
+    out = out.split(fromStr).join(toStr);
   });
-  const allowed = dictionary.description_normalization?.remove_punctuation_except || [];
+  const allowed: string[] = dictionary.description_normalization?.remove_punctuation_except || [];
   const punctPattern = new RegExp(`[^A-Za-z0-9\\s${allowed.map((c) => '\\' + c).join('')}]+`, 'g');
   out = out.replace(punctPattern, ' ');
   if (dictionary.description_normalization?.collapse_whitespace) {
@@ -95,12 +97,12 @@ const normalizeDescription = (value: string, dictionary: PartSearchDictionary = 
 const normalizePartNumber = (value: string, dictionary: PartSearchDictionary = PART_SEARCH_DICTIONARY): string => {
   if (!value) return '';
   let out = String(value);
-  const stripChars = dictionary.part_number_normalization?.strip_characters || [];
+  const stripChars: string[] = dictionary.part_number_normalization?.strip_characters || [];
   stripChars.forEach((ch) => {
     const re = new RegExp(ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g');
     out = out.replace(re, '');
   });
-  const collapseChars = dictionary.part_number_normalization?.collapse_characters_to_dash || [];
+  const collapseChars: string[] = dictionary.part_number_normalization?.collapse_characters_to_dash || [];
   collapseChars.forEach((ch) => {
     const re = new RegExp(ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g');
     out = out.replace(re, '-');
