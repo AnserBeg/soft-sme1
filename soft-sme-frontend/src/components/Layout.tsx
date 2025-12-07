@@ -41,6 +41,7 @@ import {
   Email as EmailIcon,
   Description as DescriptionIcon,
   Chat as ChatIcon,
+  Search as SearchIcon,
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import { Tooltip } from '@mui/material';
@@ -154,6 +155,7 @@ const Layout: React.FC = () => {
 
       { type: 'header', text: 'Products & Inventory' },
       { text: 'Products', icon: <LocalOfferIcon />, path: '/products' },
+      { text: 'Smart Search', icon: <SearchIcon />, path: '/inventory/smart-search' },
       { text: 'Stock', icon: <InventoryIcon />, path: '/inventory' },
       { text: 'Supply', icon: <InventoryIcon />, path: '/supply' },
       { text: 'Service', icon: <InventoryIcon />, path: '/service' },
@@ -208,6 +210,7 @@ const Layout: React.FC = () => {
         { text: 'Return Orders', icon: <AssignmentReturnIcon />, path: '/return-orders' },
         { text: 'Parts to Order', icon: <InventoryIcon />, path: '/parts-to-order' },
         { type: 'header', text: 'Inventory' },
+        { text: 'Smart Search', icon: <SearchIcon />, path: '/inventory/smart-search' },
         { text: 'Stock', icon: <InventoryIcon />, path: '/inventory' },
         { text: 'Supply', icon: <InventoryIcon />, path: '/supply' },
         { text: 'Service', icon: <InventoryIcon />, path: '/service' },

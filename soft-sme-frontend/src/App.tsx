@@ -22,6 +22,7 @@ import ServicePage from './pages/ServicePage';
 import QuotePage from './pages/QuotePage';
 import QuoteEditorPage from './pages/QuoteEditorPage';
 import MessagingPage from './pages/MessagingPage';
+import SmartInventorySearchPage from './pages/SmartInventorySearchPage';
 
 // import SalesOrderPage from './pages/SalesOrderPage';
 
@@ -94,6 +95,7 @@ const PrivateRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => 
       '/return-orders',
       '/parts-to-order',
       '/inventory',
+      '/inventory/smart-search',
       '/supply',
       '/service',
       '/email-settings',
@@ -169,6 +171,7 @@ const AppRoutes: React.FC = () => {
         
         {/* Inventory */}
         <Route path="inventory" element={<InventoryPage />} />
+        <Route path="inventory/smart-search" element={<SmartInventorySearchPage />} />
         <Route path="supply" element={<SupplyPage />} />
         <Route path="service" element={<ServicePage />} />
         
