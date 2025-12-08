@@ -11,6 +11,7 @@ from livekit.agents import RunContext, function_tool, get_job_context
 
 
 DEFAULT_ESCALATION_NUMBER = os.getenv("DEFAULT_ESCALATION_NUMBER", "tel:+18883658681")
+OUTBOUND_COUNTRY_CODE = os.getenv("OUTBOUND_COUNTRY_CODE", "+1")
 
 
 def _norm_value(val: Optional[str]) -> str:
@@ -627,6 +628,17 @@ async def call_tech_for_status(ctx: RunContext, phone_number: str) -> str:
         logger.error("Missing LiveKit env (LIVEKIT_HTTP_URL/URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET, LIVEKIT_OUTBOUND_TRUNK_ID)")
         return "error"
 
+    def normalize(num: str) -> str:
+        n = num.strip()
+        if n.startswith("tel:"):
+            n = n[4:]
+        n = n.replace(" ", "")
+        if n.startswith("+"):
+            return n
+        if OUTBOUND_COUNTRY_CODE and n.isdigit() and len(n) == 10:
+            return f"{OUTBOUND_COUNTRY_CODE}{n}"
+        return n
+
     try:
         from livekit import api as lkapi
         from livekit.protocol.sip import CreateSIPParticipantRequest
@@ -637,11 +649,7 @@ async def call_tech_for_status(ctx: RunContext, phone_number: str) -> str:
             api_secret=api_secret,
         )
         room_name = job_ctx.room.name
-        dest = phone_number
-        if dest.startswith("tel:"):
-            dest = dest.replace("tel:", "", 1)
-        if not dest.startswith("+"):
-            dest = f"+{dest}"
+        dest = normalize(phone_number)
 
         await client.sip.create_sip_participant(
             CreateSIPParticipantRequest(

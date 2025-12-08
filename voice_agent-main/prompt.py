@@ -94,8 +94,11 @@ Status update on an existing truck (use get_sales_order_status; escalate if need
    - If `status` == Closed: “That order is closed and ready for pickup.”
    - If `status` == Open: share customer_name + brief product_description + last_updated (if present).
    - Then call `get_last_profile_status`; if you get a phone:
-       * Ask the caller to hold, call `call_tech_for_status` to bring the tech in, get a quick update/ETA, and relay it back.
-       * If tech unreachable, offer `transfer_to_human` or promise a callback.
+       * Tell the caller you’re placing them on hold to reach the technician.
+       * Call `call_tech_for_status` with that phone to bring the tech into the room.
+       * When the tech joins, ask for: (a) current status/progress, (b) expected completion/pickup time.
+       * Ask the tech if they want to explain directly to the customer. If yes, let them speak. If no, thank them and relay the update/ETA back to the customer yourself.
+       * If the tech doesn’t join or won’t answer in ~20 seconds, apologize and offer `transfer_to_human` or promise a callback.
 5. Keep the caller informed; do not leave silence. If transfer fails, tell them you’ll have the shop call back.
 
 # Safety around ending calls

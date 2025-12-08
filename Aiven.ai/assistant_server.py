@@ -43,6 +43,53 @@ def _ensure_python_paths():
 
 _ensure_python_paths()
 
+
+def _ensure_database_url():
+    """
+    Populate DATABASE_URL for the SQL agent if it isn't already set.
+
+    Priority:
+      1) Existing DATABASE_URL
+      2) AI_AGENT_DATABASE_URL / AGENT_DATABASE_URL
+      3) Construct from DB_* or PG* env vars
+    """
+    if os.getenv("DATABASE_URL"):
+        return
+
+    # Allow override via explicit agent-specific variables
+    for key in ("AI_AGENT_DATABASE_URL", "AGENT_DATABASE_URL", "SQL_DATABASE_URL"):
+        val = os.getenv(key)
+        if val:
+            os.environ["DATABASE_URL"] = val
+            print(f"[assistant] DATABASE_URL sourced from {key}")
+            return
+
+    host = os.getenv("DB_HOST") or os.getenv("PGHOST")
+    port = os.getenv("DB_PORT") or os.getenv("PGPORT") or "5432"
+    name = os.getenv("DB_DATABASE") or os.getenv("DB_NAME") or os.getenv("PGDATABASE")
+    user = os.getenv("DB_USER") or os.getenv("PGUSER")
+    password = os.getenv("DB_PASSWORD") or os.getenv("PGPASSWORD")
+
+    if not (host and name and user and password):
+        return
+
+    ssl_mode = os.getenv("DB_SSLMODE")
+    if not ssl_mode:
+        flag = (os.getenv("DB_SSL") or "").strip().lower()
+        if flag in ("1", "true", "yes", "on"):
+            ssl_mode = "require"
+
+    url = f"postgresql://{user}:{password}@{host}:{port}/{name}"
+    if ssl_mode:
+        sep = "&" if "?" in url else "?"
+        url = f"{url}{sep}sslmode={ssl_mode}"
+
+    os.environ["DATABASE_URL"] = url
+    print("[assistant] DATABASE_URL constructed from DB_* env vars")
+
+
+_ensure_database_url()
+
 def _in_virtualenv() -> bool:
     try:
         # Strong heuristics: path contains a typical venv folder or prefixes differ
