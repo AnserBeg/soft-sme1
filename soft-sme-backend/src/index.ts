@@ -56,6 +56,7 @@ import taskRoutes from './routes/taskRoutes';
 import partFinderRoutes from './routes/partFinderRoutes';
 import inventoryVendorRoutes from './routes/inventoryVendorRoutes';
 import assistantRoutes from './routes/assistantRoutes';
+import reminderRoutes from './routes/reminderRoutes';
 
 // Add error handling around chatRouter import
 let chatRouter: any;
@@ -332,6 +333,9 @@ console.log('Registered profile document routes');
 
 app.use('/api/messaging', authWithTenant, messagingRoutes);
 console.log('Registered messaging routes');
+
+app.use('/api/reminders', authWithTenant, reminderRoutes);
+console.log('Registered reminder routes');
 
 app.use('/api/tasks', taskRoutes);
 console.log('Registered task routes');

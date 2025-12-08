@@ -883,7 +883,7 @@ router.get('/profiles', async (req: Request, res: Response) => {
     // Mobile users can only see profiles they have access to
     if (userRole === 'Admin' || userRole === 'Time Tracking') {
       query = `
-        SELECT p.id, p.name, p.email 
+        SELECT p.id, p.name, p.email, p.phone_number 
         FROM profiles p
         ORDER BY p.name
       `;
@@ -896,7 +896,7 @@ router.get('/profiles', async (req: Request, res: Response) => {
 
       // Mobile users can only see profiles they have access to
       query = `
-        SELECT DISTINCT p.id, p.name, p.email 
+        SELECT DISTINCT p.id, p.name, p.email, p.phone_number 
         FROM profiles p
         INNER JOIN user_profile_access upa ON p.id = upa.profile_id
         WHERE upa.user_id = $1 AND upa.is_active = true
@@ -923,7 +923,7 @@ router.get('/mobile/profiles', async (req: Request, res: Response) => {
     
     // Mobile users (including admin) can only see profiles they have access to
     const query = `
-      SELECT DISTINCT p.id, p.name, p.email 
+      SELECT DISTINCT p.id, p.name, p.email, p.phone_number 
       FROM profiles p
       INNER JOIN user_profile_access upa ON p.id = upa.profile_id
       WHERE upa.user_id = $1 AND upa.is_active = true
@@ -939,7 +939,7 @@ router.get('/mobile/profiles', async (req: Request, res: Response) => {
 });
 
 router.post('/profiles', async (req: Request, res: Response) => {
-  const { name, email } = req.body;
+  const { name, email, phone_number } = req.body;
 
   try {
     if (!name || !email) {
@@ -947,13 +947,38 @@ router.post('/profiles', async (req: Request, res: Response) => {
     }
 
     const result = await pool.query(
-      'INSERT INTO profiles (name, email) VALUES ($1, $2) RETURNING *',
-      [name, email]
+      'INSERT INTO profiles (name, email, phone_number) VALUES ($1, $2, $3) RETURNING *',
+      [name, email, phone_number || null]
     );
 
     res.status(201).json(result.rows[0]);
   } catch (err) {
     console.error('Error creating profile:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.put('/profiles/:id', async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { name, email, phone_number } = req.body;
+
+  try {
+    if (!name || !email) {
+      return res.status(400).json({ error: 'Name and email are required' });
+    }
+
+    const result = await pool.query(
+      'UPDATE profiles SET name = $1, email = $2, phone_number = $3, updated_at = NOW() WHERE id = $4 RETURNING *',
+      [name, email, phone_number || null, id]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Profile not found' });
+    }
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('Error updating profile:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

@@ -7,6 +7,7 @@ export interface Profile {
   id: number;
   name: string;
   email: string;
+  phone_number?: string | null;
 }
 
 export interface SalesOrder {
@@ -115,8 +116,13 @@ export const getProfiles = async (): Promise<Profile[]> => {
   }
 };
 
-export const createProfile = async (name: string, email: string): Promise<Profile> => {
-  const response = await api.post('/api/time-tracking/profiles', { name, email });
+export const createProfile = async (name: string, email: string, phone_number?: string): Promise<Profile> => {
+  const response = await api.post('/api/time-tracking/profiles', { name, email, phone_number });
+  return response.data;
+};
+
+export const updateProfile = async (id: number, name: string, email: string, phone_number?: string): Promise<Profile> => {
+  const response = await api.put(`/api/time-tracking/profiles/${id}`, { name, email, phone_number });
   return response.data;
 };
 

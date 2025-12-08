@@ -26,8 +26,8 @@ import {
   IconButton
 } from '@mui/material';
 import { Add as AddIcon, GetApp as GetAppIcon, PictureAsPdf as PictureAsPdfIcon } from '@mui/icons-material';
-import { getProfiles, createProfile, Profile } from '../services/timeTrackingService';
-import { Delete as DeleteIcon } from '@mui/icons-material';
+import { getProfiles, createProfile, updateProfile, Profile } from '../services/timeTrackingService';
+import { Delete as DeleteIcon, Edit as EditIcon } from '@mui/icons-material';
 import api from '../api/axios';
 import { toast } from 'react-toastify';
 import { getShifts, clockInShift, clockOutShift, getActiveShift } from '../services/attendanceService';
@@ -55,7 +55,8 @@ const AttendancePage: React.FC = () => {
   const [activeLoading, setActiveLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [openProfileDialog, setOpenProfileDialog] = useState(false);
-  const [newProfile, setNewProfile] = useState({ name: '', email: '' });
+  const [profileForm, setProfileForm] = useState({ name: '', email: '', phone_number: '' });
+  const [editingProfileId, setEditingProfileId] = useState<number | null>(null);
 
   const [showUnclosedWarning, setShowUnclosedWarning] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -238,16 +239,29 @@ const AttendancePage: React.FC = () => {
     }
   };
 
-  const handleCreateProfile = async () => {
+  const handleSaveProfile = async () => {
+    if (!profileForm.name || !profileForm.email) {
+      setError('Name and email are required');
+      return;
+    }
     try {
-      const profile = await createProfile(newProfile.name, newProfile.email);
-      setProfiles([...profiles, profile]);
+      let profile: Profile;
+      if (editingProfileId) {
+        profile = await updateProfile(editingProfileId, profileForm.name, profileForm.email, profileForm.phone_number || undefined);
+        setProfiles(prev => prev.map(p => (p.id === editingProfileId ? profile : p)));
+        toast.success('Profile updated');
+      } else {
+        profile = await createProfile(profileForm.name, profileForm.email, profileForm.phone_number || undefined);
+        setProfiles([...profiles, profile]);
+        toast.success('Profile created');
+      }
       setOpenProfileDialog(false);
-      setNewProfile({ name: '', email: '' });
+      setProfileForm({ name: '', email: '', phone_number: '' });
+      setEditingProfileId(null);
       setError(null);
     } catch (err) {
-      setError('Failed to create profile. Please try again.');
-      console.error('Error creating profile:', err);
+      setError('Failed to save profile. Please try again.');
+      console.error('Error saving profile:', err);
     }
   };
 
@@ -319,7 +333,11 @@ const AttendancePage: React.FC = () => {
               {user?.access_role !== 'Time Tracking' && (
                 <Button
                   startIcon={<AddIcon />}
-                  onClick={() => setOpenProfileDialog(true)}
+                  onClick={() => {
+                    setEditingProfileId(null);
+                    setProfileForm({ name: '', email: '', phone_number: '' });
+                    setOpenProfileDialog(true);
+                  }}
                 >
                   Add Profile
                 </Button>
@@ -356,29 +374,50 @@ const AttendancePage: React.FC = () => {
                   <MenuItem key={profile.id} value={profile.id} sx={{ fontSize: '1.1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <span>{profile.name}</span>
                     {user?.access_role === 'Admin' && (
-                      <IconButton
-                        aria-label={`Delete ${profile.name}`}
-                        size="small"
-                        edge="end"
-                        onClick={async (e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          const ok = window.confirm(`Delete profile "${profile.name}"? This cannot be undone.`);
-                          if (!ok) return;
-                          try {
-                            await api.delete(`/api/time-tracking/profiles/${profile.id}`);
-                            setProfiles(prev => prev.filter(pr => pr.id !== profile.id));
-                            if (selectedProfile === profile.id) setSelectedProfile('');
-                            toast.success('Profile deleted');
-                          } catch (err: any) {
-                            const msg = err?.response?.data?.error || 'Failed to delete profile';
-                            toast.error(msg);
-                          }
-                        }}
-                        sx={{ ml: 2, color: 'error.main' }}
-                      >
-                        <DeleteIcon fontSize="small" />
-                      </IconButton>
+                      <Box display="flex" alignItems="center" gap={1}>
+                        <IconButton
+                          aria-label={`Edit ${profile.name}`}
+                          size="small"
+                          edge="end"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setEditingProfileId(profile.id);
+                            setProfileForm({
+                              name: profile.name || '',
+                              email: profile.email || '',
+                              phone_number: (profile as any).phone_number || '',
+                            });
+                            setOpenProfileDialog(true);
+                          }}
+                          sx={{ color: 'primary.main' }}
+                        >
+                          <EditIcon fontSize="small" />
+                        </IconButton>
+                        <IconButton
+                          aria-label={`Delete ${profile.name}`}
+                          size="small"
+                          edge="end"
+                          onClick={async (e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            const ok = window.confirm(`Delete profile "${profile.name}"? This cannot be undone.`);
+                            if (!ok) return;
+                            try {
+                              await api.delete(`/api/time-tracking/profiles/${profile.id}`);
+                              setProfiles(prev => prev.filter(pr => pr.id !== profile.id));
+                              if (selectedProfile === profile.id) setSelectedProfile('');
+                              toast.success('Profile deleted');
+                            } catch (err: any) {
+                              const msg = err?.response?.data?.error || 'Failed to delete profile';
+                              toast.error(msg);
+                            }
+                          }}
+                          sx={{ color: 'error.main' }}
+                        >
+                          <DeleteIcon fontSize="small" />
+                        </IconButton>
+                      </Box>
                     )}
                   </MenuItem>
                 ))}
@@ -514,27 +553,34 @@ const AttendancePage: React.FC = () => {
         </Grid>
       </Grid>
 
-      {/* Add Profile Dialog */}
+      {/* Add/Edit Profile Dialog */}
       <Dialog open={openProfileDialog} onClose={() => setOpenProfileDialog(false)}>
-        <DialogTitle>Add Profile</DialogTitle>
+        <DialogTitle>{editingProfileId ? 'Edit Profile' : 'Add Profile'}</DialogTitle>
         <DialogContent>
           <TextField
             label="Name"
-            value={newProfile.name}
-            onChange={e => setNewProfile({ ...newProfile, name: e.target.value })}
+            value={profileForm.name}
+            onChange={e => setProfileForm({ ...profileForm, name: e.target.value })}
             fullWidth
             sx={{ mb: 2 }}
           />
           <TextField
             label="Email"
-            value={newProfile.email}
-            onChange={e => setNewProfile({ ...newProfile, email: e.target.value })}
+            value={profileForm.email}
+            onChange={e => setProfileForm({ ...profileForm, email: e.target.value })}
+            fullWidth
+            sx={{ mb: 2 }}
+          />
+          <TextField
+            label="Phone Number"
+            value={profileForm.phone_number}
+            onChange={e => setProfileForm({ ...profileForm, phone_number: e.target.value })}
             fullWidth
           />
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setOpenProfileDialog(false)}>Cancel</Button>
-          <Button onClick={handleCreateProfile} variant="contained">Save</Button>
+          <Button onClick={handleSaveProfile} variant="contained">Save</Button>
         </DialogActions>
       </Dialog>
 

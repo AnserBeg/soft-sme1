@@ -1,21 +1,20 @@
 from dotenv import load_dotenv
 
 from livekit import agents
-from livekit.agents import AgentSession, Agent, RoomInputOptions
+from livekit.agents import Agent, AgentSession, RoomInputOptions
 from livekit.plugins import noise_cancellation, silero
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 from prompt import AGENT_INSTRUCTIONS, SESSION_INSTRUCTIONS
-from tool import end_call, transfer_to_human
 
 load_dotenv(".env.local")
 
 
-class Assistant(Agent):
+class OutboundReminderAgent(Agent):
     def __init__(self):
         super().__init__(
             instructions=AGENT_INSTRUCTIONS,
-            tools=[end_call, transfer_to_human]
+            tools=[],  # reminder only; add tools if you later want clock-in actions
         )
 
 
@@ -30,7 +29,7 @@ async def entrypoint(ctx: agents.JobContext):
 
     await session.start(
         room=ctx.room,
-        agent=Assistant(),
+        agent=OutboundReminderAgent(),
         room_input_options=RoomInputOptions(
             noise_cancellation=noise_cancellation.BVC(),
         ),
@@ -42,4 +41,10 @@ async def entrypoint(ctx: agents.JobContext):
 
 
 if __name__ == "__main__":
-    agents.cli.run_app(agents.WorkerOptions(entrypoint_fnc=entrypoint))
+    agents.cli.run_app(
+        agents.WorkerOptions(
+            entrypoint_fnc=entrypoint,
+            initialize_process_timeout=60.0,
+            agent_name="Clock-In Reminder",
+        )
+    )
