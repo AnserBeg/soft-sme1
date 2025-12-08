@@ -293,11 +293,6 @@ router.get('/open', async (req: Request, res: Response) => {
 // Get the last profile that worked on a sales order (based on latest time entry)
 router.get('/:id/last-profile', async (req: Request, res: Response) => {
   const { id } = req.params;
-  const tenantId = req.headers['x-tenant-id'];
-
-  if (!tenantId) {
-    return res.status(400).json({ error: 'x-tenant-id header is required' });
-  }
 
   try {
     const query = `
@@ -309,12 +304,12 @@ router.get('/:id/last-profile', async (req: Request, res: Response) => {
         te.clock_out
       FROM time_entries te
       JOIN profiles p ON p.id = te.profile_id
-      WHERE te.so_id = $1 AND te.tenant_id = $2
+      WHERE te.so_id = $1
       ORDER BY te.clock_in DESC
       LIMIT 1
     `;
 
-    const result = await pool.query(query, [id, tenantId]);
+    const result = await pool.query(query, [id]);
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'No time entries found for this sales order' });
     }

@@ -13,6 +13,12 @@ from livekit.agents import RunContext, function_tool, get_job_context
 DEFAULT_ESCALATION_NUMBER = os.getenv("DEFAULT_ESCALATION_NUMBER", "tel:+18883658681")
 
 
+def _norm_value(val: Optional[str]) -> str:
+  if not val:
+    return ""
+  return re.sub(r"[^a-z0-9]", "", str(val).lower())
+
+
 @function_tool
 async def transfer_to_human(ctx: RunContext, destination: str = "") -> str:
     """Transfer to specialist. Call only after confirming consent. Destination defaults to DEFAULT_ESCALATION_NUMBER env."""
@@ -229,7 +235,8 @@ async def _get_or_create_customer(
 @function_tool
 async def get_sales_order_status(ctx: RunContext, sales_order_number: str) -> str:
     """
-    Fetch a sales order by ID/number, returning status and basic fields.
+    Fetch a sales order by ID/number. If a non-numeric SO number is provided (e.g., "SO-2025-00066"),
+    fall back to scanning open sales orders and matching by sales_order_number.
     """
     logger = logging.getLogger("phone-assistant")
     job_ctx = get_job_context()
@@ -245,7 +252,6 @@ async def get_sales_order_status(ctx: RunContext, sales_order_number: str) -> st
         logger.error("AGENT_BACKEND_BASE_URL/BACKEND_BASE_URL is not set")
         return "error"
 
-    url = _build_url(BACKEND_BASE_URL, f"{SALES_ORDER_PATH.rstrip('/')}/{sales_order_number}")
     headers = {
         "Content-Type": "application/json",
         "x-tenant-id": tenant_id,
@@ -253,15 +259,37 @@ async def get_sales_order_status(ctx: RunContext, sales_order_number: str) -> st
     if token:
         headers["Authorization"] = f"Bearer {token}"
 
-    try:
+    async def fetch_by_id(so_id: str) -> Optional[Dict[str, Any]]:
+        url = _build_url(BACKEND_BASE_URL, f"{SALES_ORDER_PATH.rstrip('/')}/{so_id}")
         resp = await _get_json(url, headers)
         if resp.status_code != 200:
-            logger.error("Sales order fetch failed", extra={"status": resp.status_code, "body": resp.text})
-            return "error"
+            return None
         data = resp.json()
-        if not isinstance(data, dict):
+        return data if isinstance(data, dict) else None
+
+    try:
+        data: Optional[Dict[str, Any]] = None
+        if sales_order_number.isdigit():
+            data = await fetch_by_id(sales_order_number)
+        else:
+            # Non-numeric: search open orders and match on sales_order_number
+            list_url = _build_url(BACKEND_BASE_URL, f"{SALES_ORDER_PATH.rstrip('/')}")
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(list_url, headers=headers, params={"status": "open"})
+            if resp.status_code == 200 and isinstance(resp.json(), list):
+                candidates = resp.json()
+                for so in candidates:
+                    if _norm_value(so.get("sales_order_number")) == _norm_value(sales_order_number):
+                        data = so
+                        break
+            # If still not found and numeric-ish, attempt direct fetch
+            if data is None and any(ch.isdigit() for ch in sales_order_number):
+                data = await fetch_by_id(sales_order_number)
+
+        if not data:
+            logger.error("Sales order fetch failed", extra={"status": "not_found"})
             return "error"
-        # Return only relevant fields to the LLM
+
         payload = {
             "sales_order_id": data.get("sales_order_id") or data.get("id"),
             "sales_order_number": data.get("sales_order_number") or data.get("sales_order_id"),
@@ -269,8 +297,8 @@ async def get_sales_order_status(ctx: RunContext, sales_order_number: str) -> st
             "customer_name": data.get("customer_name"),
             "product_description": data.get("product_description"),
             "unit_number": data.get("unit_number"),
+            "vin_number": data.get("vin_number"),
             "last_updated": data.get("updated_at") or data.get("updatedAt"),
-            # include any assigned or last worked profile info if present
             "last_profile_name": data.get("last_profile_name") or data.get("assigned_to"),
         }
         return json.dumps(payload, ensure_ascii=False)
@@ -486,15 +514,32 @@ async def search_sales_orders(
     def _score(so: Dict[str, Any]) -> float:
         scores = []
         if company_name:
-            scores.append(SequenceMatcher(None, _norm(company_name), _norm(str(so.get("customer_name") or ""))).ratio())
+            scores.append(
+                SequenceMatcher(
+                    None,
+                    _norm_value(company_name),
+                    _norm_value(str(so.get("customer_name") or "")),
+                ).ratio()
+            )
         if unit_number:
-            scores.append(SequenceMatcher(None, _norm(unit_number), _norm(str(so.get("unit_number") or ""))).ratio())
+            scores.append(
+                SequenceMatcher(
+                    None,
+                    _norm_value(unit_number),
+                    _norm_value(str(so.get("unit_number") or "")),
+                ).ratio()
+            )
         if vin:
-            # exact vin match gets a bump
-            if _norm(vin) and _norm(vin) == _norm(str(so.get("vin_number") or "")):
+            if _norm_value(vin) and _norm_value(vin) == _norm_value(str(so.get("vin_number") or "")):
                 scores.append(1.0)
             else:
-                scores.append(SequenceMatcher(None, _norm(vin), _norm(str(so.get("vin_number") or ""))).ratio())
+                scores.append(
+                    SequenceMatcher(
+                        None,
+                        _norm_value(vin),
+                        _norm_value(str(so.get("vin_number") or "")),
+                    ).ratio()
+                )
         return max(scores) if scores else 0.0
 
     try:
