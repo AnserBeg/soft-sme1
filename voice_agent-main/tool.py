@@ -10,18 +10,20 @@ from livekit import api
 from livekit.agents import RunContext, function_tool, get_job_context
 
 
+DEFAULT_ESCALATION_NUMBER = os.getenv("DEFAULT_ESCALATION_NUMBER", "tel:+18883658681")
+
+
 @function_tool
-async def transfer_to_human(ctx: RunContext) -> str:
-    """Transfer to specialist. Call only after confirming the users name and consent to be transferred."""
+async def transfer_to_human(ctx: RunContext, destination: str = "") -> str:
+    """Transfer to specialist. Call only after confirming consent. Destination defaults to DEFAULT_ESCALATION_NUMBER env."""
     logger = logging.getLogger("phone-assistant")
     job_ctx = get_job_context()
     if job_ctx is None:
         logger.error("Job context not found")
         return "error"
 
-    transfer_to = "tel:+18883658681"
+    transfer_to = destination.strip() or DEFAULT_ESCALATION_NUMBER
 
-    #find sip participant
     sip_participant = None
     for participant in job_ctx.room.remote_participants.values():
         if participant.identity.startswith("sip:"):
@@ -224,6 +226,59 @@ async def _get_or_create_customer(
         return None
 
 
+@function_tool
+async def get_sales_order_status(ctx: RunContext, sales_order_number: str) -> str:
+    """
+    Fetch a sales order by ID/number, returning status and basic fields.
+    """
+    logger = logging.getLogger("phone-assistant")
+    job_ctx = get_job_context()
+    if job_ctx is None:
+        logger.error("Failed to get job context")
+        return "error"
+
+    tenant_ctx = _resolve_tenant(job_ctx)
+    tenant_id = tenant_ctx["tenant_id"]
+    token = tenant_ctx["token"]
+
+    if not BACKEND_BASE_URL:
+        logger.error("AGENT_BACKEND_BASE_URL/BACKEND_BASE_URL is not set")
+        return "error"
+
+    url = _build_url(BACKEND_BASE_URL, f"{SALES_ORDER_PATH.rstrip('/')}/{sales_order_number}")
+    headers = {
+        "Content-Type": "application/json",
+        "x-tenant-id": tenant_id,
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    try:
+        resp = await _get_json(url, headers)
+        if resp.status_code != 200:
+            logger.error("Sales order fetch failed", extra={"status": resp.status_code, "body": resp.text})
+            return "error"
+        data = resp.json()
+        if not isinstance(data, dict):
+            return "error"
+        # Return only relevant fields to the LLM
+        payload = {
+            "sales_order_id": data.get("sales_order_id") or data.get("id"),
+            "sales_order_number": data.get("sales_order_number") or data.get("sales_order_id"),
+            "status": data.get("status"),
+            "customer_name": data.get("customer_name"),
+            "product_description": data.get("product_description"),
+            "unit_number": data.get("unit_number"),
+            "last_updated": data.get("updated_at") or data.get("updatedAt"),
+            # include any assigned or last worked profile info if present
+            "last_profile_name": data.get("last_profile_name") or data.get("assigned_to"),
+        }
+        return json.dumps(payload, ensure_ascii=False)
+    except Exception:
+        logger.error("Exception fetching sales order status", exc_info=True)
+        return "error"
+
+
 def _build_product_name(issue: str, make: Optional[str], model: Optional[str], year: Optional[str]) -> str:
     base = issue.strip() if issue else ""
     if not base:
@@ -390,4 +445,172 @@ async def customer_lookup(ctx: RunContext, company_name: str) -> str:
         return json.dumps({"matches": [m for _, m in top]}, ensure_ascii=False)
     except Exception:
         logger.error("Exception during customer lookup", exc_info=True)
+        return "error"
+
+
+@function_tool
+async def search_sales_orders(
+    ctx: RunContext,
+    company_name: Optional[str] = None,
+    unit_number: Optional[str] = None,
+    vin: Optional[str] = None,
+) -> str:
+    """
+    Search open sales orders by company name and/or unit/VIN (client-side fuzzy). Returns up to 5 matches.
+    """
+    logger = logging.getLogger("phone-assistant")
+    job_ctx = get_job_context()
+    if job_ctx is None:
+        logger.error("Failed to get job context")
+        return "error"
+
+    tenant_ctx = _resolve_tenant(job_ctx)
+    tenant_id = tenant_ctx["tenant_id"]
+    token = tenant_ctx["token"]
+
+    if not BACKEND_BASE_URL:
+        logger.error("AGENT_BACKEND_BASE_URL/BACKEND_BASE_URL is not set")
+        return "error"
+
+    if not company_name and not unit_number and not vin:
+        return "error"
+
+    url = _build_url(BACKEND_BASE_URL, f"{SALES_ORDER_PATH.rstrip('/')}")
+    headers = {
+        "Content-Type": "application/json",
+        "x-tenant-id": tenant_id,
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    def _score(so: Dict[str, Any]) -> float:
+        scores = []
+        if company_name:
+            scores.append(SequenceMatcher(None, _norm(company_name), _norm(str(so.get("customer_name") or ""))).ratio())
+        if unit_number:
+            scores.append(SequenceMatcher(None, _norm(unit_number), _norm(str(so.get("unit_number") or ""))).ratio())
+        if vin:
+            # exact vin match gets a bump
+            if _norm(vin) and _norm(vin) == _norm(str(so.get("vin_number") or "")):
+                scores.append(1.0)
+            else:
+                scores.append(SequenceMatcher(None, _norm(vin), _norm(str(so.get("vin_number") or ""))).ratio())
+        return max(scores) if scores else 0.0
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url, headers=headers, params={"status": "open"})
+        if resp.status_code not in (200, 201):
+            logger.error("Sales order search failed", extra={"status": resp.status_code, "body": resp.text})
+            return "error"
+        data = resp.json()
+        if not isinstance(data, list) or not data:
+            return "error"
+        scored = []
+        for so in data:
+            score = _score(so)
+            scored.append((score, so))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        matches = [so for s, so in scored if s >= 0.45][:5]
+        if not matches:
+            return "no_match"
+        return json.dumps({"matches": matches}, ensure_ascii=False)
+    except Exception:
+        logger.error("Exception searching sales orders", exc_info=True)
+        return "error"
+
+
+@function_tool
+async def get_last_profile_status(ctx: RunContext, sales_order_id: int) -> str:
+    """
+    Get the last profile that worked on a sales order (with phone and last clock times).
+    """
+    logger = logging.getLogger("phone-assistant")
+    job_ctx = get_job_context()
+    if job_ctx is None:
+        logger.error("Failed to get job context")
+        return "error"
+
+    tenant_ctx = _resolve_tenant(job_ctx)
+    tenant_id = tenant_ctx["tenant_id"]
+    token = tenant_ctx["token"]
+
+    if not BACKEND_BASE_URL:
+        logger.error("AGENT_BACKEND_BASE_URL/BACKEND_BASE_URL is not set")
+        return "error"
+
+    url = _build_url(BACKEND_BASE_URL, f"{SALES_ORDER_PATH.rstrip('/')}/{sales_order_id}/last-profile")
+    headers = {
+        "Content-Type": "application/json",
+        "x-tenant-id": tenant_id,
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    try:
+        resp = await _get_json(url, headers)
+        if resp.status_code != 200:
+            logger.error("Last profile fetch failed", extra={"status": resp.status_code, "body": resp.text})
+            return "error"
+        data = resp.json()
+        if not isinstance(data, dict):
+            return "error"
+        return json.dumps(data, ensure_ascii=False)
+    except Exception:
+        logger.error("Exception fetching last profile", exc_info=True)
+        return "error"
+
+
+@function_tool
+async def call_tech_for_status(ctx: RunContext, phone_number: str) -> str:
+    """
+    Dial the provided tech phone into the current room using the outbound SIP trunk.
+    Requires LIVEKIT_HTTP_URL (or LIVEKIT_URL), LIVEKIT_API_KEY/SECRET, and LIVEKIT_OUTBOUND_TRUNK_ID.
+    """
+    logger = logging.getLogger("phone-assistant")
+    job_ctx = get_job_context()
+    if job_ctx is None:
+        logger.error("Failed to get job context")
+        return "error"
+
+    livekit_url = os.getenv("LIVEKIT_HTTP_URL") or os.getenv("LIVEKIT_URL")
+    api_key = os.getenv("LIVEKIT_API_KEY")
+    api_secret = os.getenv("LIVEKIT_API_SECRET")
+    trunk_id = os.getenv("LIVEKIT_OUTBOUND_TRUNK_ID") or os.getenv("OUTBOUND_TRUNK_ID")
+
+    if not livekit_url or not api_key or not api_secret or not trunk_id:
+        logger.error("Missing LiveKit env (LIVEKIT_HTTP_URL/URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET, LIVEKIT_OUTBOUND_TRUNK_ID)")
+        return "error"
+
+    try:
+        from livekit import api as lkapi
+        from livekit.protocol.sip import CreateSIPParticipantRequest
+
+        client = lkapi.LiveKitAPI(
+            url=livekit_url.replace("wss://", "https://").rstrip("/"),
+            api_key=api_key,
+            api_secret=api_secret,
+        )
+        room_name = job_ctx.room.name
+        dest = phone_number
+        if dest.startswith("tel:"):
+            dest = dest.replace("tel:", "", 1)
+        if not dest.startswith("+"):
+            dest = f"+{dest}"
+
+        await client.sip.create_sip_participant(
+            CreateSIPParticipantRequest(
+                sip_trunk_id=trunk_id,
+                sip_call_to=dest,
+                room_name=room_name,
+                participant_identity=f"sip:{dest}",
+                participant_name=dest,
+                wait_until_answered=False,
+                play_dialtone=True,
+            )
+        )
+        await client.aclose()
+        return "dialing"
+    except Exception:
+        logger.error("Exception dialing tech", exc_info=True)
         return "error"

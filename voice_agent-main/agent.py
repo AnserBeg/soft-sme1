@@ -6,7 +6,16 @@ from livekit.plugins import noise_cancellation, silero
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 from prompt import AGENT_INSTRUCTIONS, SESSION_INSTRUCTIONS
-from tool import create_sales_order, customer_lookup, end_call, transfer_to_human
+from tool import (
+    create_sales_order,
+    customer_lookup,
+    end_call,
+    transfer_to_human,
+    get_sales_order_status,
+    get_last_profile_status,
+    call_tech_for_status,
+    search_sales_orders,
+)
 
 load_dotenv(".env.local")
 
@@ -15,7 +24,16 @@ class Assistant(Agent):
     def __init__(self):
         super().__init__(
             instructions=AGENT_INSTRUCTIONS,
-            tools=[end_call, transfer_to_human, customer_lookup, create_sales_order]
+            tools=[
+                end_call,
+                transfer_to_human,
+                customer_lookup,
+                search_sales_orders,
+                create_sales_order,
+                get_sales_order_status,
+                get_last_profile_status,
+                call_tech_for_status,
+            ]
         )
 
 

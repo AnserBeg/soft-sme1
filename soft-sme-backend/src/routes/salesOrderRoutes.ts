@@ -5,6 +5,7 @@ import { SalesOrderService } from '../services/SalesOrderService';
 import { InventoryService } from '../services/InventoryService';
 import axios from 'axios';
 import { getLogoImageSource } from '../utils/pdfLogoHelper';
+import { resolveTenantUserId } from '../utils/tenantUser';
 
 // Helper function to check if customer exists in QuickBooks
 async function checkQBOCustomerExists(customerName: string, accessToken: string, realmId: string): Promise<boolean> {
@@ -229,6 +230,50 @@ const router = express.Router();
 const salesOrderService = new SalesOrderService(pool);
 const inventoryService = new InventoryService(pool);
 
+// Search sales orders by company name and/or unit/VIN
+router.get('/search', async (req: Request, res: Response) => {
+  const { company, unit, vin } = req.query;
+
+  if (!company && !unit && !vin) {
+    return res.status(400).json({ error: 'Provide at least company, unit, or vin' });
+  }
+
+  try {
+    const params: any[] = [];
+    const where: string[] = ['1=1'];
+
+    if (company) {
+      params.push(`%${(company as string).toLowerCase()}%`);
+      where.push(`LOWER(cm.customer_name) LIKE $${params.length}`);
+    }
+    if (unit) {
+      params.push(unit);
+      where.push(`soh.unit_number = $${params.length}`);
+    }
+    if (vin) {
+      params.push(vin);
+      where.push(`soh.vin_number = $${params.length}`);
+    }
+
+    const sql = `
+      SELECT soh.*, cm.customer_name
+      FROM salesorderhistory soh
+      LEFT JOIN customermaster cm ON cm.customer_id = soh.customer_id
+      WHERE ${where.join(' AND ')}
+      ORDER BY soh.sales_date DESC
+      LIMIT 5
+    `;
+    const result = await pool.query(sql, params);
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'No matching sales orders found' });
+    }
+    return res.json(result.rows);
+  } catch (err) {
+    console.error('salesOrderRoutes: Error searching sales orders', err);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Get all open sales orders
 router.get('/open', async (req: Request, res: Response) => {
   try {
@@ -242,6 +287,49 @@ router.get('/open', async (req: Request, res: Response) => {
   } catch (err) {
     console.error('salesOrderRoutes: Error fetching open sales orders:', err);
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get the last profile that worked on a sales order (based on latest time entry)
+router.get('/:id/last-profile', async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const tenantId = req.headers['x-tenant-id'];
+
+  if (!tenantId) {
+    return res.status(400).json({ error: 'x-tenant-id header is required' });
+  }
+
+  try {
+    const query = `
+      SELECT
+        te.profile_id,
+        p.name AS profile_name,
+        p.phone_number,
+        te.clock_in,
+        te.clock_out
+      FROM time_entries te
+      JOIN profiles p ON p.id = te.profile_id
+      WHERE te.so_id = $1 AND te.tenant_id = $2
+      ORDER BY te.clock_in DESC
+      LIMIT 1
+    `;
+
+    const result = await pool.query(query, [id, tenantId]);
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'No time entries found for this sales order' });
+    }
+
+    const row = result.rows[0];
+    return res.json({
+      profile_id: row.profile_id,
+      profile_name: row.profile_name,
+      phone_number: row.phone_number,
+      last_clock_in: row.clock_in,
+      last_clock_out: row.clock_out,
+    });
+  } catch (err) {
+    console.error('salesOrderRoutes: Error fetching last profile for sales order', err);
+    return res.status(500).json({ error: 'Internal server error' });
   }
 });
 
