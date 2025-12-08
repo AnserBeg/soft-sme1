@@ -1,3 +1,4 @@
+import asyncio
 from dotenv import load_dotenv
 
 from livekit import agents
@@ -6,6 +7,12 @@ from livekit.plugins import noise_cancellation, silero
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 from prompt import AGENT_INSTRUCTIONS, SESSION_INSTRUCTIONS
+from tool import (
+    end_call,
+    search_open_sales_orders,
+    create_sales_order,
+    clock_in_time_entry,
+)
 
 load_dotenv(".env.local")
 
@@ -14,7 +21,12 @@ class OutboundReminderAgent(Agent):
     def __init__(self):
         super().__init__(
             instructions=AGENT_INSTRUCTIONS,
-            tools=[],  # reminder only; add tools if you later want clock-in actions
+            tools=[
+                end_call,
+                search_open_sales_orders,
+                create_sales_order,
+                clock_in_time_entry,
+            ],
         )
 
 
@@ -35,9 +47,19 @@ async def entrypoint(ctx: agents.JobContext):
         ),
     )
 
-    await session.generate_reply(
-        instructions=SESSION_INSTRUCTIONS,
-    )
+    # Wait briefly for SIP participant to join before speaking
+    async def wait_for_participant(timeout: float = 10.0) -> None:
+        elapsed = 0.0
+        while elapsed < timeout:
+            if ctx.room.remote_participants:
+                return
+            await asyncio.sleep(0.5)
+            elapsed += 0.5
+
+    await wait_for_participant()
+
+    # Kick off the conversation using the session instructions
+    await session.generate_reply(instructions=SESSION_INSTRUCTIONS)
 
 
 if __name__ == "__main__":

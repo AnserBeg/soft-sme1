@@ -21,9 +21,14 @@ LIVEKIT_URL = os.getenv("LIVEKIT_URL")
 LIVEKIT_API_KEY = os.getenv("LIVEKIT_API_KEY")
 LIVEKIT_API_SECRET = os.getenv("LIVEKIT_API_SECRET")
 OUTBOUND_TRUNK_ID = os.getenv("LIVEKIT_OUTBOUND_TRUNK_ID") or os.getenv("OUTBOUND_TRUNK_ID")
+OUTBOUND_COUNTRY_CODE = os.getenv("OUTBOUND_COUNTRY_CODE", "+1")
 
 TWIRP_ROOM = "/twirp/livekit.RoomService/CreateRoom"
 TWIRP_SIP = "/twirp/livekit.SIPService/CreateSIPParticipant"
+LIVEKIT_HTTP_BASE = (
+    os.getenv("LIVEKIT_HTTP_URL")
+    or (LIVEKIT_URL.replace("wss://", "https://") if LIVEKIT_URL else None)
+)
 
 # Simple cooldown per profile to avoid spamming
 COOLDOWN_SECONDS = int(os.getenv("REMINDER_COOLDOWN_SECONDS", "3600"))
@@ -37,6 +42,16 @@ def _can_call(profile_id: int) -> bool:
 
 def _mark_called(profile_id: int) -> None:
     _recent_calls[profile_id] = time.time()
+
+
+def _normalize_number(num: str) -> str:
+    digits = "".join(ch for ch in num if ch.isdigit() or ch == "+")
+    if digits.startswith("+"):
+        return digits
+    # If 10-digit North America, prefix country code
+    if len(digits) == 10 and OUTBOUND_COUNTRY_CODE:
+        return f"{OUTBOUND_COUNTRY_CODE}{digits}"
+    return digits
 
 
 def build_headers() -> Dict[str, str]:
@@ -69,54 +84,57 @@ async def fetch_idle_employees() -> List[Dict[str, Any]]:
 
 
 def build_room_token() -> str:
+    import datetime
     from livekit import api
 
     at = api.AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET)
-    at.identity = "reminder-orchestrator"
-    at.ttl = 300
-    at.add_grants(api.VideoGrants(room_create=True, room_admin=True, room_join=True))
+    at.with_identity("reminder-orchestrator")
+    # Server-side token for room creation and SIP participant creation; no room join required.
+    at.with_grants(api.VideoGrants(room_create=True, room_admin=True))
+    at.with_ttl(datetime.timedelta(seconds=300))
     return at.to_jwt()
 
 
 async def create_room(room_name: str, metadata: Dict[str, Any]) -> None:
-    if not LIVEKIT_URL or not LIVEKIT_API_KEY or not LIVEKIT_API_SECRET:
-        raise RuntimeError("Set LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET")
-    token = build_room_token()
-    payload = {
-        "name": room_name,
-        "empty_timeout": 3600,
-        "metadata": json.dumps(metadata),
-    }
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        r = await client.post(
-            LIVEKIT_URL.rstrip("/") + TWIRP_ROOM,
-            headers={"Authorization": f"Bearer {token}"},
-            json=payload,
+    from livekit import api as lkapi
+
+    if not LIVEKIT_HTTP_BASE or not LIVEKIT_API_KEY or not LIVEKIT_API_SECRET:
+        raise RuntimeError("Set LIVEKIT_URL (or LIVEKIT_HTTP_URL), LIVEKIT_API_KEY, LIVEKIT_API_SECRET")
+    client = lkapi.LiveKitAPI(url=LIVEKIT_HTTP_BASE.rstrip("/"), api_key=LIVEKIT_API_KEY, api_secret=LIVEKIT_API_SECRET)
+    await client.room.create_room(
+        lkapi.CreateRoomRequest(
+            name=room_name,
+            empty_timeout=3600,
+            metadata=json.dumps(metadata),
         )
-    r.raise_for_status()
+    )
+    await client.aclose()
 
 
 async def dial_out(room_name: str, to_number: str) -> None:
-    if not LIVEKIT_URL or not OUTBOUND_TRUNK_ID:
-        raise RuntimeError("Set LIVEKIT_URL and LIVEKIT_OUTBOUND_TRUNK_ID/OUTBOUND_TRUNK_ID")
-    token = build_room_token()
-    payload = {
-        "sip_trunk_id": OUTBOUND_TRUNK_ID,
-        "sip_call_to": to_number,
-        "room_name": room_name,
-        "participant_identity": f"sip:{to_number}",
-        "participant_name": to_number,
-        "krisp_enabled": True,
-        "wait_until_answered": False,
-        "play_dialtone": True,
-    }
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        r = await client.post(
-            LIVEKIT_URL.rstrip("/") + TWIRP_SIP,
-            headers={"Authorization": f"Bearer {token}"},
-            json=payload,
+    from livekit import api as lkapi
+    from livekit.protocol.sip import CreateSIPParticipantRequest
+
+    if not LIVEKIT_HTTP_BASE or not OUTBOUND_TRUNK_ID:
+        raise RuntimeError("Set LIVEKIT_URL (or LIVEKIT_HTTP_URL) and LIVEKIT_OUTBOUND_TRUNK_ID/OUTBOUND_TRUNK_ID")
+    dest = _normalize_number(to_number)
+    client = lkapi.LiveKitAPI(url=LIVEKIT_HTTP_BASE.rstrip("/"), api_key=LIVEKIT_API_KEY, api_secret=LIVEKIT_API_SECRET)
+    try:
+        resp = await client.sip.create_sip_participant(
+            CreateSIPParticipantRequest(
+                sip_trunk_id=OUTBOUND_TRUNK_ID,
+                sip_call_to=dest,
+                room_name=room_name,
+                participant_identity=f"sip:{dest}",
+                participant_name=dest,
+                krisp_enabled=True,
+                wait_until_answered=False,
+                play_dialtone=True,
+            )
         )
-    r.raise_for_status()
+        print(f"[reminder-orchestrator] SIP participant created for {dest}: {resp}")
+    finally:
+        await client.aclose()
 
 
 async def call_employee(emp: Dict[str, Any]) -> None:
@@ -128,14 +146,37 @@ async def call_employee(emp: Dict[str, Any]) -> None:
     name = emp.get("profile_name") or "there"
     tenant = TENANT_ID  # this worker is scoped to a single tenant
     room_name = f"reminder-{profile_id}-{int(time.time())}"
+    dest = _normalize_number(phone)
     metadata = {
         "tenantId": tenant,
         "employeeName": name,
-        "employeePhone": phone,
+        "employeePhone": dest,
         "profileId": profile_id,
     }
+    print(f"[reminder-orchestrator] Creating room {room_name} for {dest}")
     await create_room(room_name, metadata)
-    await dial_out(room_name, phone)
+    # Dispatch the outbound agent to this room with metadata so it can speak when the callee answers
+    try:
+        from livekit import api as lkapi
+
+        client = lkapi.LiveKitAPI(
+            url=LIVEKIT_HTTP_BASE.rstrip("/"),
+            api_key=LIVEKIT_API_KEY,
+            api_secret=LIVEKIT_API_SECRET,
+        )
+        await client.agent_dispatch.create_dispatch(
+            lkapi.CreateAgentDispatchRequest(
+                agent_name="Clock-In Reminder",
+                room=room_name,
+                metadata=json.dumps(metadata),
+            )
+        )
+        await client.aclose()
+    except Exception as dispatch_err:
+        print(f"[reminder-orchestrator] Failed to dispatch agent: {dispatch_err}")
+        return
+    print(f"[reminder-orchestrator] Dialing {dest} via trunk {OUTBOUND_TRUNK_ID}")
+    await dial_out(room_name, dest)
     _mark_called(int(profile_id))
 
 
