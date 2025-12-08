@@ -304,7 +304,7 @@ router.get('/:id/last-profile', async (req: Request, res: Response) => {
         te.clock_out
       FROM time_entries te
       JOIN profiles p ON p.id = te.profile_id
-      WHERE te.so_id = $1
+      WHERE te.sales_order_id = $1
       ORDER BY te.clock_in DESC
       LIMIT 1
     `;
