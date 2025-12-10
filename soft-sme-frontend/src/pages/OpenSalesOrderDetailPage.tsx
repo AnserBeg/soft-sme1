@@ -98,6 +98,7 @@ interface SalesOrder {
   vehicle_make?: string | null;
   vehicle_model?: string | null;
   invoice_status?: InvoiceStatus | null;
+  mileage?: number | null;
 }
 
 interface PartsToOrderItem {
@@ -126,7 +127,8 @@ type OptionalFieldKey =
   | 'wantedByDate'
   | 'wantedByTimeOfDay'
   | 'productDescription'
-  | 'terms';
+  | 'terms'
+  | 'mileage';
 type FieldVisibilityMap = Record<OptionalFieldKey, boolean>;
 
 const rankAndFilter = <T extends { label: string }>(options: T[], query: string, limit = 8) => {
@@ -183,6 +185,7 @@ const SalesOrderDetailPage: React.FC = () => {
   const [unitNumber, setUnitNumber] = useState('');
   const [vehicleMake, setVehicleMake] = useState('');
   const [vehicleModel, setVehicleModel] = useState('');
+  const [mileage, setMileage] = useState<number | ''>('');
   const [invoiceStatus, setInvoiceStatus] = useState<InvoiceStatus>('');
   const [wantedByTimeOfDay, setWantedByTimeOfDay] = useState<WantedTimeOfDay>('');
 
@@ -218,6 +221,7 @@ const SalesOrderDetailPage: React.FC = () => {
     wantedByTimeOfDay: true,
     productDescription: true,
     terms: true,
+    mileage: true,
   };
   const [fieldVisibility, setFieldVisibility] = useState<FieldVisibilityMap>(() => {
     if (typeof window === 'undefined') return DEFAULT_FIELD_VISIBILITY;
@@ -313,8 +317,9 @@ const SalesOrderDetailPage: React.FC = () => {
     estimatedCost: estimatedCost != null ? Number(estimatedCost) : null,
     vehicleMake: (vehicleMake || '').trim(),
     vehicleModel: (vehicleModel || '').trim(),
+    mileage: mileage === '' ? '' : Number(mileage),
     invoiceStatus,
-  }), [customer, product, salesDate, wantedByDate, wantedByTimeOfDay, terms, customerPoNumber, vinNumber, unitNumber, estimatedCost, vehicleMake, vehicleModel, invoiceStatus]);
+  }), [customer, product, salesDate, wantedByDate, wantedByTimeOfDay, terms, customerPoNumber, vinNumber, unitNumber, estimatedCost, vehicleMake, vehicleModel, mileage, invoiceStatus]);
 
   // Set initial signature only once after data is fully loaded
   useEffect(() => {
@@ -636,6 +641,11 @@ const SalesOrderDetailPage: React.FC = () => {
         setCustomerPoNumber(data.salesOrder?.customer_po_number || '');
         setVinNumber(data.salesOrder?.vin_number || '');
         setUnitNumber(data.salesOrder?.unit_number || '');
+        setMileage(
+          data.salesOrder?.mileage === null || data.salesOrder?.mileage === undefined
+            ? ''
+            : Number(data.salesOrder.mileage)
+        );
         setVehicleMake(data.salesOrder?.vehicle_make || '');
         setVehicleModel(data.salesOrder?.vehicle_model || '');
         setInvoiceStatus(normalizedStatus);
@@ -1044,6 +1054,7 @@ const SalesOrderDetailPage: React.FC = () => {
       unit_number: unitNumber.trim(),
       vehicle_make: vehicleMake.trim(),
       vehicle_model: vehicleModel.trim(),
+      mileage: mileage === '' ? null : Number(mileage),
       invoice_status: invoiceStatus || null,
       status: isCreationMode ? 'Open' : (salesOrder?.status || 'Open'),
       estimated_cost: estimatedCost != null ? Number(estimatedCost) : 0,
@@ -1104,6 +1115,11 @@ const SalesOrderDetailPage: React.FC = () => {
           setInvoiceStatus(refreshedStatus);
           setSourceQuoteNumber(data.salesOrder?.source_quote_number || '');
           setUnitNumber(data.salesOrder?.unit_number || '');
+          setMileage(
+            data.salesOrder?.mileage === null || data.salesOrder?.mileage === undefined
+              ? ''
+              : Number(data.salesOrder.mileage)
+          );
 
           const li = (data.lineItems || data.salesOrder?.line_items || []).map((item: any) => ({
             part_number: item.part_number,
@@ -1365,6 +1381,7 @@ const SalesOrderDetailPage: React.FC = () => {
               <Grid item xs={12} sm={6}><b>Status:</b> {salesOrder.status?.toUpperCase() || 'N/A'}</Grid>
               <Grid item xs={12} sm={6}><b>VIN #:</b> {salesOrder.vin_number || 'N/A'}</Grid>
               <Grid item xs={12} sm={6}><b>Unit #:</b> {salesOrder.unit_number || 'N/A'}</Grid>
+              <Grid item xs={12} sm={6}><b>Mileage:</b> {salesOrder.mileage ?? 'N/A'}</Grid>
               <Grid item xs={12} sm={6}><b>Make:</b> {salesOrder.vehicle_make || 'N/A'}</Grid>
               <Grid item xs={12} sm={6}><b>Model:</b> {salesOrder.vehicle_model || 'N/A'}</Grid>
               <Grid item xs={12} sm={6}>
@@ -1490,7 +1507,7 @@ const SalesOrderDetailPage: React.FC = () => {
               setCustomer(null); setCustomerInput(''); setSalesDate(dayjs()); setWantedByDate(null); setWantedByTimeOfDay('');
               setProduct(null); setProductInput(''); setProductDescription('');
               setTerms(''); setCustomerPoNumber(''); setVinNumber('');
-              setUnitNumber(''); setVehicleMake(''); setVehicleModel(''); setInvoiceStatus('');
+              setUnitNumber(''); setVehicleMake(''); setVehicleModel(''); setInvoiceStatus(''); setMileage('');
               setEstimatedCost(null);
               setLineItems([{
                 part_number: '', part_description: '', quantity: '',
@@ -1528,6 +1545,7 @@ const SalesOrderDetailPage: React.FC = () => {
                 { key: 'sourceQuote', label: 'Source Quote #' },
                 { key: 'vin', label: 'VIN #' },
                 { key: 'unitNumber', label: 'Unit #' },
+                { key: 'mileage', label: 'Mileage' },
                 { key: 'vehicleMake', label: 'Make' },
                 { key: 'vehicleModel', label: 'Model' },
                 { key: 'invoiceStatus', label: 'Invoice Status' },
@@ -1724,6 +1742,19 @@ const SalesOrderDetailPage: React.FC = () => {
                   onChange={e => setUnitNumber(e.target.value)}
                   fullWidth
                   placeholder="Optional"
+                />
+              </Grid>
+            )}
+            {fieldVisibility.mileage && (
+              <Grid item xs={12} sm={4}>
+                <TextField
+                  label="Mileage"
+                  type="number"
+                  value={mileage === '' ? '' : mileage}
+                  onChange={e => setMileage(e.target.value === '' ? '' : Number(e.target.value))}
+                  fullWidth
+                  placeholder="Optional"
+                  inputProps={{ min: 0, step: 1 }}
                 />
               </Grid>
             )}

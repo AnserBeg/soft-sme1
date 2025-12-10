@@ -24,6 +24,7 @@ export interface Invoice {
   unit_number?: string | null;
   vehicle_make?: string | null;
   vehicle_model?: string | null;
+  mileage?: number | null;
   terms?: string | null;
   status: 'Paid' | 'Unpaid';
   invoice_date: string;

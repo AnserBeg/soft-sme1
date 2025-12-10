@@ -229,6 +229,7 @@ const InvoicesPage: React.FC = () => {
       { field: 'product_description', headerName: 'Product Description', minWidth: 200, flex: 1.5 },
       { field: 'vin_number', headerName: 'VIN #', minWidth: 120 },
       { field: 'unit_number', headerName: 'Unit #', minWidth: 120 },
+      { field: 'mileage', headerName: 'Mileage', minWidth: 110 },
       { field: 'vehicle_make', headerName: 'Make', minWidth: 120 },
       { field: 'vehicle_model', headerName: 'Model', minWidth: 120 },
       {
@@ -314,6 +315,7 @@ const InvoicesPage: React.FC = () => {
         row.product_description,
         row.vin_number,
         row.unit_number,
+        row.mileage,
         row.vehicle_make,
         row.vehicle_model,
         row.invoice_date ? new Date(row.invoice_date).toLocaleDateString() : '',

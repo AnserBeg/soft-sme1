@@ -64,6 +64,7 @@ const InvoiceDetailPage: React.FC = () => {
     vehicle_make: '',
     vehicle_model: '',
     source_sales_order_number: '',
+    mileage: '',
   });
   const [lineItems, setLineItems] = useState<InvoiceLineItem[]>([defaultLineItem()]);
   const [inventoryItems, setInventoryItems] = useState<any[]>([]);
@@ -92,6 +93,7 @@ const InvoiceDetailPage: React.FC = () => {
       unitNumber: true,
       vehicleMake: true,
       vehicleModel: true,
+      mileage: true,
     };
     const stored = localStorage.getItem(FIELD_VISIBILITY_STORAGE_KEY);
     if (stored) {
@@ -103,6 +105,7 @@ const InvoiceDetailPage: React.FC = () => {
       unitNumber: true,
       vehicleMake: true,
       vehicleModel: true,
+      mileage: true,
     };
   });
   const [fieldPickerAnchor, setFieldPickerAnchor] = useState<HTMLElement | null>(null);
@@ -176,6 +179,7 @@ const InvoiceDetailPage: React.FC = () => {
         unit_number: prev.unit_number || so.unit_number || '',
         vehicle_make: prev.vehicle_make || so.vehicle_make || '',
         vehicle_model: prev.vehicle_model || so.vehicle_model || '',
+        mileage: prev.mileage ?? so.mileage ?? '',
         notes: prev.notes || so.terms || '',
       }));
     } catch (e) {
@@ -467,6 +471,7 @@ const InvoiceDetailPage: React.FC = () => {
       unit_number: invoice.unit_number ?? '',
       vehicle_make: invoice.vehicle_make ?? '',
       vehicle_model: invoice.vehicle_model ?? '',
+      mileage: invoice.mileage === '' || invoice.mileage === null || invoice.mileage === undefined ? null : Number(invoice.mileage),
       line_items: lineItems.map((li) => ({
         invoice_line_item_id: li.invoice_line_item_id,
         part_id: li.part_id,
@@ -663,6 +668,23 @@ const InvoiceDetailPage: React.FC = () => {
                 />
               )}
             </Grid>
+            {fieldVisibility.mileage !== false && (
+              <Grid item xs={12} sm={3}>
+                <TextField
+                  label="Mileage"
+                  type="number"
+                  value={invoice.mileage ?? ''}
+                  onChange={(e) =>
+                    setInvoice((prev: any) => ({
+                      ...prev,
+                      mileage: e.target.value === '' ? '' : Number(e.target.value),
+                    }))
+                  }
+                  fullWidth
+                  inputProps={{ step: 1, min: 0 }}
+                />
+              </Grid>
+            )}
             <Grid item xs={12} sm={3}>
               {fieldVisibility.vehicleMake !== false && (
                 <TextField
@@ -748,6 +770,10 @@ const InvoiceDetailPage: React.FC = () => {
             <FormControlLabel
               control={<Checkbox size="small" checked={fieldVisibility.unitNumber !== false} onChange={(e) => setFieldVisibility((prev) => ({ ...prev, unitNumber: e.target.checked }))} />}
               label="Unit #"
+            />
+            <FormControlLabel
+              control={<Checkbox size="small" checked={fieldVisibility.mileage !== false} onChange={(e) => setFieldVisibility((prev) => ({ ...prev, mileage: e.target.checked }))} />}
+              label="Mileage"
             />
             <FormControlLabel
               control={<Checkbox size="small" checked={fieldVisibility.vehicleMake !== false} onChange={(e) => setFieldVisibility((prev) => ({ ...prev, vehicleMake: e.target.checked }))} />}

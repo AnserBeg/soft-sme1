@@ -30,6 +30,7 @@ export interface InvoiceInput {
   unit_number?: string | null;
   vehicle_make?: string | null;
   vehicle_model?: string | null;
+  mileage?: number | null;
 }
 
 export interface InvoiceListResult {
@@ -272,7 +273,7 @@ export class InvoiceService {
       await client.query('BEGIN');
       const soRes = await client.query(
         `SELECT sales_order_id, sales_order_number, customer_id, status
-                , product_name, product_description, vin_number, unit_number, vehicle_make, vehicle_model, terms
+                , product_name, product_description, vin_number, unit_number, vehicle_make, vehicle_model, terms, mileage
          FROM salesorderhistory
          WHERE sales_order_id = $1`,
         [salesOrderId]
@@ -346,8 +347,8 @@ export class InvoiceService {
         `INSERT INTO invoices (
           invoice_number, sequence_number, customer_id, sales_order_id, source_sales_order_number,
           status, invoice_date, due_date, payment_terms_in_days, subtotal, total_gst_amount, total_amount, notes,
-          product_name, product_description, vin_number, unit_number, vehicle_make, vehicle_model
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+          product_name, product_description, vin_number, unit_number, vehicle_make, vehicle_model, mileage
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
         RETURNING invoice_id, invoice_number, due_date`,
         [
           invoiceNumber,
@@ -369,6 +370,7 @@ export class InvoiceService {
           salesOrder.unit_number,
           salesOrder.vehicle_make,
           salesOrder.vehicle_model,
+          salesOrder.mileage ?? null,
         ]
       );
 
@@ -423,6 +425,7 @@ export class InvoiceService {
           ? Number(payload.payment_terms_in_days)
           : await this.getCustomerTerms(client, payload.customer_id);
       const dueDate = parseDate(payload.due_date, this.addDays(invoiceDate, terms));
+      const mileage = payload.mileage !== undefined && payload.mileage !== null ? Number(payload.mileage) : null;
 
       const { subtotal, total_gst_amount, total_amount } = this.calcTotals(marginAdjustedItems);
       const { sequenceNumber, nnnnn } = await getNextInvoiceSequenceNumberForYear(invoiceDate.getFullYear());
@@ -432,8 +435,8 @@ export class InvoiceService {
         `INSERT INTO invoices (
           invoice_number, sequence_number, customer_id, sales_order_id, source_sales_order_number,
           status, invoice_date, due_date, payment_terms_in_days, subtotal, total_gst_amount, total_amount, notes,
-          product_name, product_description, vin_number, unit_number, vehicle_make, vehicle_model
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+          product_name, product_description, vin_number, unit_number, vehicle_make, vehicle_model, mileage
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
         RETURNING invoice_id, invoice_number`,
         [
           invoiceNumber,
@@ -455,6 +458,7 @@ export class InvoiceService {
           payload.unit_number ?? null,
           payload.vehicle_make ?? null,
           payload.vehicle_model ?? null,
+          mileage,
         ]
       );
 
@@ -514,6 +518,7 @@ export class InvoiceService {
       const dueDate = parseDate(payload.due_date ?? current.due_date, this.addDays(invoiceDate, terms));
       const customerId = payload.customer_id ?? current.customer_id;
       const notes = payload.notes ?? current.notes;
+      const mileage = payload.mileage !== undefined && payload.mileage !== null ? Number(payload.mileage) : current.mileage ?? null;
 
       const { subtotal, total_gst_amount, total_amount } = this.calcTotals(lineItems);
 
@@ -536,8 +541,9 @@ export class InvoiceService {
              unit_number = $15,
              vehicle_make = $16,
              vehicle_model = $17,
+             mileage = $18,
              updated_at = NOW()
-         WHERE invoice_id = $18`,
+         WHERE invoice_id = $19`,
         [
           customerId,
           payload.sales_order_id ?? current.sales_order_id,
@@ -556,6 +562,7 @@ export class InvoiceService {
           payload.unit_number ?? current.unit_number,
           payload.vehicle_make ?? current.vehicle_make,
           payload.vehicle_model ?? current.vehicle_model,
+          mileage,
           invoiceId,
         ]
       );
@@ -620,6 +627,7 @@ export class InvoiceService {
               so.unit_number AS so_unit_number,
               so.vehicle_make AS so_vehicle_make,
               so.vehicle_model AS so_vehicle_model,
+              so.mileage AS so_mileage,
               so.terms AS so_terms
        FROM invoices i
        JOIN customermaster c ON i.customer_id = c.customer_id
@@ -653,6 +661,7 @@ export class InvoiceService {
         unit_number: invoice.unit_number ?? invoice.so_unit_number ?? invoice.unit_number ?? null,
         vehicle_make: invoice.vehicle_make ?? invoice.so_vehicle_make ?? invoice.vehicle_make ?? null,
         vehicle_model: invoice.vehicle_model ?? invoice.so_vehicle_model ?? invoice.vehicle_model ?? null,
+        mileage: invoice.mileage ?? invoice.so_mileage ?? invoice.mileage ?? null,
         sales_order_number: invoice.so_sales_order_number ?? invoice.sales_order_number ?? null,
         subtotal: toNumber(invoice.subtotal),
         total_gst_amount: toNumber(invoice.total_gst_amount),
@@ -717,6 +726,7 @@ export class InvoiceService {
         i.unit_number AS invoice_unit_number,
         i.vehicle_make AS invoice_vehicle_make,
         i.vehicle_model AS invoice_vehicle_model,
+        i.mileage AS invoice_mileage,
         so.sales_order_number AS so_sales_order_number,
         so.product_name AS so_product_name,
         so.product_description AS so_product_description,
@@ -724,6 +734,7 @@ export class InvoiceService {
         so.unit_number AS so_unit_number,
         so.vehicle_make AS so_vehicle_make,
         so.vehicle_model AS so_vehicle_model,
+        so.mileage AS so_mileage,
         so.terms AS so_terms
       FROM invoices i
       JOIN customermaster c ON i.customer_id = c.customer_id
@@ -747,6 +758,7 @@ export class InvoiceService {
       unit_number: row.invoice_unit_number ?? row.so_unit_number ?? row.unit_number ?? null,
       vehicle_make: row.invoice_vehicle_make ?? row.so_vehicle_make ?? row.vehicle_make ?? null,
       vehicle_model: row.invoice_vehicle_model ?? row.so_vehicle_model ?? row.vehicle_model ?? null,
+      mileage: row.invoice_mileage ?? row.so_mileage ?? row.mileage ?? null,
       sales_order_number: row.so_sales_order_number ?? row.sales_order_number ?? null,
       subtotal: toNumber(row.subtotal),
       total_gst_amount: toNumber(row.total_gst_amount),

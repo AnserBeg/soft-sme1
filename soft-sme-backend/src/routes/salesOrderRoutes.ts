@@ -501,6 +501,10 @@ router.put('/:id', async (req: Request, res: Response) => {
   if (salesOrderData.unit_number) salesOrderData.unit_number = salesOrderData.unit_number.trim();
   if (salesOrderData.vehicle_make) salesOrderData.vehicle_make = salesOrderData.vehicle_make.trim();
   if (salesOrderData.vehicle_model) salesOrderData.vehicle_model = salesOrderData.vehicle_model.trim();
+  if (salesOrderData.mileage !== undefined) {
+    const parsed = parseFloat(salesOrderData.mileage);
+    salesOrderData.mileage = Number.isFinite(parsed) ? parsed : null;
+  }
   if (salesOrderData.wanted_by_time_of_day !== undefined) {
     salesOrderData.wanted_by_time_of_day = normalizeWantedTimeOfDay(salesOrderData.wanted_by_time_of_day);
   }
@@ -559,6 +563,7 @@ if (lineItems && lineItems.length > 0) {
     'unit_number',
     'vehicle_make',
     'vehicle_model',
+    'mileage',
     'wanted_by_date',
     'wanted_by_time_of_day',
     'invoice_status',
@@ -594,6 +599,10 @@ if (lineItems && lineItems.length > 0) {
           if (key === 'invoice_status') coercedValue = normalizeInvoiceStatus(value);
           if (key === 'quote_id') {
             coercedValue = value === null ? null : parseInt(value as any, 10);
+          }
+          if (key === 'mileage') {
+            const parsedMileage = parseFloat(value as any);
+            coercedValue = Number.isFinite(parsedMileage) ? parsedMileage : null;
           }
           updateFields.push(`${key} = $${paramCount}`);
           updateValues.push(coercedValue);
@@ -868,6 +877,14 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
             : 'N/A';
         doc.font('Helvetica').fontSize(11).fillColor('#000000').text(invoiceLabel, 450, y);
       }
+      y += 16;
+    }
+    if (isFieldVisible('mileage')) {
+      doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Mileage:', 50, y);
+      doc.font('Helvetica').fontSize(11).fillColor('#000000').text(
+        salesOrder.mileage !== null && salesOrder.mileage !== undefined ? String(salesOrder.mileage) : 'N/A',
+        170, y
+      );
       y += 16;
     }
     const makeValue = salesOrder.vehicle_make?.trim() || '';

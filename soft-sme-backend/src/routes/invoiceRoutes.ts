@@ -234,6 +234,7 @@ router.post('/upload-csv', (req: Request, res: Response) => {
     vehicle_make?: string;
     vehicle_model?: string;
     unit_number?: string;
+    mileage?: number;
     memo?: string;
     lines: ImportLine[];
   };
@@ -320,6 +321,7 @@ router.post('/upload-csv', (req: Request, res: Response) => {
     const vehicle_make = restParts.length ? firstPart : makeYearRaw || undefined;
     const vehicle_model = restParts.length ? restParts.join('/') : undefined;
     const unit_number = normalizedRow.unit_number;
+    const mileageVal = normalizedRow.mileage ? Number(normalizedRow.mileage) : undefined;
 
       const key = `${canonicalName}::${invoiceNumber}`;
       if (!invoiceMap.has(key)) {
@@ -336,6 +338,7 @@ router.post('/upload-csv', (req: Request, res: Response) => {
           vehicle_make,
           vehicle_model,
           unit_number: unit_number || undefined,
+          mileage: mileageVal ?? undefined,
           memo: memo || undefined,
           lines: [],
         });
@@ -361,6 +364,7 @@ router.post('/upload-csv', (req: Request, res: Response) => {
       if (!invoice.vehicle_make && vehicle_make) invoice.vehicle_make = vehicle_make;
       if (!invoice.vehicle_model && vehicle_model) invoice.vehicle_model = vehicle_model;
       if (!invoice.unit_number && unit_number) invoice.unit_number = unit_number;
+      if (invoice.mileage === undefined && mileageVal !== undefined && !Number.isNaN(mileageVal)) invoice.mileage = mileageVal;
       if (!invoice.memo && memo) invoice.memo = memo;
       if (!invoice.productName && productService) invoice.productName = productService;
       if (!invoice.productDescription && (partDescription || memo)) invoice.productDescription = partDescription || memo;
@@ -452,8 +456,8 @@ router.post('/upload-csv', (req: Request, res: Response) => {
         `INSERT INTO invoices (
             invoice_number, sequence_number, customer_id, sales_order_id, source_sales_order_number,
             status, invoice_date, due_date, payment_terms_in_days, subtotal, total_gst_amount, total_amount, notes,
-            product_name, product_description, vin_number, unit_number, vehicle_make, vehicle_model
-          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+            product_name, product_description, vin_number, unit_number, vehicle_make, vehicle_model, mileage
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
           RETURNING invoice_id`,
           [
             invoice.invoiceNumber,
@@ -475,6 +479,7 @@ router.post('/upload-csv', (req: Request, res: Response) => {
             invoice.unit_number || null,
             invoice.vehicle_make || null,
             invoice.vehicle_model || null,
+            invoice.mileage ?? null,
           ]
         );
 
@@ -1127,6 +1132,7 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
     renderField('Unit #:', invoice.unit_number || '', 40, 120, vehicleRowY, 140);
     renderField('Make:', invoice.vehicle_make || '', 320, 400, vehicleRowY, 140); // aligned under Due Date
     renderField('Model:', invoice.vehicle_model || '', 480, 540, vehicleRowY, 80);
+    renderField('Mileage:', invoice.mileage != null ? String(invoice.mileage) : '', 40, 120, vehicleRowY + metaRowHeight, 140);
     renderField('VIN #:', invoice.vin_number || '', 480, 540, vehicleRowY + metaRowHeight, 140);
 
     // Row 3: Product only
