@@ -525,6 +525,165 @@ router.post('/upload-csv', (req: Request, res: Response) => {
   });
 });
 
+// Bulk update unit numbers on existing invoices from a simple CSV (columns: #, Name, Unit, Date)
+router.post('/upload-unit-numbers', (req: Request, res: Response) => {
+  upload.single('file')(req, res, async (err: any) => {
+    if (err) {
+      console.error('invoiceRoutes: upload unit csv multer error', err);
+      if (err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({ error: 'CSV file too large (max 20MB)' });
+      }
+      return res.status(400).json({ error: err.message || 'File upload failed' });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ error: 'No CSV file uploaded' });
+    }
+
+    const warnings: string[] = [];
+    const rawRows: any[] = [];
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        fs.createReadStream(req.file!.path)
+          .pipe(csv())
+          .on('data', (data) => rawRows.push(data))
+          .on('end', () => resolve())
+          .on('error', (readErr) => reject(readErr));
+      });
+    } catch (readErr) {
+      console.error('invoiceRoutes: failed to read unit CSV', readErr);
+      fs.unlink(req.file.path, () => undefined);
+      return res.status(400).json({ error: 'Unable to read CSV file' });
+    }
+
+    if (rawRows.length === 0) {
+      fs.unlink(req.file.path, () => undefined);
+      return res.status(400).json({ error: 'CSV file is empty' });
+    }
+
+    type UnitUpdate = { unit: string; rows: number[] };
+    const updateMap = new Map<string, UnitUpdate>();
+
+    rawRows.forEach((row, idx) => {
+      const rowNumber = idx + 2; // account for header
+      const normalizedRow: Record<string, string> = {};
+      Object.entries(row).forEach(([key, value]) => {
+        const mappedKey = headerMap[normalizeHeader(key)] || normalizeHeader(key);
+        normalizedRow[mappedKey] = normalizeCell(value);
+      });
+
+      const hasAnyValue = Object.values(normalizedRow).some((v) => normalizeCell(v));
+      if (!hasAnyValue) return;
+
+      const invoiceNumber = pickFirst(normalizedRow, [
+        'invoice_number',
+        '#',
+        'number',
+        'no',
+        'txn_no',
+        'transaction_no',
+        'transaction_number',
+        'transaction_',
+        'transaction',
+        'transactio',
+        'transactio_',
+        'txn',
+      ]);
+      if (!invoiceNumber) {
+        warnings.push(`Row ${rowNumber}: Missing invoice number (# column)`);
+        return;
+      }
+
+      const unitRaw = pickFirst(normalizedRow, ['unit_number', 'unit', 'unit_no']);
+      const unit = unitRaw.trim();
+      if (!unit) {
+        warnings.push(`Invoice ${invoiceNumber}: No unit value provided (row ${rowNumber})`);
+        return;
+      }
+
+      const existing = updateMap.get(invoiceNumber);
+      if (existing) {
+        existing.rows.push(rowNumber);
+        if (!existing.unit) {
+          existing.unit = unit;
+        } else if (existing.unit !== unit) {
+          warnings.push(`Invoice ${invoiceNumber}: Conflicting unit values "${existing.unit}" and "${unit}" (rows ${existing.rows.join(', ')})`);
+        }
+      } else {
+        updateMap.set(invoiceNumber, { unit, rows: [rowNumber] });
+      }
+    });
+
+    if (updateMap.size === 0) {
+      fs.unlink(req.file.path, () => undefined);
+      return res.status(400).json({ error: 'No usable rows found in CSV', warnings });
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const invoiceNumbers = Array.from(updateMap.keys());
+      const existingRes = await client.query(
+        'SELECT invoice_id, invoice_number, unit_number FROM invoices WHERE invoice_number = ANY($1)',
+        [invoiceNumbers]
+      );
+      const existingMap = new Map<string, { invoice_id: number; unit_number: string | null }>();
+      existingRes.rows.forEach((row: any) => {
+        existingMap.set(row.invoice_number, { invoice_id: row.invoice_id, unit_number: row.unit_number });
+      });
+
+      const missingInvoices = invoiceNumbers.filter((inv) => !existingMap.has(inv));
+      const updatedInvoices: { invoice_number: string; unit_number: string }[] = [];
+      let skippedMissingUnit = 0;
+      let skippedAlreadyHadUnit = 0;
+
+      for (const [invoiceNumber, info] of updateMap.entries()) {
+        const existing = existingMap.get(invoiceNumber);
+        if (!existing) continue;
+        const newUnit = info.unit.trim();
+        if (!newUnit) {
+          skippedMissingUnit += 1;
+          continue;
+        }
+        const currentUnit = (existing.unit_number || '').trim();
+        if (currentUnit) {
+          skippedAlreadyHadUnit += 1;
+          continue;
+        }
+        await client.query('UPDATE invoices SET unit_number = $1, updated_at = NOW() WHERE invoice_id = $2', [
+          newUnit,
+          existing.invoice_id,
+        ]);
+        updatedInvoices.push({ invoice_number: invoiceNumber, unit_number: newUnit });
+      }
+
+      await client.query('COMMIT');
+      res.json({
+        message: 'Invoice unit numbers updated',
+        summary: {
+          rowsProcessed: rawRows.length,
+          invoicesMatched: invoiceNumbers.length - missingInvoices.length,
+          updated: updatedInvoices.length,
+          skippedMissingUnit,
+          skippedAlreadyHadUnit,
+          missingInvoices: missingInvoices.length,
+        },
+        updatedInvoices,
+        missingInvoices,
+        warnings,
+      });
+    } catch (error) {
+      await client.query('ROLLBACK');
+      console.error('invoiceRoutes: upload unit csv error', error);
+      res.status(500).json({ error: 'Failed to update invoice unit numbers from CSV' });
+    } finally {
+      client.release();
+      fs.unlink(req.file.path, () => undefined);
+    }
+  });
+});
+
 const fetchBusinessProfile = async () => {
   const businessProfileRes = await pool.query(
     `SELECT 

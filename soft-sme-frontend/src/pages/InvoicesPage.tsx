@@ -24,6 +24,7 @@ import {
   deleteInvoice,
   downloadInvoiceImportTemplate,
   uploadInvoiceCsv,
+  uploadInvoiceUnitNumbers,
 } from '../services/invoiceService';
 import { getCustomers, getCustomer, updateCustomer } from '../services/customerService';
 import { Invoice } from '../types/invoice';
@@ -63,7 +64,9 @@ const InvoicesPage: React.FC = () => {
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   });
   const [uploading, setUploading] = useState(false);
+  const [unitUploading, setUnitUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const unitFileInputRef = useRef<HTMLInputElement | null>(null);
   const COLUMN_VISIBILITY_STORAGE_KEY = 'invoices.columnVisibility';
   const [columnVisibilityModel, setColumnVisibilityModel] = useState<Record<string, boolean>>(() => {
     if (typeof window === 'undefined') return {};
@@ -376,6 +379,10 @@ const InvoicesPage: React.FC = () => {
     fileInputRef.current?.click();
   };
 
+  const handleUnitUploadClick = () => {
+    unitFileInputRef.current?.click();
+  };
+
   const handleFileChange: React.ChangeEventHandler<HTMLInputElement> = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -395,6 +402,32 @@ const InvoicesPage: React.FC = () => {
     } finally {
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const handleUnitFileChange: React.ChangeEventHandler<HTMLInputElement> = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUnitUploading(true);
+    try {
+      const result = await uploadInvoiceUnitNumbers(file);
+      const updated = result.summary?.updated ?? 0;
+      const missing = result.summary?.missingInvoices ?? result.missingInvoices?.length ?? 0;
+      toast.success(
+        `Unit upload complete. Updated: ${updated}${missing ? `, missing invoices: ${missing}` : ''}`
+      );
+      if (result.warnings?.length) {
+        console.warn('Invoice unit CSV warnings:', result.warnings);
+      }
+      fetchPage(true);
+    } catch (error: any) {
+      console.error('Error uploading invoice unit CSV', error);
+      const message = error?.response?.data?.error || 'Failed to upload unit CSV';
+      const details = error?.response?.data?.warnings?.[0];
+      toast.error(details ? `${message}: ${details}` : message);
+    } finally {
+      setUnitUploading(false);
+      if (unitFileInputRef.current) unitFileInputRef.current.value = '';
     }
   };
 
@@ -426,6 +459,15 @@ const InvoicesPage: React.FC = () => {
             startIcon={<UploadIcon />}
             variant="outlined"
             color="secondary"
+            onClick={handleUnitUploadClick}
+            disabled={unitUploading}
+          >
+            {unitUploading ? 'Uploading units...' : 'Upload Unit CSV'}
+          </Button>
+          <Button
+            startIcon={<UploadIcon />}
+            variant="outlined"
+            color="secondary"
             onClick={handleUploadClick}
             disabled={uploading}
           >
@@ -449,6 +491,13 @@ const InvoicesPage: React.FC = () => {
         ref={fileInputRef}
         style={{ display: 'none' }}
         onChange={handleFileChange}
+      />
+      <input
+        type="file"
+        accept=".csv,text/csv"
+        ref={unitFileInputRef}
+        style={{ display: 'none' }}
+        onChange={handleUnitFileChange}
       />
 
       <Paper sx={{ mb: 3, p: 2, border: '1px solid', borderColor: 'divider' }}>

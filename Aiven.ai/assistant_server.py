@@ -44,34 +44,36 @@ def _ensure_python_paths():
 _ensure_python_paths()
 
 
-def _ensure_database_url():
-    """
-    Populate DATABASE_URL for the SQL agent if it isn't already set.
+def _parse_tenant_url_map(raw: Optional[str]) -> dict[str, str]:
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, dict):
+            return {str(k): str(v) for k, v in parsed.items() if v}
+    except Exception:
+        pass
+    out: dict[str, str] = {}
+    for item in raw.split(";"):
+        if "=" in item:
+            k, v = item.split("=", 1)
+            if k.strip() and v.strip():
+                out[k.strip()] = v.strip()
+    return out
 
-    Priority:
-      1) Existing DATABASE_URL
-      2) AI_AGENT_DATABASE_URL / AGENT_DATABASE_URL
-      3) Construct from DB_* or PG* env vars
-    """
-    if os.getenv("DATABASE_URL"):
-        return
 
-    # Allow override via explicit agent-specific variables
-    for key in ("AI_AGENT_DATABASE_URL", "AGENT_DATABASE_URL", "SQL_DATABASE_URL"):
-        val = os.getenv(key)
-        if val:
-            os.environ["DATABASE_URL"] = val
-            print(f"[assistant] DATABASE_URL sourced from {key}")
-            return
+TENANT_DATABASE_URLS = _parse_tenant_url_map(os.getenv("TENANT_DATABASE_URLS"))
+DEFAULT_TENANT_ID = os.getenv("DEFAULT_TENANT_ID") or (next(iter(TENANT_DATABASE_URLS.keys()), None))
 
+
+def _build_fallback_database_url() -> Optional[str]:
     host = os.getenv("DB_HOST") or os.getenv("PGHOST")
     port = os.getenv("DB_PORT") or os.getenv("PGPORT") or "5432"
     name = os.getenv("DB_DATABASE") or os.getenv("DB_NAME") or os.getenv("PGDATABASE")
     user = os.getenv("DB_USER") or os.getenv("PGUSER")
     password = os.getenv("DB_PASSWORD") or os.getenv("PGPASSWORD")
-
     if not (host and name and user and password):
-        return
+        return None
 
     ssl_mode = os.getenv("DB_SSLMODE")
     if not ssl_mode:
@@ -83,12 +85,32 @@ def _ensure_database_url():
     if ssl_mode:
         sep = "&" if "?" in url else "?"
         url = f"{url}{sep}sslmode={ssl_mode}"
-
-    os.environ["DATABASE_URL"] = url
-    print("[assistant] DATABASE_URL constructed from DB_* env vars")
+    return url
 
 
-_ensure_database_url()
+def _choose_database_url(tenant_id: Optional[str]) -> Optional[str]:
+    if tenant_id and tenant_id in TENANT_DATABASE_URLS:
+        return TENANT_DATABASE_URLS[tenant_id]
+    if DEFAULT_TENANT_ID and DEFAULT_TENANT_ID in TENANT_DATABASE_URLS:
+        return TENANT_DATABASE_URLS[DEFAULT_TENANT_ID]
+
+    for key in ("AI_AGENT_DATABASE_URL", "AGENT_DATABASE_URL", "SQL_DATABASE_URL"):
+        val = os.getenv(key)
+        if val:
+            return val
+
+    return _build_fallback_database_url()
+
+
+def _ensure_database_url(tenant_id: Optional[str] = None):
+    """
+    Set DATABASE_URL for this request based on tenant mapping; falls back to legacy env.
+    """
+    chosen = _choose_database_url(tenant_id)
+    if chosen:
+        os.environ["DATABASE_URL"] = chosen
+    elif not os.getenv("DATABASE_URL"):
+        print("[assistant] DATABASE_URL unavailable; set TENANT_DATABASE_URLS or DB_* env vars.")
 
 def _in_virtualenv() -> bool:
     try:
