@@ -426,7 +426,58 @@ function buildAuthHeaders(): Record<string, string> {
   return headers;
 }
 
-const assistantHeaders = buildAuthHeaders();
+const baseAssistantHeaders = buildAuthHeaders();
+
+function pickHeaderValue(value: string | string[] | undefined): string | undefined {
+  if (Array.isArray(value)) {
+    return value[0];
+  }
+  if (typeof value === 'string') {
+    return value;
+  }
+  return undefined;
+}
+
+function resolveTenantIdFromRequest(req: Request): string | undefined {
+  const fromHeader =
+    pickHeaderValue(req.headers['x-tenant-id'] as any) ||
+    pickHeaderValue(req.headers['x-company-id'] as any) ||
+    pickHeaderValue((req.headers as any)['x-company_id']);
+
+  if (fromHeader) {
+    return String(fromHeader);
+  }
+
+  const fromUser = (req.user as any)?.company_id;
+  if (fromUser) {
+    return String(fromUser);
+  }
+
+  return undefined;
+}
+
+function buildRequestHeaders(req: Request): Record<string, string> {
+  const headers: Record<string, string> = { ...baseAssistantHeaders };
+
+  const tenantId = resolveTenantIdFromRequest(req);
+  if (tenantId) {
+    headers['x-tenant-id'] = tenantId;
+    headers['x-company-id'] = tenantId;
+  }
+
+  const userId = pickHeaderValue(req.headers['x-user-id'] as any) || (req.user?.id ? String(req.user.id) : undefined);
+  if (userId) {
+    headers['x-user-id'] = userId;
+  }
+
+  const userEmail =
+    pickHeaderValue(req.headers['x-user-email'] as any) || (req.user?.email ? String(req.user.email) : undefined);
+  if (userEmail) {
+    headers['x-user-email'] = userEmail;
+  }
+
+  return headers;
+}
 
 function mapAssistantError(err: unknown) {
   if (err instanceof Error) {
@@ -477,7 +528,7 @@ router.get('/health', async (_req: Request, res: Response) => {
 
   try {
     const r = await _fetch(assistantEndpoints.healthUrl, {
-      headers: assistantHeaders,
+      headers: baseAssistantHeaders,
     });
     const j = await r.json();
     res.json(j);
@@ -508,9 +559,11 @@ router.post('/', async (req: Request, res: Response) => {
       promptPreview: previewText(prompt, PROMPT_PREVIEW_LENGTH),
     });
 
+    const headers = buildRequestHeaders(req);
+
     const r = await _fetch(assistantEndpoints.chatUrl, {
       method: 'POST',
-      headers: assistantHeaders,
+      headers,
       body: JSON.stringify({ prompt, mode })
     });
 

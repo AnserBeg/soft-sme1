@@ -268,6 +268,13 @@ def assistant():
         if not prompt or not isinstance(prompt, str):
             return jsonify({"error": "prompt is required"}), 400
 
+        tenant_id = (
+            request.headers.get("x-tenant-id")
+            or request.headers.get("x-company-id")
+            or request.headers.get("x-company_id")
+        )
+        _ensure_database_url(tenant_id)
+
         text, rows = _answer(prompt, mode)
         # Determine source from mode/route
         decided = (mode or "").strip().upper()
