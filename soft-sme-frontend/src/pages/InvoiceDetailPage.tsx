@@ -586,8 +586,9 @@ const InvoiceDetailPage: React.FC = () => {
   const customerGridSx = {
     ...denseGridBase,
     gridTemplateColumns: {
-      xs: 'repeat(auto-fit, minmax(240px, 1fr))',
-      md: 'repeat(auto-fit, minmax(280px, 1fr))',
+      xs: '1fr',
+      sm: 'repeat(2, minmax(0, 1fr))',
+      md: '2fr 1fr 1fr',
     },
   };
   const vehicleGridSx = {
@@ -601,8 +602,9 @@ const InvoiceDetailPage: React.FC = () => {
   const jobGridSx = {
     ...denseGridBase,
     gridTemplateColumns: {
-      xs: 'repeat(auto-fit, minmax(220px, 1fr))',
-      md: 'repeat(auto-fit, minmax(260px, 1fr))',
+      xs: '1fr',
+      sm: 'repeat(2, minmax(0, 1fr))',
+      md: 'repeat(3, minmax(0, 1fr))',
     },
   };
 
