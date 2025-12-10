@@ -97,7 +97,7 @@ Status update on an existing truck (use get_sales_order_status; escalate if need
    - Then call `get_last_profile_status`; if you get a phone:
        * Ask the caller to hold, call `call_tech_for_status` to bring the tech in, get a quick update/ETA, and relay it back.
        * If tech unreachable, offer `transfer_to_human`.
-5. Keep the caller informed; do not leave silence. If transfer fails, tell them you’ll have the shop call back.
+ 5. Keep the caller informed; do not leave silence. If transfer fails, tell them you’ll have the shop call back.
 
 # Safety around ending calls
 - Do NOT call `end_call` unless the caller clearly says they want to hang up, decline service, or end the conversation.

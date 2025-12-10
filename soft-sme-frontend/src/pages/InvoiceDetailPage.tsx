@@ -631,6 +631,34 @@ const InvoiceDetailPage: React.FC = () => {
     }
   };
 
+  const applyVehicleAutofill = useCallback(
+    (nextUnit?: string, nextVin?: string) => {
+      const updates: any = {};
+      if (nextUnit !== undefined) updates.unit_number = nextUnit;
+      if (nextVin !== undefined) updates.vin_number = nextVin;
+
+      if (vehicleHistory.length && (nextUnit || nextVin || invoice.unit_number || invoice.vin_number)) {
+        const computed = computeLatestVehicleValues(
+          vehicleHistory,
+          nextUnit ?? invoice.unit_number,
+          nextVin ?? invoice.vin_number
+        );
+        if (computed.unit_number) updates.unit_number = computed.unit_number;
+        if (computed.vin_number) updates.vin_number = computed.vin_number;
+        if (computed.vehicle_make) updates.vehicle_make = computed.vehicle_make;
+        if (computed.vehicle_model) updates.vehicle_model = computed.vehicle_model;
+        const mileageValue = computed.mileage;
+        if (mileageValue !== undefined && mileageValue !== null && String(mileageValue) !== '') {
+          const mileageNumber = Number(mileageValue);
+          updates.mileage = Number.isFinite(mileageNumber) ? mileageNumber : mileageValue;
+        }
+      }
+
+      setInvoice((prev: any) => ({ ...prev, ...updates }));
+    },
+    [invoice.unit_number, invoice.vin_number, vehicleHistory]
+  );
+
   if (loading) {
     return (
       <Container maxWidth="md" sx={{ mt: 6, textAlign: 'center' }}>
@@ -689,34 +717,6 @@ const InvoiceDetailPage: React.FC = () => {
       md: 'repeat(3, minmax(0, 1fr))',
     },
   };
-
-  const applyVehicleAutofill = useCallback(
-    (nextUnit?: string, nextVin?: string) => {
-      const updates: any = {};
-      if (nextUnit !== undefined) updates.unit_number = nextUnit;
-      if (nextVin !== undefined) updates.vin_number = nextVin;
-
-      if (vehicleHistory.length && (nextUnit || nextVin || invoice.unit_number || invoice.vin_number)) {
-        const computed = computeLatestVehicleValues(
-          vehicleHistory,
-          nextUnit ?? invoice.unit_number,
-          nextVin ?? invoice.vin_number
-        );
-        if (computed.unit_number) updates.unit_number = computed.unit_number;
-        if (computed.vin_number) updates.vin_number = computed.vin_number;
-        if (computed.vehicle_make) updates.vehicle_make = computed.vehicle_make;
-        if (computed.vehicle_model) updates.vehicle_model = computed.vehicle_model;
-        const mileageValue = computed.mileage;
-        if (mileageValue !== undefined && mileageValue !== null && String(mileageValue) !== '') {
-          const mileageNumber = Number(mileageValue);
-          updates.mileage = Number.isFinite(mileageNumber) ? mileageNumber : mileageValue;
-        }
-      }
-
-      setInvoice((prev: any) => ({ ...prev, ...updates }));
-    },
-    [invoice.unit_number, invoice.vin_number, vehicleHistory]
-  );
 
   const hasCustomerSelection = Boolean(customer?.id || invoice.customer_id);
 
