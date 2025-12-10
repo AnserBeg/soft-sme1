@@ -77,7 +77,7 @@ const normalizeVisibilityMap = <T extends Record<string, boolean>>(
   const result = { ...defaults };
   (Object.keys(defaults) as (keyof T)[]).forEach(key => {
     const raw = (incoming as any)[key];
-    result[key] = typeof raw === 'boolean' ? raw : defaults[key];
+    result[key] = (typeof raw === 'boolean' ? raw : defaults[key]) as T[keyof T];
   });
   return result;
 };

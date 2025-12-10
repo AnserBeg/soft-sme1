@@ -63,7 +63,7 @@ const coerceSettings = (data: any): FieldVisibilitySettings => {
     if (!incoming || typeof incoming !== 'object') return result;
     (Object.keys(fallback) as (keyof T)[]).forEach(key => {
       const value = (incoming as any)[key];
-      result[key] = typeof value === 'boolean' ? value : fallback[key];
+      result[key] = (typeof value === 'boolean' ? value : fallback[key]) as T[keyof T];
     });
     return result;
   };
