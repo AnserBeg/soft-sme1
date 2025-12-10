@@ -37,6 +37,9 @@ import {
   fieldVisibilityService,
   InvoiceFieldVisibility,
 } from '../services/fieldVisibilityService';
+import { getCustomerVehicleHistory } from '../services/vehicleHistoryService';
+import { VehicleHistoryRecord } from '../types/vehicleHistory';
+import { buildVehicleOptionMaps, computeLatestVehicleValues, normalizeVehicleKey } from '../utils/vehicleHistory';
 
 interface CustomerOption {
   id: number;
@@ -106,6 +109,9 @@ const InvoiceDetailPage: React.FC = () => {
   });
   const [adminFieldVisibility, setAdminFieldVisibility] = useState<InvoiceFieldVisibility>(DEFAULT_FIELD_VISIBILITY);
   const [fieldPickerAnchor, setFieldPickerAnchor] = useState<HTMLElement | null>(null);
+  const [vehicleHistory, setVehicleHistory] = useState<VehicleHistoryRecord[]>([]);
+  const [vehicleHistoryLoading, setVehicleHistoryLoading] = useState(false);
+  const lastVehicleHistoryCustomerId = useRef<number | null>(null);
 
   const totals = useMemo(() => {
     const subtotal = lineItems.reduce((sum, item) => sum + (Number(item.line_amount) || 0), 0);
@@ -133,6 +139,34 @@ const InvoiceDetailPage: React.FC = () => {
       setCustomersLoading(false);
     }
   }, []);
+
+  const loadVehicleHistory = useCallback(
+    async (customerId?: number | null) => {
+      if (!customerId) {
+        setVehicleHistory([]);
+        lastVehicleHistoryCustomerId.current = null;
+        return;
+      }
+      if (lastVehicleHistoryCustomerId.current === customerId && vehicleHistory.length) return;
+      lastVehicleHistoryCustomerId.current = customerId;
+      setVehicleHistoryLoading(true);
+      try {
+        const res = await getCustomerVehicleHistory(customerId);
+        const sorted = [...(res.records || [])].sort((a, b) => {
+          const aTime = a.activity_date ? new Date(a.activity_date).getTime() : 0;
+          const bTime = b.activity_date ? new Date(b.activity_date).getTime() : 0;
+          return bTime - aTime;
+        });
+        setVehicleHistory(sorted);
+      } catch (err) {
+        console.error('Failed to load vehicle history for customer', err);
+        setVehicleHistory([]);
+      } finally {
+        setVehicleHistoryLoading(false);
+      }
+    },
+    [vehicleHistory.length]
+  );
 
   useEffect(() => {
     loadCustomers();
@@ -185,6 +219,11 @@ const InvoiceDetailPage: React.FC = () => {
     })();
   }, []);
 
+  useEffect(() => {
+    const customerId = customer?.id ?? invoice.customer_id ?? null;
+    loadVehicleHistory(customerId ? Number(customerId) : null);
+  }, [customer?.id, invoice.customer_id, loadVehicleHistory]);
+
   const effectiveFieldVisibility = useMemo(() => {
     const merged: InvoiceFieldVisibility = { ...DEFAULT_FIELD_VISIBILITY };
     (Object.keys(merged) as (keyof InvoiceFieldVisibility)[]).forEach(key => {
@@ -192,6 +231,23 @@ const InvoiceDetailPage: React.FC = () => {
     });
     return merged;
   }, [adminFieldVisibility, fieldVisibility]);
+
+  const { units: unitOptions, vins: vinOptions, unitToVins, vinToUnits } = useMemo(
+    () => buildVehicleOptionMaps(vehicleHistory),
+    [vehicleHistory]
+  );
+
+  const filteredVinOptions = useMemo(() => {
+    const unitKey = normalizeVehicleKey(invoice.unit_number);
+    if (unitKey && unitToVins[unitKey]) return unitToVins[unitKey];
+    return vinOptions;
+  }, [invoice.unit_number, unitToVins, vinOptions]);
+
+  const filteredUnitOptions = useMemo(() => {
+    const vinKey = normalizeVehicleKey(invoice.vin_number);
+    if (vinKey && vinToUnits[vinKey]) return vinToUnits[vinKey];
+    return unitOptions;
+  }, [invoice.vin_number, unitOptions, vinToUnits]);
 
   const applySalesOrderDefaults = async (soId: number) => {
     try {
@@ -608,6 +664,35 @@ const InvoiceDetailPage: React.FC = () => {
     },
   };
 
+  const applyVehicleAutofill = useCallback(
+    (nextUnit?: string, nextVin?: string) => {
+      const updates: any = {};
+      if (nextUnit !== undefined) updates.unit_number = nextUnit;
+      if (nextVin !== undefined) updates.vin_number = nextVin;
+
+      if (vehicleHistory.length && (nextUnit || nextVin || invoice.unit_number || invoice.vin_number)) {
+        const computed = computeLatestVehicleValues(
+          vehicleHistory,
+          nextUnit ?? invoice.unit_number,
+          nextVin ?? invoice.vin_number
+        );
+        if (computed.unit_number) updates.unit_number = computed.unit_number;
+        if (computed.vin_number) updates.vin_number = computed.vin_number;
+        if (computed.vehicle_make) updates.vehicle_make = computed.vehicle_make;
+        if (computed.vehicle_model) updates.vehicle_model = computed.vehicle_model;
+        if (computed.mileage !== undefined && computed.mileage !== null && computed.mileage !== '') {
+          const mileageNumber = Number(computed.mileage);
+          updates.mileage = Number.isFinite(mileageNumber) ? mileageNumber : computed.mileage;
+        }
+      }
+
+      setInvoice((prev: any) => ({ ...prev, ...updates }));
+    },
+    [invoice.unit_number, invoice.vin_number, vehicleHistory]
+  );
+
+  const hasCustomerSelection = Boolean(customer?.id || invoice.customer_id);
+
   const customerField = (
     <Autocomplete<CustomerOption, false, false, true>
       options={customers}
@@ -653,17 +738,76 @@ const InvoiceDetailPage: React.FC = () => {
     />
   );
 
+  const vinInput = !hasCustomerSelection ? (
+    <TextField
+      label="VIN #"
+      value={invoice.vin_number || ''}
+      onChange={(e) => setInvoice((prev: any) => ({ ...prev, vin_number: e.target.value }))}
+      fullWidth
+    />
+  ) : (
+    <Autocomplete<string, false, false, true>
+      freeSolo
+      options={filteredVinOptions}
+      loading={vehicleHistoryLoading}
+      value={invoice.vin_number || ''}
+      onInputChange={(_, value) => setInvoice((prev: any) => ({ ...prev, vin_number: value }))}
+      onChange={(_, value, reason) => {
+        if (reason === 'clear') {
+          setInvoice((prev: any) => ({ ...prev, vin_number: '' }));
+          return;
+        }
+        const nextVin = typeof value === 'string' ? value : value ?? '';
+        applyVehicleAutofill(undefined, nextVin);
+      }}
+      renderInput={(params) => (
+        <TextField
+          {...params}
+          label="VIN #"
+          fullWidth
+        />
+      )}
+    />
+  );
+
+  const unitInput = !hasCustomerSelection ? (
+    <TextField
+      label="Unit #"
+      value={invoice.unit_number || ''}
+      onChange={(e) => setInvoice((prev: any) => ({ ...prev, unit_number: e.target.value }))}
+      fullWidth
+    />
+  ) : (
+    <Autocomplete<string, false, false, true>
+      freeSolo
+      options={filteredUnitOptions}
+      loading={vehicleHistoryLoading}
+      value={invoice.unit_number || ''}
+      onInputChange={(_, value) => setInvoice((prev: any) => ({ ...prev, unit_number: value }))}
+      onChange={(_, value, reason) => {
+        if (reason === 'clear') {
+          setInvoice((prev: any) => ({ ...prev, unit_number: '' }));
+          return;
+        }
+        const nextUnit = typeof value === 'string' ? value : value ?? '';
+        applyVehicleAutofill(nextUnit, undefined);
+      }}
+      renderInput={(params) => (
+        <TextField
+          {...params}
+          label="Unit #"
+          fullWidth
+        />
+      )}
+    />
+  );
+
   const vehicleFields: SectionField[] = [
     effectiveFieldVisibility.vin !== false
       ? {
           key: 'vin',
           element: (
-            <TextField
-              label="VIN #"
-              value={invoice.vin_number || ''}
-              onChange={(e) => setInvoice((prev: any) => ({ ...prev, vin_number: e.target.value }))}
-              fullWidth
-            />
+            vinInput
           ),
         }
       : null,
@@ -671,12 +815,7 @@ const InvoiceDetailPage: React.FC = () => {
       ? {
           key: 'unitNumber',
           element: (
-            <TextField
-              label="Unit #"
-              value={invoice.unit_number || ''}
-              onChange={(e) => setInvoice((prev: any) => ({ ...prev, unit_number: e.target.value }))}
-              fullWidth
-            />
+            unitInput
           ),
         }
       : null,

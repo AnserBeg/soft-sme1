@@ -409,6 +409,73 @@ router.get('/export/pdf', async (req: Request, res: Response) => {
   }
 });
 
+router.get('/:id/vehicle-history', async (req: Request, res: Response) => {
+  const customerId = Number(req.params.id);
+  if (!Number.isFinite(customerId)) {
+    return res.status(400).json({ error: 'Invalid customer id' });
+  }
+
+  const client = await pool.connect();
+  try {
+    const result = await client.query(
+      `
+        SELECT source, source_id, reference_number, activity_date, record_date,
+               vin_number, unit_number, vehicle_make, vehicle_model, mileage,
+               product_name, product_description
+        FROM (
+          SELECT
+            'invoice' AS source,
+            i.invoice_id AS source_id,
+            i.invoice_number AS reference_number,
+            COALESCE(i.invoice_date, i.updated_at, NOW()) AS activity_date,
+            i.invoice_date AS record_date,
+            i.vin_number,
+            i.unit_number,
+            i.vehicle_make,
+            i.vehicle_model,
+            i.mileage,
+            i.product_name,
+            i.product_description
+          FROM invoices i
+          WHERE i.customer_id = $1
+          UNION ALL
+          SELECT
+            'sales_order' AS source,
+            soh.sales_order_id AS source_id,
+            soh.sales_order_number AS reference_number,
+            COALESCE(soh.sales_date, soh.updated_at, soh.created_at, NOW()) AS activity_date,
+            soh.sales_date AS record_date,
+            soh.vin_number,
+            soh.unit_number,
+            soh.vehicle_make,
+            soh.vehicle_model,
+            soh.mileage,
+            soh.product_name,
+            soh.product_description
+          FROM salesorderhistory soh
+          WHERE soh.customer_id = $1
+        ) combined
+        ORDER BY activity_date DESC NULLS LAST, source_id DESC
+        LIMIT 500
+      `,
+      [customerId]
+    );
+
+    const records = result.rows.map((row) => ({
+      ...row,
+      activity_date: row.activity_date ? new Date(row.activity_date).toISOString() : null,
+      record_date: row.record_date ? new Date(row.record_date).toISOString() : null,
+    }));
+
+    res.json({ records });
+  } catch (err) {
+    console.error('customerRoutes: failed to fetch vehicle history', err);
+    res.status(500).json({ error: 'Failed to load vehicle history for customer' });
+  } finally {
+    client.release();
+  }
+});
+
 // Get a specific customer by ID
 router.get('/:id', async (req: Request, res: Response) => {
   console.log('customerRoutes: GET /:id - fetching customer', req.params.id);

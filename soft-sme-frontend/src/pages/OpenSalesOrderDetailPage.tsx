@@ -38,6 +38,9 @@ import {
   fieldVisibilityService,
   SalesOrderFieldVisibility,
 } from '../services/fieldVisibilityService';
+import { getCustomerVehicleHistory } from '../services/vehicleHistoryService';
+import { VehicleHistoryRecord } from '../types/vehicleHistory';
+import { buildVehicleOptionMaps, computeLatestVehicleValues, normalizeVehicleKey } from '../utils/vehicleHistory';
 
 const UNIT_OPTIONS = ['Each', 'cm', 'ft', 'ft^2', 'kg', 'pcs', 'hr', 'L'];
 type PartOption = string | { label: string; isNew?: true; inputValue?: string };
@@ -183,6 +186,9 @@ const SalesOrderDetailPage: React.FC = () => {
   const [customerTypingTimer, setCustomerTypingTimer] = useState<number | null>(null);
   const [customerEnterPressed, setCustomerEnterPressed] = useState(false);
   const customerInputRef = useRef<HTMLInputElement | null>(null);
+  const [vehicleHistory, setVehicleHistory] = useState<VehicleHistoryRecord[]>([]);
+  const [vehicleHistoryLoading, setVehicleHistoryLoading] = useState(false);
+  const lastVehicleHistoryCustomerId = useRef<number | null>(null);
 
   const [product, setProduct] = useState<ProductOption | null>(null);
   const [productInput, setProductInput] = useState('');
@@ -435,6 +441,45 @@ const SalesOrderDetailPage: React.FC = () => {
     },
   };
 
+  const applyVehicleAutofill = useCallback(
+    (nextUnit?: string, nextVin?: string) => {
+      const updates: {
+        unit?: string;
+        vin?: string;
+        make?: string;
+        model?: string;
+        mileage?: number | '';
+      } = {};
+
+      const targetUnit = nextUnit ?? unitNumber;
+      const targetVin = nextVin ?? vinNumber;
+
+      if (nextUnit !== undefined) updates.unit = nextUnit;
+      if (nextVin !== undefined) updates.vin = nextVin;
+
+      if (vehicleHistory.length && (targetUnit || targetVin)) {
+        const computed = computeLatestVehicleValues(vehicleHistory, targetUnit, targetVin);
+        if (computed.unit_number) updates.unit = computed.unit_number;
+        if (computed.vin_number) updates.vin = computed.vin_number;
+        if (computed.vehicle_make) updates.make = computed.vehicle_make;
+        if (computed.vehicle_model) updates.model = computed.vehicle_model;
+        if (computed.mileage !== undefined && computed.mileage !== null && computed.mileage !== '') {
+          const mileageNumber = Number(computed.mileage);
+          updates.mileage = Number.isFinite(mileageNumber) ? mileageNumber : (computed.mileage as any);
+        }
+      }
+
+      if (updates.unit !== undefined) setUnitNumber(updates.unit);
+      if (updates.vin !== undefined) setVinNumber(updates.vin);
+      if (updates.make !== undefined) setVehicleMake(updates.make);
+      if (updates.model !== undefined) setVehicleModel(updates.model);
+      if (updates.mileage !== undefined) setMileage(updates.mileage);
+    },
+    [unitNumber, vehicleHistory, vinNumber]
+  );
+
+  const hasCustomerSelection = Boolean(customer?.id || salesOrder?.customer_id);
+
   // Line items signature for change detection - no debouncing needed
   const lineItemsSignature = useMemo(() => {
     return JSON.stringify(
@@ -448,6 +493,23 @@ const SalesOrderDetailPage: React.FC = () => {
       }))
     );
   }, [lineItems]);
+
+  const { units: unitOptions, vins: vinOptions, unitToVins, vinToUnits } = useMemo(
+    () => buildVehicleOptionMaps(vehicleHistory),
+    [vehicleHistory]
+  );
+
+  const filteredVinOptions = useMemo(() => {
+    const unitKey = normalizeVehicleKey(unitNumber);
+    if (unitKey && unitToVins[unitKey]) return unitToVins[unitKey];
+    return vinOptions;
+  }, [unitNumber, unitToVins, vinOptions]);
+
+  const filteredUnitOptions = useMemo(() => {
+    const vinKey = normalizeVehicleKey(vinNumber);
+    if (vinKey && vinToUnits[vinKey]) return vinToUnits[vinKey];
+    return unitOptions;
+  }, [unitOptions, vinNumber, vinToUnits]);
 
   const partDescriptionLookup = useMemo(() => {
     const map: Record<string, string> = {};
@@ -630,6 +692,34 @@ const SalesOrderDetailPage: React.FC = () => {
     }
   }, [customers.length, customersLoading]);
 
+  const loadVehicleHistory = useCallback(
+    async (customerId?: number | null) => {
+      if (!customerId) {
+        setVehicleHistory([]);
+        lastVehicleHistoryCustomerId.current = null;
+        return;
+      }
+      if (lastVehicleHistoryCustomerId.current === customerId && vehicleHistory.length) return;
+      lastVehicleHistoryCustomerId.current = customerId;
+      setVehicleHistoryLoading(true);
+      try {
+        const res = await getCustomerVehicleHistory(customerId);
+        const sorted = [...(res.records || [])].sort((a, b) => {
+          const aTime = a.activity_date ? new Date(a.activity_date).getTime() : 0;
+          const bTime = b.activity_date ? new Date(b.activity_date).getTime() : 0;
+          return bTime - aTime;
+        });
+        setVehicleHistory(sorted);
+      } catch (err) {
+        console.error('Failed to load vehicle history for customer', err);
+        setVehicleHistory([]);
+      } finally {
+        setVehicleHistoryLoading(false);
+      }
+    },
+    [vehicleHistory.length]
+  );
+
   // ---------- Mode-specific fetch ----------
   useEffect(() => {
     // If no id yet or we are in creation mode or id is not numeric, do not fetch by id
@@ -742,6 +832,11 @@ const SalesOrderDetailPage: React.FC = () => {
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, isCreationMode, isNumericId]);
+
+  useEffect(() => {
+    const customerId = customer?.id ?? salesOrder?.customer_id ?? null;
+    loadVehicleHistory(customerId ? Number(customerId) : null);
+  }, [customer?.id, loadVehicleHistory, salesOrder?.customer_id]);
 
   // debouncedLineItems derives from lineItems directly
 
@@ -1687,18 +1782,80 @@ const SalesOrderDetailPage: React.FC = () => {
       : null,
   ].filter(Boolean) as SectionField[];
 
+  const vinInput = !hasCustomerSelection ? (
+    <TextField
+      label="VIN #"
+      value={vinNumber}
+      onChange={e => setVinNumber(e.target.value)}
+      fullWidth
+      placeholder="Optional"
+    />
+  ) : (
+    <Autocomplete<string, false, false, true>
+      freeSolo
+      options={filteredVinOptions}
+      loading={vehicleHistoryLoading}
+      value={vinNumber}
+      onInputChange={(_, value) => setVinNumber(value)}
+      onChange={(_, value, reason) => {
+        if (reason === 'clear') {
+          setVinNumber('');
+          return;
+        }
+        const nextVin = typeof value === 'string' ? value : value ?? '';
+        applyVehicleAutofill(undefined, nextVin);
+      }}
+      renderInput={(params) => (
+        <TextField
+          {...params}
+          label="VIN #"
+          fullWidth
+          placeholder="Optional"
+        />
+      )}
+    />
+  );
+
+  const unitInput = !hasCustomerSelection ? (
+    <TextField
+      label="Unit #"
+      value={unitNumber}
+      onChange={e => setUnitNumber(e.target.value)}
+      fullWidth
+      placeholder="Optional"
+    />
+  ) : (
+    <Autocomplete<string, false, false, true>
+      freeSolo
+      options={filteredUnitOptions}
+      loading={vehicleHistoryLoading}
+      value={unitNumber}
+      onInputChange={(_, value) => setUnitNumber(value)}
+      onChange={(_, value, reason) => {
+        if (reason === 'clear') {
+          setUnitNumber('');
+          return;
+        }
+        const nextUnit = typeof value === 'string' ? value : value ?? '';
+        applyVehicleAutofill(nextUnit, undefined);
+      }}
+      renderInput={(params) => (
+        <TextField
+          {...params}
+          label="Unit #"
+          fullWidth
+          placeholder="Optional"
+        />
+      )}
+    />
+  );
+
   const vehicleFields: SectionField[] = [
     effectiveFieldVisibility.vin
       ? {
           key: 'vin',
           element: (
-            <TextField
-              label="VIN #"
-              value={vinNumber}
-              onChange={e => setVinNumber(e.target.value)}
-              fullWidth
-              placeholder="Optional"
-            />
+            vinInput
           ),
         }
       : null,
@@ -1706,13 +1863,7 @@ const SalesOrderDetailPage: React.FC = () => {
       ? {
           key: 'unitNumber',
           element: (
-            <TextField
-              label="Unit #"
-              value={unitNumber}
-              onChange={e => setUnitNumber(e.target.value)}
-              fullWidth
-              placeholder="Optional"
-            />
+            unitInput
           ),
         }
       : null,
