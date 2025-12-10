@@ -50,6 +50,32 @@ interface CustomerOption {
 
 type SectionField = { key: string; element: React.ReactNode };
 
+const normalize = (s: string) =>
+  s
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^\w\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toUpperCase();
+
+const rankAndFilter = <T extends { label: string }>(options: T[], query: string, limit = 8) => {
+  const q = normalize(query || '');
+  if (!q) return options.slice(0, limit);
+  const scored = options
+    .map((opt) => {
+      const labelNorm = normalize(opt.label);
+      let score = -1;
+      if (labelNorm.startsWith(q)) score = 3;
+      else if (labelNorm.split(' ').some((w) => w.startsWith(q))) score = 2;
+      else if (labelNorm.includes(q)) score = 1;
+      return { opt, score };
+    })
+    .filter((x) => x.score >= 0);
+  scored.sort((a, b) => b.score - a.score || a.opt.label.localeCompare(b.opt.label));
+  return scored.slice(0, limit).map((x) => x.opt);
+};
+
 const defaultLineItem = (): InvoiceLineItem => ({
   part_id: null,
   part_number: '',
@@ -724,9 +750,9 @@ const InvoiceDetailPage: React.FC = () => {
       isOptionEqualToValue={(o, v) => o.id === v.id}
       filterOptions={(options, params) => {
         const input = (params.inputValue || '').trim();
-        const base = options;
-        const hasExact = base.some((opt) => opt.label.toLowerCase() === input.toLowerCase());
-        const out: CustomerOption[] = [...base];
+        const ranked = rankAndFilter(options, input, 10);
+        const hasExact = options.some((opt) => normalize(opt.label) === normalize(input));
+        const out: CustomerOption[] = [...ranked];
         if (input && !hasExact) {
           out.push({ label: `Add "${params.inputValue}"`, isNew: true, id: -1 });
         }
