@@ -706,9 +706,10 @@ const InvoiceDetailPage: React.FC = () => {
         if (computed.vin_number) updates.vin_number = computed.vin_number;
         if (computed.vehicle_make) updates.vehicle_make = computed.vehicle_make;
         if (computed.vehicle_model) updates.vehicle_model = computed.vehicle_model;
-        if (computed.mileage !== undefined && computed.mileage !== null && computed.mileage !== '') {
-          const mileageNumber = Number(computed.mileage);
-          updates.mileage = Number.isFinite(mileageNumber) ? mileageNumber : computed.mileage;
+        const mileageValue = computed.mileage;
+        if (mileageValue !== undefined && mileageValue !== null && String(mileageValue) !== '') {
+          const mileageNumber = Number(mileageValue);
+          updates.mileage = Number.isFinite(mileageNumber) ? mileageNumber : mileageValue;
         }
       }
 
