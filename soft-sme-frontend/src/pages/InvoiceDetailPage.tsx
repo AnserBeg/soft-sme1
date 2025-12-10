@@ -45,6 +45,8 @@ interface CustomerOption {
   isNew?: true;
 }
 
+type SectionField = { key: string; element: React.ReactNode };
+
 const defaultLineItem = (): InvoiceLineItem => ({
   part_id: null,
   part_number: '',
@@ -567,6 +569,190 @@ const InvoiceDetailPage: React.FC = () => {
   }
 
   const isOverdue = invoice.status === 'Unpaid' && dueDate && dueDate.isBefore(dayjs(), 'day');
+  const cardSx = {
+    p: 3,
+    mb: 3,
+    border: '1px solid',
+    borderColor: 'divider',
+    borderRadius: 2,
+    boxShadow: '0 8px 24px rgba(0,0,0,0.06)',
+  };
+  const denseGridBase = {
+    display: 'grid',
+    gap: 2,
+    gridAutoFlow: 'row dense',
+    alignItems: 'stretch',
+  };
+  const customerGridSx = {
+    ...denseGridBase,
+    gridTemplateColumns: {
+      xs: 'repeat(auto-fit, minmax(240px, 1fr))',
+      md: 'repeat(auto-fit, minmax(280px, 1fr))',
+    },
+  };
+  const vehicleGridSx = {
+    ...denseGridBase,
+    gridTemplateColumns: {
+      xs: 'repeat(auto-fit, minmax(200px, 1fr))',
+      md: 'repeat(auto-fit, minmax(180px, 1fr))',
+      lg: 'repeat(auto-fit, minmax(160px, 1fr))',
+    },
+  };
+  const jobGridSx = {
+    ...denseGridBase,
+    gridTemplateColumns: {
+      xs: 'repeat(auto-fit, minmax(220px, 1fr))',
+      md: 'repeat(auto-fit, minmax(260px, 1fr))',
+    },
+  };
+
+  const customerField = (
+    <Autocomplete<CustomerOption, false, false, true>
+      options={customers}
+      value={customer}
+      inputValue={customerInput}
+      onInputChange={(_, val) => setCustomerInput(val)}
+      loading={customersLoading}
+      onFocus={loadCustomers}
+      onChange={(_, val) => {
+        if (!val) {
+          setCustomer(null);
+          setInvoice((prev: any) => ({ ...prev, customer_id: null }));
+          return;
+        }
+        if (typeof val === 'object' && (val as any).isNew) {
+          const typed = (val as any).inputValue || customerInput || '';
+          setNewCustomerName(typed);
+          setIsAddCustomerModalOpen(true);
+          return;
+        }
+        const chosen = typeof val === 'string' ? customers.find((c) => c.label === val) || null : (val as CustomerOption);
+        setCustomer(chosen);
+        setCustomerInput(chosen?.label || '');
+        if (chosen?.id) {
+          setInvoice((prev: any) => ({ ...prev, customer_id: chosen.id }));
+        }
+      }}
+      getOptionLabel={(option) => (typeof option === 'string' ? option : option.label)}
+      isOptionEqualToValue={(o, v) => o.id === v.id}
+      filterOptions={(options, params) => {
+        const input = (params.inputValue || '').trim();
+        const base = options;
+        const hasExact = base.some((opt) => opt.label.toLowerCase() === input.toLowerCase());
+        const out: CustomerOption[] = [...base];
+        if (input && !hasExact) {
+          out.push({ label: `Add "${params.inputValue}"`, isNew: true, id: -1 });
+        }
+        return out;
+      }}
+      renderInput={(params) => (
+        <TextField {...params} label="Customer" fullWidth />
+      )}
+    />
+  );
+
+  const vehicleFields: SectionField[] = [
+    effectiveFieldVisibility.vin !== false
+      ? {
+          key: 'vin',
+          element: (
+            <TextField
+              label="VIN #"
+              value={invoice.vin_number || ''}
+              onChange={(e) => setInvoice((prev: any) => ({ ...prev, vin_number: e.target.value }))}
+              fullWidth
+            />
+          ),
+        }
+      : null,
+    effectiveFieldVisibility.unitNumber !== false
+      ? {
+          key: 'unitNumber',
+          element: (
+            <TextField
+              label="Unit #"
+              value={invoice.unit_number || ''}
+              onChange={(e) => setInvoice((prev: any) => ({ ...prev, unit_number: e.target.value }))}
+              fullWidth
+            />
+          ),
+        }
+      : null,
+    effectiveFieldVisibility.vehicleMake !== false
+      ? {
+          key: 'vehicleMake',
+          element: (
+            <TextField
+              label="Make"
+              value={invoice.vehicle_make || ''}
+              onChange={(e) => setInvoice((prev: any) => ({ ...prev, vehicle_make: e.target.value }))}
+              fullWidth
+            />
+          ),
+        }
+      : null,
+    effectiveFieldVisibility.vehicleModel !== false
+      ? {
+          key: 'vehicleModel',
+          element: (
+            <TextField
+              label="Model"
+              value={invoice.vehicle_model || ''}
+              onChange={(e) => setInvoice((prev: any) => ({ ...prev, vehicle_model: e.target.value }))}
+              fullWidth
+            />
+          ),
+        }
+      : null,
+    effectiveFieldVisibility.mileage !== false
+      ? {
+          key: 'mileage',
+          element: (
+            <TextField
+              label="Mileage"
+              type="number"
+              value={invoice.mileage ?? ''}
+              onChange={(e) =>
+                setInvoice((prev: any) => ({
+                  ...prev,
+                  mileage: e.target.value === '' ? '' : Number(e.target.value),
+                }))
+              }
+              fullWidth
+              inputProps={{ step: 1, min: 0 }}
+            />
+          ),
+        }
+      : null,
+  ].filter(Boolean) as SectionField[];
+
+  const jobFields: SectionField[] = [
+    {
+      key: 'invoiceDate',
+      element: (
+        <DatePicker
+          label="Invoice Date"
+          value={invoiceDate}
+          onChange={(val) => setInvoiceDate(val)}
+          slotProps={{ textField: { fullWidth: true } }}
+        />
+      ),
+    },
+    {
+      key: 'dueDate',
+      element: (
+        <DatePicker
+          label="Due Date"
+          value={dueDate}
+          onChange={(val) => {
+            setDueDate(val);
+            setDueDateTouched(true);
+          }}
+          slotProps={{ textField: { fullWidth: true } }}
+        />
+      ),
+    },
+  ];
 
   return (
     <>
@@ -615,165 +801,59 @@ const InvoiceDetailPage: React.FC = () => {
           </Stack>
         </Box>
 
-        <Paper sx={{ p: 3, mb: 3 }}>
-          <Grid container spacing={2}>
-            {/* Customer aligned to top left like SO */}
-            <Grid item xs={12} sm={6}>
-              <Autocomplete<CustomerOption, false, false, true>
-                options={customers}
-                value={customer}
-                inputValue={customerInput}
-                onInputChange={(_, val) => setCustomerInput(val)}
-                loading={customersLoading}
-                onFocus={loadCustomers}
-                onChange={(_, val) => {
-                  if (!val) {
-                    setCustomer(null);
-                    setInvoice((prev: any) => ({ ...prev, customer_id: null }));
-                    return;
-                  }
-                  if (typeof val === 'object' && (val as any).isNew) {
-                    const typed = (val as any).inputValue || customerInput || '';
-                    setNewCustomerName(typed);
-                    setIsAddCustomerModalOpen(true);
-                    return;
-                  }
-                  const chosen = typeof val === 'string' ? customers.find((c) => c.label === val) || null : (val as CustomerOption);
-                  setCustomer(chosen);
-                  setCustomerInput(chosen?.label || '');
-                  if (chosen?.id) {
-                    setInvoice((prev: any) => ({ ...prev, customer_id: chosen.id }));
-                  }
-                }}
-                getOptionLabel={(option) => (typeof option === 'string' ? option : option.label)}
-                isOptionEqualToValue={(o, v) => o.id === v.id}
-                filterOptions={(options, params) => {
-                  const input = (params.inputValue || '').trim();
-                  const base = options;
-                  const hasExact = base.some((opt) => opt.label.toLowerCase() === input.toLowerCase());
-                  const out: CustomerOption[] = [...base];
-                  if (input && !hasExact) {
-                    out.push({ label: `Add "${params.inputValue}"`, isNew: true, id: -1 });
-                  }
-                  return out;
-                }}
-                renderInput={(params) => (
-                  <TextField {...params} label="Customer" fullWidth />
-                )}
-              />
-            </Grid>
-            {/* Keep dates on the right similar to SO layout */}
-            <Grid item xs={12} sm={3}>
-              <DatePicker
-                label="Invoice Date"
-                value={invoiceDate}
-                onChange={(val) => setInvoiceDate(val)}
-                slotProps={{ textField: { fullWidth: true } }}
-              />
-            </Grid>
-            <Grid item xs={12} sm={3}>
-              <DatePicker
-                label="Due Date"
-                value={dueDate}
-                onChange={(val) => {
-                  setDueDate(val);
-                  setDueDateTouched(true);
-                }}
-                slotProps={{ textField: { fullWidth: true } }}
-              />
-            </Grid>
+        <Paper sx={cardSx}>
+          <Typography variant="subtitle1" fontWeight={600} gutterBottom>Customer Information</Typography>
+          <Box sx={customerGridSx}>
+            <Box>{customerField}</Box>
+          </Box>
+        </Paper>
 
-            <Grid item xs={12} sm={6}>
-              {effectiveFieldVisibility.unitNumber !== false && (
-                <TextField
-                  label="Unit #"
-                  value={invoice.unit_number || ''}
-                  onChange={(e) => setInvoice((prev: any) => ({ ...prev, unit_number: e.target.value }))}
-                  fullWidth
-                />
-              )}
-            </Grid>
-            {effectiveFieldVisibility.mileage !== false && (
-              <Grid item xs={12} sm={3}>
-                <TextField
-                  label="Mileage"
-                  type="number"
-                  value={invoice.mileage ?? ''}
-                  onChange={(e) =>
-                    setInvoice((prev: any) => ({
-                      ...prev,
-                      mileage: e.target.value === '' ? '' : Number(e.target.value),
-                    }))
-                  }
-                  fullWidth
-                  inputProps={{ step: 1, min: 0 }}
-                />
-              </Grid>
-            )}
-            <Grid item xs={12} sm={3}>
-              {effectiveFieldVisibility.vehicleMake !== false && (
-                <TextField
-                  label="Make"
-                  value={invoice.vehicle_make || ''}
-                  onChange={(e) => setInvoice((prev: any) => ({ ...prev, vehicle_make: e.target.value }))}
-                  fullWidth
-                />
-              )}
-            </Grid>
-            <Grid item xs={12} sm={3}>
-              {effectiveFieldVisibility.vehicleModel !== false && (
-                <TextField
-                  label="Model"
-                  value={invoice.vehicle_model || ''}
-                  onChange={(e) => setInvoice((prev: any) => ({ ...prev, vehicle_model: e.target.value }))}
-                  fullWidth
-                />
-              )}
-            </Grid>
+        <Paper sx={cardSx}>
+          <Typography variant="subtitle1" fontWeight={600} gutterBottom>Vehicle Details</Typography>
+          <Box sx={vehicleGridSx}>
+            {vehicleFields.map(field => (
+              <Box key={field.key}>{field.element}</Box>
+            ))}
+          </Box>
+        </Paper>
 
-            {effectiveFieldVisibility.vin !== false && (
-              <Grid item xs={12} sm={6}>
-                <TextField
-                  label="VIN #"
-                  value={invoice.vin_number || ''}
-                  onChange={(e) => setInvoice((prev: any) => ({ ...prev, vin_number: e.target.value }))}
-                  fullWidth
-                />
-              </Grid>
-            )}
-            <Grid item xs={12} sm={6}>
+        <Paper sx={cardSx}>
+          <Typography variant="subtitle1" fontWeight={600} gutterBottom>Job & Schedule</Typography>
+          <Box sx={{ ...jobGridSx, mb: 2 }}>
+            {jobFields.map(field => (
+              <Box key={field.key}>{field.element}</Box>
+            ))}
+          </Box>
+          <Box sx={{ display: 'grid', gap: 2 }}>
+            <TextField
+              label="Product"
+              value={invoice.product_name || ''}
+              onChange={(e) => setInvoice((prev: any) => ({ ...prev, product_name: e.target.value }))}
+              fullWidth
+            />
+            {effectiveFieldVisibility.productDescription !== false && (
               <TextField
-                label="Product"
-                value={invoice.product_name || ''}
-                onChange={(e) => setInvoice((prev: any) => ({ ...prev, product_name: e.target.value }))}
+                label="Product Description"
+                value={invoice.product_description || ''}
+                onChange={(e) => setInvoice((prev: any) => ({ ...prev, product_description: e.target.value }))}
                 fullWidth
-              />
-            </Grid>
-
-            <Grid item xs={12}>
-              {effectiveFieldVisibility.productDescription !== false && (
-                <TextField
-                  label="Product Description"
-                  value={invoice.product_description || ''}
-                  onChange={(e) => setInvoice((prev: any) => ({ ...prev, product_description: e.target.value }))}
-                  fullWidth
-                  multiline
-                  minRows={2}
-                />
-              )}
-            </Grid>
-
-            <Grid item xs={12}>
-              <TextField
-                label="Terms"
                 multiline
                 minRows={2}
-                fullWidth
-                value={invoice.notes || ''}
-                onChange={(e) => setInvoice((prev: any) => ({ ...prev, notes: e.target.value }))}
               />
-            </Grid>
-          </Grid>
+            )}
+          </Box>
+        </Paper>
+
+        <Paper sx={cardSx}>
+          <Typography variant="subtitle1" fontWeight={600} gutterBottom>Invoice Terms</Typography>
+          <TextField
+            label="Invoice Terms"
+            multiline
+            minRows={2}
+            fullWidth
+            value={invoice.notes || ''}
+            onChange={(e) => setInvoice((prev: any) => ({ ...prev, notes: e.target.value }))}
+          />
         </Paper>
       <Popover
         open={Boolean(fieldPickerAnchor)}
