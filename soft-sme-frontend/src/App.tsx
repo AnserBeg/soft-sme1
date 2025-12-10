@@ -55,6 +55,7 @@ import TaskDetailPage from './pages/TaskDetailPage';
 import TasksDashboardPage from './pages/TasksDashboardPage';
 import ReturnOrdersPage from './pages/ReturnOrdersPage';
 import ReturnOrderDetailPage from './pages/ReturnOrderDetailPage';
+import FieldVisibilitySettingsPage from './pages/FieldVisibilitySettingsPage';
 import { useEffect, useState, useRef } from 'react';
 import { syncPending, getPendingCount } from './services/offlineSync';
 import { ToastContainer, toast } from 'react-toastify';
@@ -220,6 +221,7 @@ const AppRoutes: React.FC = () => {
         
         {/* System Management */}
         <Route path="backup-management" element={<BackupManagementPage />} />
+        <Route path="field-visibility" element={<FieldVisibilitySettingsPage />} />
         
         {/* Mobile User Access Management */}
         <Route path="mobile-user-access" element={<MobileUserAccessPage />} />

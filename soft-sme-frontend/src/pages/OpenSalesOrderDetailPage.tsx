@@ -33,6 +33,11 @@ import {
 } from '../utils/salesOrderCalculations';
 import { formatCurrency } from '../utils/formatters';
 import UnsavedChangesGuard from '../components/UnsavedChangesGuard';
+import {
+  DEFAULT_FIELD_VISIBILITY_SETTINGS,
+  fieldVisibilityService,
+  SalesOrderFieldVisibility,
+} from '../services/fieldVisibilityService';
 
 const UNIT_OPTIONS = ['Each', 'cm', 'ft', 'ft^2', 'kg', 'pcs', 'hr', 'L'];
 type PartOption = string | { label: string; isNew?: true; inputValue?: string };
@@ -129,7 +134,7 @@ type OptionalFieldKey =
   | 'productDescription'
   | 'terms'
   | 'mileage';
-type FieldVisibilityMap = Record<OptionalFieldKey, boolean>;
+type FieldVisibilityMap = SalesOrderFieldVisibility;
 
 const rankAndFilter = <T extends { label: string }>(options: T[], query: string, limit = 8) => {
   const q = normalize(query);
@@ -209,19 +214,7 @@ const SalesOrderDetailPage: React.FC = () => {
 
   const OPTIONAL_FIELD_STORAGE_KEY = 'salesOrderDetail.fieldVisibility';
   const DEFAULT_FIELD_VISIBILITY: FieldVisibilityMap = {
-    customerPoNumber: true,
-    quotedPrice: true,
-    sourceQuote: true,
-    vin: true,
-    unitNumber: true,
-    vehicleMake: true,
-    vehicleModel: true,
-    invoiceStatus: true,
-    wantedByDate: true,
-    wantedByTimeOfDay: true,
-    productDescription: true,
-    terms: true,
-    mileage: true,
+    ...DEFAULT_FIELD_VISIBILITY_SETTINGS.salesOrders,
   };
   const [fieldVisibility, setFieldVisibility] = useState<FieldVisibilityMap>(() => {
     if (typeof window === 'undefined') return DEFAULT_FIELD_VISIBILITY;
@@ -236,11 +229,43 @@ const SalesOrderDetailPage: React.FC = () => {
     }
     return DEFAULT_FIELD_VISIBILITY;
   });
+  const [adminFieldVisibility, setAdminFieldVisibility] = useState<FieldVisibilityMap>(DEFAULT_FIELD_VISIBILITY);
+
   useEffect(() => {
     if (typeof window !== 'undefined') {
       localStorage.setItem(OPTIONAL_FIELD_STORAGE_KEY, JSON.stringify(fieldVisibility));
     }
   }, [fieldVisibility]);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const fetched = await fieldVisibilityService.fetchSettings();
+        setAdminFieldVisibility(fetched.salesOrders);
+        setFieldVisibility(prev => {
+          const next = { ...prev };
+          let changed = false;
+          (Object.keys(fetched.salesOrders) as OptionalFieldKey[]).forEach(key => {
+            if (!fetched.salesOrders[key] && next[key]) {
+              next[key] = false;
+              changed = true;
+            }
+          });
+          return changed ? next : prev;
+        });
+      } catch (err) {
+        console.warn('Failed to load admin field visibility defaults; using user preferences', err);
+      }
+    })();
+  }, []);
+
+  const effectiveFieldVisibility = useMemo(() => {
+    const merged: FieldVisibilityMap = { ...DEFAULT_FIELD_VISIBILITY };
+    (Object.keys(merged) as OptionalFieldKey[]).forEach(key => {
+      merged[key] = Boolean(adminFieldVisibility[key] && fieldVisibility[key]);
+    });
+    return merged;
+  }, [adminFieldVisibility, fieldVisibility]);
 
   const [fieldPickerAnchor, setFieldPickerAnchor] = useState<HTMLElement | null>(null);
   const openFieldPicker = (event: React.MouseEvent<HTMLElement>) => setFieldPickerAnchor(event.currentTarget);
@@ -1216,7 +1241,7 @@ const SalesOrderDetailPage: React.FC = () => {
     try {
       // Save first if open
       if (salesOrder.status?.toLowerCase() !== 'closed') await handleSave();
-      const visibleFields = Object.entries(fieldVisibility)
+      const visibleFields = Object.entries(effectiveFieldVisibility)
         .filter(([, isVisible]) => isVisible)
         .map(([key]) => key)
         .join(',');
@@ -1553,13 +1578,15 @@ const SalesOrderDetailPage: React.FC = () => {
                 { key: 'wantedByTimeOfDay', label: 'Wanted Time of Day' },
                 { key: 'productDescription', label: 'Product Description' },
                 { key: 'terms', label: 'Terms' },
-              ].map(({ key, label }) => (
+              ]
+                .filter(({ key }) => adminFieldVisibility[key as OptionalFieldKey])
+                .map(({ key, label }) => (
                 <FormControlLabel
                   key={key}
                   control={
                     <Checkbox
                       size="small"
-                      checked={fieldVisibility[key as OptionalFieldKey]}
+                      checked={Boolean(fieldVisibility[key as OptionalFieldKey])}
                       onChange={(e) =>
                         setFieldVisibility((prev) => ({
                           ...prev,
@@ -1693,12 +1720,12 @@ const SalesOrderDetailPage: React.FC = () => {
                 )}
               />
             </Grid>
-            {fieldVisibility.customerPoNumber && (
+            {effectiveFieldVisibility.customerPoNumber && (
               <Grid item xs={12} sm={4}>
                 <TextField label="Customer PO #" value={customerPoNumber} onChange={e => setCustomerPoNumber(e.target.value)} fullWidth placeholder="Optional" />
               </Grid>
             )}
-            {!isSalesPurchaseUser && fieldVisibility.quotedPrice && (
+            {!isSalesPurchaseUser && effectiveFieldVisibility.quotedPrice && (
               <Grid item xs={12} sm={4}>
                 <TextField
                   label="Quoted Price"
@@ -1712,7 +1739,7 @@ const SalesOrderDetailPage: React.FC = () => {
               </Grid>
             )}
 
-            {fieldVisibility.sourceQuote && (
+            {effectiveFieldVisibility.sourceQuote && (
               <Grid item xs={12} sm={4}>
                 <TextField
                   label="Source Quote #"
@@ -1723,7 +1750,7 @@ const SalesOrderDetailPage: React.FC = () => {
                 />
               </Grid>
             )}
-            {fieldVisibility.vin && (
+            {effectiveFieldVisibility.vin && (
               <Grid item xs={12} sm={4}>
                 <TextField
                   label="VIN #"
@@ -1734,7 +1761,7 @@ const SalesOrderDetailPage: React.FC = () => {
                 />
               </Grid>
             )}
-            {fieldVisibility.unitNumber && (
+            {effectiveFieldVisibility.unitNumber && (
               <Grid item xs={12} sm={4}>
                 <TextField
                   label="Unit #"
@@ -1745,7 +1772,7 @@ const SalesOrderDetailPage: React.FC = () => {
                 />
               </Grid>
             )}
-            {fieldVisibility.mileage && (
+            {effectiveFieldVisibility.mileage && (
               <Grid item xs={12} sm={4}>
                 <TextField
                   label="Mileage"
@@ -1758,7 +1785,7 @@ const SalesOrderDetailPage: React.FC = () => {
                 />
               </Grid>
             )}
-            {fieldVisibility.vehicleMake && (
+            {effectiveFieldVisibility.vehicleMake && (
               <Grid item xs={12} sm={4}>
                 <TextField
                   label="Make"
@@ -1769,7 +1796,7 @@ const SalesOrderDetailPage: React.FC = () => {
                 />
               </Grid>
             )}
-            {fieldVisibility.vehicleModel && (
+            {effectiveFieldVisibility.vehicleModel && (
               <Grid item xs={12} sm={4}>
                 <TextField
                   label="Model"
@@ -1780,7 +1807,7 @@ const SalesOrderDetailPage: React.FC = () => {
                 />
               </Grid>
             )}
-            {fieldVisibility.invoiceStatus && (
+            {effectiveFieldVisibility.invoiceStatus && (
               <Grid item xs={12} sm={4}>
                 <FormControl component="fieldset" fullWidth>
                   <FormLabel sx={{ mb: 1 }}>Invoice</FormLabel>
@@ -1830,7 +1857,7 @@ const SalesOrderDetailPage: React.FC = () => {
                 </FormControl>
               </Grid>
             )}
-            {fieldVisibility.wantedByDate && (
+            {effectiveFieldVisibility.wantedByDate && (
               <Grid item xs={12} sm={4}>
                 <DatePicker
                   label="Wanted By Date"
@@ -1841,7 +1868,7 @@ const SalesOrderDetailPage: React.FC = () => {
                 />
               </Grid>
             )}
-            {fieldVisibility.wantedByTimeOfDay && (
+            {effectiveFieldVisibility.wantedByTimeOfDay && (
               <Grid item xs={12} sm={4}>
                 <FormControl component="fieldset" fullWidth>
                   <FormLabel sx={{ mb: 1 }}>Wanted Time of Day</FormLabel>
@@ -1934,12 +1961,12 @@ const SalesOrderDetailPage: React.FC = () => {
                 disabled={false}
               />
             </Grid>
-            {fieldVisibility.productDescription && (
+            {effectiveFieldVisibility.productDescription && (
               <Grid item xs={12}>
                 <TextField label="Product Description" value={productDescription} onChange={e => setProductDescription(e.target.value)} fullWidth multiline minRows={2} maxRows={6} sx={{ mt:1 }} />
               </Grid>
             )}
-            {fieldVisibility.terms && (
+            {effectiveFieldVisibility.terms && (
               <Grid item xs={12}>
                 <TextField label="Terms" value={terms} onChange={e => setTerms(e.target.value)} fullWidth multiline minRows={3} maxRows={8} sx={{ mt:1 }} placeholder="Enter payment/delivery terms, etc." />
               </Grid>

@@ -32,6 +32,11 @@ import { InvoiceLineItem } from '../types/invoice';
 import { formatCurrency } from '../utils/formatters';
 import api from '../api/axios';
 import UnifiedCustomerDialog, { CustomerFormValues } from '../components/UnifiedCustomerDialog';
+import {
+  DEFAULT_FIELD_VISIBILITY_SETTINGS,
+  fieldVisibilityService,
+  InvoiceFieldVisibility,
+} from '../services/fieldVisibilityService';
 
 interface CustomerOption {
   id: number;
@@ -86,28 +91,18 @@ const InvoiceDetailPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
   const FIELD_VISIBILITY_STORAGE_KEY = 'invoiceDetail.fieldVisibility';
-  const [fieldVisibility, setFieldVisibility] = useState<Record<string, boolean>>(() => {
-    if (typeof window === 'undefined') return {
-      vin: true,
-      productDescription: true,
-      unitNumber: true,
-      vehicleMake: true,
-      vehicleModel: true,
-      mileage: true,
-    };
+  const DEFAULT_FIELD_VISIBILITY: InvoiceFieldVisibility = {
+    ...DEFAULT_FIELD_VISIBILITY_SETTINGS.invoices,
+  };
+  const [fieldVisibility, setFieldVisibility] = useState<InvoiceFieldVisibility>(() => {
+    if (typeof window === 'undefined') return DEFAULT_FIELD_VISIBILITY;
     const stored = localStorage.getItem(FIELD_VISIBILITY_STORAGE_KEY);
     if (stored) {
-      try { return JSON.parse(stored); } catch {}
+      try { return { ...DEFAULT_FIELD_VISIBILITY, ...JSON.parse(stored) }; } catch {}
     }
-    return {
-      vin: true,
-      productDescription: true,
-      unitNumber: true,
-      vehicleMake: true,
-      vehicleModel: true,
-      mileage: true,
-    };
+    return DEFAULT_FIELD_VISIBILITY;
   });
+  const [adminFieldVisibility, setAdminFieldVisibility] = useState<InvoiceFieldVisibility>(DEFAULT_FIELD_VISIBILITY);
   const [fieldPickerAnchor, setFieldPickerAnchor] = useState<HTMLElement | null>(null);
 
   const totals = useMemo(() => {
@@ -165,6 +160,36 @@ const InvoiceDetailPage: React.FC = () => {
       localStorage.setItem(FIELD_VISIBILITY_STORAGE_KEY, JSON.stringify(fieldVisibility));
     }
   }, [fieldVisibility]);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const fetched = await fieldVisibilityService.fetchSettings();
+        setAdminFieldVisibility(fetched.invoices);
+        setFieldVisibility(prev => {
+          const next = { ...prev };
+          let changed = false;
+          (Object.keys(fetched.invoices) as (keyof InvoiceFieldVisibility)[]).forEach(key => {
+            if (!fetched.invoices[key] && next[key]) {
+              next[key] = false;
+              changed = true;
+            }
+          });
+          return changed ? next : prev;
+        });
+      } catch (err) {
+        console.warn('Failed to load invoice field visibility defaults; using saved preferences', err);
+      }
+    })();
+  }, []);
+
+  const effectiveFieldVisibility = useMemo(() => {
+    const merged: InvoiceFieldVisibility = { ...DEFAULT_FIELD_VISIBILITY };
+    (Object.keys(merged) as (keyof InvoiceFieldVisibility)[]).forEach(key => {
+      merged[key] = Boolean(adminFieldVisibility[key] && fieldVisibility[key]);
+    });
+    return merged;
+  }, [adminFieldVisibility, fieldVisibility]);
 
   const applySalesOrderDefaults = async (soId: number) => {
     try {
@@ -659,7 +684,7 @@ const InvoiceDetailPage: React.FC = () => {
             </Grid>
 
             <Grid item xs={12} sm={6}>
-              {fieldVisibility.unitNumber !== false && (
+              {effectiveFieldVisibility.unitNumber !== false && (
                 <TextField
                   label="Unit #"
                   value={invoice.unit_number || ''}
@@ -668,7 +693,7 @@ const InvoiceDetailPage: React.FC = () => {
                 />
               )}
             </Grid>
-            {fieldVisibility.mileage !== false && (
+            {effectiveFieldVisibility.mileage !== false && (
               <Grid item xs={12} sm={3}>
                 <TextField
                   label="Mileage"
@@ -686,7 +711,7 @@ const InvoiceDetailPage: React.FC = () => {
               </Grid>
             )}
             <Grid item xs={12} sm={3}>
-              {fieldVisibility.vehicleMake !== false && (
+              {effectiveFieldVisibility.vehicleMake !== false && (
                 <TextField
                   label="Make"
                   value={invoice.vehicle_make || ''}
@@ -696,7 +721,7 @@ const InvoiceDetailPage: React.FC = () => {
               )}
             </Grid>
             <Grid item xs={12} sm={3}>
-              {fieldVisibility.vehicleModel !== false && (
+              {effectiveFieldVisibility.vehicleModel !== false && (
                 <TextField
                   label="Model"
                   value={invoice.vehicle_model || ''}
@@ -706,7 +731,7 @@ const InvoiceDetailPage: React.FC = () => {
               )}
             </Grid>
 
-            {fieldVisibility.vin !== false && (
+            {effectiveFieldVisibility.vin !== false && (
               <Grid item xs={12} sm={6}>
                 <TextField
                   label="VIN #"
@@ -726,7 +751,7 @@ const InvoiceDetailPage: React.FC = () => {
             </Grid>
 
             <Grid item xs={12}>
-              {fieldVisibility.productDescription !== false && (
+              {effectiveFieldVisibility.productDescription !== false && (
                 <TextField
                   label="Product Description"
                   value={invoice.product_description || ''}
@@ -759,30 +784,33 @@ const InvoiceDetailPage: React.FC = () => {
         <Box sx={{ p: 2, minWidth: 220 }}>
           <Typography variant="subtitle1" sx={{ mb: 1.5 }}>Show / Hide Fields</Typography>
           <FormGroup>
-            <FormControlLabel
-              control={<Checkbox size="small" checked={fieldVisibility.vin !== false} onChange={(e) => setFieldVisibility((prev) => ({ ...prev, vin: e.target.checked }))} />}
-              label="VIN #"
-            />
-            <FormControlLabel
-              control={<Checkbox size="small" checked={fieldVisibility.productDescription !== false} onChange={(e) => setFieldVisibility((prev) => ({ ...prev, productDescription: e.target.checked }))} />}
-              label="Product Description"
-            />
-            <FormControlLabel
-              control={<Checkbox size="small" checked={fieldVisibility.unitNumber !== false} onChange={(e) => setFieldVisibility((prev) => ({ ...prev, unitNumber: e.target.checked }))} />}
-              label="Unit #"
-            />
-            <FormControlLabel
-              control={<Checkbox size="small" checked={fieldVisibility.mileage !== false} onChange={(e) => setFieldVisibility((prev) => ({ ...prev, mileage: e.target.checked }))} />}
-              label="Mileage"
-            />
-            <FormControlLabel
-              control={<Checkbox size="small" checked={fieldVisibility.vehicleMake !== false} onChange={(e) => setFieldVisibility((prev) => ({ ...prev, vehicleMake: e.target.checked }))} />}
-              label="Make"
-            />
-            <FormControlLabel
-              control={<Checkbox size="small" checked={fieldVisibility.vehicleModel !== false} onChange={(e) => setFieldVisibility((prev) => ({ ...prev, vehicleModel: e.target.checked }))} />}
-              label="Model"
-            />
+            {[
+              { key: 'vin', label: 'VIN #' },
+              { key: 'productDescription', label: 'Product Description' },
+              { key: 'unitNumber', label: 'Unit #' },
+              { key: 'mileage', label: 'Mileage' },
+              { key: 'vehicleMake', label: 'Make' },
+              { key: 'vehicleModel', label: 'Model' },
+            ]
+              .filter(({ key }) => adminFieldVisibility[key as keyof InvoiceFieldVisibility])
+              .map(({ key, label }) => (
+                <FormControlLabel
+                  key={key}
+                  control={
+                    <Checkbox
+                      size="small"
+                      checked={Boolean((fieldVisibility as any)[key])}
+                      onChange={(e) =>
+                        setFieldVisibility(prev => ({
+                          ...prev,
+                          [key]: e.target.checked,
+                        }))
+                      }
+                    />
+                  }
+                  label={label}
+                />
+              ))}
           </FormGroup>
         </Box>
       </Popover>

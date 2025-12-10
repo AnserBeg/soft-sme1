@@ -1,7 +1,147 @@
 import express, { Request, Response } from 'express';
 import { pool } from '../db';
+import { adminAuth } from '../middleware/authMiddleware';
 
 const router = express.Router();
+
+type SalesOrderFieldVisibility = {
+  customerPoNumber: boolean;
+  quotedPrice: boolean;
+  sourceQuote: boolean;
+  vin: boolean;
+  unitNumber: boolean;
+  vehicleMake: boolean;
+  vehicleModel: boolean;
+  invoiceStatus: boolean;
+  wantedByDate: boolean;
+  wantedByTimeOfDay: boolean;
+  productDescription: boolean;
+  terms: boolean;
+  mileage: boolean;
+};
+
+type InvoiceFieldVisibility = {
+  vin: boolean;
+  productDescription: boolean;
+  unitNumber: boolean;
+  vehicleMake: boolean;
+  vehicleModel: boolean;
+  mileage: boolean;
+};
+
+type FieldVisibilitySettings = {
+  salesOrders: SalesOrderFieldVisibility;
+  invoices: InvoiceFieldVisibility;
+};
+
+const FIELD_VISIBILITY_KEY = 'field_visibility_settings';
+
+const DEFAULT_FIELD_VISIBILITY: FieldVisibilitySettings = {
+  salesOrders: {
+    customerPoNumber: true,
+    quotedPrice: true,
+    sourceQuote: true,
+    vin: true,
+    unitNumber: true,
+    vehicleMake: true,
+    vehicleModel: true,
+    invoiceStatus: true,
+    wantedByDate: true,
+    wantedByTimeOfDay: true,
+    productDescription: true,
+    terms: true,
+    mileage: true,
+  },
+  invoices: {
+    vin: true,
+    productDescription: true,
+    unitNumber: true,
+    vehicleMake: true,
+    vehicleModel: true,
+    mileage: true,
+  },
+};
+
+const cloneDefaultVisibility = (): FieldVisibilitySettings => ({
+  salesOrders: { ...DEFAULT_FIELD_VISIBILITY.salesOrders },
+  invoices: { ...DEFAULT_FIELD_VISIBILITY.invoices },
+});
+
+const normalizeVisibilityMap = <T extends Record<string, boolean>>(
+  incoming: any,
+  defaults: T,
+): T => {
+  if (!incoming || typeof incoming !== 'object') {
+    return { ...defaults };
+  }
+  const result = { ...defaults };
+  (Object.keys(defaults) as (keyof T)[]).forEach(key => {
+    const raw = (incoming as any)[key];
+    result[key] = typeof raw === 'boolean' ? raw : defaults[key];
+  });
+  return result;
+};
+
+const parseFieldVisibilitySettings = (raw: any): FieldVisibilitySettings => {
+  if (!raw || typeof raw !== 'string') return cloneDefaultVisibility();
+  try {
+    const parsed = JSON.parse(raw);
+    const salesOrders = normalizeVisibilityMap(
+      parsed?.salesOrders,
+      DEFAULT_FIELD_VISIBILITY.salesOrders,
+    );
+    const invoices = normalizeVisibilityMap(
+      parsed?.invoices,
+      DEFAULT_FIELD_VISIBILITY.invoices,
+    );
+    return { salesOrders, invoices };
+  } catch {
+    return cloneDefaultVisibility();
+  }
+};
+
+// Get the default field visibility settings for sales orders and invoices
+router.get('/field-visibility', async (_req: Request, res: Response) => {
+  try {
+    const result = await pool.query(
+      'SELECT value FROM global_settings WHERE key = $1',
+      [FIELD_VISIBILITY_KEY],
+    );
+    const value = result.rows[0]?.value ?? null;
+    const settings = parseFieldVisibilitySettings(value);
+    res.json({ settings });
+  } catch (err) {
+    console.error('globalSettingsRoutes: Error fetching field visibility settings:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Update the default field visibility settings (Admin only)
+router.put('/field-visibility', adminAuth, async (req: Request, res: Response) => {
+  try {
+    const payload = req.body || {};
+    const settings: FieldVisibilitySettings = {
+      salesOrders: normalizeVisibilityMap(
+        payload.salesOrders,
+        DEFAULT_FIELD_VISIBILITY.salesOrders,
+      ),
+      invoices: normalizeVisibilityMap(
+        payload.invoices,
+        DEFAULT_FIELD_VISIBILITY.invoices,
+      ),
+    };
+
+    await pool.query(
+      'INSERT INTO global_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value',
+      [FIELD_VISIBILITY_KEY, JSON.stringify(settings)],
+    );
+
+    res.json({ success: true, settings });
+  } catch (err) {
+    console.error('globalSettingsRoutes: Error updating field visibility settings:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
 // Helper function to update sales order line items when global rates change
 async function updateSalesOrderRates(rateType: 'labour' | 'overhead' | 'supply', newRate: number) {

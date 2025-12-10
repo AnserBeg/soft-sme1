@@ -42,6 +42,7 @@ import {
   Description as DescriptionIcon,
   Chat as ChatIcon,
   Search as SearchIcon,
+  Visibility as VisibilityIcon,
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import { Tooltip } from '@mui/material';
@@ -175,6 +176,7 @@ const Layout: React.FC = () => {
       { text: 'Business Profile', icon: <BusinessIcon />, path: '/business-profile' },
       { text: 'Accounting', icon: <AttachMoneyIcon />, path: '/qbo-account-mapping' },
       { text: 'Global Variables', icon: <AttachMoneyIcon />, path: '/margin-schedule' },
+      { text: 'Field Visibility', icon: <VisibilityIcon />, path: '/field-visibility' },
       { text: 'Email Settings', icon: <EmailIcon />, path: '/email-settings' },
       { text: 'Backup Management', icon: <BackupIcon />, path: '/backup-management' },
     ],
