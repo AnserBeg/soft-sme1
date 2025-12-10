@@ -45,6 +45,7 @@ const DEFAULT_GST_RATE = 5.0;
 
 type InvoiceStatus = '' | 'needed' | 'done';
 type WantedTimeOfDay = '' | 'morning' | 'afternoon' | 'evening';
+type SectionField = { key: string; element: React.ReactNode };
 
 const normalizeInvoiceStatus = (value: any): InvoiceStatus => {
   if (typeof value === 'string') {
@@ -149,6 +150,13 @@ const rankAndFilter = <T extends { label: string }>(options: T[], query: string,
   }).filter(x => x.score >= 0);
   scored.sort((a,b) => b.score - a.score || a.opt.label.localeCompare(b.opt.label));
   return scored.slice(0, limit).map(x => x.opt);
+};
+
+const getGridSpan = (count: number) => {
+  if (count >= 4) return 3;
+  if (count === 3) return 4;
+  if (count === 2) return 6;
+  return 12;
 };
 
 const SalesOrderDetailPage: React.FC = () => {
@@ -387,6 +395,14 @@ const SalesOrderDetailPage: React.FC = () => {
   const [ptoPartNumberForModal, setPtoPartNumberForModal] = useState('');
   const alertHeightPx = 64; // approximate banner height
   const activeAlertOffset = negativeAvailabilityItems.length > 0 ? (8 + alertHeightPx * negativeAvailabilityItems.length) : 0;
+  const cardSx = {
+    p: 3,
+    mb: 3,
+    border: '1px solid',
+    borderColor: 'divider',
+    borderRadius: 2,
+    boxShadow: '0 8px 24px rgba(0,0,0,0.06)',
+  };
 
   // Line items signature for change detection - no debouncing needed
   const lineItemsSignature = useMemo(() => {
@@ -1514,6 +1530,340 @@ const SalesOrderDetailPage: React.FC = () => {
   
   if (!isCreationMode && isClosed) return renderReadOnly();
 
+  const customerFields: SectionField[] = [
+    {
+      key: 'customer',
+      element: (
+        <Autocomplete<CustomerOption, false, false, true>
+          open={customerOpen}
+          onOpen={() => setCustomerOpen(true)}
+          onClose={() => setCustomerOpen(false)}
+          autoHighlight
+          value={customer}
+          onChange={(_, newValue) => {
+            if (customerEnterPressed) { setCustomerEnterPressed(false); return; }
+            if (newValue && (newValue as any).isNew) {
+              setIsAddCustomerModalOpen(true);
+              setNewCustomerName(customerInput);
+              setCustomer(null);
+              setCustomerInput('');
+              setCustomerOpen(false);
+            } else {
+              setCustomer(newValue as CustomerOption);
+              setCustomerOpen(false);
+            }
+          }}
+          inputValue={customerInput}
+          onInputChange={(_, v, reason) => {
+            setCustomerInput(v);
+            if (customerTypingTimer) window.clearTimeout(customerTypingTimer);
+            if (reason === 'reset') return;
+            const text = (v || '').trim();
+            if (text.length > 0) {
+              const t = window.setTimeout(() => setCustomerOpen(true), 200);
+              setCustomerTypingTimer(t as unknown as number);
+            } else {
+              setCustomerOpen(false);
+            }
+          }}
+          options={customers}
+          filterOptions={(options, params) => {
+            const ranked = rankAndFilter(options, params.inputValue || '');
+            const hasExact = !!exactCustomerMatch(params.inputValue || '');
+            const out:any[] = [...ranked];
+            if ((params.inputValue || '').trim() !== '' && !hasExact) {
+              out.push({ label: `Add "${params.inputValue}" as New Customer`, isNew: true } as any);
+            }
+            return out;
+          }}
+          getOptionLabel={o => typeof o === 'string' ? o : o.label}
+          isOptionEqualToValue={(o, v) => o.id === v.id}
+          renderOption={(props, option) => {
+            const isNew = (option as any).isNew;
+            const { key, ...other } = props;
+            return (
+              <li key={key} {...other} style={{ display:'flex', alignItems:'center', opacity: isNew ? 0.9 : 1 }}>
+                {isNew && <AddCircleOutlineIcon fontSize="small" style={{ marginRight:8, color:'#666' }} />}
+                <span>{(option as any).label}</span>
+              </li>
+            );
+          }}
+          renderInput={params => (
+            <TextField
+              {...params}
+              label="Customer"
+              required
+              onFocus={reloadCustomersIfNeeded}
+              onKeyDown={handleCustomerKeyDown}
+              onBlur={() => {
+                if (!customer) {
+                  const input = customerInput.trim();
+                  if (input) {
+                    const match = exactCustomerMatch(input);
+                    if (match) { setCustomer(match); setCustomerInput(match.label); }
+                  }
+                }
+              }}
+              inputRef={el => { customerInputRef.current = el; }}
+            />
+          )}
+        />
+      ),
+    },
+    effectiveFieldVisibility.customerPoNumber
+      ? {
+          key: 'customerPoNumber',
+          element: (
+            <TextField
+              label="Customer PO #"
+              value={customerPoNumber}
+              onChange={e => setCustomerPoNumber(e.target.value)}
+              fullWidth
+              placeholder="Optional"
+            />
+          ),
+        }
+      : null,
+    !isSalesPurchaseUser && effectiveFieldVisibility.quotedPrice
+      ? {
+          key: 'quotedPrice',
+          element: (
+            <TextField
+              label="Quoted Price"
+              type="number"
+              value={estimatedCost ?? ''}
+              onChange={e => setEstimatedCost(e.target.value ? parseFloat(e.target.value) : null)}
+              fullWidth
+              InputProps={{ startAdornment: <InputAdornment position="start">$</InputAdornment> }}
+              inputProps={{ onWheel: (e) => (e.currentTarget as HTMLInputElement).blur() }}
+            />
+          ),
+        }
+      : null,
+    effectiveFieldVisibility.sourceQuote
+      ? {
+          key: 'sourceQuote',
+          element: (
+            <TextField
+              label="Source Quote #"
+              value={sourceQuoteNumber || ''}
+              placeholder="Not converted from a quote"
+              fullWidth
+              InputProps={{ readOnly: true }}
+            />
+          ),
+        }
+      : null,
+    {
+      key: 'salesDate',
+      element: (
+        <DatePicker
+          label="Invoice Date"
+          value={salesDate}
+          onChange={setSalesDate}
+          sx={{ width:'100%' }}
+          slotProps={{ textField: { fullWidth: true, required: true } }}
+        />
+      ),
+    },
+    effectiveFieldVisibility.wantedByDate
+      ? {
+          key: 'wantedByDate',
+          element: (
+            <DatePicker
+              label="Due Date"
+              value={wantedByDate}
+              onChange={setWantedByDate}
+              sx={{ width:'100%' }}
+              slotProps={{ textField: { placeholder: 'Optional', fullWidth: true } }}
+            />
+          ),
+        }
+      : null,
+  ].filter(Boolean) as SectionField[];
+  const customerCol = getGridSpan(customerFields.length || 1);
+
+  const vehicleFields: SectionField[] = [
+    effectiveFieldVisibility.unitNumber
+      ? {
+          key: 'unitNumber',
+          element: (
+            <TextField
+              label="Unit #"
+              value={unitNumber}
+              onChange={e => setUnitNumber(e.target.value)}
+              fullWidth
+              placeholder="Optional"
+            />
+          ),
+        }
+      : null,
+    effectiveFieldVisibility.vehicleMake
+      ? {
+          key: 'vehicleMake',
+          element: (
+            <TextField
+              label="Make"
+              value={vehicleMake}
+              onChange={e => setVehicleMake(e.target.value)}
+              fullWidth
+              placeholder="Optional"
+            />
+          ),
+        }
+      : null,
+    effectiveFieldVisibility.vehicleModel
+      ? {
+          key: 'vehicleModel',
+          element: (
+            <TextField
+              label="Model"
+              value={vehicleModel}
+              onChange={e => setVehicleModel(e.target.value)}
+              fullWidth
+              placeholder="Optional"
+            />
+          ),
+        }
+      : null,
+    effectiveFieldVisibility.mileage
+      ? {
+          key: 'mileage',
+          element: (
+            <TextField
+              label="Mileage"
+              type="number"
+              value={mileage === '' ? '' : mileage}
+              onChange={e => setMileage(e.target.value === '' ? '' : Number(e.target.value))}
+              fullWidth
+              placeholder="Optional"
+              inputProps={{ min: 0, step: 1 }}
+            />
+          ),
+        }
+      : null,
+  ].filter(Boolean) as SectionField[];
+  const vehicleCol = getGridSpan(vehicleFields.length || 1);
+
+  const jobFields: SectionField[] = [
+    effectiveFieldVisibility.vin
+      ? {
+          key: 'vin',
+          element: (
+            <TextField
+              label="VIN #"
+              value={vinNumber}
+              onChange={e => setVinNumber(e.target.value)}
+              fullWidth
+              placeholder="Optional"
+            />
+          ),
+        }
+      : null,
+    effectiveFieldVisibility.wantedByTimeOfDay
+      ? {
+          key: 'wantedTimeOfDay',
+          element: (
+            <FormControl component="fieldset" fullWidth>
+              <FormLabel sx={{ mb: 1 }}>Wanted Time of Day</FormLabel>
+              <ToggleButtonGroup
+                value={wantedByTimeOfDay || null}
+                exclusive
+                fullWidth
+                size="small"
+                color="standard"
+                aria-label="Wanted time of day"
+                onChange={(_, value) => setWantedByTimeOfDay((value || '') as WantedTimeOfDay)}
+                sx={{
+                  '& .MuiToggleButtonGroup-grouped': { textTransform: 'none', flex: 1, gap: 0 },
+                  '& .MuiToggleButtonGroup-grouped:not(:first-of-type)': { marginLeft: 0 },
+                }}
+              >
+                <ToggleButton value="morning">Morning</ToggleButton>
+                <ToggleButton value="afternoon">Afternoon</ToggleButton>
+                <ToggleButton value="evening">Evening</ToggleButton>
+              </ToggleButtonGroup>
+            </FormControl>
+          ),
+        }
+      : null,
+  ].filter(Boolean) as SectionField[];
+  const jobCol = getGridSpan(jobFields.length || 1);
+
+  const invoiceStatusFields: SectionField[] = [
+    effectiveFieldVisibility.invoiceStatus
+      ? {
+          key: 'invoiceStatus',
+          element: (
+            <FormControl component="fieldset" fullWidth>
+              <FormLabel sx={{ mb: 1 }}>Invoice</FormLabel>
+              <ToggleButtonGroup
+                value={invoiceStatus || null}
+                exclusive
+                fullWidth
+                size="small"
+                color="standard"
+                aria-label="Invoice status"
+                onChange={handleInvoiceStatusToggle}
+                sx={{
+                  '& .MuiToggleButtonGroup-grouped': {
+                    textTransform: 'none',
+                    flex: 1,
+                    gap: 0,
+                  },
+                  '& .MuiToggleButtonGroup-grouped:not(:first-of-type)': {
+                    marginLeft: 0,
+                  },
+                  '& .MuiToggleButtonGroup-grouped.Mui-selected': {
+                    color: '#fff',
+                  },
+                  '& .MuiToggleButtonGroup-grouped.Mui-selected.MuiToggleButton-colorError': {
+                    bgcolor: (theme) => theme.palette.error.main,
+                    '&:hover': {
+                      bgcolor: (theme) => theme.palette.error.dark,
+                    },
+                  },
+                  '& .MuiToggleButtonGroup-grouped.Mui-selected.MuiToggleButton-colorSuccess': {
+                    bgcolor: (theme) => theme.palette.success.main,
+                    '&:hover': {
+                      bgcolor: (theme) => theme.palette.success.dark,
+                    },
+                  },
+                }}
+              >
+                <ToggleButton value="needed" color="error">
+                  <CancelIcon fontSize="small" sx={{ mr: 1 }} />
+                  Needed
+                </ToggleButton>
+                <ToggleButton value="done" color="success">
+                  <CheckCircleIcon fontSize="small" sx={{ mr: 1 }} />
+                  Done
+                </ToggleButton>
+              </ToggleButtonGroup>
+            </FormControl>
+          ),
+        }
+      : null,
+    effectiveFieldVisibility.terms
+      ? {
+          key: 'terms',
+          element: (
+            <TextField
+              label="Terms"
+              value={terms}
+              onChange={e => setTerms(e.target.value)}
+              fullWidth
+              multiline
+              minRows={3}
+              maxRows={8}
+              placeholder="Enter payment/delivery terms, etc."
+            />
+          ),
+        }
+      : null,
+  ].filter(Boolean) as SectionField[];
+  const invoiceStatusCol = getGridSpan(invoiceStatusFields.length || 1);
+
   // ---------- Main form (Create + Edit Open) ----------
   return (
     <LocalizationProvider dateAdapter={AdapterDayjs}>
@@ -1642,265 +1992,48 @@ const SalesOrderDetailPage: React.FC = () => {
         )}
 
         {/* Top form card - shift up when alerts are visible */}
-        <Paper sx={{ p: 3, mb: 3, transform: activeAlertOffset ? `translateY(-${activeAlertOffset}px)` : 'none', transition:'transform 200ms ease' }} elevation={3}>
-          <Grid container spacing={3}>
-            <Grid item xs={12} sm={4}>
-              <Autocomplete<CustomerOption, false, false, true>
-                open={customerOpen}
-                onOpen={() => setCustomerOpen(true)}
-                onClose={() => setCustomerOpen(false)}
-                autoHighlight
-                value={customer}
-                onChange={(_, newValue) => {
-                  if (customerEnterPressed) { setCustomerEnterPressed(false); return; }
-                  if (newValue && (newValue as any).isNew) {
-                    setIsAddCustomerModalOpen(true);
-                    setNewCustomerName(customerInput);
-                    setCustomer(null);
-                    setCustomerInput('');
-                    setCustomerOpen(false);
-                  } else {
-                    setCustomer(newValue as CustomerOption);
-                    setCustomerOpen(false);
-                  }
-                }}
-                inputValue={customerInput}
-                onInputChange={(_, v, reason) => {
-                  setCustomerInput(v);
-                  if (customerTypingTimer) window.clearTimeout(customerTypingTimer);
-                  if (reason === 'reset') return;
-                  const text = (v || '').trim();
-                  if (text.length > 0) {
-                    const t = window.setTimeout(() => setCustomerOpen(true), 200);
-                    setCustomerTypingTimer(t as unknown as number);
-                  } else {
-                    setCustomerOpen(false);
-                  }
-                }}
-                options={customers}
-                filterOptions={(options, params) => {
-                  const ranked = rankAndFilter(options, params.inputValue || '');
-                  const hasExact = !!exactCustomerMatch(params.inputValue || '');
-                  const out:any[] = [...ranked];
-                  if ((params.inputValue || '').trim() !== '' && !hasExact) {
-                    out.push({ label: `Add "${params.inputValue}" as New Customer`, isNew: true } as any);
-                  }
-                  return out;
-                }}
-                getOptionLabel={o => typeof o === 'string' ? o : o.label}
-                isOptionEqualToValue={(o, v) => o.id === v.id}
-                renderOption={(props, option) => {
-                  const isNew = (option as any).isNew;
-                  const { key, ...other } = props;
-                  return (
-                    <li key={key} {...other} style={{ display:'flex', alignItems:'center', opacity: isNew ? 0.9 : 1 }}>
-                      {isNew && <AddCircleOutlineIcon fontSize="small" style={{ marginRight:8, color:'#666' }} />}
-                      <span>{(option as any).label}</span>
-                    </li>
-                  );
-                }}
-                renderInput={params => (
-                  <TextField
-                    {...params}
-                    label="Customer"
-                    required
-                    onFocus={reloadCustomersIfNeeded}
-                    onKeyDown={handleCustomerKeyDown}
-                    onBlur={() => {
-                      if (!customer) {
-                        const input = customerInput.trim();
-                        if (input) {
-                          const match = exactCustomerMatch(input);
-                          if (match) { setCustomer(match); setCustomerInput(match.label); }
-                        }
-                      }
-                    }}
-                    inputRef={el => { customerInputRef.current = el; }}
-                  />
-                )}
-              />
-            </Grid>
-            {effectiveFieldVisibility.customerPoNumber && (
-              <Grid item xs={12} sm={4}>
-                <TextField label="Customer PO #" value={customerPoNumber} onChange={e => setCustomerPoNumber(e.target.value)} fullWidth placeholder="Optional" />
+        <Box sx={{ transform: activeAlertOffset ? `translateY(-${activeAlertOffset}px)` : 'none', transition:'transform 200ms ease' }}>
+          <Paper sx={cardSx} elevation={3}>
+            <Typography variant="subtitle1" fontWeight={600} gutterBottom>Customer & Invoice Details</Typography>
+            {customerFields.length ? (
+              <Grid container spacing={2}>
+                {customerFields.map(field => (
+                  <Grid item xs={12} sm={customerFields.length > 1 ? 6 : 12} md={customerCol} key={field.key}>
+                    {field.element}
+                  </Grid>
+                ))}
               </Grid>
+            ) : (
+              <Typography variant="body2" color="text.secondary">No customer fields are enabled.</Typography>
             )}
-            {!isSalesPurchaseUser && effectiveFieldVisibility.quotedPrice && (
-              <Grid item xs={12} sm={4}>
-                <TextField
-                  label="Quoted Price"
-                  type="number"
-                  value={estimatedCost ?? ''}
-                  onChange={e => setEstimatedCost(e.target.value ? parseFloat(e.target.value) : null)}
-                  fullWidth
-                  InputProps={{ startAdornment: <InputAdornment position="start">$</InputAdornment> }}
-                  inputProps={{ onWheel: (e) => (e.currentTarget as HTMLInputElement).blur() }}
-                />
-              </Grid>
-            )}
+          </Paper>
+        </Box>
 
-            {effectiveFieldVisibility.sourceQuote && (
-              <Grid item xs={12} sm={4}>
-                <TextField
-                  label="Source Quote #"
-                  value={sourceQuoteNumber || ''}
-                  placeholder="Not converted from a quote"
-                  fullWidth
-                  InputProps={{ readOnly: true }}
-                />
-              </Grid>
-            )}
-            {effectiveFieldVisibility.vin && (
-              <Grid item xs={12} sm={4}>
-                <TextField
-                  label="VIN #"
-                  value={vinNumber}
-                  onChange={e => setVinNumber(e.target.value)}
-                  fullWidth
-                  placeholder="Optional"
-                />
-              </Grid>
-            )}
-            {effectiveFieldVisibility.unitNumber && (
-              <Grid item xs={12} sm={4}>
-                <TextField
-                  label="Unit #"
-                  value={unitNumber}
-                  onChange={e => setUnitNumber(e.target.value)}
-                  fullWidth
-                  placeholder="Optional"
-                />
-              </Grid>
-            )}
-            {effectiveFieldVisibility.mileage && (
-              <Grid item xs={12} sm={4}>
-                <TextField
-                  label="Mileage"
-                  type="number"
-                  value={mileage === '' ? '' : mileage}
-                  onChange={e => setMileage(e.target.value === '' ? '' : Number(e.target.value))}
-                  fullWidth
-                  placeholder="Optional"
-                  inputProps={{ min: 0, step: 1 }}
-                />
-              </Grid>
-            )}
-            {effectiveFieldVisibility.vehicleMake && (
-              <Grid item xs={12} sm={4}>
-                <TextField
-                  label="Make"
-                  value={vehicleMake}
-                  onChange={e => setVehicleMake(e.target.value)}
-                  fullWidth
-                  placeholder="Optional"
-                />
-              </Grid>
-            )}
-            {effectiveFieldVisibility.vehicleModel && (
-              <Grid item xs={12} sm={4}>
-                <TextField
-                  label="Model"
-                  value={vehicleModel}
-                  onChange={e => setVehicleModel(e.target.value)}
-                  fullWidth
-                  placeholder="Optional"
-                />
-              </Grid>
-            )}
-            {effectiveFieldVisibility.invoiceStatus && (
-              <Grid item xs={12} sm={4}>
-                <FormControl component="fieldset" fullWidth>
-                  <FormLabel sx={{ mb: 1 }}>Invoice</FormLabel>
-                  <ToggleButtonGroup
-                    value={invoiceStatus || null}
-                    exclusive
-                    fullWidth
-                    size="small"
-                    color="standard"
-                    aria-label="Invoice status"
-                    onChange={handleInvoiceStatusToggle}
-                    sx={{
-                      '& .MuiToggleButtonGroup-grouped': {
-                        textTransform: 'none',
-                        flex: 1,
-                        gap: 0,
-                      },
-                      '& .MuiToggleButtonGroup-grouped:not(:first-of-type)': {
-                        marginLeft: 0,
-                      },
-                      '& .MuiToggleButtonGroup-grouped.Mui-selected': {
-                        color: '#fff',
-                      },
-                      '& .MuiToggleButtonGroup-grouped.Mui-selected.MuiToggleButton-colorError': {
-                        bgcolor: (theme) => theme.palette.error.main,
-                        '&:hover': {
-                          bgcolor: (theme) => theme.palette.error.dark,
-                        },
-                      },
-                      '& .MuiToggleButtonGroup-grouped.Mui-selected.MuiToggleButton-colorSuccess': {
-                        bgcolor: (theme) => theme.palette.success.main,
-                        '&:hover': {
-                          bgcolor: (theme) => theme.palette.success.dark,
-                        },
-                      },
-                    }}
-                  >
-                    <ToggleButton value="needed" color="error">
-                      <CancelIcon fontSize="small" sx={{ mr: 1 }} />
-                      Needed
-                    </ToggleButton>
-                    <ToggleButton value="done" color="success">
-                      <CheckCircleIcon fontSize="small" sx={{ mr: 1 }} />
-                      Done
-                    </ToggleButton>
-                  </ToggleButtonGroup>
-                </FormControl>
-              </Grid>
-            )}
-            {effectiveFieldVisibility.wantedByDate && (
-              <Grid item xs={12} sm={4}>
-                <DatePicker
-                  label="Wanted By Date"
-                  value={wantedByDate}
-                  onChange={setWantedByDate}
-                  sx={{ width:'100%' }}
-                  slotProps={{ textField: { placeholder: 'Optional' } }}
-                />
-              </Grid>
-            )}
-            {effectiveFieldVisibility.wantedByTimeOfDay && (
-              <Grid item xs={12} sm={4}>
-                <FormControl component="fieldset" fullWidth>
-                  <FormLabel sx={{ mb: 1 }}>Wanted Time of Day</FormLabel>
-                  <ToggleButtonGroup
-                    value={wantedByTimeOfDay || null}
-                    exclusive
-                    fullWidth
-                    size="small"
-                    color="standard"
-                    aria-label="Wanted time of day"
-                    onChange={(_, value) => setWantedByTimeOfDay((value || '') as WantedTimeOfDay)}
-                    sx={{
-                      '& .MuiToggleButtonGroup-grouped': { textTransform: 'none', flex: 1, gap: 0 },
-                      '& .MuiToggleButtonGroup-grouped:not(:first-of-type)': { marginLeft: 0 },
-                    }}
-                  >
-                    <ToggleButton value="morning">Morning</ToggleButton>
-                    <ToggleButton value="afternoon">Afternoon</ToggleButton>
-                    <ToggleButton value="evening">Evening</ToggleButton>
-                  </ToggleButtonGroup>
-                </FormControl>
-              </Grid>
-            )}
-            <Grid item xs={12} sm={4}>
-              <DatePicker
-                label="Sales Date"
-                value={salesDate}
-                onChange={setSalesDate}
-                sx={{ width:'100%' }}
-                slotProps={{ textField: { required: true } }}
-              />
+        {vehicleFields.length ? (
+          <Paper sx={cardSx} elevation={3}>
+            <Typography variant="subtitle1" fontWeight={600} gutterBottom>Vehicle Details</Typography>
+            <Grid container spacing={2}>
+              {vehicleFields.map(field => (
+                <Grid item xs={12} sm={vehicleFields.length > 1 ? 6 : 12} md={vehicleCol} key={field.key}>
+                  {field.element}
+                </Grid>
+              ))}
             </Grid>
+          </Paper>
+        ) : null}
+
+        <Paper sx={cardSx} elevation={3}>
+          <Typography variant="subtitle1" fontWeight={600} gutterBottom>Job & Schedule</Typography>
+          {jobFields.length ? (
+            <Grid container spacing={2} sx={{ mb: 2 }}>
+              {jobFields.map(field => (
+                <Grid item xs={12} sm={jobFields.length > 1 ? 6 : 12} md={jobCol} key={field.key}>
+                  {field.element}
+                </Grid>
+              ))}
+            </Grid>
+          ) : null}
+          <Grid container spacing={2}>
             <Grid item xs={12}>
               <Autocomplete<ProductOption>
                 disablePortal
@@ -1963,16 +2096,24 @@ const SalesOrderDetailPage: React.FC = () => {
             </Grid>
             {effectiveFieldVisibility.productDescription && (
               <Grid item xs={12}>
-                <TextField label="Product Description" value={productDescription} onChange={e => setProductDescription(e.target.value)} fullWidth multiline minRows={2} maxRows={6} sx={{ mt:1 }} />
-              </Grid>
-            )}
-            {effectiveFieldVisibility.terms && (
-              <Grid item xs={12}>
-                <TextField label="Terms" value={terms} onChange={e => setTerms(e.target.value)} fullWidth multiline minRows={3} maxRows={8} sx={{ mt:1 }} placeholder="Enter payment/delivery terms, etc." />
+                <TextField label="Product Description" value={productDescription} onChange={e => setProductDescription(e.target.value)} fullWidth multiline minRows={2} maxRows={6} />
               </Grid>
             )}
           </Grid>
         </Paper>
+
+        {invoiceStatusFields.length ? (
+          <Paper sx={cardSx} elevation={3}>
+            <Typography variant="subtitle1" fontWeight={600} gutterBottom>Invoice Status</Typography>
+            <Grid container spacing={2}>
+              {invoiceStatusFields.map(field => (
+                <Grid item xs={12} sm={invoiceStatusFields.length > 1 ? 6 : 12} md={invoiceStatusCol} key={field.key}>
+                  {field.element}
+                </Grid>
+              ))}
+            </Grid>
+          </Paper>
+        ) : null}
 
         <Box sx={{ position:'relative', zIndex: 1000, transform: activeAlertOffset ? `translateY(-${activeAlertOffset}px)` : 'none', transition: 'transform 200ms ease' }}>
           <Typography variant="h6" gutterBottom sx={{ mt: 2 }}>Line Items</Typography>
