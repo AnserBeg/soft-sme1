@@ -403,6 +403,37 @@ const SalesOrderDetailPage: React.FC = () => {
     borderRadius: 2,
     boxShadow: '0 8px 24px rgba(0,0,0,0.06)',
   };
+  const denseGridBase = {
+    display: 'grid',
+    gap: 2,
+    gridAutoFlow: 'row dense',
+    alignItems: 'stretch',
+  };
+  const customerGridSx = {
+    ...denseGridBase,
+    gridTemplateColumns: {
+      xs: '1fr',
+      sm: 'repeat(2, minmax(0, 1fr))',
+      md: '2fr 1fr 1fr',
+    },
+  };
+  const vehicleGridSx = {
+    ...denseGridBase,
+    gridTemplateColumns: {
+      xs: '1fr',
+      sm: 'repeat(2, minmax(0, 1fr))',
+      md: 'repeat(3, minmax(0, 1fr))',
+      lg: '1.2fr repeat(4, minmax(0, 1fr))',
+    },
+  };
+  const jobGridSx = {
+    ...denseGridBase,
+    gridTemplateColumns: {
+      xs: '1fr',
+      sm: 'repeat(2, minmax(0, 1fr))',
+      md: 'repeat(3, minmax(0, 1fr))',
+    },
+  };
 
   // Line items signature for change detection - no debouncing needed
   const lineItemsSignature = useMemo(() => {
@@ -1624,6 +1655,20 @@ const SalesOrderDetailPage: React.FC = () => {
           ),
         }
       : null,
+    effectiveFieldVisibility.sourceQuote
+      ? {
+          key: 'sourceQuote',
+          element: (
+            <TextField
+              label="Source Quote #"
+              value={sourceQuoteNumber || ''}
+              placeholder="Not converted from a quote"
+              fullWidth
+              InputProps={{ readOnly: true }}
+            />
+          ),
+        }
+      : null,
     !isSalesPurchaseUser && effectiveFieldVisibility.quotedPrice
       ? {
           key: 'quotedPrice',
@@ -1640,50 +1685,23 @@ const SalesOrderDetailPage: React.FC = () => {
           ),
         }
       : null,
-    effectiveFieldVisibility.sourceQuote
-      ? {
-          key: 'sourceQuote',
-          element: (
-            <TextField
-              label="Source Quote #"
-              value={sourceQuoteNumber || ''}
-              placeholder="Not converted from a quote"
-              fullWidth
-              InputProps={{ readOnly: true }}
-            />
-          ),
-        }
-      : null,
-    {
-      key: 'salesDate',
-      element: (
-        <DatePicker
-          label="Invoice Date"
-          value={salesDate}
-          onChange={setSalesDate}
-          sx={{ width:'100%' }}
-          slotProps={{ textField: { fullWidth: true, required: true } }}
-        />
-      ),
-    },
-    effectiveFieldVisibility.wantedByDate
-      ? {
-          key: 'wantedByDate',
-          element: (
-            <DatePicker
-              label="Due Date"
-              value={wantedByDate}
-              onChange={setWantedByDate}
-              sx={{ width:'100%' }}
-              slotProps={{ textField: { placeholder: 'Optional', fullWidth: true } }}
-            />
-          ),
-        }
-      : null,
   ].filter(Boolean) as SectionField[];
-  const customerCol = getGridSpan(customerFields.length || 1);
 
   const vehicleFields: SectionField[] = [
+    effectiveFieldVisibility.vin
+      ? {
+          key: 'vin',
+          element: (
+            <TextField
+              label="VIN #"
+              value={vinNumber}
+              onChange={e => setVinNumber(e.target.value)}
+              fullWidth
+              placeholder="Optional"
+            />
+          ),
+        }
+      : null,
     effectiveFieldVisibility.unitNumber
       ? {
           key: 'unitNumber',
@@ -1743,19 +1761,30 @@ const SalesOrderDetailPage: React.FC = () => {
         }
       : null,
   ].filter(Boolean) as SectionField[];
-  const vehicleCol = getGridSpan(vehicleFields.length || 1);
 
   const jobFields: SectionField[] = [
-    effectiveFieldVisibility.vin
+    {
+      key: 'salesDate',
+      element: (
+        <DatePicker
+          label="Sales Date"
+          value={salesDate}
+          onChange={setSalesDate}
+          sx={{ width:'100%' }}
+          slotProps={{ textField: { fullWidth: true, required: true } }}
+        />
+      ),
+    },
+    effectiveFieldVisibility.wantedByDate
       ? {
-          key: 'vin',
+          key: 'wantedByDate',
           element: (
-            <TextField
-              label="VIN #"
-              value={vinNumber}
-              onChange={e => setVinNumber(e.target.value)}
-              fullWidth
-              placeholder="Optional"
+            <DatePicker
+              label="Wanted By Date"
+              value={wantedByDate}
+              onChange={setWantedByDate}
+              sx={{ width:'100%' }}
+              slotProps={{ textField: { placeholder: 'Optional', fullWidth: true } }}
             />
           ),
         }
@@ -1788,7 +1817,6 @@ const SalesOrderDetailPage: React.FC = () => {
         }
       : null,
   ].filter(Boolean) as SectionField[];
-  const jobCol = getGridSpan(jobFields.length || 1);
 
   const invoiceStatusFields: SectionField[] = [
     effectiveFieldVisibility.invoiceStatus
@@ -1994,15 +2022,13 @@ const SalesOrderDetailPage: React.FC = () => {
         {/* Top form card - shift up when alerts are visible */}
         <Box sx={{ transform: activeAlertOffset ? `translateY(-${activeAlertOffset}px)` : 'none', transition:'transform 200ms ease' }}>
           <Paper sx={cardSx} elevation={3}>
-            <Typography variant="subtitle1" fontWeight={600} gutterBottom>Customer & Invoice Details</Typography>
+            <Typography variant="subtitle1" fontWeight={600} gutterBottom>Customer Information</Typography>
             {customerFields.length ? (
-              <Grid container spacing={2}>
+              <Box sx={customerGridSx}>
                 {customerFields.map(field => (
-                  <Grid item xs={12} sm={customerFields.length > 1 ? 6 : 12} md={customerCol} key={field.key}>
-                    {field.element}
-                  </Grid>
+                  <Box key={field.key}>{field.element}</Box>
                 ))}
-              </Grid>
+              </Box>
             ) : (
               <Typography variant="body2" color="text.secondary">No customer fields are enabled.</Typography>
             )}
@@ -2012,26 +2038,22 @@ const SalesOrderDetailPage: React.FC = () => {
         {vehicleFields.length ? (
           <Paper sx={cardSx} elevation={3}>
             <Typography variant="subtitle1" fontWeight={600} gutterBottom>Vehicle Details</Typography>
-            <Grid container spacing={2}>
+            <Box sx={vehicleGridSx}>
               {vehicleFields.map(field => (
-                <Grid item xs={12} sm={vehicleFields.length > 1 ? 6 : 12} md={vehicleCol} key={field.key}>
-                  {field.element}
-                </Grid>
+                <Box key={field.key}>{field.element}</Box>
               ))}
-            </Grid>
+            </Box>
           </Paper>
         ) : null}
 
         <Paper sx={cardSx} elevation={3}>
           <Typography variant="subtitle1" fontWeight={600} gutterBottom>Job & Schedule</Typography>
           {jobFields.length ? (
-            <Grid container spacing={2} sx={{ mb: 2 }}>
+            <Box sx={{ ...jobGridSx, mb: 2 }}>
               {jobFields.map(field => (
-                <Grid item xs={12} sm={jobFields.length > 1 ? 6 : 12} md={jobCol} key={field.key}>
-                  {field.element}
-                </Grid>
+                <Box key={field.key}>{field.element}</Box>
               ))}
-            </Grid>
+            </Box>
           ) : null}
           <Grid container spacing={2}>
             <Grid item xs={12}>
