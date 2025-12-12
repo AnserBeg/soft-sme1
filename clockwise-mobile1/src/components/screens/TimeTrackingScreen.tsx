@@ -631,13 +631,20 @@ export const TimeTrackingScreen: React.FC = () => {
         })}
 
         <Dialog open={!!pendingClockOutEntry} onOpenChange={(open) => { if (!open) resetStoryModal(); }}>
-          <DialogContent className="max-w-lg w-full">
+          <DialogContent className="max-w-lg w-full max-h-[85vh] overflow-y-auto relative">
+            <div className="flex items-start justify-between mb-3 sticky top-0 bg-background z-10">
+              <div className="flex-1" />
+              <Button variant="ghost" size="icon" onClick={resetStoryModal} className="shrink-0">
+                <span className="sr-only">Close</span>
+                ×
+              </Button>
+            </div>
             {isStoryLoading ? (
               <div className="flex items-center justify-center py-6">
                 <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
               </div>
             ) : (
-              <div className="space-y-4">
+              <div className="space-y-4 pb-6">
                 <div className="space-y-2">
                   <p className="text-sm font-medium text-muted-foreground">Previous entries</p>
                   {techStoryExisting ? (
