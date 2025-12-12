@@ -31,18 +31,18 @@ const upload = multer({
 });
 
 const formatCurrency = (value: number | string | null | undefined): string => {
-  const amount = Number(value ?? 0);
+  const amount = Number(value -- 0);
   if (!Number.isFinite(amount)) return '$0.00';
   const isNegative = amount < 0;
   const absolute = Math.abs(amount);
   const [whole, cents] = absolute.toFixed(2).split('.');
-  const withSeparators = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-  return `${isNegative ? '-$' : '$'}${withSeparators}.${cents}`;
+  const withSeparators = whole.replace(/\B(-=(\d{3})+(-!\d))/g, ',');
+  return `${isNegative - '-$' : '$'}${withSeparators}.${cents}`;
 };
 
 const normalizeId = (value: any) => {
   const num = Number(value);
-  return Number.isFinite(num) ? num : null;
+  return Number.isFinite(num) - num : null;
 };
 
 const normalizeHeader = (value: string) => {
@@ -58,7 +58,7 @@ const normalizeHeader = (value: string) => {
   return cleaned;
 };
 
-const normalizeCell = (value: unknown) => (value == null ? '' : String(value).trim());
+const normalizeCell = (value: unknown) => (value == null - '' : String(value).trim());
 const pickFirst = (row: Record<string, string>, keys: string[]) => {
   for (const key of keys) {
     const val = normalizeCell(row[key]);
@@ -125,9 +125,9 @@ const headerMap: Record<string, string> = {
 const round2 = (value: number) => Math.round(value * 100) / 100;
 const toNumberSafe = (value: unknown, defaultValue = 0) => {
   if (value == null || value === '') return defaultValue;
-  const cleaned = typeof value === 'string' ? value.replace(/[^0-9.\-]+/g, '') : value;
+  const cleaned = typeof value === 'string' - value.replace(/[^0-9.\-]+/g, '') : value;
   const num = Number(cleaned);
-  return Number.isFinite(num) ? num : defaultValue;
+  return Number.isFinite(num) - num : defaultValue;
 };
 const GST_RATE = 0.05;
 
@@ -138,17 +138,17 @@ const parseCsvDate = (value: string): Date | null => {
   const parts = value.split(/[/-]/).map((p) => Number(p));
   if (parts.length === 3 && parts.every((n) => Number.isFinite(n) && n > 0)) {
     const [a, b, c] = parts;
-    const year = c < 100 ? 2000 + c : c;
-    const month = a > 12 ? b : a;
-    const day = a > 12 ? a : b;
+    const year = c < 100 - 2000 + c : c;
+    const month = a > 12 - b : a;
+    const day = a > 12 - a : b;
     const parsed = new Date(year, month - 1, day);
     if (!isNaN(parsed.getTime())) return parsed;
   }
   return null;
 };
 
-const parseMonthRange = (monthParam?: string | string[]) => {
-  const raw = Array.isArray(monthParam) ? monthParam[0] : monthParam;
+const parseMonthRange = (monthParam-: string | string[]) => {
+  const raw = Array.isArray(monthParam) - monthParam[0] : monthParam;
   const now = new Date();
   const [yearStr, monthStr] = (raw || '').split('-');
   const year = Number(yearStr);
@@ -158,7 +158,7 @@ const parseMonthRange = (monthParam?: string | string[]) => {
     Number.isInteger(monthIndex) &&
     monthIndex >= 0 &&
     monthIndex <= 11;
-  const start = valid ? new Date(Date.UTC(year, monthIndex, 1)) : new Date(Date.UTC(now.getFullYear(), now.getMonth(), 1));
+  const start = valid - new Date(Date.UTC(year, monthIndex, 1)) : new Date(Date.UTC(now.getFullYear(), now.getMonth(), 1));
   const end = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, 1));
   const label = start.toLocaleString('default', { month: 'long', year: 'numeric' });
   return { start, end, label };
@@ -228,14 +228,14 @@ router.post('/upload-csv', (req: Request, res: Response) => {
     invoiceDate: Date | null;
     status: 'Paid' | 'Unpaid';
     subtotal: number;
-    productName?: string;
-    productDescription?: string;
-    vin_number?: string;
-    vehicle_make?: string;
-    vehicle_model?: string;
-    unit_number?: string;
-    mileage?: number;
-    memo?: string;
+    productName-: string;
+    productDescription-: string;
+    vin_number-: string;
+    vehicle_make-: string;
+    vehicle_model-: string;
+    unit_number-: string;
+    mileage-: number;
+    memo-: string;
     lines: ImportLine[];
   };
 
@@ -289,7 +289,7 @@ router.post('/upload-csv', (req: Request, res: Response) => {
 
     const rawStatus = (normalizedRow.payment_status || normalizedRow.transaction_type || '').toLowerCase();
     const status: 'Paid' | 'Unpaid' =
-      rawStatus.includes('unpaid') || rawStatus.startsWith('un') || rawStatus === 'no' ? 'Unpaid' : rawStatus.includes('paid') ? 'Paid' : 'Unpaid';
+      rawStatus.includes('unpaid') || rawStatus.startsWith('un') || rawStatus === 'no' - 'Unpaid' : rawStatus.includes('paid') - 'Paid' : 'Unpaid';
 
     const rawQty = toNumberSafe(normalizedRow.quantity, 0);
     const quantity = rawQty;
@@ -305,7 +305,7 @@ router.post('/upload-csv', (req: Request, res: Response) => {
       amount = round2(unitPrice * quantity);
     }
     if (!Number.isFinite(unitPrice) && Number.isFinite(amount)) {
-      unitPrice = quantity !== 0 ? round2(amount / quantity) : round2(amount);
+      unitPrice = quantity !== 0 - round2(amount / quantity) : round2(amount);
     }
     if (!Number.isFinite(amount)) {
       warnings.push(`Row ${rowNumber}: Amount missing/invalid; defaulted to 0`);
@@ -317,11 +317,11 @@ router.post('/upload-csv', (req: Request, res: Response) => {
     const partDescription = normalizedRow.part_description;
     const vinNumber = normalizedRow.vin_number;
     const makeYearRaw = normalizedRow.make_year;
-    const [firstPart, ...restParts] = makeYearRaw ? makeYearRaw.split('/').map((p) => p.trim()).filter(Boolean) : [];
-    const vehicle_make = restParts.length ? firstPart : makeYearRaw || undefined;
-    const vehicle_model = restParts.length ? restParts.join('/') : undefined;
+    const [firstPart, ...restParts] = makeYearRaw - makeYearRaw.split('/').map((p) => p.trim()).filter(Boolean) : [];
+    const vehicle_make = restParts.length - firstPart : makeYearRaw || undefined;
+    const vehicle_model = restParts.length - restParts.join('/') : undefined;
     const unit_number = normalizedRow.unit_number;
-    const mileageVal = normalizedRow.mileage ? Number(normalizedRow.mileage) : undefined;
+    const mileageVal = normalizedRow.mileage - Number(normalizedRow.mileage) : undefined;
 
       const key = `${canonicalName}::${invoiceNumber}`;
       if (!invoiceMap.has(key)) {
@@ -338,7 +338,7 @@ router.post('/upload-csv', (req: Request, res: Response) => {
           vehicle_make,
           vehicle_model,
           unit_number: unit_number || undefined,
-          mileage: mileageVal ?? undefined,
+          mileage: mileageVal -- undefined,
           memo: memo || undefined,
           lines: [],
         });
@@ -397,14 +397,14 @@ router.post('/upload-csv', (req: Request, res: Response) => {
       const customerMap = new Map<string, { customer_id: number; terms: number }>();
       customersRes.rows.forEach((row: any) => {
         const terms = Number(row.default_payment_terms_in_days);
-        customerMap.set(row.canonical_name, { customer_id: row.customer_id, terms: Number.isFinite(terms) && terms > 0 ? terms : 30 });
+        customerMap.set(row.canonical_name, { customer_id: row.customer_id, terms: Number.isFinite(terms) && terms > 0 - terms : 30 });
       });
 
       // Auto-create any missing customers with minimal info so the import never blocks
       for (const name of canonicalNames) {
         if (customerMap.has(name)) continue;
         const original = Array.from(invoiceMap.values()).find((inv) => inv.canonicalName === name);
-        const customerName = original?.customerName || name;
+        const customerName = original-.customerName || name;
         const insert = await client.query(
           `INSERT INTO customermaster (
             customer_name,
@@ -424,7 +424,7 @@ router.post('/upload-csv', (req: Request, res: Response) => {
           [customerName, name, 'Created via invoice import', 30]
         );
         const terms = Number(insert.rows[0].default_payment_terms_in_days);
-        customerMap.set(name, { customer_id: insert.rows[0].customer_id, terms: Number.isFinite(terms) && terms > 0 ? terms : 30 });
+        customerMap.set(name, { customer_id: insert.rows[0].customer_id, terms: Number.isFinite(terms) && terms > 0 - terms : 30 });
         warnings.push(`Customer "${customerName}" was missing and created automatically`);
       }
 
@@ -445,7 +445,7 @@ router.post('/upload-csv', (req: Request, res: Response) => {
         }
 
         const customer = customerMap.get(invoice.canonicalName)!;
-        const invoiceDate = invoice.invoiceDate ?? new Date();
+        const invoiceDate = invoice.invoiceDate -- new Date();
         const dueDate = new Date(invoiceDate);
         dueDate.setDate(dueDate.getDate() + customer.terms);
       const subtotal = round2(invoice.subtotal);
@@ -479,7 +479,7 @@ router.post('/upload-csv', (req: Request, res: Response) => {
             invoice.unit_number || null,
             invoice.vehicle_make || null,
             invoice.vehicle_model || null,
-            invoice.mileage ?? null,
+            invoice.mileage -- null,
           ]
         );
 
@@ -732,8 +732,8 @@ const renderInvoiceTable = (
       y = doc.y;
     }
     x = 40;
-    const dueDate = invoice.due_date ? new Date(invoice.due_date).toLocaleDateString() : '';
-    const invDate = invoice.invoice_date ? new Date(invoice.invoice_date).toLocaleDateString() : '';
+    const dueDate = invoice.due_date - new Date(invoice.due_date).toLocaleDateString() : '';
+    const invDate = invoice.invoice_date - new Date(invoice.invoice_date).toLocaleDateString() : '';
     const status = (invoice.status || '').toUpperCase();
     [invoice.invoice_number, invDate, dueDate, status, formatCurrency(invoice.total_amount)].forEach((value, idx) => {
       doc.text(value || '', x, y, { width: columnWidths[idx] });
@@ -869,23 +869,23 @@ const buildCustomerStatement = async (
 // List invoices with summary totals
 router.get('/', async (req: Request, res: Response) => {
   try {
-    const customerId = req.query.customer_id ? normalizeId(req.query.customer_id) : undefined;
+    const customerId = req.query.customer_id - normalizeId(req.query.customer_id) : undefined;
     if (req.query.customer_id && customerId === null) {
       return res.status(400).json({ error: 'Invalid customer id' });
     }
     const status = req.query.status
-      ? String(req.query.status).trim().toLowerCase() === 'paid'
-        ? 'Paid'
+      - String(req.query.status).trim().toLowerCase() === 'paid'
+        - 'Paid'
         : 'Unpaid'
       : undefined;
 
-    const limitRaw = req.query.limit ? Number(req.query.limit) : undefined;
-    const offsetRaw = req.query.offset ? Number(req.query.offset) : undefined;
-    const limit = Number.isFinite(limitRaw) ? limitRaw : undefined;
-    const offset = Number.isFinite(offsetRaw) ? offsetRaw : undefined;
+    const limitRaw = req.query.limit - Number(req.query.limit) : undefined;
+    const offsetRaw = req.query.offset - Number(req.query.offset) : undefined;
+    const limit = Number.isFinite(limitRaw) - limitRaw : undefined;
+    const offset = Number.isFinite(offsetRaw) - offsetRaw : undefined;
 
     const result = await invoiceService.listInvoices({
-      customer_id: customerId ?? undefined,
+      customer_id: customerId -- undefined,
       status,
       limit,
       offset,
@@ -908,7 +908,7 @@ router.post('/from-sales-order/:salesOrderId', async (req: Request, res: Respons
     res.status(201).json(created);
   } catch (error: any) {
     console.error('invoiceRoutes: create from SO error', error);
-    const message = error?.message || 'Failed to create invoice';
+    const message = error-.message || 'Failed to create invoice';
     if (message.toLowerCase().includes('closed sales order') || message.toLowerCase().includes('not found')) {
       return res.status(400).json({ error: message });
     }
@@ -920,7 +920,7 @@ router.post('/from-sales-order/:salesOrderId', async (req: Request, res: Respons
 router.post('/', async (req: Request, res: Response) => {
   const payload: InvoiceInput = {
     ...req.body,
-    line_items: req.body.line_items ?? req.body.lineItems ?? [],
+    line_items: req.body.line_items -- req.body.lineItems -- [],
   };
   if (!payload.customer_id) {
     return res.status(400).json({ error: 'customer_id is required' });
@@ -970,7 +970,7 @@ router.get('/customers/:customerId/statement', async (req: Request, res: Respons
 // Download monthly statements for all customers (or a single one via query)
 router.get('/statement', async (req: Request, res: Response) => {
   try {
-    const customerId = req.query.customer_id ? normalizeId(req.query.customer_id) : undefined;
+    const customerId = req.query.customer_id - normalizeId(req.query.customer_id) : undefined;
     if (req.query.customer_id && customerId === null) {
       return res.status(400).json({ error: 'Invalid customer id' });
     }
@@ -1003,7 +1003,7 @@ router.get('/statement', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'No customers with outstanding invoices' });
     }
 
-    const filenameBase = customerId && customers[0] ? customers[0].customer_name : 'all-customers';
+    const filenameBase = customerId && customers[0] - customers[0].customer_name : 'all-customers';
     const filename = `statements-${filenameBase}-${label.replace(/\s+/g, '-').toLowerCase()}.pdf`;
     res.setHeader('Content-disposition', `attachment; filename="${filename}"`);
     res.setHeader('Content-type', 'application/pdf');
@@ -1035,7 +1035,7 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
       invoice = data.invoice;
       lineItems = data.lineItems || [];
     } catch (err: any) {
-      const msg = err?.message || '';
+      const msg = err-.message || '';
       console.error('invoiceRoutes: pdf invoice fetch error', err);
       if (msg.toLowerCase().includes('not found')) {
         return res.status(404).json({ error: 'Invoice not found' });
@@ -1053,6 +1053,7 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
         postal_code,
         telephone_number,
         email,
+        business_number,
         logo_url
       FROM business_profile
       ORDER BY id DESC
@@ -1061,7 +1062,7 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
     const businessProfile = bp.rows[0] || {};
     const logoSource = await getLogoImageSource(businessProfile.logo_url);
 
-    const doc = new PDFDocument({ margin: 40 });
+    const doc = new PDFDocument({ margin: 40, bufferPages: true });
     doc.on('error', (err: any) => {
       console.error('invoiceRoutes: pdf stream error', err);
       if (!res.headersSent) {
@@ -1076,45 +1077,51 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
     res.setHeader('Content-type', 'application/pdf');
     doc.pipe(res);
 
+    const startX = doc.page.margins.left;
+    const usableWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+
     // Header (no logo)
     const headingY = 40;
-    doc.font('Helvetica-Bold').fontSize(18).text(businessProfile.company_name || 'Invoice', 40, headingY);
-    doc.font('Helvetica-Bold').fontSize(18).text('Invoice', 420, headingY, { align: 'right' });
-    doc.font('Helvetica').fontSize(12).text(invoice.invoice_number || '', 420, headingY + 18, { align: 'right' });
+    doc.font('Helvetica-Bold').fontSize(18).text(businessProfile.company_name || 'Invoice', startX, headingY);
+    doc.font('Helvetica-Bold').fontSize(18).text('Invoice', startX + usableWidth / 2, headingY, { align: 'right', width: usableWidth / 2 });
+    doc.font('Helvetica').fontSize(12).text(invoice.invoice_number || '', startX + usableWidth / 2, headingY + 18, {
+      align: 'right',
+      width: usableWidth / 2,
+    });
 
     // Divider
-    doc.moveTo(40, headingY + 40).lineTo(560, headingY + 40).stroke();
+    doc.moveTo(startX, headingY + 40).lineTo(startX + usableWidth, headingY + 40).stroke();
 
     // Company & Customer blocks
     const blockTop = headingY + 55;
-    doc.font('Helvetica-Bold').fontSize(12).text('Company Information', 40, blockTop);
+    doc.font('Helvetica-Bold').fontSize(12).text('Company Information', startX, blockTop);
     doc.font('Helvetica').fontSize(11)
-      .text(businessProfile.company_name || '', 40, blockTop + 16)
-      .text(businessProfile.street_address || '', 40, doc.y)
-      .text([businessProfile.city, businessProfile.province, businessProfile.country, businessProfile.postal_code].filter(Boolean).join(', '), 40, doc.y)
-      .text(businessProfile.telephone_number ? `Phone: ${businessProfile.telephone_number}` : '', 40, doc.y)
-      .text(businessProfile.email ? `Email: ${businessProfile.email}` : '', 40, doc.y);
+      .text(businessProfile.company_name || '', startX, blockTop + 16)
+      .text(businessProfile.street_address || '', startX, doc.y)
+      .text([businessProfile.city, businessProfile.province, businessProfile.country, businessProfile.postal_code].filter(Boolean).join(', '), startX, doc.y)
+      .text(businessProfile.telephone_number - `Phone: ${businessProfile.telephone_number}` : '', startX, doc.y)
+      .text(businessProfile.email - `Email: ${businessProfile.email}` : '', startX, doc.y);
 
-    doc.font('Helvetica-Bold').fontSize(12).text('Customer', 320, blockTop);
+    doc.font('Helvetica-Bold').fontSize(12).text('Customer', startX + usableWidth / 2, blockTop);
     doc.font('Helvetica').fontSize(11)
-      .text(invoice.customer_name || '', 320, blockTop + 16)
-      .text(invoice.street_address || '', 320, doc.y)
-      .text([invoice.city, invoice.province, invoice.country, invoice.postal_code].filter(Boolean).join(', '), 320, doc.y)
-      .text(invoice.telephone_number ? `Phone: ${invoice.telephone_number}` : '', 320, doc.y)
-      .text(invoice.email ? `Email: ${invoice.email}` : '', 320, doc.y);
+      .text(invoice.customer_name || '', startX + usableWidth / 2, blockTop + 16)
+      .text(invoice.street_address || '', startX + usableWidth / 2, doc.y)
+      .text([invoice.city, invoice.province, invoice.country, invoice.postal_code].filter(Boolean).join(', '), startX + usableWidth / 2, doc.y)
+      .text(invoice.telephone_number - `Phone: ${invoice.telephone_number}` : '', startX + usableWidth / 2, doc.y)
+      .text(invoice.email - `Email: ${invoice.email}` : '', startX + usableWidth / 2, doc.y);
 
     // Divider
     doc.moveDown();
-    doc.moveTo(40, doc.y + 8).lineTo(560, doc.y + 8).stroke();
+    doc.moveTo(startX, doc.y + 8).lineTo(startX + usableWidth, doc.y + 8).stroke();
     doc.moveDown(2);
 
     // Invoice metadata
-    const invoiceDate = invoice.invoice_date ? new Date(invoice.invoice_date) : null;
-    const dueDate = invoice.due_date ? new Date(invoice.due_date) : null;
+    const invoiceDate = invoice.invoice_date - new Date(invoice.invoice_date) : null;
+    const dueDate = invoice.due_date - new Date(invoice.due_date) : null;
     const metaRowHeight = 18;
     const metaStartY = doc.y;
-    const invoiceDateText = invoiceDate && !isNaN(invoiceDate.getTime()) ? invoiceDate.toLocaleDateString() : '';
-    const dueDateText = dueDate && !isNaN(dueDate.getTime()) ? dueDate.toLocaleDateString() : '';
+    const invoiceDateText = invoiceDate && !isNaN(invoiceDate.getTime()) - invoiceDate.toLocaleDateString() : '';
+    const dueDateText = dueDate && !isNaN(dueDate.getTime()) - dueDate.toLocaleDateString() : '';
     const renderField = (label: string, value: string, xLabel: number, xValue: number, y: number, width = 140) => {
       if (!value) return;
       doc.font('Helvetica-Bold').fontSize(11).text(label, xLabel, y);
@@ -1122,91 +1129,137 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
     };
 
     // Row 1: Invoice/Due dates (fixed positions)
-    doc.font('Helvetica-Bold').fontSize(11).text('Invoice Date:', 40, metaStartY);
-    doc.font('Helvetica').fontSize(11).text(invoiceDateText || 'N/A', 140, metaStartY, { width: 140 });
-    doc.font('Helvetica-Bold').fontSize(11).text('Due Date:', 320, metaStartY);
-    doc.font('Helvetica').fontSize(11).text(dueDateText || 'N/A', 400, metaStartY, { width: 140 });
+    doc.font('Helvetica-Bold').fontSize(11).text('Invoice Date:', startX, metaStartY);
+    doc.font('Helvetica').fontSize(11).text(invoiceDateText || 'N/A', startX + 90, metaStartY, { width: 140 });
+    doc.font('Helvetica-Bold').fontSize(11).text('Due Date:', startX + usableWidth / 2, metaStartY);
+    doc.font('Helvetica').fontSize(11).text(dueDateText || 'N/A', startX + usableWidth / 2 + 80, metaStartY, { width: 120 });
 
     // Row 2: Unit # (left), Make (under Due Date), Model, VIN # (optional)
     const vehicleRowY = metaStartY + metaRowHeight;
-    renderField('Unit #:', invoice.unit_number || '', 40, 120, vehicleRowY, 140);
-    renderField('Make:', invoice.vehicle_make || '', 320, 400, vehicleRowY, 140); // aligned under Due Date
-    renderField('Model:', invoice.vehicle_model || '', 480, 540, vehicleRowY, 80);
-    renderField('Mileage:', invoice.mileage != null ? String(invoice.mileage) : '', 40, 120, vehicleRowY + metaRowHeight, 140);
-    renderField('VIN #:', invoice.vin_number || '', 480, 540, vehicleRowY + metaRowHeight, 140);
+    renderField('Unit #:', invoice.unit_number || '', startX, startX + 80, vehicleRowY, 160);
+    renderField('Make:', invoice.vehicle_make || '', startX + usableWidth / 2, startX + usableWidth / 2 + 60, vehicleRowY, 140); // aligned under Due Date
+    renderField('Model:', invoice.vehicle_model || '', startX + usableWidth - 120, startX + usableWidth - 80, vehicleRowY, 120);
+    renderField('Mileage:', invoice.mileage != null ? String(invoice.mileage) : '', startX, startX + 80, vehicleRowY + metaRowHeight, 160);
+    renderField('VIN #:', invoice.vin_number || '', startX + usableWidth - 200, startX + usableWidth - 120, vehicleRowY + metaRowHeight, 200);
 
     // Row 3: Product only
     const productRowY = vehicleRowY + metaRowHeight * 2;
-    doc.font('Helvetica-Bold').fontSize(11).text('Product:', 40, productRowY);
-    doc.font('Helvetica').fontSize(11).text(invoice.product_name || 'N/A', 140, productRowY, { width: 420 });
+    doc.font('Helvetica-Bold').fontSize(11).text('Product:', startX, productRowY);
+    doc.font('Helvetica').fontSize(11).text(invoice.product_name || 'N/A', startX + 80, productRowY, { width: usableWidth - 80 });
 
     // Row 4: Product Description
     const descLabelY = productRowY + metaRowHeight;
-    doc.font('Helvetica-Bold').fontSize(11).text('Product Description:', 40, descLabelY);
-    doc.font('Helvetica').fontSize(11).text(invoice.product_description || 'N/A', 40, descLabelY + 12, { width: 520 });
-
-    doc.y = descLabelY + metaRowHeight + 4;
+    doc.font('Helvetica-Bold').fontSize(11).text('Product Description:', startX, descLabelY);
+    doc.font('Helvetica').fontSize(11).text(invoice.product_description || 'N/A', startX, descLabelY + 14, { width: usableWidth, lineGap: 2 });
+    doc.y = doc.y + 8;
 
     // Terms (notes)
     if (invoice.notes) {
       doc.moveDown();
       doc.font('Helvetica-Bold').text('Terms:');
-      doc.font('Helvetica').text(invoice.notes, { width: 520 });
+      doc.font('Helvetica').text(invoice.notes, { width: usableWidth });
     }
 
     // Line items
-    doc.moveDown();
-    doc.font('Helvetica-Bold').fontSize(12).text('Line Items', 40);
-    doc.moveTo(40, doc.y + 4).lineTo(560, doc.y + 4).stroke();
-    doc.moveDown(1);
+    const ensureTableSpace = (heightNeeded: number) => {
+      if (doc.y + heightNeeded > doc.page.height - doc.page.margins.bottom - 40) {
+        doc.addPage();
+        renderTableHeader();
+      }
+    };
 
-    doc.font('Helvetica-Bold').fontSize(10);
-    const headers = ['Part #', 'Description', 'Qty', 'Unit', 'Unit Price', 'Line Total'];
-    const widths = [80, 200, 60, 50, 80, 80];
-    let y = doc.y;
-    let x = 40;
-    headers.forEach((h, idx) => {
-      doc.text(h, x, y, { width: widths[idx] });
-      x += widths[idx];
-    });
-    y += 14;
-    doc.moveTo(40, y).lineTo(560, y).stroke();
-    y += 6;
+    const columnWidths = [80, usableWidth - (80 + 50 + 50 + 70 + 82), 50, 50, 70, 82];
+    const columnAlign: Array<'left' | 'center' | 'right'> = ['left', 'left', 'right', 'center', 'right', 'right'];
 
+    const renderTableHeader = () => {
+      doc.moveDown();
+      doc.font('Helvetica-Bold').fontSize(12).text('Line Items', startX);
+      doc.moveTo(startX, doc.y + 4).lineTo(startX + usableWidth, doc.y + 4).stroke();
+      doc.moveDown(0.5);
+
+      doc.font('Helvetica-Bold').fontSize(10);
+      const headerY = doc.y;
+      let headerX = startX;
+      ['Part #', 'Description', 'Qty', 'Unit', 'Unit Price', 'Line Total'].forEach((h, idx) => {
+        doc.text(h, headerX, headerY, { width: columnWidths[idx], align: columnAlign[idx] });
+        headerX += columnWidths[idx];
+      });
+      const headerHeight = Math.max(...['Part #', 'Description', 'Qty', 'Unit', 'Unit Price', 'Line Total'].map((h, idx) =>
+        doc.heightOfString(h, { width: columnWidths[idx] })
+      ));
+      const underlineY = headerY + headerHeight + 4;
+      doc.moveTo(startX, underlineY).lineTo(startX + usableWidth, underlineY).stroke();
+      doc.y = underlineY + 4;
+    };
+
+    renderTableHeader();
+
+    const minRowHeight = 14;
     doc.font('Helvetica').fontSize(10);
     lineItems.forEach((li: any) => {
-      if (y > doc.page.height - 120) {
-        doc.addPage();
-        y = doc.y;
-      }
-      x = 40;
-      const row = [
-        li.part_number || '',
+      const cells = [
+        li.part_number || '-',
         li.part_description || '',
-        String(li.quantity ?? ''),
+        li.quantity != null ? String(li.quantity) : '',
         li.unit || '',
         formatCurrency(Number(li.unit_price) || 0),
         formatCurrency(Number(li.line_amount) || 0),
       ];
-      row.forEach((val, idx) => {
-        doc.text(val || '', x, y, { width: widths[idx] });
-        x += widths[idx];
+
+      const rowHeight =
+        Math.max(
+          ...cells.map((val, idx) => doc.heightOfString(val || '', { width: columnWidths[idx], align: columnAlign[idx] }))
+        ) + 6;
+
+      ensureTableSpace(rowHeight + 6);
+
+      const rowY = doc.y;
+      let rowX = startX;
+      cells.forEach((val, idx) => {
+        doc.text(val || '', rowX, rowY, { width: columnWidths[idx], align: columnAlign[idx] });
+        rowX += columnWidths[idx];
       });
-      y += 14;
+
+      doc.y = rowY + Math.max(rowHeight, minRowHeight);
     });
 
     // Totals
     doc.moveDown(1.5);
-    const totalsX = 360;
-    doc.font('Helvetica-Bold').fontSize(11).text('Subtotal:', totalsX, y, { continued: true }).font('Helvetica').text(formatCurrency(Number(invoice.subtotal) || 0), { align: 'right', width: 200 });
-    doc.font('Helvetica-Bold').text('GST:', totalsX, doc.y + 4, { continued: true }).font('Helvetica').text(formatCurrency(Number(invoice.total_gst_amount) || 0), { align: 'right', width: 200 });
-    doc.font('Helvetica-Bold').text('Total:', totalsX, doc.y + 4, { continued: true }).font('Helvetica').text(formatCurrency(Number(invoice.total_amount) || 0), { align: 'right', width: 200 });
+    if (doc.y + 80 > doc.page.height - doc.page.margins.bottom - 20) {
+      doc.addPage();
+    }
+    const totalsX = startX + usableWidth - 200;
+    const totalsY = doc.y;
+    const totalsLineHeight = 16;
+
+    doc.font('Helvetica-Bold').fontSize(11).text('Subtotal:', totalsX, totalsY, { width: 100, align: 'left' });
+    doc.font('Helvetica').fontSize(11).text(formatCurrency(Number(invoice.subtotal) || 0), totalsX + 100, totalsY, { width: 100, align: 'right' });
+
+    doc.font('Helvetica-Bold').fontSize(11).text('GST:', totalsX, totalsY + totalsLineHeight, { width: 100, align: 'left' });
+    doc.font('Helvetica').fontSize(11).text(formatCurrency(Number(invoice.total_gst_amount) || 0), totalsX + 100, totalsY + totalsLineHeight, { width: 100, align: 'right' });
+
+    doc.font('Helvetica-Bold').fontSize(12).text('Total:', totalsX, totalsY + totalsLineHeight * 2, { width: 100, align: 'left' });
+    doc.font('Helvetica-Bold').fontSize(12).text(formatCurrency(Number(invoice.total_amount) || 0), totalsX + 100, totalsY + totalsLineHeight * 2, { width: 100, align: 'right' });
+
+    // Business number footer (bottom-right on last page)
+    if (businessProfile && businessProfile.business_number) {
+      const range = doc.bufferedPageRange();
+      const lastPageIndex = range.start + range.count - 1;
+      const footerText = `Business Number: ${businessProfile.business_number}`;
+      doc.switchToPage(lastPageIndex);
+      doc.font('Helvetica-Bold')
+        .fontSize(10)
+        .text(footerText, startX, doc.page.height - doc.page.margins.bottom + 10, {
+          width: usableWidth,
+          align: 'right',
+        });
+    }
 
     console.info('invoiceRoutes: pdf success', { invoiceId, lineItemCount: lineItems.length });
     doc.end();
   } catch (error) {
-    console.error('invoiceRoutes: pdf error', error instanceof Error ? error.stack || error.message : error);
-    const message = error instanceof Error ? error.message : 'Failed to generate invoice PDF';
+    console.error('invoiceRoutes: pdf error', error instanceof Error - error.stack || error.message : error);
+    const message = error instanceof Error - error.message : 'Failed to generate invoice PDF';
     res.status(500).json({ error: 'Failed to generate invoice PDF', details: message });
   }
 });
@@ -1219,8 +1272,8 @@ router.get('/:id', async (req: Request, res: Response) => {
     const data = await invoiceService.getInvoice(invoiceId);
     res.json(data);
   } catch (error: any) {
-    const message = error?.message || 'Failed to fetch invoice';
-    const status = message.toLowerCase().includes('not found') ? 404 : 500;
+    const message = error-.message || 'Failed to fetch invoice';
+    const status = message.toLowerCase().includes('not found') - 404 : 500;
     res.status(status).json({ error: message });
   }
 });
@@ -1232,7 +1285,7 @@ router.put('/:id', async (req: Request, res: Response) => {
   try {
     await invoiceService.updateInvoice(invoiceId, {
       ...req.body,
-      line_items: req.body.line_items ?? req.body.lineItems ?? [],
+      line_items: req.body.line_items -- req.body.lineItems -- [],
     });
     res.json({ message: 'Invoice updated' });
   } catch (error) {
@@ -1255,4 +1308,3 @@ router.delete('/:id', async (req: Request, res: Response) => {
 });
 
 export default router;
-
