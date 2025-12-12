@@ -291,6 +291,31 @@ const SalesOrderDetailPage: React.FC = () => {
   const openFieldPicker = (event: React.MouseEvent<HTMLElement>) => setFieldPickerAnchor(event.currentTarget);
   const closeFieldPicker = () => setFieldPickerAnchor(null);
 
+  const lineItemWidths = useMemo(() => {
+    if (isTimeTrackingUser) {
+      return {
+        partNumber: 3,
+        description: 3,
+        quantity: 1.5,
+        availability: 1.5,
+        unit: 1.5,
+        unitCost: 0,
+        amount: 0,
+        actions: 1.5,
+      };
+    }
+    return {
+      partNumber: 2.5,
+      description: 2.5,
+      quantity: 1,
+      availability: 1,
+      unit: 1,
+      unitCost: 1.5,
+      amount: 1.5,
+      actions: 1,
+    };
+  }, [isTimeTrackingUser]);
+
   // Calculate totals from all visible line items (including LABOUR/OVERHEAD from backend)
   const totals = useMemo(() => {
     // If no line items, return zero totals
@@ -2378,7 +2403,7 @@ const SalesOrderDetailPage: React.FC = () => {
               })
               .map(({ item, originalIndex }) => (
               <React.Fragment key={originalIndex}>
-                <Grid item xs={12} sm={6} md={2.5}>
+                <Grid item xs={12} sm={6} md={lineItemWidths.partNumber}>
                   <Autocomplete<PartOption, false, false, true>
                     open={partOpenIndex === originalIndex}
                     onOpen={() => setPartOpenIndex(originalIndex)}
@@ -2480,10 +2505,10 @@ const SalesOrderDetailPage: React.FC = () => {
                     }}
                   />
                 </Grid>
-                <Grid item xs={12} sm={6} md={2.5}>
+                <Grid item xs={12} sm={6} md={lineItemWidths.description}>
                   <TextField label="Part Description" value={item.part_description} fullWidth required InputProps={{ readOnly: true }} sx={{ backgroundColor:'#ffffff' }} />
                 </Grid>
-                <Grid item xs={6} sm={3} md={1}>
+                <Grid item xs={6} sm={3} md={lineItemWidths.quantity}>
                   <TextField
                     label="Qty"
                     value={item.quantity}
@@ -2493,7 +2518,7 @@ const SalesOrderDetailPage: React.FC = () => {
                     inputProps={{ step:1, onWheel: (e:any) => e.target.blur() }}
                   />
                 </Grid>
-                <Grid item xs={6} sm={3} md={1}>
+                <Grid item xs={6} sm={3} md={lineItemWidths.availability}>
                   <TextField
                     label="Avail"
                     value={(() => {
@@ -2517,11 +2542,11 @@ const SalesOrderDetailPage: React.FC = () => {
                     }}
                   />
                 </Grid>
-                <Grid item xs={6} sm={3} md={1}>
+                <Grid item xs={6} sm={3} md={lineItemWidths.unit}>
                   <TextField label="Unit" value={item.part_number === 'SUPPLY' ? '' : item.unit} fullWidth InputProps={{ readOnly: true }} sx={{ backgroundColor:'#ffffff' }} />
                 </Grid>
                 {!isTimeTrackingUser && (
-                  <Grid item xs={12} sm={2} md={1.5}>
+                  <Grid item xs={12} sm={2} md={lineItemWidths.unitCost}>
                     <TextField
                       label="Unit Cost"
                       value={item.part_number === 'LABOUR' ? (globalLabourRate ?? 0) : item.part_number === 'OVERHEAD' ? (globalOverheadRate ?? 0) : item.part_number === 'SUPPLY' ? '' : item.unit_price}
@@ -2535,11 +2560,11 @@ const SalesOrderDetailPage: React.FC = () => {
                   </Grid>
                 )}
                 {!isTimeTrackingUser && (
-                  <Grid item xs={6} sm={3} md={1.5}>
+                  <Grid item xs={6} sm={3} md={lineItemWidths.amount}>
                     <TextField label="Amount" value={item.line_amount != null && !isNaN(Number(item.line_amount)) ? Number(item.line_amount).toFixed(2) : '0.00'} InputProps={{ readOnly: true }} fullWidth />
                   </Grid>
                 )}
-                <Grid item xs={6} sm={3} md={1} sx={{ display:'flex', alignItems:'center' }}>
+                <Grid item xs={6} sm={3} md={lineItemWidths.actions} sx={{ display:'flex', alignItems:'center' }}>
                   <Button variant="outlined" color="primary" onClick={() => handleRemoveLineItem(originalIndex)} fullWidth>Remove</Button>
                 </Grid>
               </React.Fragment>
@@ -2551,13 +2576,15 @@ const SalesOrderDetailPage: React.FC = () => {
         </Paper>
         </Box>
 
-        <Paper sx={{ p:3, mb:3 }} elevation={3}>
-          <Grid container spacing={2}>
-            <Grid item xs={12} sm={4}><Typography variant="subtitle1">Subtotal: {formatCurrency(subtotal)}</Typography></Grid>
-            <Grid item xs={12} sm={4}><Typography variant="subtitle1">Total GST: {formatCurrency(totalGSTAmount)}</Typography></Grid>
-            <Grid item xs={12} sm={4}><Typography variant="h6">Total Amount: {formatCurrency(totalAmount)}</Typography></Grid>
-          </Grid>
-        </Paper>
+        {!isTimeTrackingUser && (
+          <Paper sx={{ p:3, mb:3 }} elevation={3}>
+            <Grid container spacing={2}>
+              <Grid item xs={12} sm={4}><Typography variant="subtitle1">Subtotal: {formatCurrency(subtotal)}</Typography></Grid>
+              <Grid item xs={12} sm={4}><Typography variant="subtitle1">Total GST: {formatCurrency(totalGSTAmount)}</Typography></Grid>
+              <Grid item xs={12} sm={4}><Typography variant="h6">Total Amount: {formatCurrency(totalAmount)}</Typography></Grid>
+            </Grid>
+          </Paper>
+        )}
 
         {/* Parts to Order (edit mode only) */}
         {!isCreationMode && (
