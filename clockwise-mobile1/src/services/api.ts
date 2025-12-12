@@ -118,6 +118,10 @@ export const attendanceAPI = {
     const response = await api.get('/attendance/geofence');
     return response.data;
   },
+  getShifts: async (params?: { from?: string; to?: string }) => {
+    const response = await api.get('/attendance', { params });
+    return response.data;
+  },
   getActiveShift: async (profileId: string) => {
     const response = await api.get('/attendance/active', { params: { profile_id: profileId } });
     return response.data;

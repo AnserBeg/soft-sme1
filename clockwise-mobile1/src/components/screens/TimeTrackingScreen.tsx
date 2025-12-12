@@ -43,6 +43,7 @@ interface SalesOrder {
   number: string;
   product_name?: string;
   customer_name?: string;
+  unit_number?: string;
 }
 
 export const TimeTrackingScreen: React.FC = () => {
@@ -390,6 +391,7 @@ export const TimeTrackingScreen: React.FC = () => {
     const parts = [
       displayOrderNumber(salesOrder.number),
       salesOrder.customer_name,
+      salesOrder.unit_number,
       salesOrder.product_name || salesOrder.name
     ].filter(Boolean);
 
@@ -406,15 +408,19 @@ export const TimeTrackingScreen: React.FC = () => {
     return entry.profile_name || getProfileName(entry.profile_id);
   };
 
-  // Helper function to get sales order name from time entry data
+  // Helper function to get sales order name from time entry data with customer/unit/product context
   const getSalesOrderNameFromEntry = (entry: any) => {
-    const labelFromState = getSalesOrderName(entry.sales_order_id);
-    if (labelFromState !== 'Unknown Order') {
-      return labelFromState;
-    }
-
-    const fallbackParts = [entry.sales_order_number, entry.customer_name, entry.product_name].filter(Boolean);
-    return fallbackParts.join(' | ') || 'Unknown Order';
+    const soFromState = salesOrders.find((s) => s.id === entry.sales_order_id);
+    const parts: string[] = [];
+    const orderNumber = entry.sales_order_number || soFromState?.number;
+    if (orderNumber) parts.push(orderNumber);
+    const customer = soFromState?.customer_name || entry.customer_name;
+    if (customer) parts.push(customer);
+    const unit = soFromState?.unit_number || entry.unit_number;
+    if (unit) parts.push(unit);
+    const product = entry.product_name || soFromState?.product_name || soFromState?.name;
+    if (product) parts.push(product);
+    return parts.join(' | ') || 'Unknown Order';
   };
 
   const activeEntries = timeEntries.filter(entry => entry.status === 'active');
@@ -494,13 +500,14 @@ export const TimeTrackingScreen: React.FC = () => {
                     const isClockedInForSO = !!(selectedProfile && allEntries.find(
                       entry => entry.profile_id?.toString() === selectedProfile?.toString() && entry.sales_order_id?.toString() === so.id?.toString() && !entry.clock_out
                     ));
-                    const label = formatSalesOrderLabel(so);
-                    const numberDisplay = displayOrderNumber(so.number);
-                    return (
-                      <SelectItem
-                        key={so.id}
-                        value={so.id}
-                        textValue={label}
+                  const label = formatSalesOrderLabel(so);
+                  const numberDisplay = displayOrderNumber(so.number);
+                  const detailParts = [so.unit_number, so.product_name].filter(Boolean).join(' · ');
+                  return (
+                    <SelectItem
+                      key={so.id}
+                      value={so.id}
+                      textValue={label}
                         className="items-start gap-2 whitespace-normal py-3 px-4 text-left leading-5 hover:bg-primary/5"
                         disabled={isClockedInForSO}
                       >
@@ -513,8 +520,8 @@ export const TimeTrackingScreen: React.FC = () => {
                               </span>
                             )}
                           </div>
-                          {so.product_name && (
-                            <span className="text-xs text-muted-foreground leading-tight">{so.product_name}</span>
+                          {detailParts && (
+                            <span className="text-xs text-muted-foreground leading-tight">{detailParts}</span>
                           )}
                           {isClockedInForSO ? <span className="text-[11px] font-medium text-warning">Already Clocked In</span> : ''}
                         </div>
@@ -596,17 +603,12 @@ export const TimeTrackingScreen: React.FC = () => {
                </CardHeader>
                <CardContent className="space-y-4">
                  <div className="space-y-2">
-                   <div>
-                     <p className="text-sm font-medium text-muted-foreground">Profile</p>
-                     <p className="font-medium">{getProfileNameFromEntry(entry)}</p>
-                   </div>
-                                    <div>
-                   <p className="text-sm font-medium text-muted-foreground">Sales Order</p>
-                   <p className="text-sm">{getSalesOrderNameFromEntry(entry)}</p>
-                   {entry.product_name && (
-                     <p className="text-xs text-muted-foreground mt-1">{entry.product_name}</p>
-                   )}
-                 </div>
+                  <div>
+                    <p className="font-medium">{getProfileNameFromEntry(entry)}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm">{getSalesOrderNameFromEntry(entry)}</p>
+                  </div>
                  </div>
                  {isOwnEntry ? (
                    <Button
@@ -620,26 +622,20 @@ export const TimeTrackingScreen: React.FC = () => {
                      Clock Out
                    </Button>
                  ) : (
-                   <div className="text-center py-2">
-                     <p className="text-sm text-muted-foreground">
-                       Only {getProfileNameFromEntry(entry)} can clock out of this session
-                     </p>
-                   </div>
-                 )}
-             </CardContent>
-           </Card>
-         );
-        })}
+                <div className="text-center py-2" />
+              )}
+            </CardContent>
+          </Card>
+        );
+      })}
 
         <Dialog open={!!pendingClockOutEntry} onOpenChange={(open) => { if (!open) resetStoryModal(); }}>
-          <DialogContent className="max-w-lg w-full max-h-[85vh] overflow-y-auto bg-background">
-            <DialogHeader>
-              <DialogTitle className="sr-only">Tech Story</DialogTitle>
-              <DialogDescription className="sr-only">
-                Add a technician story before clocking out.
-              </DialogDescription>
+          <DialogContent className="max-w-lg w-full max-h-[85vh] overflow-y-auto bg-background pt-2 pb-4 px-4">
+            <DialogHeader className="sr-only">
+              <DialogTitle>Tech Story</DialogTitle>
+              <DialogDescription>Add a technician story before clocking out.</DialogDescription>
             </DialogHeader>
-            <div className="flex justify-end mb-2">
+            <div className="flex justify-end">
               <Button variant="ghost" size="icon" onClick={resetStoryModal} className="shrink-0">
                 <span className="sr-only">Close</span>
                 <X className="h-4 w-4" />

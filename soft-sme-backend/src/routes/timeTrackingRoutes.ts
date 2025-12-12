@@ -1024,6 +1024,7 @@ router.get('/sales-orders', async (req: Request, res: Response) => {
         soh.sales_order_id as id, 
         soh.sales_order_number as number, 
         soh.product_name,
+        soh.unit_number,
         COALESCE(cm.customer_name, 'Unknown Customer') as customer_name
        FROM salesorderhistory soh
        LEFT JOIN customermaster cm ON soh.customer_id = cm.customer_id

@@ -29,6 +29,7 @@ type Shift = {
   profile_id?: string;
   clock_in: string;
   clock_out?: string | null;
+  profile_name?: string;
 };
 
 const haversineMeters = (lat1: number, lon1: number, lat2: number, lon2: number) => {
@@ -65,6 +66,7 @@ export const AttendanceScreen: React.FC = () => {
   const [selectedProfile, setSelectedProfile] = useState<string>('');
   const [geofence, setGeofence] = useState<Geofence | null>(null);
   const [activeShift, setActiveShift] = useState<Shift | null>(null);
+  const [todayShifts, setTodayShifts] = useState<Shift[]>([]);
   const [distanceFromFence, setDistanceFromFence] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [locationError, setLocationError] = useState<string | null>(null);
@@ -118,6 +120,14 @@ export const AttendanceScreen: React.FC = () => {
 
       setGeofence(normalizeGeofence(fenceData));
 
+      const today = new Date();
+      const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate()).toISOString();
+      const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1).toISOString();
+
+      const shiftsRes = await attendanceAPI.getShifts({ from: startOfDay, to: endOfDay });
+      const normalizedShifts = Array.isArray(shiftsRes) ? shiftsRes : [];
+      setTodayShifts(normalizedShifts);
+
       if (resolvedProfile) {
         const shift = await attendanceAPI.getActiveShift(resolvedProfile);
         setActiveShift(shift);
@@ -139,6 +149,9 @@ export const AttendanceScreen: React.FC = () => {
   useEffect(() => {
     loadData();
   }, [loadData]);
+  
+  const activeToday = todayShifts.filter((s) => !s.clock_out);
+  const completedToday = todayShifts.filter((s) => s.clock_out);
 
   const resolveLocationRequirement = useCallback(
     async (action: 'clock in' | 'clock out') => {
@@ -331,6 +344,9 @@ export const AttendanceScreen: React.FC = () => {
     return new Date(value).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
   };
 
+  const activeToday = todayShifts.filter((s) => !s.clock_out);
+  const completedToday = todayShifts.filter((s) => s.clock_out);
+
   const geofenceConfigured = geofence?.configured;
   const withinFence = geofenceConfigured && distanceFromFence !== null && geofence?.radius_meters !== null
     ? distanceFromFence <= geofence.radius_meters
@@ -409,6 +425,54 @@ export const AttendanceScreen: React.FC = () => {
                 )}
               </Button>
             )}
+          </CardContent>
+        </Card>
+
+        <Card className="shadow-card border-0">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-lg">Today&apos;s attendance</CardTitle>
+            <CardDescription>All profiles with today&apos;s clock-ins</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div>
+              <p className="text-sm font-semibold mb-2">Currently clocked in</p>
+              {activeToday.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No active attendance shifts.</p>
+              ) : (
+                <div className="space-y-2">
+                  {activeToday.map((shift) => (
+                    <div key={shift.id} className="flex items-center justify-between rounded-md border border-warning/30 bg-warning/5 px-3 py-2">
+                      <div className="flex flex-col">
+                        <span className="font-medium">{shift.profile_name || `Profile ${shift.profile_id}`}</span>
+                        <span className="text-xs text-muted-foreground">In: {formatTime(shift.clock_in)}</span>
+                      </div>
+                      <Badge variant="outline" className="border-warning text-warning">ACTIVE</Badge>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div>
+              <p className="text-sm font-semibold mb-2">Completed today</p>
+              {completedToday.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No completed shifts yet.</p>
+              ) : (
+                <div className="space-y-2">
+                  {completedToday.map((shift) => (
+                    <div key={shift.id} className="flex items-center justify-between rounded-md border px-3 py-2">
+                      <div className="flex flex-col">
+                        <span className="font-medium">{shift.profile_name || `Profile ${shift.profile_id}`}</span>
+                        <span className="text-xs text-muted-foreground">
+                          In: {formatTime(shift.clock_in)} · Out: {formatTime(shift.clock_out || '')}
+                        </span>
+                      </div>
+                      <Badge variant="outline" className="border-muted-foreground text-muted-foreground">DONE</Badge>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </CardContent>
         </Card>
 
