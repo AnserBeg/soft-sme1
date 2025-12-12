@@ -632,13 +632,14 @@ export const TimeTrackingScreen: React.FC = () => {
         })}
 
         <Dialog open={!!pendingClockOutEntry} onOpenChange={(open) => { if (!open) resetStoryModal(); }}>
-          <DialogContent className="max-w-lg w-full max-h-[85vh] overflow-y-auto relative bg-background">
-            <DialogHeader className="sr-only">
-              <DialogTitle>Tech Story</DialogTitle>
-              <DialogDescription>Add a technician story before clocking out.</DialogDescription>
+          <DialogContent className="max-w-lg w-full max-h-[85vh] overflow-y-auto bg-background">
+            <DialogHeader>
+              <DialogTitle className="sr-only">Tech Story</DialogTitle>
+              <DialogDescription className="sr-only">
+                Add a technician story before clocking out.
+              </DialogDescription>
             </DialogHeader>
-            <div className="flex items-start justify-between mb-3 sticky top-0 bg-background z-10">
-              <div className="flex-1" />
+            <div className="flex justify-end mb-2">
               <Button variant="ghost" size="icon" onClick={resetStoryModal} className="shrink-0">
                 <span className="sr-only">Close</span>
                 <X className="h-4 w-4" />
