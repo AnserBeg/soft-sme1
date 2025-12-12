@@ -1,8 +1,66 @@
 import express, { Request, Response } from 'express';
 import { pool } from '../db';
+import { sharedPool } from '../dbShared';
 import bcrypt from 'bcrypt';
 
 const router = express.Router();
+
+/**
+ * Keep the shared auth DB and the tenant DB in sync so multi-tenant logins
+ * keep working. We upsert by email to avoid duplicate records when a user
+ * already exists in one of the databases.
+ */
+async function upsertSharedUser(
+  email: string,
+  username: string,
+  passwordHash: string,
+  accessRole: string,
+  companyId: string,
+) {
+  const sharedResult = await sharedPool.query(
+    `
+    INSERT INTO users (email, username, password_hash, access_role, company_id)
+    VALUES ($1, $2, $3, $4, $5)
+    ON CONFLICT (email)
+    DO UPDATE SET 
+      username = EXCLUDED.username,
+      password_hash = EXCLUDED.password_hash,
+      access_role = EXCLUDED.access_role,
+      company_id = EXCLUDED.company_id,
+      updated_at = NOW()
+    RETURNING id, email, username, access_role, company_id
+    `,
+    [email, username, passwordHash, accessRole, companyId],
+  );
+
+  return sharedResult.rows[0];
+}
+
+async function upsertTenantUser(
+  email: string,
+  username: string,
+  passwordHash: string,
+  accessRole: string,
+  companyId: string,
+) {
+  const tenantResult = await pool.query(
+    `
+    INSERT INTO users (email, username, password_hash, access_role, company_id)
+    VALUES ($1, $2, $3, $4, $5)
+    ON CONFLICT (email)
+    DO UPDATE SET 
+      username = EXCLUDED.username,
+      password_hash = EXCLUDED.password_hash,
+      access_role = EXCLUDED.access_role,
+      company_id = EXCLUDED.company_id,
+      updated_at = NOW()
+    RETURNING id, email, username, access_role, company_id
+    `,
+    [email, username, passwordHash, accessRole, companyId],
+  );
+
+  return tenantResult.rows[0];
+}
 
 // Get all employees for the current user's company
 router.get('/', async (req: Request, res: Response) => {
@@ -54,11 +112,19 @@ router.post('/', async (req: Request, res: Response) => {
     }
     
     const hashedPassword = await bcrypt.hash(password, 10);
-    const result = await pool.query(
-      'INSERT INTO users (email, username, password_hash, access_role, company_id) VALUES ($1, $2, $3, $4, $5) RETURNING id, email, username, access_role',
-      [email, username, hashedPassword, access_role, company_id]
-    );
-    res.status(201).json({ message: 'Employee created successfully', employee: result.rows[0] });
+    const sharedUser = await upsertSharedUser(email, username, hashedPassword, access_role, company_id);
+    const tenantUser = await upsertTenantUser(email, username, hashedPassword, access_role, company_id);
+
+    res.status(201).json({
+      message: 'Employee created successfully',
+      employee: {
+        id: tenantUser.id,
+        email: tenantUser.email,
+        username: tenantUser.username,
+        access_role: tenantUser.access_role,
+        shared_user_id: sharedUser.id,
+      },
+    });
   } catch (err: any) {
     console.error('employeeRoutes: Error creating employee:', err);
     console.error('Error details:', {
@@ -91,20 +157,32 @@ router.put('/:id', async (req: Request, res: Response) => {
   const { username, access_role, password } = req.body;
   try {
     const company_id = req.user?.company_id;
-    let query, params;
-    if (password) {
-      const hashedPassword = await bcrypt.hash(password, 10);
-      query = 'UPDATE users SET username = $1, access_role = $2, password_hash = $3 WHERE id = $4 AND company_id = $5 RETURNING id, email, username, access_role';
-      params = [username, access_role, hashedPassword, id, company_id];
-    } else {
-      query = 'UPDATE users SET username = $1, access_role = $2 WHERE id = $3 AND company_id = $4 RETURNING id, email, username, access_role';
-      params = [username, access_role, id, company_id];
+    if (!company_id) {
+      return res.status(400).json({ error: 'Company ID not found' });
     }
-    const result = await pool.query(query, params);
-    if (result.rows.length === 0) {
+
+    const existing = await pool.query(
+      'SELECT email, username, password_hash FROM users WHERE id = $1 AND company_id = $2',
+      [id, company_id],
+    );
+
+    if (existing.rows.length === 0) {
       return res.status(404).json({ error: 'Employee not found' });
     }
-    res.json(result.rows[0]);
+
+    const current = existing.rows[0];
+    const newPasswordHash = password ? await bcrypt.hash(password, 10) : current.password_hash;
+    const newUsername = username ?? current.username;
+    const newAccessRole = access_role ?? 'Employee';
+
+    const tenantResult = await pool.query(
+      'UPDATE users SET username = $1, access_role = $2, password_hash = $3 WHERE id = $4 AND company_id = $5 RETURNING id, email, username, access_role',
+      [newUsername, newAccessRole, newPasswordHash, id, company_id],
+    );
+
+    await upsertSharedUser(current.email, newUsername, newPasswordHash, newAccessRole, company_id);
+
+    res.json(tenantResult.rows[0]);
   } catch (err) {
     console.error('employeeRoutes: Error updating employee:', err);
     res.status(500).json({ error: 'Internal server error' });
@@ -116,13 +194,25 @@ router.delete('/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
   try {
     const company_id = req.user?.company_id;
-    const result = await pool.query(
-      'DELETE FROM users WHERE id = $1 AND company_id = $2 RETURNING id',
-      [id, company_id]
+    if (!company_id) {
+      return res.status(400).json({ error: 'Company ID not found' });
+    }
+
+    const existing = await pool.query(
+      'SELECT email FROM users WHERE id = $1 AND company_id = $2',
+      [id, company_id],
     );
-    if (result.rows.length === 0) {
+
+    if (existing.rows.length === 0) {
       return res.status(404).json({ error: 'Employee not found' });
     }
+
+    await pool.query('DELETE FROM users WHERE id = $1 AND company_id = $2', [id, company_id]);
+    await sharedPool.query('DELETE FROM users WHERE email = $1 AND company_id = $2', [
+      existing.rows[0].email,
+      company_id,
+    ]);
+
     res.json({ success: true });
   } catch (err) {
     console.error('employeeRoutes: Error deleting employee:', err);

@@ -535,17 +535,9 @@ const OpenSalesOrdersPage: React.FC = () => {
     console.log('OpenSalesOrdersPage: User role:', user?.access_role);
     console.log('OpenSalesOrdersPage: Sales order ID:', params.row.sales_order_id);
     
-    if (user?.access_role === 'Time Tracking') {
-      // Redirect time tracking users to the worker sales order page
-      const targetPath = `/worker-sales-orders/${params.row.sales_order_id}`;
-      console.log('OpenSalesOrdersPage: Navigating time tracking user to:', targetPath);
-      navigate(targetPath);
-    } else {
-      // Regular users go to the normal sales order detail page
-      const targetPath = `/open-sales-orders/${params.row.sales_order_id}`;
-      console.log('OpenSalesOrdersPage: Navigating regular user to:', targetPath);
-      navigate(targetPath);
-    }
+    const targetPath = `/open-sales-orders/${params.row.sales_order_id}`;
+    console.log('OpenSalesOrdersPage: Navigating user to:', targetPath);
+    navigate(targetPath);
   };
 
   if (user?.access_role === 'Time Tracking') {
@@ -564,6 +556,14 @@ const OpenSalesOrdersPage: React.FC = () => {
             onClick={(event) => handleOpenColumnSelector(event, columns.filter((col) => col.field !== 'actions'))}
           >
             Columns
+          </Button>
+          <Button
+            variant="contained"
+            startIcon={<AddIcon />}
+            sx={{ mr: 1 }}
+            onClick={() => navigate('/open-sales-orders/new')}
+          >
+            New Sales Order
           </Button>
           <Button
             variant="outlined"

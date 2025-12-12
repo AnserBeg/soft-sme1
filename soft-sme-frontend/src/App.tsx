@@ -74,15 +74,13 @@ const PrivateRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => 
     if (path === '/' || path === '/dashboard') {
       return <Navigate to="/attendance" replace />;
     }
-    // Only allow /time-tracking, /attendance, /open-sales-orders, /open-purchase-orders, and /worker-sales-orders
+    // Only allow /time-tracking, /attendance, /open-sales-orders, and /worker-sales-orders
     if (
       path !== '/time-tracking' &&
       path !== '/attendance' &&
       path !== '/messaging' &&
       !path.startsWith('/open-sales-orders') &&
-      !path.startsWith('/worker-sales-orders') &&
-      !path.startsWith('/open-purchase-orders') &&
-      !path.startsWith('/purchase-order')
+      !path.startsWith('/worker-sales-orders')
     ) {
       return <Navigate to="/attendance" replace />;
     }
