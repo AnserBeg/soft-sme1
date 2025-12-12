@@ -191,6 +191,8 @@ const Layout: React.FC = () => {
         { text: 'Attendance', icon: <TimelineIcon />, path: '/attendance' },
         { text: 'Time Tracking', icon: <TimelineIcon />, path: '/time-tracking' },
         messageMenuItem,
+        { type: 'header', text: 'Purchasing' },
+        { text: 'Purchase Orders', icon: <AssignmentIcon />, path: '/open-purchase-orders' },
         { type: 'header', text: 'Sales' },
         { text: 'Sales Orders', icon: <ReceiptIcon />, path: '/open-sales-orders' },
       ];
@@ -374,5 +376,4 @@ const Layout: React.FC = () => {
 };
 
 export default Layout;
-
 

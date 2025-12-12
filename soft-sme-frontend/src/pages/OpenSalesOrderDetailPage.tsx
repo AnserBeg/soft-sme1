@@ -170,6 +170,7 @@ const SalesOrderDetailPage: React.FC = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
   const isSalesPurchaseUser = user?.access_role === 'Sales and Purchase';
+  const isTimeTrackingUser = user?.access_role === 'Time Tracking';
 
   // Shared state
   const [customers, setCustomers] = useState<CustomerOption[]>([]);
@@ -278,8 +279,13 @@ const SalesOrderDetailPage: React.FC = () => {
     (Object.keys(merged) as OptionalFieldKey[]).forEach(key => {
       merged[key] = Boolean(adminFieldVisibility[key] && fieldVisibility[key]);
     });
+    if (isTimeTrackingUser) {
+      merged.quotedPrice = false;
+      merged.invoiceStatus = false;
+      merged.terms = false;
+    }
     return merged;
-  }, [adminFieldVisibility, fieldVisibility]);
+  }, [adminFieldVisibility, fieldVisibility, isTimeTrackingUser]);
 
   const [fieldPickerAnchor, setFieldPickerAnchor] = useState<HTMLElement | null>(null);
   const openFieldPicker = (event: React.MouseEvent<HTMLElement>) => setFieldPickerAnchor(event.currentTarget);
@@ -2105,14 +2111,15 @@ const SalesOrderDetailPage: React.FC = () => {
                 { key: 'vehicleModel', label: 'Model' },
                 { key: 'invoiceStatus', label: 'Invoice Status' },
                 { key: 'wantedByDate', label: 'Wanted By Date' },
-                { key: 'wantedByTimeOfDay', label: 'Wanted Time of Day' },
-                { key: 'productDescription', label: 'Product Description' },
-                { key: 'terms', label: 'Terms' },
-              ]
-                .filter(({ key }) => adminFieldVisibility[key as OptionalFieldKey])
-                .map(({ key, label }) => (
-                <FormControlLabel
-                  key={key}
+              { key: 'wantedByTimeOfDay', label: 'Wanted Time of Day' },
+              { key: 'productDescription', label: 'Product Description' },
+              { key: 'terms', label: 'Terms' },
+            ]
+              .filter(({ key }) => adminFieldVisibility[key as OptionalFieldKey])
+              .filter(({ key }) => !(isTimeTrackingUser && ['quotedPrice', 'invoiceStatus', 'terms'].includes(key)))
+              .map(({ key, label }) => (
+              <FormControlLabel
+                key={key}
                   control={
                     <Checkbox
                       size="small"
