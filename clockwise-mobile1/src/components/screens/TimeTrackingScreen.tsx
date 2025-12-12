@@ -632,13 +632,6 @@ export const TimeTrackingScreen: React.FC = () => {
 
         <Dialog open={!!pendingClockOutEntry} onOpenChange={(open) => { if (!open) resetStoryModal(); }}>
           <DialogContent className="max-w-lg w-full">
-            <DialogHeader>
-              <DialogTitle>Tech Story</DialogTitle>
-              <DialogDescription>
-                Add a quick recap for this sales order before clocking out. Your entry will be saved to the order and carried forward to invoices.
-              </DialogDescription>
-            </DialogHeader>
-
             {isStoryLoading ? (
               <div className="flex items-center justify-center py-6">
                 <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -666,14 +659,6 @@ export const TimeTrackingScreen: React.FC = () => {
                     placeholder="What happened on this job? Notes, fixes, parts used, next steps..."
                     className="text-base"
                   />
-                  {pendingClockOutEntry && (
-                    <p className="text-xs text-muted-foreground">
-                      We&apos;ll prefix this entry with{' '}
-                      <span className="font-medium">
-                        {getProfileNameFromEntry(pendingClockOutEntry)} - {new Date().toLocaleDateString()} ({estimateShiftDurationHours(pendingClockOutEntry)} hrs)
-                      </span>
-                    </p>
-                  )}
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">

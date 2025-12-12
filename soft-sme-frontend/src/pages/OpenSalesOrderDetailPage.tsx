@@ -1605,13 +1605,13 @@ const SalesOrderDetailPage: React.FC = () => {
               </Grid>
               <Grid item xs={12}><b>Estimated Price:</b> {formatCurrency(salesOrder.estimated_cost || 0)}</Grid>
               <Grid item xs={12}><b>Product Description:</b> {salesOrder.product_description || 'N/A'}</Grid>
-              <Grid item xs={12}><b>Terms:</b> {salesOrder.terms || 'N/A'}</Grid>
               <Grid item xs={12}>
                 <b>Tech Story:</b>
                 <Box sx={{ whiteSpace: 'pre-line', mt: 0.5 }}>
                   {salesOrder.tech_story || 'N/A'}
                 </Box>
               </Grid>
+              <Grid item xs={12}><b>Terms:</b> {salesOrder.terms || 'N/A'}</Grid>
               {salesOrder.exported_to_qbo && (
                 <Grid item xs={12}><b>QBO Export:</b> Exported
                   {salesOrder.qbo_invoice_id && ` (Invoice ID: ${salesOrder.qbo_invoice_id})`}
@@ -2084,23 +2084,6 @@ const SalesOrderDetailPage: React.FC = () => {
           ),
         }
       : null,
-    effectiveFieldVisibility.techStory
-      ? {
-          key: 'techStory',
-          element: (
-            <TextField
-              label="Tech Story"
-              value={techStory}
-              onChange={e => setTechStory(e.target.value)}
-              fullWidth
-              multiline
-              minRows={4}
-              maxRows={12}
-              placeholder="Add technician notes for this sales order"
-            />
-          ),
-        }
-      : null,
   ].filter(Boolean) as SectionField[];
   const invoiceStatusCol = getGridSpan(invoiceStatusFields.length || 1);
 
@@ -2167,6 +2150,7 @@ const SalesOrderDetailPage: React.FC = () => {
                 { key: 'wantedByDate', label: 'Wanted By Date' },
               { key: 'wantedByTimeOfDay', label: 'Wanted Time of Day' },
               { key: 'productDescription', label: 'Product Description' },
+              { key: 'techStory', label: 'Tech Story' },
               { key: 'terms', label: 'Terms' },
               { key: 'techStory', label: 'Tech Story' },
             ]
@@ -2333,6 +2317,20 @@ const SalesOrderDetailPage: React.FC = () => {
             {effectiveFieldVisibility.productDescription && (
               <Grid item xs={12}>
                 <TextField label="Product Description" value={productDescription} onChange={e => setProductDescription(e.target.value)} fullWidth multiline minRows={2} maxRows={6} />
+              </Grid>
+            )}
+            {effectiveFieldVisibility.techStory && (
+              <Grid item xs={12}>
+                <TextField
+                  label="Tech Story"
+                  value={techStory}
+                  onChange={e => setTechStory(e.target.value)}
+                  fullWidth
+                  multiline
+                  minRows={4}
+                  maxRows={12}
+                  placeholder="Add technician notes for this sales order"
+                />
               </Grid>
             )}
           </Grid>

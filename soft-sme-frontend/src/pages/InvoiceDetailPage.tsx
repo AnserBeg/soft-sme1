@@ -1012,6 +1012,17 @@ const InvoiceDetailPage: React.FC = () => {
                 minRows={2}
               />
             )}
+            {effectiveFieldVisibility.techStory !== false && (
+              <TextField
+                label="Tech Story"
+                value={invoice.tech_story || ''}
+                onChange={(e) => setInvoice((prev: any) => ({ ...prev, tech_story: e.target.value }))}
+                fullWidth
+                multiline
+                minRows={4}
+                placeholder="Technician notes carried from the sales order"
+              />
+            )}
           </Box>
         </Paper>
 
@@ -1025,18 +1036,6 @@ const InvoiceDetailPage: React.FC = () => {
           value={invoice.notes || ''}
           onChange={(e) => setInvoice((prev: any) => ({ ...prev, notes: e.target.value }))}
         />
-          {effectiveFieldVisibility.techStory !== false && (
-            <TextField
-              sx={{ mt: 2 }}
-              label="Tech Story"
-              multiline
-              minRows={4}
-              fullWidth
-              value={invoice.tech_story || ''}
-              onChange={(e) => setInvoice((prev: any) => ({ ...prev, tech_story: e.target.value }))}
-              placeholder="Technician notes carried from the sales order"
-            />
-          )}
         </Paper>
       <Popover
         open={Boolean(fieldPickerAnchor)}
