@@ -124,10 +124,16 @@ export const attendanceAPI = {
     });
     return response.data;
   },
-  clockOut: async (shiftId?: string, profileId?: string) => {
+  clockOut: async (
+    shiftId?: string,
+    profileId?: string,
+    coords?: { latitude?: number; longitude?: number }
+  ) => {
     const response = await api.post('/attendance/clock-out', {
       shift_id: shiftId,
       profile_id: profileId,
+      latitude: coords?.latitude,
+      longitude: coords?.longitude,
     });
     return response.data;
   },

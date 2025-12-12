@@ -140,6 +140,55 @@ export const AttendanceScreen: React.FC = () => {
     loadData();
   }, [loadData]);
 
+  const resolveLocationRequirement = useCallback(
+    async (action: 'clock in' | 'clock out') => {
+      const needsLocation = geofence?.configured;
+      let coords: { latitude?: number; longitude?: number } | undefined;
+      const radius = geofence?.radius_meters ?? null;
+
+      if (!needsLocation) {
+        setDistanceFromFence(null);
+        return { coords, allowed: true };
+      }
+
+      try {
+        const position = await requestLocation();
+        const { latitude, longitude } = position.coords;
+        coords = { latitude, longitude };
+
+        if (
+          geofence?.configured &&
+          geofence.center_latitude !== null &&
+          geofence.center_longitude !== null &&
+          radius !== null
+        ) {
+          const distance = haversineMeters(
+            latitude,
+            longitude,
+            geofence.center_latitude,
+            geofence.center_longitude
+          );
+          setDistanceFromFence(Math.round(distance));
+
+          if (distance > radius) {
+            toast({
+              title: 'Outside geofence',
+              description: `Move inside the geofence to ${action}.`,
+              variant: 'destructive',
+            });
+            return { coords, allowed: false };
+          }
+        }
+
+        return { coords, allowed: true };
+      } catch (error: any) {
+        setLocationError(error?.message || 'Unable to fetch location.');
+        throw error;
+      }
+    },
+    [geofence?.configured, geofence?.center_latitude, geofence?.center_longitude, geofence?.radius_meters, toast]
+  );
+
   useEffect(() => {
     let watchId: number | null = null;
     if (!activeShift || !geofence?.configured) {
@@ -213,41 +262,10 @@ export const AttendanceScreen: React.FC = () => {
     setLocationError(null);
 
     try {
-      const needsLocation = geofence?.configured;
-      let coords: { latitude?: number; longitude?: number } | undefined;
-      const radius = geofence?.radius_meters ?? null;
-      if (!needsLocation) {
-        setDistanceFromFence(null);
-      }
-
-      if (needsLocation) {
-        const position = await requestLocation();
-        const { latitude, longitude } = position.coords;
-        coords = { latitude, longitude };
-
-        if (
-          geofence?.configured &&
-          geofence.center_latitude !== null &&
-          geofence.center_longitude !== null &&
-          radius !== null
-        ) {
-          const distance = haversineMeters(
-            latitude,
-            longitude,
-            geofence.center_latitude,
-            geofence.center_longitude
-          );
-          setDistanceFromFence(Math.round(distance));
-          if (distance > radius) {
-            toast({
-              title: 'Outside geofence',
-              description: 'Move inside the geofence to clock in.',
-              variant: 'destructive',
-            });
-            setIsLoading(false);
-            return;
-          }
-        }
+      const { coords, allowed } = await resolveLocationRequirement('clock in');
+      if (!allowed) {
+        setIsLoading(false);
+        return;
       }
 
       const shift = await attendanceAPI.clockIn(selectedProfile, coords);
@@ -282,8 +300,15 @@ export const AttendanceScreen: React.FC = () => {
     }
 
     setIsLoading(true);
+    setLocationError(null);
     try {
-      await attendanceAPI.clockOut(activeShift?.id, selectedProfile);
+      const { coords, allowed } = await resolveLocationRequirement('clock out');
+      if (!allowed) {
+        setIsLoading(false);
+        return;
+      }
+
+      await attendanceAPI.clockOut(activeShift?.id, selectedProfile, coords);
       setActiveShift(null);
       toast({
         title: 'Clocked out',
@@ -437,4 +462,3 @@ export const AttendanceScreen: React.FC = () => {
 };
 
 export default AttendanceScreen;
-
