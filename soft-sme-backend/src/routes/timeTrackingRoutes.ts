@@ -334,7 +334,7 @@ function mobileTimeTrackerOnly(req: Request, res: Response, next: Function) {
 // Apply the middleware to all routes except profiles, sales-orders, and time tracking endpoints
 router.use((req: Request, res: Response, next: Function) => {
   // Allow access to profiles, sales-orders, and time tracking endpoints for all authenticated users
-  if (req.path === '/profiles' || req.path === '/sales-orders' || req.path.startsWith('/time-entries')) {
+  if (req.path === '/profiles' || req.path.startsWith('/sales-orders') || req.path.startsWith('/time-entries')) {
     return next();
   }
   // Apply mobileTimeTrackerOnly middleware for other routes
@@ -471,6 +471,7 @@ router.post('/time-entries/:id/clock-out', async (req: Request, res: Response) =
 
   try {
     const requestTimeZone = req.headers['x-timezone'] as string | undefined;
+    const techStoryEntry = typeof req.body?.tech_story_entry === 'string' ? req.body.tech_story_entry.trim() : '';
     // Get daily break times
     const breakStartRes = await pool.query("SELECT value FROM global_settings WHERE key = 'daily_break_start'");
     const breakEndRes = await pool.query("SELECT value FROM global_settings WHERE key = 'daily_break_end'");
@@ -521,13 +522,40 @@ router.post('/time-entries/:id/clock-out', async (req: Request, res: Response) =
       [id]
     );
 
-    const salesOrderIdRes = await pool.query('SELECT sales_order_id FROM time_entries WHERE id = $1', [id]);
-    if (salesOrderIdRes.rows.length > 0) {
-      const soId = salesOrderIdRes.rows[0].sales_order_id;
-      await recalcSalesOrderLabourOverheadAndSupply(soId);
+    const updatedEntry = updatedEntryRes.rows[0];
+    let updatedTechStory: string | undefined;
+
+    if (techStoryEntry && updatedEntry) {
+      const storyTimeZone = normalizeTimeZone(requestTimeZone);
+      const formattedDate = new Intl.DateTimeFormat('en-CA', { timeZone: storyTimeZone }).format(clockOutTime);
+      const durationValue = typeof updatedEntry.duration === 'number'
+        ? updatedEntry.duration
+        : parseFloat(updatedEntry.duration ?? clockOutRes.rows[0]?.duration ?? effectiveDuration ?? 0);
+      const durationLabel = Number.isFinite(durationValue) ? durationValue.toFixed(2) : '0.00';
+      const profileName = updatedEntry.profile_name || 'Technician';
+
+      const existingStoryRes = await pool.query(
+        'SELECT tech_story FROM salesorderhistory WHERE sales_order_id = $1',
+        [updatedEntry.sales_order_id]
+      );
+      const existingStory = existingStoryRes.rows[0]?.tech_story ?? '';
+      const newEntry = `${profileName} - ${formattedDate} (${durationLabel} hrs)\n${techStoryEntry}`;
+      updatedTechStory = [existingStory?.trim(), newEntry.trim()].filter(Boolean).join('\n\n');
+
+      await pool.query(
+        'UPDATE salesorderhistory SET tech_story = $1, updated_at = NOW() WHERE sales_order_id = $2',
+        [updatedTechStory, updatedEntry.sales_order_id]
+      );
     }
 
-    res.json(updatedEntryRes.rows[0]);
+    if (updatedEntry?.sales_order_id) {
+      await recalcSalesOrderLabourOverheadAndSupply(updatedEntry.sales_order_id);
+    }
+
+    res.json({
+      ...updatedEntry,
+      tech_story: updatedTechStory,
+    });
   } catch (err) {
     console.error('Error clocking out:', err);
     res.status(500).json({ error: 'Internal server error' });
@@ -1020,6 +1048,32 @@ router.get('/sales-orders', async (req: Request, res: Response) => {
     res.json(result.rows);
   } catch (err) {
     console.error('Error fetching sales orders:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.get('/sales-orders/:id/tech-story', async (req: Request, res: Response) => {
+  const { id } = req.params;
+  try {
+    const salesOrderId = Number(id);
+    if (!Number.isFinite(salesOrderId)) {
+      return res.status(400).json({ error: 'Invalid sales order id' });
+    }
+    const result = await pool.query(
+      'SELECT sales_order_id, sales_order_number, tech_story FROM salesorderhistory WHERE sales_order_id = $1',
+      [salesOrderId]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Sales order not found' });
+    }
+    const row = result.rows[0];
+    res.json({
+      sales_order_id: row.sales_order_id,
+      sales_order_number: row.sales_order_number,
+      tech_story: row.tech_story || '',
+    });
+  } catch (err) {
+    console.error('Error fetching sales order tech story:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

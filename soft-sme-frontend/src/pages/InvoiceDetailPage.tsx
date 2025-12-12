@@ -101,6 +101,7 @@ const InvoiceDetailPage: React.FC = () => {
     vehicle_model: '',
     source_sales_order_number: '',
     mileage: '',
+    tech_story: '',
   });
   const [lineItems, setLineItems] = useState<InvoiceLineItem[]>([defaultLineItem()]);
   const [inventoryItems, setInventoryItems] = useState<any[]>([]);
@@ -290,6 +291,7 @@ const InvoiceDetailPage: React.FC = () => {
         vehicle_model: prev.vehicle_model || so.vehicle_model || '',
         mileage: prev.mileage ?? so.mileage ?? '',
         notes: prev.notes || so.terms || '',
+        tech_story: prev.tech_story || so.tech_story || '',
       }));
     } catch (e) {
       console.warn('Failed to pull sales order defaults for invoice', e);
@@ -313,7 +315,7 @@ const InvoiceDetailPage: React.FC = () => {
           unit_price: Number(li.unit_price) || 0,
           line_amount: Number(li.line_amount) || Math.round((Number(li.quantity) * Number(li.unit_price)) * 100) / 100,
         })) as InvoiceLineItem[];
-        setInvoice(header);
+        setInvoice({ ...header, tech_story: header.tech_story || '' });
         setLineItems(items.length ? items : [defaultLineItem()]);
         const option =
           header.customer_id
@@ -572,6 +574,7 @@ const InvoiceDetailPage: React.FC = () => {
       status: invoice.status || 'Unpaid',
       payment_terms_in_days: invoice.payment_terms_in_days ?? customer?.defaultTerms,
       notes: invoice.notes,
+      tech_story: invoice.tech_story ?? null,
       sales_order_id: invoice.sales_order_id ?? null,
       source_sales_order_number: invoice.source_sales_order_number ?? null,
       product_name: invoice.product_name ?? '',
@@ -1015,13 +1018,25 @@ const InvoiceDetailPage: React.FC = () => {
         <Paper sx={cardSx}>
           <Typography variant="subtitle1" fontWeight={600} gutterBottom>Invoice Terms</Typography>
           <TextField
-            label="Invoice Terms"
-            multiline
-            minRows={2}
-            fullWidth
-            value={invoice.notes || ''}
-            onChange={(e) => setInvoice((prev: any) => ({ ...prev, notes: e.target.value }))}
-          />
+          label="Invoice Terms"
+          multiline
+          minRows={2}
+          fullWidth
+          value={invoice.notes || ''}
+          onChange={(e) => setInvoice((prev: any) => ({ ...prev, notes: e.target.value }))}
+        />
+          {effectiveFieldVisibility.techStory !== false && (
+            <TextField
+              sx={{ mt: 2 }}
+              label="Tech Story"
+              multiline
+              minRows={4}
+              fullWidth
+              value={invoice.tech_story || ''}
+              onChange={(e) => setInvoice((prev: any) => ({ ...prev, tech_story: e.target.value }))}
+              placeholder="Technician notes carried from the sales order"
+            />
+          )}
         </Paper>
       <Popover
         open={Boolean(fieldPickerAnchor)}
@@ -1039,11 +1054,12 @@ const InvoiceDetailPage: React.FC = () => {
               { key: 'mileage', label: 'Mileage' },
               { key: 'vehicleMake', label: 'Make' },
               { key: 'vehicleModel', label: 'Model' },
+              { key: 'techStory', label: 'Tech Story' },
             ]
               .filter(({ key }) => adminFieldVisibility[key as keyof InvoiceFieldVisibility])
               .map(({ key, label }) => (
-                <FormControlLabel
-                  key={key}
+              <FormControlLabel
+                key={key}
                   control={
                     <Checkbox
                       size="small"

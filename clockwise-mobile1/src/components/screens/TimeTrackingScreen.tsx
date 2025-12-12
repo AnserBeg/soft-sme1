@@ -3,6 +3,9 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Textarea } from '@/components/ui/textarea';
+import { Label } from '@/components/ui/label';
 import { timeTrackingAPI } from '@/services/api';
 import { useToast } from '@/hooks/use-toast';
 import { 
@@ -10,8 +13,8 @@ import {
   Play, 
   Square, 
   RefreshCw, 
-  Timer,
-  CheckCircle
+  CheckCircle,
+  Loader2
 } from 'lucide-react';
 
 interface TimeEntry {
@@ -52,6 +55,11 @@ export const TimeTrackingScreen: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [currentActiveEntry, setCurrentActiveEntry] = useState<TimeEntry | null>(null);
+  const [pendingClockOutEntry, setPendingClockOutEntry] = useState<TimeEntry | null>(null);
+  const [techStoryExisting, setTechStoryExisting] = useState<string>('');
+  const [techStoryEntry, setTechStoryEntry] = useState<string>('');
+  const [isStoryLoading, setIsStoryLoading] = useState(false);
+  const [isClockingOut, setIsClockingOut] = useState(false);
 
   // Use local date instead of UTC to match backend expectations
   const today = new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD format
@@ -271,35 +279,75 @@ export const TimeTrackingScreen: React.FC = () => {
         description: error.response?.data?.message || "Please try again",
         variant: "destructive",
       });
-    } finally {
+  } finally {
       setIsLoading(false);
     }
   };
 
-  const handleClockOut = async (entryId: string) => {
+  const startClockOutFlow = async (entry: TimeEntry) => {
+    setPendingClockOutEntry(entry);
+    setTechStoryEntry('');
+    setIsStoryLoading(true);
+    try {
+      const response = await timeTrackingAPI.getSalesOrderTechStory(entry.sales_order_id);
+      setTechStoryExisting(response?.tech_story || '');
+    } catch (error) {
+      console.error('Failed to load tech story', error);
+      setTechStoryExisting('');
+    } finally {
+      setIsStoryLoading(false);
+    }
+  };
+
+  const resetStoryModal = () => {
+    setPendingClockOutEntry(null);
+    setTechStoryExisting('');
+    setTechStoryEntry('');
+    setIsStoryLoading(false);
+    setIsClockingOut(false);
+  };
+
+  const completeClockOut = async (includeStory: boolean) => {
+    if (!pendingClockOutEntry) return;
+    const storyToSend = techStoryEntry.trim();
+    if (includeStory && !storyToSend) {
+      toast({
+        title: "Add a tech story or skip",
+        description: "Enter your story or choose Skip to finish clocking out.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsClockingOut(true);
     setIsLoading(true);
     try {
-      await timeTrackingAPI.clockOut(entryId);
+      const response = await timeTrackingAPI.clockOut(
+        pendingClockOutEntry.id,
+        includeStory && storyToSend ? storyToSend : undefined
+      );
       toast({
         title: "Clocked Out!",
-        description: "Time entry completed successfully",
+        description: includeStory && storyToSend ? "Time entry and tech story saved" : "Time entry completed successfully",
       });
       
-      // Clear the current active entry
       setCurrentActiveEntry(null);
       
-      // Update the time entries to mark this entry as completed
       setTimeEntries(prev => 
         prev.map(entry => 
-          entry.id === entryId 
-            ? { ...entry, clock_out: new Date().toISOString(), status: 'completed' as const }
+          entry.id === pendingClockOutEntry.id 
+            ? { 
+                ...entry, 
+                clock_out: response?.clock_out || new Date().toISOString(), 
+                duration: response?.duration ?? entry.duration,
+                status: 'completed' as const 
+              }
             : entry
         )
       );
       
-      // Fetch fresh data to get the updated entry with duration
-      // Remove setTimeout to avoid stale closure issues
       await fetchData();
+      resetStoryModal();
     } catch (error: any) {
       toast({
         title: "Clock Out Failed",
@@ -307,6 +355,7 @@ export const TimeTrackingScreen: React.FC = () => {
         variant: "destructive",
       });
     } finally {
+      setIsClockingOut(false);
       setIsLoading(false);
     }
   };
@@ -319,6 +368,13 @@ export const TimeTrackingScreen: React.FC = () => {
       minute: '2-digit',
       timeZone: userTimeZone,
     });
+  };
+
+  const estimateShiftDurationHours = (entry: TimeEntry) => {
+    const start = new Date(entry.clock_in).getTime();
+    if (Number.isNaN(start)) return '0.00';
+    const diff = Math.max(0, (Date.now() - start) / (1000 * 60 * 60));
+    return diff.toFixed(2);
   };
 
   const getProfileName = (profileId: string) => {
@@ -553,8 +609,8 @@ export const TimeTrackingScreen: React.FC = () => {
                  </div>
                  {isOwnEntry ? (
                    <Button
-                     onClick={() => handleClockOut(entry.id)}
-                     disabled={isLoading}
+                     onClick={() => startClockOutFlow(entry)}
+                     disabled={isLoading || isClockingOut}
                      variant="destructive"
                      size="mobile"
                      className="w-full"
@@ -569,10 +625,89 @@ export const TimeTrackingScreen: React.FC = () => {
                      </p>
                    </div>
                  )}
-               </CardContent>
-             </Card>
-           );
-         })}
+             </CardContent>
+           </Card>
+         );
+        })}
+
+        <Dialog open={!!pendingClockOutEntry} onOpenChange={(open) => { if (!open) resetStoryModal(); }}>
+          <DialogContent className="max-w-lg w-full">
+            <DialogHeader>
+              <DialogTitle>Tech Story</DialogTitle>
+              <DialogDescription>
+                Add a quick recap for this sales order before clocking out. Your entry will be saved to the order and carried forward to invoices.
+              </DialogDescription>
+            </DialogHeader>
+
+            {isStoryLoading ? (
+              <div className="flex items-center justify-center py-6">
+                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <p className="text-sm font-medium text-muted-foreground">Previous entries</p>
+                  {techStoryExisting ? (
+                    <div className="border rounded-md bg-muted/50 p-3 text-sm whitespace-pre-wrap max-h-40 overflow-y-auto">
+                      {techStoryExisting}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">No tech story yet. Add your first entry.</p>
+                  )}
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="techStory">Add new entry</Label>
+                  <Textarea
+                    id="techStory"
+                    value={techStoryEntry}
+                    onChange={(e) => setTechStoryEntry(e.target.value)}
+                    rows={5}
+                    placeholder="What happened on this job? Notes, fixes, parts used, next steps..."
+                    className="text-base"
+                  />
+                  {pendingClockOutEntry && (
+                    <p className="text-xs text-muted-foreground">
+                      We&apos;ll prefix this entry with{' '}
+                      <span className="font-medium">
+                        {getProfileNameFromEntry(pendingClockOutEntry)} - {new Date().toLocaleDateString()} ({estimateShiftDurationHours(pendingClockOutEntry)} hrs)
+                      </span>
+                    </p>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <Button
+                    variant="outline"
+                    onClick={() => completeClockOut(false)}
+                    disabled={isClockingOut}
+                    className="h-12"
+                  >
+                    Skip
+                  </Button>
+                  <Button
+                    onClick={() => completeClockOut(true)}
+                    disabled={isClockingOut || !techStoryEntry.trim()}
+                    variant="success"
+                    className="h-12"
+                  >
+                    {isClockingOut ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                        Saving...
+                      </>
+                    ) : (
+                      <>
+                        <Square className="h-4 w-4 mr-2" />
+                        Save &amp; Clock Out
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
 
         {/* Today's Completed Entries */}
         {completedEntries.length > 0 && (

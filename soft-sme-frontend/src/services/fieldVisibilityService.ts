@@ -14,6 +14,7 @@ export type SalesOrderFieldVisibility = {
   productDescription: boolean;
   terms: boolean;
   mileage: boolean;
+  techStory: boolean;
 };
 
 export type InvoiceFieldVisibility = {
@@ -23,6 +24,7 @@ export type InvoiceFieldVisibility = {
   vehicleMake: boolean;
   vehicleModel: boolean;
   mileage: boolean;
+  techStory: boolean;
 };
 
 export type FieldVisibilitySettings = {
@@ -45,6 +47,7 @@ export const DEFAULT_FIELD_VISIBILITY_SETTINGS: FieldVisibilitySettings = {
     productDescription: true,
     terms: true,
     mileage: true,
+    techStory: true,
   },
   invoices: {
     vin: true,
@@ -53,6 +56,7 @@ export const DEFAULT_FIELD_VISIBILITY_SETTINGS: FieldVisibilitySettings = {
     vehicleMake: true,
     vehicleModel: true,
     mileage: true,
+    techStory: true,
   },
 };
 

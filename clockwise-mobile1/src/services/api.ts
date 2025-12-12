@@ -91,8 +91,9 @@ export const timeTrackingAPI = {
     return response.data;
   },
   
-  clockOut: async (entryId: string) => {
-    const response = await api.post(`/time-tracking/time-entries/${entryId}/clock-out`);
+  clockOut: async (entryId: string, techStoryEntry?: string) => {
+    const payload = techStoryEntry ? { tech_story_entry: techStoryEntry } : {};
+    const response = await api.post(`/time-tracking/time-entries/${entryId}/clock-out`, payload);
     return response.data;
   },
   
@@ -103,6 +104,11 @@ export const timeTrackingAPI = {
   
   getSalesOrders: async () => {
     const response = await api.get('/time-tracking/sales-orders');
+    return response.data;
+  },
+
+  getSalesOrderTechStory: async (salesOrderId: string) => {
+    const response = await api.get(`/time-tracking/sales-orders/${salesOrderId}/tech-story`);
     return response.data;
   },
 };

@@ -73,6 +73,7 @@ export class SalesOrderService {
         estimated_cost,
         quote_id,
         source_quote_number,
+        tech_story,
       } = headerSource;
 
       const customerId = headerSource.customer_id !== undefined && headerSource.customer_id !== null
@@ -139,8 +140,8 @@ export class SalesOrderService {
           customer_po_number, vin_number, unit_number, vehicle_make, vehicle_model, mileage,
           wanted_by_date, wanted_by_time_of_day,
           invoice_status, subtotal, total_gst_amount, total_amount,
-          status, estimated_cost, sequence_number, quote_id, source_quote_number
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)`,
+          status, estimated_cost, sequence_number, quote_id, source_quote_number, tech_story
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)`,
         [
           newSalesOrderId,
           formattedSONumber,
@@ -166,6 +167,7 @@ export class SalesOrderService {
           sequenceNumber,
           quoteIdInt,
           sourceQuoteNumberStr,
+          typeof tech_story === 'string' ? tech_story : null,
         ]
       );
 

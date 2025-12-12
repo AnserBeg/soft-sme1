@@ -23,6 +23,7 @@ export interface InvoiceInput {
   payment_terms_in_days?: number | null;
   status?: InvoiceStatus;
   notes?: string | null;
+  tech_story?: string | null;
   line_items: InvoiceLineItemInput[];
   product_name?: string | null;
   product_description?: string | null;
@@ -273,7 +274,7 @@ export class InvoiceService {
       await client.query('BEGIN');
       const soRes = await client.query(
         `SELECT sales_order_id, sales_order_number, customer_id, status
-                , product_name, product_description, vin_number, unit_number, vehicle_make, vehicle_model, terms, mileage
+                , product_name, product_description, vin_number, unit_number, vehicle_make, vehicle_model, terms, mileage, tech_story
          FROM salesorderhistory
          WHERE sales_order_id = $1`,
         [salesOrderId]
@@ -347,8 +348,8 @@ export class InvoiceService {
         `INSERT INTO invoices (
           invoice_number, sequence_number, customer_id, sales_order_id, source_sales_order_number,
           status, invoice_date, due_date, payment_terms_in_days, subtotal, total_gst_amount, total_amount, notes,
-          product_name, product_description, vin_number, unit_number, vehicle_make, vehicle_model, mileage
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+          product_name, product_description, vin_number, unit_number, vehicle_make, vehicle_model, mileage, tech_story
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
         RETURNING invoice_id, invoice_number, due_date`,
         [
           invoiceNumber,
@@ -371,6 +372,7 @@ export class InvoiceService {
           salesOrder.vehicle_make,
           salesOrder.vehicle_model,
           salesOrder.mileage ?? null,
+          salesOrder.tech_story ?? null,
         ]
       );
 
@@ -435,8 +437,8 @@ export class InvoiceService {
         `INSERT INTO invoices (
           invoice_number, sequence_number, customer_id, sales_order_id, source_sales_order_number,
           status, invoice_date, due_date, payment_terms_in_days, subtotal, total_gst_amount, total_amount, notes,
-          product_name, product_description, vin_number, unit_number, vehicle_make, vehicle_model, mileage
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+          product_name, product_description, vin_number, unit_number, vehicle_make, vehicle_model, mileage, tech_story
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
         RETURNING invoice_id, invoice_number`,
         [
           invoiceNumber,
@@ -459,6 +461,7 @@ export class InvoiceService {
           payload.vehicle_make ?? null,
           payload.vehicle_model ?? null,
           mileage,
+          payload.tech_story ?? null,
         ]
       );
 
@@ -542,8 +545,9 @@ export class InvoiceService {
              vehicle_make = $16,
              vehicle_model = $17,
              mileage = $18,
+             tech_story = $19,
              updated_at = NOW()
-         WHERE invoice_id = $19`,
+         WHERE invoice_id = $20`,
         [
           customerId,
           payload.sales_order_id ?? current.sales_order_id,
@@ -563,6 +567,7 @@ export class InvoiceService {
           payload.vehicle_make ?? current.vehicle_make,
           payload.vehicle_model ?? current.vehicle_model,
           mileage,
+          payload.tech_story ?? current.tech_story,
           invoiceId,
         ]
       );

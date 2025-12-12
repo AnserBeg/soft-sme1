@@ -571,7 +571,8 @@ if (lineItems && lineItems.length > 0) {
     'total_gst_amount',
     'total_amount',
     'quote_id',
-    'source_quote_number'
+    'source_quote_number',
+    'tech_story',
   ];
     // Update sales order header fields if provided
     if (Object.keys(salesOrderData).length > 0) {
@@ -2315,4 +2316,3 @@ router.delete('/:salesOrderId/parts-to-order/:partNumber', async (req: Request, 
 });
 
 export default router; 
-

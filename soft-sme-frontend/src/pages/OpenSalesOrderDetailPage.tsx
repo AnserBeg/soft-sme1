@@ -108,6 +108,7 @@ interface SalesOrder {
   vehicle_model?: string | null;
   invoice_status?: InvoiceStatus | null;
   mileage?: number | null;
+  tech_story?: string | null;
 }
 
 interface PartsToOrderItem {
@@ -137,7 +138,8 @@ type OptionalFieldKey =
   | 'wantedByTimeOfDay'
   | 'productDescription'
   | 'terms'
-  | 'mileage';
+  | 'mileage'
+  | 'techStory';
 type FieldVisibilityMap = SalesOrderFieldVisibility;
 
 const rankAndFilter = <T extends { label: string }>(options: T[], query: string, limit = 8) => {
@@ -208,6 +210,7 @@ const SalesOrderDetailPage: React.FC = () => {
   const [mileage, setMileage] = useState<number | ''>('');
   const [invoiceStatus, setInvoiceStatus] = useState<InvoiceStatus>('');
   const [wantedByTimeOfDay, setWantedByTimeOfDay] = useState<WantedTimeOfDay>('');
+  const [techStory, setTechStory] = useState('');
 
   const handleInvoiceStatusToggle = useCallback((_: React.MouseEvent<HTMLElement>, value: InvoiceStatus | null) => {
     setInvoiceStatus(value ?? '');
@@ -769,6 +772,7 @@ const SalesOrderDetailPage: React.FC = () => {
         }]);
         setIsDataFullyLoaded(true); // Mark data as loaded for creation mode
         setSourceQuoteNumber('');
+        setTechStory('');
       }
       return;
     }
@@ -843,6 +847,7 @@ const SalesOrderDetailPage: React.FC = () => {
         setVehicleMake(data.salesOrder?.vehicle_make || '');
         setVehicleModel(data.salesOrder?.vehicle_model || '');
         setInvoiceStatus(normalizedStatus);
+        setTechStory(data.salesOrder?.tech_story || '');
         
         // hydrate dropdown selections
         const cust = customers.find(c => c.id === data.salesOrder?.customer_id) ||
@@ -1259,6 +1264,7 @@ const SalesOrderDetailPage: React.FC = () => {
       estimated_cost: estimatedCost != null ? Number(estimatedCost) : 0,
       lineItems: buildPayloadLineItems(lineItems),
       source_quote_number: sourceQuoteNumber?.trim() || null,
+      tech_story: techStory?.trim() || null,
     };
 
     setIsSaving(true);
@@ -1600,6 +1606,12 @@ const SalesOrderDetailPage: React.FC = () => {
               <Grid item xs={12}><b>Estimated Price:</b> {formatCurrency(salesOrder.estimated_cost || 0)}</Grid>
               <Grid item xs={12}><b>Product Description:</b> {salesOrder.product_description || 'N/A'}</Grid>
               <Grid item xs={12}><b>Terms:</b> {salesOrder.terms || 'N/A'}</Grid>
+              <Grid item xs={12}>
+                <b>Tech Story:</b>
+                <Box sx={{ whiteSpace: 'pre-line', mt: 0.5 }}>
+                  {salesOrder.tech_story || 'N/A'}
+                </Box>
+              </Grid>
               {salesOrder.exported_to_qbo && (
                 <Grid item xs={12}><b>QBO Export:</b> Exported
                   {salesOrder.qbo_invoice_id && ` (Invoice ID: ${salesOrder.qbo_invoice_id})`}
@@ -2072,6 +2084,23 @@ const SalesOrderDetailPage: React.FC = () => {
           ),
         }
       : null,
+    effectiveFieldVisibility.techStory
+      ? {
+          key: 'techStory',
+          element: (
+            <TextField
+              label="Tech Story"
+              value={techStory}
+              onChange={e => setTechStory(e.target.value)}
+              fullWidth
+              multiline
+              minRows={4}
+              maxRows={12}
+              placeholder="Add technician notes for this sales order"
+            />
+          ),
+        }
+      : null,
   ].filter(Boolean) as SectionField[];
   const invoiceStatusCol = getGridSpan(invoiceStatusFields.length || 1);
 
@@ -2139,6 +2168,7 @@ const SalesOrderDetailPage: React.FC = () => {
               { key: 'wantedByTimeOfDay', label: 'Wanted Time of Day' },
               { key: 'productDescription', label: 'Product Description' },
               { key: 'terms', label: 'Terms' },
+              { key: 'techStory', label: 'Tech Story' },
             ]
               .filter(({ key }) => adminFieldVisibility[key as OptionalFieldKey])
               .filter(({ key }) => !(isTimeTrackingUser && ['quotedPrice', 'invoiceStatus', 'terms'].includes(key)))

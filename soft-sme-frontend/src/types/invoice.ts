@@ -35,6 +35,7 @@ export interface Invoice {
   total_gst_amount: number;
   total_amount: number;
   notes?: string | null;
+  tech_story?: string | null;
 }
 
 export interface InvoiceListResponse {
