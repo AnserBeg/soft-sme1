@@ -31,18 +31,18 @@ const upload = multer({
 });
 
 const formatCurrency = (value: number | string | null | undefined): string => {
-  const amount = Number(value -- 0);
+  const amount = Number(value ?? 0);
   if (!Number.isFinite(amount)) return '$0.00';
   const isNegative = amount < 0;
   const absolute = Math.abs(amount);
   const [whole, cents] = absolute.toFixed(2).split('.');
-  const withSeparators = whole.replace(/\B(-=(\d{3})+(-!\d))/g, ',');
-  return `${isNegative - '-$' : '$'}${withSeparators}.${cents}`;
+  const withSeparators = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return `${isNegative ? '-$' : '$'}${withSeparators}.${cents}`;
 };
 
 const normalizeId = (value: any) => {
   const num = Number(value);
-  return Number.isFinite(num) - num : null;
+  return Number.isFinite(num) ? num : null;
 };
 
 const normalizeHeader = (value: string) => {
@@ -58,7 +58,7 @@ const normalizeHeader = (value: string) => {
   return cleaned;
 };
 
-const normalizeCell = (value: unknown) => (value == null - '' : String(value).trim());
+const normalizeCell = (value: unknown) => (value == null ? '' : String(value).trim());
 const pickFirst = (row: Record<string, string>, keys: string[]) => {
   for (const key of keys) {
     const val = normalizeCell(row[key]);
@@ -125,9 +125,9 @@ const headerMap: Record<string, string> = {
 const round2 = (value: number) => Math.round(value * 100) / 100;
 const toNumberSafe = (value: unknown, defaultValue = 0) => {
   if (value == null || value === '') return defaultValue;
-  const cleaned = typeof value === 'string' - value.replace(/[^0-9.\-]+/g, '') : value;
+  const cleaned = typeof value === 'string' ? value.replace(/[^0-9.\-]+/g, '') : value;
   const num = Number(cleaned);
-  return Number.isFinite(num) - num : defaultValue;
+  return Number.isFinite(num) ? num : defaultValue;
 };
 const GST_RATE = 0.05;
 
@@ -138,17 +138,17 @@ const parseCsvDate = (value: string): Date | null => {
   const parts = value.split(/[/-]/).map((p) => Number(p));
   if (parts.length === 3 && parts.every((n) => Number.isFinite(n) && n > 0)) {
     const [a, b, c] = parts;
-    const year = c < 100 - 2000 + c : c;
-    const month = a > 12 - b : a;
-    const day = a > 12 - a : b;
+    const year = c < 100 ? 2000 + c : c;
+    const month = a > 12 ? b : a;
+    const day = a > 12 ? a : b;
     const parsed = new Date(year, month - 1, day);
     if (!isNaN(parsed.getTime())) return parsed;
   }
   return null;
 };
 
-const parseMonthRange = (monthParam-: string | string[]) => {
-  const raw = Array.isArray(monthParam) - monthParam[0] : monthParam;
+const parseMonthRange = (monthParam?: string | string[]) => {
+  const raw = Array.isArray(monthParam) ? monthParam[0] : monthParam;
   const now = new Date();
   const [yearStr, monthStr] = (raw || '').split('-');
   const year = Number(yearStr);
@@ -158,7 +158,7 @@ const parseMonthRange = (monthParam-: string | string[]) => {
     Number.isInteger(monthIndex) &&
     monthIndex >= 0 &&
     monthIndex <= 11;
-  const start = valid - new Date(Date.UTC(year, monthIndex, 1)) : new Date(Date.UTC(now.getFullYear(), now.getMonth(), 1));
+  const start = valid ? new Date(Date.UTC(year, monthIndex, 1)) : new Date(Date.UTC(now.getFullYear(), now.getMonth(), 1));
   const end = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, 1));
   const label = start.toLocaleString('default', { month: 'long', year: 'numeric' });
   return { start, end, label };
@@ -228,14 +228,14 @@ router.post('/upload-csv', (req: Request, res: Response) => {
     invoiceDate: Date | null;
     status: 'Paid' | 'Unpaid';
     subtotal: number;
-    productName-: string;
-    productDescription-: string;
-    vin_number-: string;
-    vehicle_make-: string;
-    vehicle_model-: string;
-    unit_number-: string;
-    mileage-: number;
-    memo-: string;
+    productName?: string;
+    productDescription?: string;
+    vin_number?: string;
+    vehicle_make?: string;
+    vehicle_model?: string;
+    unit_number?: string;
+    mileage?: number;
+    memo?: string;
     lines: ImportLine[];
   };
 
@@ -289,7 +289,7 @@ router.post('/upload-csv', (req: Request, res: Response) => {
 
     const rawStatus = (normalizedRow.payment_status || normalizedRow.transaction_type || '').toLowerCase();
     const status: 'Paid' | 'Unpaid' =
-      rawStatus.includes('unpaid') || rawStatus.startsWith('un') || rawStatus === 'no' - 'Unpaid' : rawStatus.includes('paid') - 'Paid' : 'Unpaid';
+      rawStatus.includes('unpaid') || rawStatus.startsWith('un') || rawStatus === 'no' ? 'Unpaid' : rawStatus.includes('paid') ? 'Paid' : 'Unpaid';
 
     const rawQty = toNumberSafe(normalizedRow.quantity, 0);
     const quantity = rawQty;
@@ -305,7 +305,7 @@ router.post('/upload-csv', (req: Request, res: Response) => {
       amount = round2(unitPrice * quantity);
     }
     if (!Number.isFinite(unitPrice) && Number.isFinite(amount)) {
-      unitPrice = quantity !== 0 - round2(amount / quantity) : round2(amount);
+      unitPrice = quantity !== 0 ? round2(amount / quantity) : round2(amount);
     }
     if (!Number.isFinite(amount)) {
       warnings.push(`Row ${rowNumber}: Amount missing/invalid; defaulted to 0`);
@@ -317,11 +317,11 @@ router.post('/upload-csv', (req: Request, res: Response) => {
     const partDescription = normalizedRow.part_description;
     const vinNumber = normalizedRow.vin_number;
     const makeYearRaw = normalizedRow.make_year;
-    const [firstPart, ...restParts] = makeYearRaw - makeYearRaw.split('/').map((p) => p.trim()).filter(Boolean) : [];
-    const vehicle_make = restParts.length - firstPart : makeYearRaw || undefined;
-    const vehicle_model = restParts.length - restParts.join('/') : undefined;
+    const [firstPart, ...restParts] = makeYearRaw ? makeYearRaw.split('/').map((p) => p.trim()).filter(Boolean) : [];
+    const vehicle_make = restParts.length ? firstPart : makeYearRaw || undefined;
+    const vehicle_model = restParts.length ? restParts.join('/') : undefined;
     const unit_number = normalizedRow.unit_number;
-    const mileageVal = normalizedRow.mileage - Number(normalizedRow.mileage) : undefined;
+    const mileageVal = normalizedRow.mileage ? Number(normalizedRow.mileage) : undefined;
 
       const key = `${canonicalName}::${invoiceNumber}`;
       if (!invoiceMap.has(key)) {
@@ -338,7 +338,7 @@ router.post('/upload-csv', (req: Request, res: Response) => {
           vehicle_make,
           vehicle_model,
           unit_number: unit_number || undefined,
-          mileage: mileageVal -- undefined,
+          mileage: mileageVal ?? undefined,
           memo: memo || undefined,
           lines: [],
         });
@@ -397,14 +397,14 @@ router.post('/upload-csv', (req: Request, res: Response) => {
       const customerMap = new Map<string, { customer_id: number; terms: number }>();
       customersRes.rows.forEach((row: any) => {
         const terms = Number(row.default_payment_terms_in_days);
-        customerMap.set(row.canonical_name, { customer_id: row.customer_id, terms: Number.isFinite(terms) && terms > 0 - terms : 30 });
+        customerMap.set(row.canonical_name, { customer_id: row.customer_id, terms: Number.isFinite(terms) && terms > 0 ? terms : 30 });
       });
 
       // Auto-create any missing customers with minimal info so the import never blocks
       for (const name of canonicalNames) {
         if (customerMap.has(name)) continue;
         const original = Array.from(invoiceMap.values()).find((inv) => inv.canonicalName === name);
-        const customerName = original-.customerName || name;
+        const customerName = original?.customerName || name;
         const insert = await client.query(
           `INSERT INTO customermaster (
             customer_name,
@@ -424,7 +424,7 @@ router.post('/upload-csv', (req: Request, res: Response) => {
           [customerName, name, 'Created via invoice import', 30]
         );
         const terms = Number(insert.rows[0].default_payment_terms_in_days);
-        customerMap.set(name, { customer_id: insert.rows[0].customer_id, terms: Number.isFinite(terms) && terms > 0 - terms : 30 });
+        customerMap.set(name, { customer_id: insert.rows[0].customer_id, terms: Number.isFinite(terms) && terms > 0 ? terms : 30 });
         warnings.push(`Customer "${customerName}" was missing and created automatically`);
       }
 
@@ -445,7 +445,7 @@ router.post('/upload-csv', (req: Request, res: Response) => {
         }
 
         const customer = customerMap.get(invoice.canonicalName)!;
-        const invoiceDate = invoice.invoiceDate -- new Date();
+        const invoiceDate = invoice.invoiceDate ?? new Date();
         const dueDate = new Date(invoiceDate);
         dueDate.setDate(dueDate.getDate() + customer.terms);
       const subtotal = round2(invoice.subtotal);
@@ -479,7 +479,7 @@ router.post('/upload-csv', (req: Request, res: Response) => {
             invoice.unit_number || null,
             invoice.vehicle_make || null,
             invoice.vehicle_model || null,
-            invoice.mileage -- null,
+            invoice.mileage ?? null,
           ]
         );
 
@@ -732,8 +732,8 @@ const renderInvoiceTable = (
       y = doc.y;
     }
     x = 40;
-    const dueDate = invoice.due_date - new Date(invoice.due_date).toLocaleDateString() : '';
-    const invDate = invoice.invoice_date - new Date(invoice.invoice_date).toLocaleDateString() : '';
+    const dueDate = invoice.due_date ? new Date(invoice.due_date).toLocaleDateString() : '';
+    const invDate = invoice.invoice_date ? new Date(invoice.invoice_date).toLocaleDateString() : '';
     const status = (invoice.status || '').toUpperCase();
     [invoice.invoice_number, invDate, dueDate, status, formatCurrency(invoice.total_amount)].forEach((value, idx) => {
       doc.text(value || '', x, y, { width: columnWidths[idx] });
@@ -869,23 +869,23 @@ const buildCustomerStatement = async (
 // List invoices with summary totals
 router.get('/', async (req: Request, res: Response) => {
   try {
-    const customerId = req.query.customer_id - normalizeId(req.query.customer_id) : undefined;
+    const customerId = req.query.customer_id ? normalizeId(req.query.customer_id) : undefined;
     if (req.query.customer_id && customerId === null) {
       return res.status(400).json({ error: 'Invalid customer id' });
     }
     const status = req.query.status
-      - String(req.query.status).trim().toLowerCase() === 'paid'
-        - 'Paid'
+      ? String(req.query.status).trim().toLowerCase() === 'paid'
+        ? 'Paid'
         : 'Unpaid'
       : undefined;
 
-    const limitRaw = req.query.limit - Number(req.query.limit) : undefined;
-    const offsetRaw = req.query.offset - Number(req.query.offset) : undefined;
-    const limit = Number.isFinite(limitRaw) - limitRaw : undefined;
-    const offset = Number.isFinite(offsetRaw) - offsetRaw : undefined;
+    const limitRaw = req.query.limit ? Number(req.query.limit) : undefined;
+    const offsetRaw = req.query.offset ? Number(req.query.offset) : undefined;
+    const limit = Number.isFinite(limitRaw) ? limitRaw : undefined;
+    const offset = Number.isFinite(offsetRaw) ? offsetRaw : undefined;
 
     const result = await invoiceService.listInvoices({
-      customer_id: customerId -- undefined,
+      customer_id: customerId ?? undefined,
       status,
       limit,
       offset,
@@ -908,7 +908,7 @@ router.post('/from-sales-order/:salesOrderId', async (req: Request, res: Respons
     res.status(201).json(created);
   } catch (error: any) {
     console.error('invoiceRoutes: create from SO error', error);
-    const message = error-.message || 'Failed to create invoice';
+    const message = error?.message || 'Failed to create invoice';
     if (message.toLowerCase().includes('closed sales order') || message.toLowerCase().includes('not found')) {
       return res.status(400).json({ error: message });
     }
@@ -920,7 +920,7 @@ router.post('/from-sales-order/:salesOrderId', async (req: Request, res: Respons
 router.post('/', async (req: Request, res: Response) => {
   const payload: InvoiceInput = {
     ...req.body,
-    line_items: req.body.line_items -- req.body.lineItems -- [],
+    line_items: req.body.line_items ?? req.body.lineItems ?? [],
   };
   if (!payload.customer_id) {
     return res.status(400).json({ error: 'customer_id is required' });
@@ -970,7 +970,7 @@ router.get('/customers/:customerId/statement', async (req: Request, res: Respons
 // Download monthly statements for all customers (or a single one via query)
 router.get('/statement', async (req: Request, res: Response) => {
   try {
-    const customerId = req.query.customer_id - normalizeId(req.query.customer_id) : undefined;
+    const customerId = req.query.customer_id ? normalizeId(req.query.customer_id) : undefined;
     if (req.query.customer_id && customerId === null) {
       return res.status(400).json({ error: 'Invalid customer id' });
     }
@@ -1003,7 +1003,7 @@ router.get('/statement', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'No customers with outstanding invoices' });
     }
 
-    const filenameBase = customerId && customers[0] - customers[0].customer_name : 'all-customers';
+    const filenameBase = customerId && customers[0] ? customers[0].customer_name : 'all-customers';
     const filename = `statements-${filenameBase}-${label.replace(/\s+/g, '-').toLowerCase()}.pdf`;
     res.setHeader('Content-disposition', `attachment; filename="${filename}"`);
     res.setHeader('Content-type', 'application/pdf');
@@ -1035,7 +1035,7 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
       invoice = data.invoice;
       lineItems = data.lineItems || [];
     } catch (err: any) {
-      const msg = err-.message || '';
+      const msg = err?.message || '';
       console.error('invoiceRoutes: pdf invoice fetch error', err);
       if (msg.toLowerCase().includes('not found')) {
         return res.status(404).json({ error: 'Invoice not found' });
@@ -1099,16 +1099,16 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
       .text(businessProfile.company_name || '', startX, blockTop + 16)
       .text(businessProfile.street_address || '', startX, doc.y)
       .text([businessProfile.city, businessProfile.province, businessProfile.country, businessProfile.postal_code].filter(Boolean).join(', '), startX, doc.y)
-      .text(businessProfile.telephone_number - `Phone: ${businessProfile.telephone_number}` : '', startX, doc.y)
-      .text(businessProfile.email - `Email: ${businessProfile.email}` : '', startX, doc.y);
+      .text(businessProfile.telephone_number ? `Phone: ${businessProfile.telephone_number}` : '', startX, doc.y)
+      .text(businessProfile.email ? `Email: ${businessProfile.email}` : '', startX, doc.y);
 
     doc.font('Helvetica-Bold').fontSize(12).text('Customer', startX + usableWidth / 2, blockTop);
     doc.font('Helvetica').fontSize(11)
       .text(invoice.customer_name || '', startX + usableWidth / 2, blockTop + 16)
       .text(invoice.street_address || '', startX + usableWidth / 2, doc.y)
       .text([invoice.city, invoice.province, invoice.country, invoice.postal_code].filter(Boolean).join(', '), startX + usableWidth / 2, doc.y)
-      .text(invoice.telephone_number - `Phone: ${invoice.telephone_number}` : '', startX + usableWidth / 2, doc.y)
-      .text(invoice.email - `Email: ${invoice.email}` : '', startX + usableWidth / 2, doc.y);
+      .text(invoice.telephone_number ? `Phone: ${invoice.telephone_number}` : '', startX + usableWidth / 2, doc.y)
+      .text(invoice.email ? `Email: ${invoice.email}` : '', startX + usableWidth / 2, doc.y);
 
     // Divider
     doc.moveDown();
@@ -1116,12 +1116,12 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
     doc.moveDown(2);
 
     // Invoice metadata
-    const invoiceDate = invoice.invoice_date - new Date(invoice.invoice_date) : null;
-    const dueDate = invoice.due_date - new Date(invoice.due_date) : null;
+    const invoiceDate = invoice.invoice_date ? new Date(invoice.invoice_date) : null;
+    const dueDate = invoice.due_date ? new Date(invoice.due_date) : null;
     const metaRowHeight = 18;
     const metaStartY = doc.y;
-    const invoiceDateText = invoiceDate && !isNaN(invoiceDate.getTime()) - invoiceDate.toLocaleDateString() : '';
-    const dueDateText = dueDate && !isNaN(dueDate.getTime()) - dueDate.toLocaleDateString() : '';
+    const invoiceDateText = invoiceDate && !isNaN(invoiceDate.getTime()) ? invoiceDate.toLocaleDateString() : '';
+    const dueDateText = dueDate && !isNaN(dueDate.getTime()) ? dueDate.toLocaleDateString() : '';
     const renderField = (label: string, value: string, xLabel: number, xValue: number, y: number, width = 140) => {
       if (!value) return;
       doc.font('Helvetica-Bold').fontSize(11).text(label, xLabel, y);
@@ -1184,9 +1184,11 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
         doc.text(h, headerX, headerY, { width: columnWidths[idx], align: columnAlign[idx] });
         headerX += columnWidths[idx];
       });
-      const headerHeight = Math.max(...['Part #', 'Description', 'Qty', 'Unit', 'Unit Price', 'Line Total'].map((h, idx) =>
-        doc.heightOfString(h, { width: columnWidths[idx] })
-      ));
+      const headerHeight = Math.max(
+        ...['Part #', 'Description', 'Qty', 'Unit', 'Unit Price', 'Line Total'].map((h, idx) =>
+          doc.heightOfString(h, { width: columnWidths[idx] })
+        )
+      );
       const underlineY = headerY + headerHeight + 4;
       doc.moveTo(startX, underlineY).lineTo(startX + usableWidth, underlineY).stroke();
       doc.y = underlineY + 4;
@@ -1245,11 +1247,10 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
     if (businessProfile && businessProfile.business_number) {
       const range = doc.bufferedPageRange();
       const lastPageIndex = range.start + range.count - 1;
-      const footerText = `Business Number: ${businessProfile.business_number}`;
       doc.switchToPage(lastPageIndex);
       doc.font('Helvetica-Bold')
         .fontSize(10)
-        .text(footerText, startX, doc.page.height - doc.page.margins.bottom + 10, {
+        .text(`Business Number: ${businessProfile.business_number}`, startX, doc.page.height - doc.page.margins.bottom + 10, {
           width: usableWidth,
           align: 'right',
         });
@@ -1258,8 +1259,8 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
     console.info('invoiceRoutes: pdf success', { invoiceId, lineItemCount: lineItems.length });
     doc.end();
   } catch (error) {
-    console.error('invoiceRoutes: pdf error', error instanceof Error - error.stack || error.message : error);
-    const message = error instanceof Error - error.message : 'Failed to generate invoice PDF';
+    console.error('invoiceRoutes: pdf error', error instanceof Error ? error.stack || error.message : error);
+    const message = error instanceof Error ? error.message : 'Failed to generate invoice PDF';
     res.status(500).json({ error: 'Failed to generate invoice PDF', details: message });
   }
 });
@@ -1272,8 +1273,8 @@ router.get('/:id', async (req: Request, res: Response) => {
     const data = await invoiceService.getInvoice(invoiceId);
     res.json(data);
   } catch (error: any) {
-    const message = error-.message || 'Failed to fetch invoice';
-    const status = message.toLowerCase().includes('not found') - 404 : 500;
+    const message = error?.message || 'Failed to fetch invoice';
+    const status = message.toLowerCase().includes('not found') ? 404 : 500;
     res.status(status).json({ error: message });
   }
 });
@@ -1285,7 +1286,7 @@ router.put('/:id', async (req: Request, res: Response) => {
   try {
     await invoiceService.updateInvoice(invoiceId, {
       ...req.body,
-      line_items: req.body.line_items -- req.body.lineItems -- [],
+      line_items: req.body.line_items ?? req.body.lineItems ?? [],
     });
     res.json({ message: 'Invoice updated' });
   } catch (error) {
