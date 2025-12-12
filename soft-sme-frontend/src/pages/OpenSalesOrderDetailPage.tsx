@@ -2520,21 +2520,25 @@ const SalesOrderDetailPage: React.FC = () => {
                 <Grid item xs={6} sm={3} md={1}>
                   <TextField label="Unit" value={item.part_number === 'SUPPLY' ? '' : item.unit} fullWidth InputProps={{ readOnly: true }} sx={{ backgroundColor:'#ffffff' }} />
                 </Grid>
-                <Grid item xs={12} sm={2} md={1.5}>
-                  <TextField
-                    label="Unit Cost"
-                    value={item.part_number === 'LABOUR' ? (globalLabourRate ?? 0) : item.part_number === 'OVERHEAD' ? (globalOverheadRate ?? 0) : item.part_number === 'SUPPLY' ? '' : item.unit_price}
-                    type="number" fullWidth
-                    InputProps={{
-                      readOnly: true,
-                      startAdornment: item.part_number !== 'SUPPLY' ? <InputAdornment position="start">$</InputAdornment> : undefined,
-                      disabled: ['LABOUR','OVERHEAD','SUPPLY'].includes(item.part_number)
-                    }}
-                  />
-                </Grid>
-                <Grid item xs={6} sm={3} md={1.5}>
-                  <TextField label="Amount" value={item.line_amount != null && !isNaN(Number(item.line_amount)) ? Number(item.line_amount).toFixed(2) : '0.00'} InputProps={{ readOnly: true }} fullWidth />
-                </Grid>
+                {!isTimeTrackingUser && (
+                  <Grid item xs={12} sm={2} md={1.5}>
+                    <TextField
+                      label="Unit Cost"
+                      value={item.part_number === 'LABOUR' ? (globalLabourRate ?? 0) : item.part_number === 'OVERHEAD' ? (globalOverheadRate ?? 0) : item.part_number === 'SUPPLY' ? '' : item.unit_price}
+                      type="number" fullWidth
+                      InputProps={{
+                        readOnly: true,
+                        startAdornment: item.part_number !== 'SUPPLY' ? <InputAdornment position="start">$</InputAdornment> : undefined,
+                        disabled: ['LABOUR','OVERHEAD','SUPPLY'].includes(item.part_number)
+                      }}
+                    />
+                  </Grid>
+                )}
+                {!isTimeTrackingUser && (
+                  <Grid item xs={6} sm={3} md={1.5}>
+                    <TextField label="Amount" value={item.line_amount != null && !isNaN(Number(item.line_amount)) ? Number(item.line_amount).toFixed(2) : '0.00'} InputProps={{ readOnly: true }} fullWidth />
+                  </Grid>
+                )}
                 <Grid item xs={6} sm={3} md={1} sx={{ display:'flex', alignItems:'center' }}>
                   <Button variant="outlined" color="primary" onClick={() => handleRemoveLineItem(originalIndex)} fullWidth>Remove</Button>
                 </Grid>
