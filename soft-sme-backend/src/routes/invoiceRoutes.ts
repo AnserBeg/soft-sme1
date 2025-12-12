@@ -1134,13 +1134,15 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
     doc.font('Helvetica-Bold').fontSize(11).text('Due Date:', startX + usableWidth / 2, metaStartY);
     doc.font('Helvetica').fontSize(11).text(dueDateText || 'N/A', startX + usableWidth / 2 + 80, metaStartY, { width: 120 });
 
-    // Row 2: Unit # (left), Make (under Due Date), Model, VIN # (optional)
+    // Row 2: Unit #, Make, Mileage all on one line
     const vehicleRowY = metaStartY + metaRowHeight;
-    renderField('Unit #:', invoice.unit_number || '', startX, startX + 80, vehicleRowY, 160);
-    renderField('Make:', invoice.vehicle_make || '', startX + usableWidth / 2, startX + usableWidth / 2 + 60, vehicleRowY, 140); // aligned under Due Date
-    renderField('Model:', invoice.vehicle_model || '', startX + usableWidth - 120, startX + usableWidth - 80, vehicleRowY, 120);
-    renderField('Mileage:', invoice.mileage != null ? String(invoice.mileage) : '', startX, startX + 80, vehicleRowY + metaRowHeight, 160);
-    renderField('VIN #:', invoice.vin_number || '', startX + usableWidth - 200, startX + usableWidth - 120, vehicleRowY + metaRowHeight, 200);
+    renderField('Unit #:', invoice.unit_number || '', startX, startX + 80, vehicleRowY, 180);
+    renderField('Make:', invoice.vehicle_make || '', startX + usableWidth / 3, startX + usableWidth / 3 + 60, vehicleRowY, usableWidth / 3 - 80);
+    renderField('Mileage:', invoice.mileage != null ? String(invoice.mileage) : '', startX + (usableWidth * 2) / 3, startX + (usableWidth * 2) / 3 + 70, vehicleRowY, usableWidth / 3 - 70);
+
+    // Row 3: Model and VIN
+    renderField('Model:', invoice.vehicle_model || '', startX, startX + 80, vehicleRowY + metaRowHeight, usableWidth / 2 - 80);
+    renderField('VIN #:', invoice.vin_number || '', startX + usableWidth / 2, startX + usableWidth / 2 + 60, vehicleRowY + metaRowHeight, usableWidth / 2 - 60);
 
     // Row 3: Product only
     const productRowY = vehicleRowY + metaRowHeight * 2;
