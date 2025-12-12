@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
+import { VisuallyHidden } from '@radix-ui/react-visually-hidden';
 import { timeTrackingAPI } from '@/services/api';
 import { useToast } from '@/hooks/use-toast';
 import { 
@@ -632,6 +633,12 @@ export const TimeTrackingScreen: React.FC = () => {
 
         <Dialog open={!!pendingClockOutEntry} onOpenChange={(open) => { if (!open) resetStoryModal(); }}>
           <DialogContent className="max-w-lg w-full max-h-[85vh] overflow-y-auto relative">
+            <VisuallyHidden asChild>
+              <DialogTitle>Tech Story</DialogTitle>
+            </VisuallyHidden>
+            <VisuallyHidden asChild>
+              <DialogDescription>Add a technician story before clocking out.</DialogDescription>
+            </VisuallyHidden>
             <div className="flex items-start justify-between mb-3 sticky top-0 bg-background z-10">
               <div className="flex-1" />
               <Button variant="ghost" size="icon" onClick={resetStoryModal} className="shrink-0">
