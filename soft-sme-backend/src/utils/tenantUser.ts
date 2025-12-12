@@ -21,6 +21,20 @@ export async function resolveTenantUserId(
   }
 
   const companyId = user.company_id;
+  const sharedId = Number.isFinite(Number(user.id)) ? Number(user.id) : null;
+
+  // First try an explicit mapping via shared_user_id to avoid ID drift between shared and tenant DBs.
+  if (sharedId !== null) {
+    const bySharedId = await pool.query(
+      companyId
+        ? 'SELECT id FROM users WHERE shared_user_id = $1 AND company_id = $2'
+        : 'SELECT id FROM users WHERE shared_user_id = $1',
+      companyId ? [sharedId, companyId] : [sharedId],
+    );
+    if (bySharedId.rows.length > 0) {
+      return bySharedId.rows[0].id;
+    }
+  }
 
   const byId = await pool.query(
     companyId
@@ -40,6 +54,17 @@ export async function resolveTenantUserId(
       companyId ? [user.email, companyId] : [user.email]
     );
     if (byEmail.rows.length > 0) {
+      // Opportunistically backfill shared_user_id when we can resolve by email.
+      if (sharedId !== null) {
+        try {
+          await pool.query(
+            'UPDATE users SET shared_user_id = $1 WHERE id = $2',
+            [sharedId, byEmail.rows[0].id],
+          );
+        } catch {
+          /* non-blocking */
+        }
+      }
       return byEmail.rows[0].id;
     }
   }

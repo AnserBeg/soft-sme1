@@ -42,21 +42,23 @@ async function upsertTenantUser(
   passwordHash: string,
   accessRole: string,
   companyId: string,
+  sharedUserId: number,
 ) {
   const tenantResult = await pool.query(
     `
-    INSERT INTO users (email, username, password_hash, access_role, company_id)
-    VALUES ($1, $2, $3, $4, $5)
+    INSERT INTO users (email, username, password_hash, access_role, company_id, shared_user_id)
+    VALUES ($1, $2, $3, $4, $5, $6)
     ON CONFLICT (email)
     DO UPDATE SET 
       username = EXCLUDED.username,
       password_hash = EXCLUDED.password_hash,
       access_role = EXCLUDED.access_role,
       company_id = EXCLUDED.company_id,
+      shared_user_id = EXCLUDED.shared_user_id,
       updated_at = NOW()
-    RETURNING id, email, username, access_role, company_id
+    RETURNING id, email, username, access_role, company_id, shared_user_id
     `,
-    [email, username, passwordHash, accessRole, companyId],
+    [email, username, passwordHash, accessRole, companyId, sharedUserId],
   );
 
   return tenantResult.rows[0];
@@ -113,7 +115,14 @@ router.post('/', async (req: Request, res: Response) => {
     
     const hashedPassword = await bcrypt.hash(password, 10);
     const sharedUser = await upsertSharedUser(email, username, hashedPassword, access_role, company_id);
-    const tenantUser = await upsertTenantUser(email, username, hashedPassword, access_role, company_id);
+    const tenantUser = await upsertTenantUser(
+      email,
+      username,
+      hashedPassword,
+      access_role,
+      company_id,
+      sharedUser.id,
+    );
 
     res.status(201).json({
       message: 'Employee created successfully',
@@ -176,11 +185,19 @@ router.put('/:id', async (req: Request, res: Response) => {
     const newAccessRole = access_role ?? 'Employee';
 
     const tenantResult = await pool.query(
-      'UPDATE users SET username = $1, access_role = $2, password_hash = $3 WHERE id = $4 AND company_id = $5 RETURNING id, email, username, access_role',
+      'UPDATE users SET username = $1, access_role = $2, password_hash = $3 WHERE id = $4 AND company_id = $5 RETURNING id, email, username, access_role, shared_user_id',
       [newUsername, newAccessRole, newPasswordHash, id, company_id],
     );
 
-    await upsertSharedUser(current.email, newUsername, newPasswordHash, newAccessRole, company_id);
+    const sharedUser = await upsertSharedUser(current.email, newUsername, newPasswordHash, newAccessRole, company_id);
+
+    // Keep the mapping set even if the row pre-dated the shared_user_id column.
+    if (!tenantResult.rows[0]?.shared_user_id) {
+      await pool.query(
+        'UPDATE users SET shared_user_id = $1 WHERE id = $2',
+        [sharedUser.id, id],
+      );
+    }
 
     res.json(tenantResult.rows[0]);
   } catch (err) {
