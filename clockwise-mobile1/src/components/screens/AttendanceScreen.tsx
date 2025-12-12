@@ -150,9 +150,6 @@ export const AttendanceScreen: React.FC = () => {
     loadData();
   }, [loadData]);
   
-  const activeToday = todayShifts.filter((s) => !s.clock_out);
-  const completedToday = todayShifts.filter((s) => s.clock_out);
-
   const resolveLocationRequirement = useCallback(
     async (action: 'clock in' | 'clock out') => {
       const needsLocation = geofence?.configured;
