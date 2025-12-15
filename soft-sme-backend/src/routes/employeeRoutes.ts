@@ -18,23 +18,72 @@ async function upsertSharedUser(
   accessRole: string,
   companyId: string,
 ) {
-  const sharedResult = await sharedPool.query(
-    `
-    INSERT INTO users (email, username, password_hash, access_role, company_id)
-    VALUES ($1, $2, $3, $4, $5)
-    ON CONFLICT (company_id, email)
-    DO UPDATE SET 
-      username = EXCLUDED.username,
-      password_hash = EXCLUDED.password_hash,
-      access_role = EXCLUDED.access_role,
-      company_id = EXCLUDED.company_id,
-      updated_at = NOW()
-    RETURNING id, email, username, access_role, company_id
-    `,
-    [email, username, passwordHash, accessRole, companyId],
-  );
+  try {
+    const sharedResult = await sharedPool.query(
+      `
+      INSERT INTO users (email, username, password_hash, access_role, company_id)
+      VALUES ($1, $2, $3, $4, $5)
+      ON CONFLICT (company_id, email)
+      DO UPDATE SET 
+        username = EXCLUDED.username,
+        password_hash = EXCLUDED.password_hash,
+        access_role = EXCLUDED.access_role,
+        company_id = EXCLUDED.company_id,
+        updated_at = NOW()
+      RETURNING id, email, username, access_role, company_id
+      `,
+      [email, username, passwordHash, accessRole, companyId],
+    );
 
-  return sharedResult.rows[0];
+    return sharedResult.rows[0];
+  } catch (err: any) {
+    // Some databases might not have a matching unique constraint/index for (company_id, email).
+    // Fall back to a safe manual upsert keyed by email, without risking cross-company updates.
+    const noConflictTarget =
+      err?.code === '42P10' ||
+      String(err?.message || '').includes('no unique or exclusion constraint matching the ON CONFLICT specification');
+
+    if (!noConflictTarget) {
+      throw err;
+    }
+
+    const existing = await sharedPool.query(
+      'SELECT id, email, username, access_role, company_id FROM users WHERE email = $1 LIMIT 1',
+      [email],
+    );
+
+    if (existing.rows.length > 0) {
+      const row = existing.rows[0];
+      const existingCompanyId = row.company_id === null || row.company_id === undefined ? null : String(row.company_id);
+      if (existingCompanyId !== null && existingCompanyId !== String(companyId)) {
+        const conflict = new Error('Email already exists for a different company');
+        (conflict as any).statusCode = 400;
+        (conflict as any).code = 'EMAIL_IN_USE_OTHER_COMPANY';
+        throw conflict;
+      }
+
+      const updated = await sharedPool.query(
+        `
+        UPDATE users
+        SET username = $1, password_hash = $2, access_role = $3, updated_at = NOW()
+        WHERE id = $4
+        RETURNING id, email, username, access_role, company_id
+        `,
+        [username, passwordHash, accessRole, row.id],
+      );
+      return updated.rows[0];
+    }
+
+    const inserted = await sharedPool.query(
+      `
+      INSERT INTO users (email, username, password_hash, access_role, company_id)
+      VALUES ($1, $2, $3, $4, $5)
+      RETURNING id, email, username, access_role, company_id
+      `,
+      [email, username, passwordHash, accessRole, companyId],
+    );
+    return inserted.rows[0];
+  }
 }
 
 async function upsertTenantUser(
@@ -45,24 +94,75 @@ async function upsertTenantUser(
   companyId: string,
   sharedUserId: number,
 ) {
-  const tenantResult = await pool.query(
-    `
-    INSERT INTO users (email, username, password_hash, access_role, company_id, shared_user_id)
-    VALUES ($1, $2, $3, $4, $5, $6)
-    ON CONFLICT (company_id, email)
-    DO UPDATE SET 
-      username = EXCLUDED.username,
-      password_hash = EXCLUDED.password_hash,
-      access_role = EXCLUDED.access_role,
-      company_id = EXCLUDED.company_id,
-      shared_user_id = EXCLUDED.shared_user_id,
-      updated_at = NOW()
-    RETURNING id, email, username, access_role, company_id, shared_user_id
-    `,
-    [email, username, passwordHash, accessRole, companyId, sharedUserId],
-  );
+  try {
+    const tenantResult = await pool.query(
+      `
+      INSERT INTO users (email, username, password_hash, access_role, company_id, shared_user_id)
+      VALUES ($1, $2, $3, $4, $5, $6)
+      ON CONFLICT (company_id, email)
+      DO UPDATE SET 
+        username = EXCLUDED.username,
+        password_hash = EXCLUDED.password_hash,
+        access_role = EXCLUDED.access_role,
+        company_id = EXCLUDED.company_id,
+        shared_user_id = EXCLUDED.shared_user_id,
+        updated_at = NOW()
+      RETURNING id, email, username, access_role, company_id, shared_user_id
+      `,
+      [email, username, passwordHash, accessRole, companyId, sharedUserId],
+    );
 
-  return tenantResult.rows[0];
+    return tenantResult.rows[0];
+  } catch (err: any) {
+    const noConflictTarget =
+      err?.code === '42P10' ||
+      String(err?.message || '').includes('no unique or exclusion constraint matching the ON CONFLICT specification');
+
+    if (!noConflictTarget) {
+      throw err;
+    }
+
+    const existing = await pool.query(
+      'SELECT id, email, username, access_role, company_id, shared_user_id FROM users WHERE email = $1 LIMIT 1',
+      [email],
+    );
+
+    if (existing.rows.length > 0) {
+      const row = existing.rows[0];
+      const existingCompanyId = row.company_id === null || row.company_id === undefined ? null : String(row.company_id);
+      if (existingCompanyId !== null && existingCompanyId !== String(companyId)) {
+        const conflict = new Error('Email already exists for a different company');
+        (conflict as any).statusCode = 400;
+        (conflict as any).code = 'EMAIL_IN_USE_OTHER_COMPANY';
+        throw conflict;
+      }
+
+      const updated = await pool.query(
+        `
+        UPDATE users
+        SET username = $1,
+            password_hash = $2,
+            access_role = $3,
+            shared_user_id = $4,
+            updated_at = NOW()
+        WHERE id = $5
+        RETURNING id, email, username, access_role, company_id, shared_user_id
+        `,
+        [username, passwordHash, accessRole, sharedUserId, row.id],
+      );
+      return updated.rows[0];
+    }
+
+    const inserted = await pool.query(
+      `
+      INSERT INTO users (email, username, password_hash, access_role, company_id, shared_user_id)
+      VALUES ($1, $2, $3, $4, $5, $6)
+      RETURNING id, email, username, access_role, company_id, shared_user_id
+      `,
+      [email, username, passwordHash, accessRole, companyId, sharedUserId],
+    );
+    return inserted.rows[0];
+  }
 }
 
 // Get all employees for the current user's company
@@ -148,7 +248,9 @@ router.post('/', async (req: Request, res: Response) => {
     });
     
     // Provide more specific error messages
-    if (err.code === '23505') { // Unique constraint violation
+    if (err.statusCode === 400 && err.code === 'EMAIL_IN_USE_OTHER_COMPANY') {
+      res.status(400).json({ error: err.message });
+    } else if (err.code === '23505') { // Unique constraint violation
       if (err.constraint?.includes('email')) {
         res.status(400).json({ error: 'Email already exists' });
       } else if (err.constraint?.includes('username')) {

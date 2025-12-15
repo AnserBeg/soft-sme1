@@ -96,9 +96,8 @@ function parseTenantUrlMap(raw?: string): Record<string, string> {
     }, {});
 }
 
-console.log('[TENANT_URLS_RAW]', process.env.TENANT_DATABASE_URLS);
 const tenantUrlMap = parseTenantUrlMap(process.env.TENANT_DATABASE_URLS);
-console.log('[TENANT_URLS_KEYS]', Object.keys(tenantUrlMap));
+logger.info(`[db] Tenant URL map keys: ${Object.keys(tenantUrlMap).join(', ') || '(none)'}`);
 const defaultTenantId =
   process.env.DEFAULT_TENANT_ID ||
   Object.keys(tenantUrlMap)[0] ||
@@ -115,13 +114,27 @@ function buildPoolConfigForTenant(tenantId: string): PoolConfig {
     };
   }
 
-  // Fallback to single-tenant env config to keep backward compatibility
+  // Default to strict routing to avoid cross-tenant DB writes.
+  // For shared-DB (multi-company-in-one-DB) setups, set STRICT_TENANT_DATABASE_URLS=false.
+  const strictTenantRouting = process.env.STRICT_TENANT_DATABASE_URLS !== 'false';
+
+  // Non-strict mode: fall back to single-tenant env config for shared DB setups
+  // where TENANT_DATABASE_URLS might not include every company ID.
+  if (!strictTenantRouting) {
+    logger.warn(
+      `[db] No tenant database URL configured for tenant "${tenantId}". Falling back to default DATABASE_URL/DB_* config. ` +
+        `Set TENANT_DATABASE_URLS for isolated tenant DBs or STRICT_TENANT_DATABASE_URLS=false only for shared tenant DBs.`
+    );
+    return buildPoolConfigFromEnv();
+  }
+
+  // Strict mode: require explicit mapping for non-default tenants.
   if (tenantId === defaultTenantId) {
     return buildPoolConfigFromEnv();
   }
 
   throw new Error(
-    `No database connection configured for tenant "${tenantId}". Set TENANT_DATABASE_URLS or DEFAULT_TENANT_ID.`
+    `No database connection configured for tenant "${tenantId}". Set TENANT_DATABASE_URLS or set STRICT_TENANT_DATABASE_URLS=false (shared tenant DB only).`
   );
 }
 
