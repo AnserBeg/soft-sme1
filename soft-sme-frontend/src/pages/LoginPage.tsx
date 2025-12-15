@@ -64,14 +64,7 @@ const LoginPage: React.FC = () => {
     }
 
     try {
-      const tenantIdRaw =
-        (import.meta.env.VITE_TENANT_ID ?? import.meta.env.VITE_COMPANY_ID)?.toString().trim() || '';
-      const payload: any = { ...formData };
-      if (tenantIdRaw) {
-        payload.company_id = Number(tenantIdRaw);
-      }
-
-      const response = await api.post('/api/auth/login', payload);
+      const response = await api.post('/api/auth/login', formData);
       const { sessionToken, refreshToken, user } = response.data;
       login(sessionToken, refreshToken, user);
       if (user.access_role === 'Time Tracking') navigate('/time-tracking');

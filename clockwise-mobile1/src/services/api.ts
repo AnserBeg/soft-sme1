@@ -4,8 +4,6 @@ import axios from 'axios';
 const ENV_BASE_URL =
   import.meta.env.VITE_BACKEND_URL?.trim() ?? import.meta.env.VITE_API_BASE_URL?.trim();
 const DEFAULT_BASE_URL = '/api';
-const TENANT_ID =
-  (import.meta.env.VITE_TENANT_ID ?? import.meta.env.VITE_COMPANY_ID)?.toString().trim() || '';
 
 // Normalize base URL so it always includes the /api prefix and no trailing slash
 const BASE_URL = (() => {
@@ -20,7 +18,6 @@ export const api = axios.create({
   timeout: 15000, // Increased timeout for tunnel connections
   headers: {
     'Content-Type': 'application/json',
-    ...(TENANT_ID ? { 'x-tenant-id': TENANT_ID } : {}),
   },
 });
 
@@ -33,17 +30,25 @@ api.interceptors.request.use((config) => {
   } else {
     console.warn('API Request - No token found in localStorage');
   }
+
+  // Multi-tenant: after login the backend returns user.company_id; use it to scope tenant DB.
+  try {
+    const userRaw = localStorage.getItem('userData');
+    const user = userRaw ? JSON.parse(userRaw) : null;
+    const companyId = user?.company_id;
+    if (companyId !== undefined && companyId !== null && companyId !== '') {
+      config.headers['x-tenant-id'] = String(companyId);
+    }
+  } catch {
+    /* ignore */
+  }
   return config;
 });
 
 // Auth API
 export const authAPI = {
   login: async (email: string, password: string) => {
-    const payload: any = { email, password };
-    if (TENANT_ID) {
-      payload.company_id = Number(TENANT_ID);
-    }
-    const response = await api.post('/auth/login', payload);
+    const response = await api.post('/auth/login', { email, password });
     return response.data;
   },
 };

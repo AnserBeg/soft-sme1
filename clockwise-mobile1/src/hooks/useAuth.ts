@@ -6,6 +6,7 @@ interface User {
   id: string;
   email: string;
   access_role: string;
+  company_id?: string | number;
 }
 
 interface AuthContextType {
