@@ -74,6 +74,95 @@ router.post('/connect/titan', authMiddleware, async (req: Request, res: Response
   }
 });
 
+router.get('/titan/status', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const userId = req.user?.id ? Number(req.user.id) : null;
+    if (!userId) {
+      return res.status(401).json({ success: false, message: 'User not authenticated' });
+    }
+
+    try {
+      const results = await pool.query(
+        `SELECT provider, is_active, last_validated_at
+           FROM agent_email_connections
+          WHERE user_id = $1 AND provider = $2
+          LIMIT 1`,
+        [userId, 'titan']
+      );
+      if (results.rowCount === 0) {
+        return res.json({ success: true, connected: false });
+      }
+      const row = results.rows[0];
+      return res.json({
+        success: true,
+        connected: Boolean(row.is_active),
+        provider: row.provider,
+        lastValidatedAt: row.last_validated_at,
+      });
+    } catch (dbErr) {
+      console.error('Error checking titan connection status:', dbErr);
+      return res.status(500).json({ success: false, message: 'Failed to check Titan connection status' });
+    }
+  } catch (error: any) {
+    console.error('Error checking titan connection status:', error);
+    res.status(500).json({ success: false, message: 'Failed to check Titan connection status' });
+  }
+});
+
+router.get('/titan/search', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const userId = req.user?.id ? Number(req.user.id) : null;
+    if (!userId) {
+      return res.status(401).json({ success: false, message: 'User not authenticated' });
+    }
+
+    const q = (req.query?.q ?? '').toString();
+    const maxRaw = req.query?.max;
+    const max = maxRaw !== undefined ? Number(maxRaw) : undefined;
+
+    const results = await agentEmailService.emailSearch(userId, q, Number.isFinite(max as number) ? Number(max) : undefined);
+    res.json({ success: true, results });
+  } catch (error: any) {
+    const message = error?.message ?? 'Failed to search Titan mailbox';
+    res.status(500).json({ success: false, message });
+  }
+});
+
+router.get('/titan/messages/:id', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const userId = req.user?.id ? Number(req.user.id) : null;
+    if (!userId) {
+      return res.status(401).json({ success: false, message: 'User not authenticated' });
+    }
+
+    const message = await agentEmailService.emailRead(userId, req.params.id);
+    res.json({ success: true, message });
+  } catch (error: any) {
+    const message = error?.message ?? 'Failed to read Titan email';
+    res.status(500).json({ success: false, message });
+  }
+});
+
+router.get('/titan/messages/:id/attachments/:attachmentId', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const userId = req.user?.id ? Number(req.user.id) : null;
+    if (!userId) {
+      return res.status(401).json({ success: false, message: 'User not authenticated' });
+    }
+
+    const attachment = await agentEmailService.emailGetAttachment(
+      userId,
+      req.params.id,
+      req.params.attachmentId
+    );
+
+    res.json({ success: true, attachment });
+  } catch (error: any) {
+    const message = error?.message ?? 'Failed to download Titan attachment';
+    res.status(500).json({ success: false, message });
+  }
+});
+
 router.post('/disconnect', authMiddleware, async (req: Request, res: Response) => {
   try {
     const userId = req.user?.id ? Number(req.user.id) : null;

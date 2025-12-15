@@ -50,6 +50,7 @@ import OverheadManagementPage from './pages/OverheadManagementPage';
 import PartsToOrderPage from './pages/PartsToOrderPage';
 import MobileUserAccessPage from './pages/MobileUserAccessPage';
 import UserEmailSettingsPage from './pages/UserEmailSettingsPage';
+import InvoiceAutomatorPage from './pages/InvoiceAutomatorPage';
 import EmailTemplatesPage from './pages/EmailTemplatesPage';
 import TaskDetailPage from './pages/TaskDetailPage';
 import TasksDashboardPage from './pages/TasksDashboardPage';
@@ -228,6 +229,9 @@ const AppRoutes: React.FC = () => {
         
         {/* Email Settings */}
         <Route path="email-settings" element={<UserEmailSettingsPage />} />
+
+        {/* Invoice Automator */}
+        <Route path="invoice-automator" element={<InvoiceAutomatorPage />} />
         
         {/* Email Templates */}
         <Route path="email-templates" element={<EmailTemplatesPage />} />

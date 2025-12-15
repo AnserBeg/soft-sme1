@@ -11,6 +11,7 @@ import type {
   EmailPolicyConfig,
   EmailSummary,
   EmailMessageDetail,
+  EmailAttachmentContent,
   EmailProvider,
   EmailSendInput,
   ReplyInput,
@@ -205,6 +206,12 @@ export class AgentEmailService {
     return provider.emailRead(id);
   }
 
+  async emailGetAttachment(userId: number, messageId: string, attachmentId: string): Promise<EmailAttachmentContent> {
+    await this.ensurePolicy(false);
+    const provider = await this.getProvider(userId);
+    return provider.emailGetAttachment(messageId, attachmentId);
+  }
+
   async emailComposeDraft(userId: number, payload: ComposeEmailPayload) {
     const policy = await this.ensurePolicy(true);
     const provider = await this.getProvider(userId);
@@ -213,6 +220,11 @@ export class AgentEmailService {
   }
 
   async emailSend(userId: number, input: EmailSendInput) {
+    const token = typeof input.confirmToken === 'string' ? input.confirmToken.trim() : '';
+    if (!token) {
+      throw new Error('confirm_token is required');
+    }
+
     const policy = await this.ensurePolicy(true);
     const provider = await this.getProvider(userId);
     const connection = await this.connectionService.getConnection(userId, 'titan');
@@ -230,7 +242,7 @@ export class AgentEmailService {
       this.enforceExternalPolicy(policy, connection.config.email, recipients);
     }
 
-    const result = await provider.emailSend(input);
+    const result = await provider.emailSend({ ...input, confirmToken: token });
     return result;
   }
 

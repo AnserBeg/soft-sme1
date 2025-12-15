@@ -57,6 +57,7 @@ import partFinderRoutes from './routes/partFinderRoutes';
 import inventoryVendorRoutes from './routes/inventoryVendorRoutes';
 import assistantRoutes from './routes/assistantRoutes';
 import reminderRoutes from './routes/reminderRoutes';
+import invoiceAutomatorRoutes from './routes/invoiceAutomatorRoutes';
 
 // Add error handling around chatRouter import
 let chatRouter: any;
@@ -325,6 +326,7 @@ console.log('Registered inventory vendor routes');
 
 // Email routes
 app.use('/api/email', authWithTenant, emailRoutes);
+app.use('/api/invoice-automator', authWithTenant, invoiceAutomatorRoutes);
 console.log('Registered email routes');
 
 // Profile document routes

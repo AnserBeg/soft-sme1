@@ -5,6 +5,7 @@ import { simpleParser } from 'mailparser';
 import { AgentEmailDraftStore } from '../draftStore';
 import type {
   ComposeEmailPayload,
+  EmailAttachmentContent,
   EmailAttachmentMetadata,
   EmailDraftPreview,
   EmailMessageDetail,
@@ -104,7 +105,9 @@ type MutableSearchObject = Partial<SearchObject> & {
   text?: string;
 };
 
-export const parseQuery = (query: string): { search: SearchObject } => {
+type SearchWithText = SearchObject & { text?: string };
+
+export const parseQuery = (query: string): { search: SearchWithText } => {
   const search: MutableSearchObject = {};
   const textTerms: string[] = [];
   const headerCriteria: Array<[string, string]> = [];
@@ -184,7 +187,7 @@ export const parseQuery = (query: string): { search: SearchObject } => {
     search.header = headerCriteria as unknown as SearchObject['header'];
   }
 
-  return { search: search as SearchObject };
+  return { search: search as SearchWithText };
 };
 
 const normalizeDateString = (date: Date | string | number | undefined): string => {
@@ -324,6 +327,64 @@ export class TitanProvider implements EmailProvider {
     }
 
     return this.fetchByUid(uid);
+  }
+
+  async emailGetAttachment(messageId: string, attachmentId: string): Promise<EmailAttachmentContent> {
+    const uid = Number(messageId);
+    if (!Number.isFinite(uid)) {
+      throw new Error('Titan email identifier must be a numeric UID');
+    }
+
+    const targetId = (attachmentId ?? '').toString().trim();
+    if (!targetId) {
+      throw new Error('Attachment id is required');
+    }
+
+    return this.withMailbox(async (client) => {
+      const message = await client.fetchOne(uid, { source: true });
+      if (!message || !message.source) {
+        throw new Error('Email not found in Titan mailbox');
+      }
+
+      const parsed = await simpleParser(message.source);
+      const attachments = Array.isArray(parsed.attachments) ? parsed.attachments : [];
+
+      const matchIndex = attachments.findIndex((attachment: any, idx: number) => {
+        const meta = toAttachmentMeta(attachment, idx);
+        return meta.id === targetId;
+      });
+
+      if (matchIndex < 0) {
+        throw new Error(`Attachment "${targetId}" not found on this email`);
+      }
+
+      const attachment: any = attachments[matchIndex];
+      const meta = toAttachmentMeta(attachment, matchIndex);
+
+      const content: Buffer | undefined =
+        Buffer.isBuffer(attachment?.content)
+          ? attachment.content
+          : (attachment?.content && typeof attachment.content === 'string'
+            ? Buffer.from(attachment.content, 'utf8')
+            : undefined);
+
+      if (!content) {
+        throw new Error(`Attachment "${targetId}" has no downloadable content`);
+      }
+
+      const maxBytes = 25 * 1024 * 1024;
+      if (content.byteLength > maxBytes) {
+        throw new Error(`Attachment "${meta.filename}" is too large. Maximum size is 25MB.`);
+      }
+
+      return {
+        id: meta.id,
+        filename: meta.filename,
+        contentType: meta.contentType,
+        size: meta.size,
+        contentBase64: content.toString('base64'),
+      };
+    });
   }
 
   private async fetchByUid(uid: number): Promise<EmailMessageDetail> {

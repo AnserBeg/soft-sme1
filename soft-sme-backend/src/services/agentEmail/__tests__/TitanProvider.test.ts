@@ -112,7 +112,13 @@ describe('TitanProvider', () => {
 
     const provider = new TitanProvider(99, baseConfig, draftStore);
     await expect(
-      provider.emailSend({ confirmToken: 'abc123' })
+      provider.emailSend({
+        confirmToken: 'abc123',
+        payload: {
+          to: ['recipient@example.com'],
+          subject: 'Test',
+        },
+      })
     ).rejects.toThrow('Direct payload send is not supported for Titan without a stored draft.');
   });
 

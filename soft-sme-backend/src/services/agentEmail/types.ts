@@ -16,6 +16,14 @@ export interface EmailAttachmentMetadata {
   cid?: string | null;
 }
 
+export interface EmailAttachmentContent {
+  id: string;
+  filename: string;
+  contentType: string;
+  size: number;
+  contentBase64: string;
+}
+
 export interface EmailSummary {
   id: string;
   subject: string;
@@ -118,6 +126,7 @@ export interface EmailProvider {
   readonly providerName: string;
   emailSearch(query: string, max?: number): Promise<EmailSummary[]>;
   emailRead(id: string): Promise<EmailMessageDetail>;
+  emailGetAttachment(messageId: string, attachmentId: string): Promise<EmailAttachmentContent>;
   emailComposeDraft(payload: ComposeEmailPayload): Promise<{ draftId: string; preview: EmailDraftPreview }>;
   emailSend(input: EmailSendInput): Promise<SendResult>;
   emailReply(target: ReplyInput): Promise<SendResult>;
