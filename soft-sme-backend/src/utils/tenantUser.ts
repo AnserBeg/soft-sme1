@@ -1,4 +1,5 @@
 import { Pool } from 'pg';
+import { sharedPool } from '../dbShared';
 
 type AuthenticatedUser = {
   id?: string;
@@ -74,5 +75,49 @@ export async function resolveTenantUserId(
     email: user.email,
     companyId,
   });
+
+  // Best-effort sync: if the shared auth DB has the user but the tenant DB doesn't,
+  // upsert the tenant copy so downstream mobile/profile access can work.
+  if (sharedId !== null && companyId && user.email) {
+    try {
+      const sharedUser = await sharedPool.query(
+        'SELECT id, email, username, password_hash, access_role, company_id FROM users WHERE id = $1',
+        [sharedId],
+      );
+      const row = sharedUser.rows[0];
+      if (row && String(row.company_id) === String(companyId)) {
+        const upserted = await pool.query(
+          `
+          INSERT INTO users (email, username, password_hash, access_role, company_id)
+          VALUES ($1, $2, $3, $4, $5)
+          ON CONFLICT (company_id, email)
+          DO UPDATE SET
+            username = EXCLUDED.username,
+            password_hash = EXCLUDED.password_hash,
+            access_role = EXCLUDED.access_role,
+            updated_at = NOW()
+          RETURNING id
+          `,
+          [row.email, row.username, row.password_hash, row.access_role, row.company_id],
+        );
+
+        const tenantId = upserted.rows[0]?.id ?? null;
+        if (tenantId) {
+          try {
+            await pool.query('UPDATE users SET shared_user_id = $1 WHERE id = $2', [sharedId, tenantId]);
+          } catch {
+            /* tenant schema may not have shared_user_id yet */
+          }
+          return tenantId;
+        }
+      }
+    } catch (err) {
+      console.warn('[tenant-users] Best-effort tenant user sync failed', {
+        sharedId,
+        email: user.email,
+        companyId,
+      });
+    }
+  }
   return null;
 }

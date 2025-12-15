@@ -2,6 +2,8 @@ import axios from 'axios';
 import { getApiConfig } from '../config/api';
 
 const apiConfig = getApiConfig();
+const TENANT_ID =
+  (import.meta.env.VITE_TENANT_ID ?? import.meta.env.VITE_COMPANY_ID)?.toString().trim() || '';
 
 const safeDispatch = (name: string, detail?: Record<string, unknown>) => {
   try {
@@ -34,6 +36,10 @@ api.interceptors.request.use(
     const token = localStorage.getItem('sessionToken');
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
+    }
+
+    if (TENANT_ID) {
+      config.headers['x-tenant-id'] = TENANT_ID;
     }
     
     const deviceId = localStorage.getItem('deviceId');

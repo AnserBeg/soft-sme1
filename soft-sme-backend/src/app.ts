@@ -6,6 +6,7 @@ import cookieParser from 'cookie-parser';
 import compression from 'compression';
 import authRouter from './routes/authRoutes';
 import { authMiddleware } from './middleware/authMiddleware';
+import { tenantContextMiddleware } from './middleware/tenantMiddleware';
 import businessProfileRouter from './routes/businessProfile';
 import customerRouter from './routes/customerRoutes';
 import productRouter from './routes/productRoutes';
@@ -36,6 +37,7 @@ import chatRouter from './routes/chatRoutes';
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
 const app = express();
+const authWithTenant = [authMiddleware, tenantContextMiddleware];
 
 // Enable compression for better performance
 app.use(compression());
@@ -148,73 +150,73 @@ console.log('Registered auth routes at /api/auth');
 
 // Protected routes
 // Business profile API is available at /api/business-profile
-app.use('/api/business-profile', authMiddleware, businessProfileRouter);
+app.use('/api/business-profile', authWithTenant, businessProfileRouter);
 console.log('Registered business profile routes');
 
-app.use('/api/customers', authMiddleware, customerRouter);
+app.use('/api/customers', authWithTenant, customerRouter);
 console.log('Registered customer routes');
 
-app.use('/api/products', authMiddleware, productRouter);
+app.use('/api/products', authWithTenant, productRouter);
 console.log('Registered product routes');
 
-app.use('/api/purchase-history', authMiddleware, purchaseHistoryRouter);
+app.use('/api/purchase-history', authWithTenant, purchaseHistoryRouter);
 console.log('Registered purchase history routes');
 
-app.use('/api/margin-schedule', authMiddleware, marginScheduleRouter);
+app.use('/api/margin-schedule', authWithTenant, marginScheduleRouter);
 console.log('Registered margin schedule routes');
 
-app.use('/api/vendors', authMiddleware, vendorRouter);
+app.use('/api/vendors', authWithTenant, vendorRouter);
 console.log('Registered vendor routes');
 
-app.use('/api/inventory', authMiddleware, inventoryRouter);
+app.use('/api/inventory', authWithTenant, inventoryRouter);
 console.log('Registered inventory routes at /api/inventory');
 
-app.use('/api/search', authMiddleware, searchRoutes);
+app.use('/api/search', authWithTenant, searchRoutes);
 console.log('Registered search routes at /api/search');
 
-app.use('/api/categories', authMiddleware, categoryRouter);
+app.use('/api/categories', authWithTenant, categoryRouter);
 console.log('Registered category routes at /api/categories');
 
-app.use('/api/quotes', authMiddleware, quoteRouter);
+app.use('/api/quotes', authWithTenant, quoteRouter);
 console.log('Registered quote routes');
 
-app.use('/api/quote-templates', authMiddleware, quoteTemplateRouter);
+app.use('/api/quote-templates', authWithTenant, quoteTemplateRouter);
 console.log('Registered quote template routes');
 
-app.use('/api/sales-orders', authMiddleware, salesOrderRouter);
+app.use('/api/sales-orders', authWithTenant, salesOrderRouter);
 console.log('Registered sales order routes');
 
-app.use('/api/purchase-orders', authMiddleware, purchaseOrderRouter);
+app.use('/api/purchase-orders', authWithTenant, purchaseOrderRouter);
 console.log('Registered purchase order routes');
 
-app.use('/api/return-orders', authMiddleware, returnOrderRouter);
+app.use('/api/return-orders', authWithTenant, returnOrderRouter);
 console.log('Registered return order routes');
 
-app.use('/api/employees', authMiddleware, employeeRouter);
+app.use('/api/employees', authWithTenant, employeeRouter);
 console.log('Registered employee routes');
 
-app.use('/api/time-tracking', authMiddleware, timeTrackingRouter);
+app.use('/api/time-tracking', authWithTenant, timeTrackingRouter);
 console.log('Registered time tracking routes');
 
-app.use('/api/leave-management', authMiddleware, leaveManagementRouter);
+app.use('/api/leave-management', authWithTenant, leaveManagementRouter);
 console.log('Registered leave management routes');
 
-app.use('/api/attendance', authMiddleware, attendanceRouter);
+app.use('/api/attendance', authWithTenant, attendanceRouter);
 console.log('Registered attendance routes');
 
 app.use('/api/profile-documents', profileDocumentRouter);
 console.log('Registered profile document routes');
 
-app.use('/api/messaging', authMiddleware, messagingRouter);
+app.use('/api/messaging', authWithTenant, messagingRouter);
 console.log('Registered messaging routes');
 
-app.use('/api/settings', authMiddleware, globalSettingsRouter);
+app.use('/api/settings', authWithTenant, globalSettingsRouter);
 console.log('Registered global settings routes');
 
-app.use('/api/chat', authMiddleware, chatRouter);
+app.use('/api/chat', authWithTenant, chatRouter);
 console.log('Registered chat routes');
 
-app.use('/api/email', authMiddleware, emailRouter);
+app.use('/api/email', authWithTenant, emailRouter);
 console.log('Registered email routes');
 
 app.use('/api/tasks', taskRouter);
