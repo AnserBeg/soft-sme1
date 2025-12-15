@@ -199,7 +199,40 @@ export class InvoiceEmailAutomatorService {
   }
 
   async syncTitanMailbox(userId: number, options: SyncOptions = {}) {
-    const query = (options.query || 'unread:true has:attachment').trim();
+    const defaultInvoiceKeywords = [
+      'invoice',
+      'inv',
+      'bill',
+      'billing',
+      'receipt',
+      'facture',
+      '"tax invoice"',
+      '"commercial invoice"',
+      '"amount due"',
+    ];
+
+    const rawQuery = (options.query || '').trim();
+    const baseQuery = rawQuery.length > 0 ? rawQuery : 'unread:true has:attachment';
+
+    const ensureHasAttachment = (value: string) =>
+      /\bhas:attachment\b/i.test(value) ? value : `${value} has:attachment`;
+
+    const ensureSomeInvoiceKeyword = (value: string) => {
+      const lower = value.toLowerCase();
+      const hasSomeInvoiceWord = defaultInvoiceKeywords.some((kw) => {
+        const normalized = kw.replace(/"/g, '').toLowerCase();
+        return lower.includes(normalized);
+      });
+
+      if (hasSomeInvoiceWord) {
+        return value;
+      }
+
+      // Search in subject for invoice-related keywords by default.
+      return `${value} ${defaultInvoiceKeywords.map((kw) => `subject:${kw}`).join(' ')}`.trim();
+    };
+
+    const query = ensureSomeInvoiceKeyword(ensureHasAttachment(baseQuery)).trim();
     const maxMessages = Number.isFinite(options.maxMessages as number)
       ? Math.min(Math.max(Number(options.maxMessages), 1), 50)
       : 20;
@@ -224,6 +257,19 @@ export class InvoiceEmailAutomatorService {
         detail = await this.agentEmailService.emailRead(userId, summary.id);
       } catch (error) {
         errors += 1;
+        continue;
+      }
+
+      const subjectLower = (detail.subject || '').toLowerCase();
+      const rejectStatementTerms = [
+        'statement',
+        'statement of account',
+        'monthly statement',
+        'account statement',
+        'soa',
+      ];
+      if (rejectStatementTerms.some((term) => subjectLower.includes(term))) {
+        skipped += 1;
         continue;
       }
 
@@ -280,6 +326,17 @@ export class InvoiceEmailAutomatorService {
           const normalized = ocrResult.ocr.normalized as any;
           const vendorMatch = normalized?.vendorMatch;
           const isInvoice = normalized?.documentType === 'invoice';
+          const rawTextLower = (ocrResult.ocr.rawText || '').toLowerCase();
+          const keywordTokens: string[] = Array.isArray(normalized?.detectedKeywords)
+            ? normalized.detectedKeywords.map((k: any) => String(k).toLowerCase())
+            : [];
+          const looksLikeStatement =
+            !isInvoice
+            || keywordTokens.some((k) => k.includes('statement'))
+            || /\bstatement of account\b/i.test(rawTextLower)
+            || /\baccount statement\b/i.test(rawTextLower)
+            || /\bmonthly statement\b/i.test(rawTextLower)
+            || /\bsoa\b/i.test(rawTextLower);
           const vendorId = vendorMatch?.status === 'existing' ? Number(vendorMatch?.vendorId) : NaN;
 
           await this.updateIngestion(ingestion.id, {
@@ -295,6 +352,16 @@ export class InvoiceEmailAutomatorService {
 
           ingestion = (await this.getIngestion(userId, ingestion.id)) ?? ingestion;
           processedAttachments += 1;
+
+          if (looksLikeStatement) {
+            await this.updateIngestion(ingestion.id, {
+              status: 'rejected_statement',
+              error: 'Rejected: statement detected (statements never create purchase orders).',
+            });
+            ingestions.push((await this.getIngestion(userId, ingestion.id)) ?? ingestion);
+            skipped += 1;
+            continue;
+          }
 
           if (autoCreatePurchaseOrders && isInvoice && Number.isFinite(vendorId)) {
             const lineItems = Array.isArray(normalized?.lineItems) ? normalized.lineItems : [];

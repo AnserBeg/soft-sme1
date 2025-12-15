@@ -60,6 +60,23 @@ router.post('/connect/titan', authMiddleware, async (req: Request, res: Response
     res.json({ success: true, connection });
   } catch (error: any) {
     const message = error?.message ?? 'Failed to connect Titan mailbox';
+    const pgCode = error?.code;
+    if (
+      pgCode === '42P01'
+      && typeof message === 'string'
+      && message.toLowerCase().includes('agent_email_connections')
+    ) {
+      const tenantIdHeader = req.headers['x-tenant-id'] || req.headers['X-Tenant-Id'];
+      const tenantId = (Array.isArray(tenantIdHeader) ? tenantIdHeader[0] : tenantIdHeader)
+        || (req.user as any)?.company_id;
+      return res.status(503).json({
+        success: false,
+        message: 'Email tables are missing in this tenant database. Run backend migrations and retry.',
+        details: message,
+        tenantId: tenantId ? String(tenantId) : undefined,
+        hint: 'Ensure `soft-sme-backend/migrations/20250901_create_agent_email_connections.sql` has been applied for this tenant database (multi-tenant deployments must migrate each tenant DB).',
+      });
+    }
     if (typeof message === 'string' && message.toLowerCase().includes('failed to connect to titan imap')) {
       return res.status(502).json({ success: false, message });
     }
@@ -99,7 +116,26 @@ router.get('/titan/status', authMiddleware, async (req: Request, res: Response) 
         provider: row.provider,
         lastValidatedAt: row.last_validated_at,
       });
-    } catch (dbErr) {
+    } catch (dbErr: any) {
+      const message = dbErr?.message ?? 'Database error';
+      const pgCode = dbErr?.code;
+      if (
+        pgCode === '42P01'
+        && typeof message === 'string'
+        && message.toLowerCase().includes('agent_email_connections')
+      ) {
+        const tenantIdHeader = req.headers['x-tenant-id'] || req.headers['X-Tenant-Id'];
+        const tenantId = (Array.isArray(tenantIdHeader) ? tenantIdHeader[0] : tenantIdHeader)
+          || (req.user as any)?.company_id;
+        return res.status(503).json({
+          success: false,
+          message: 'Email tables are missing in this tenant database. Run backend migrations and retry.',
+          details: message,
+          tenantId: tenantId ? String(tenantId) : undefined,
+          hint: 'Apply `soft-sme-backend/migrations/20250901_create_agent_email_connections.sql` to the active tenant database.',
+        });
+      }
+
       console.error('Error checking titan connection status:', dbErr);
       return res.status(500).json({ success: false, message: 'Failed to check Titan connection status' });
     }

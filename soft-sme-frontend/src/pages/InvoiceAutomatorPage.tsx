@@ -68,13 +68,16 @@ const InvoiceAutomatorPage: React.FC = () => {
   const [hostSmtp, setHostSmtp] = useState<string>('smtp.titan.email');
   const [portSmtp, setPortSmtp] = useState<number>(465);
 
-  const [query, setQuery] = useState<string>('unread:true has:attachment');
+  const [query, setQuery] = useState<string>(
+    'unread:true has:attachment subject:invoice subject:inv subject:bill subject:billing subject:receipt subject:facture subject:"tax invoice" subject:"commercial invoice"'
+  );
   const [maxMessages, setMaxMessages] = useState<number>(20);
   const [autoCreate, setAutoCreate] = useState<boolean>(true);
   const [syncing, setSyncing] = useState<boolean>(false);
 
   const [loadingIngestions, setLoadingIngestions] = useState<boolean>(true);
   const [ingestions, setIngestions] = useState<Ingestion[]>([]);
+  const [showRejected, setShowRejected] = useState<boolean>(false);
 
   const refreshStatus = async () => {
     setCheckingStatus(true);
@@ -189,7 +192,12 @@ const InvoiceAutomatorPage: React.FC = () => {
     }
   };
 
-  const rows = useMemo(() => ingestions, [ingestions]);
+  const rows = useMemo(() => {
+    if (showRejected) {
+      return ingestions;
+    }
+    return ingestions.filter((ingestion) => !String(ingestion.status || '').startsWith('rejected'));
+  }, [ingestions, showRejected]);
 
   return (
     <Box p={3}>
@@ -312,7 +320,7 @@ const InvoiceAutomatorPage: React.FC = () => {
                 onChange={(e) => setQuery(e.target.value)}
                 fullWidth
                 sx={{ mb: 2 }}
-                helperText='Examples: `unread:true has:attachment`, `from:"billing@vendor.com" unread:true has:attachment`'
+                helperText='Examples: `unread:true has:attachment subject:invoice`, `from:"billing@vendor.com" unread:true has:attachment subject:invoice`'
               />
               <Grid container spacing={2}>
                 <Grid item xs={12} sm={6}>
@@ -333,6 +341,17 @@ const InvoiceAutomatorPage: React.FC = () => {
                       />
                     }
                     label="Auto-create POs"
+                  />
+                </Grid>
+                <Grid item xs={12}>
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        checked={showRejected}
+                        onChange={(e) => setShowRejected(e.target.checked)}
+                      />
+                    }
+                    label="Show rejected statements"
                   />
                 </Grid>
               </Grid>
@@ -448,4 +467,3 @@ const InvoiceAutomatorPage: React.FC = () => {
 };
 
 export default InvoiceAutomatorPage;
-

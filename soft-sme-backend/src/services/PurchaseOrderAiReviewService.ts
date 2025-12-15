@@ -380,6 +380,9 @@ export class PurchaseOrderAiReviewService {
         const structured = this.parseStructuredResponse(structuredContent, options, mode);
         return { structured, errors, sawMaxTokens };
       } catch (error) {
+        if (typeof structuredContent === 'string' && this.looksLikeTruncatedJson(structuredContent)) {
+          sawMaxTokens = true;
+        }
         const message = error instanceof Error ? error.message : 'unknown error';
         errors.push(`parse failure (finish reason: ${finishReason}): ${message}`);
       }
@@ -485,12 +488,160 @@ export class PurchaseOrderAiReviewService {
     }
   }
 
+  private static looksLikeTruncatedJson(input: string): boolean {
+    const trimmed = input.trim();
+    if (!trimmed.startsWith('{')) {
+      return false;
+    }
+
+    // Detect unbalanced braces/brackets while respecting strings/escapes.
+    let inString = false;
+    let escaped = false;
+    const stack: string[] = [];
+
+    for (let i = 0; i < trimmed.length; i += 1) {
+      const ch = trimmed[i];
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (ch === '\\') {
+        escaped = true;
+        continue;
+      }
+      if (ch === '"') {
+        inString = !inString;
+        continue;
+      }
+      if (inString) {
+        continue;
+      }
+      if (ch === '{') stack.push('}');
+      else if (ch === '[') stack.push(']');
+      else if (ch === '}' || ch === ']') {
+        if (stack.length > 0 && stack[stack.length - 1] === ch) {
+          stack.pop();
+        }
+      }
+    }
+
+    return stack.length > 0 || inString;
+  }
+
   private static cleanJsonText(content: string): string {
     return content
       .replace(/```json/gi, '```')
       .replace(/```/g, '')
       .replace(/^[\uFEFF\u200B]+/, '')
       .trim();
+  }
+
+  private static escapeControlCharsInStrings(input: string): string {
+    let inString = false;
+    let escaped = false;
+    let out = '';
+
+    for (let i = 0; i < input.length; i += 1) {
+      const ch = input[i];
+
+      if (escaped) {
+        out += ch;
+        escaped = false;
+        continue;
+      }
+
+      if (ch === '\\') {
+        out += ch;
+        escaped = true;
+        continue;
+      }
+
+      if (ch === '"') {
+        inString = !inString;
+        out += ch;
+        continue;
+      }
+
+      if (inString) {
+        if (ch === '\n') {
+          out += '\\n';
+          continue;
+        }
+        if (ch === '\r') {
+          out += '\\r';
+          continue;
+        }
+        if (ch === '\t') {
+          out += '\\t';
+          continue;
+        }
+        const code = ch.charCodeAt(0);
+        if (code >= 0 && code < 0x20) {
+          out += `\\u${code.toString(16).padStart(4, '0')}`;
+          continue;
+        }
+      }
+
+      out += ch;
+    }
+
+    return out;
+  }
+
+  private static repairPossiblyTruncatedJson(input: string): string {
+    const trimmed = input.trim();
+    if (!trimmed.startsWith('{')) {
+      return input;
+    }
+
+    let inString = false;
+    let escaped = false;
+    const closers: string[] = [];
+
+    for (let i = 0; i < trimmed.length; i += 1) {
+      const ch = trimmed[i];
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (ch === '\\') {
+        escaped = true;
+        continue;
+      }
+      if (ch === '"') {
+        inString = !inString;
+        continue;
+      }
+      if (inString) {
+        continue;
+      }
+
+      if (ch === '{') {
+        closers.push('}');
+      } else if (ch === '[') {
+        closers.push(']');
+      } else if (ch === '}' || ch === ']') {
+        if (closers.length > 0 && closers[closers.length - 1] === ch) {
+          closers.pop();
+        }
+      }
+    }
+
+    let fixed = trimmed;
+    if (inString) {
+      fixed += '"';
+    }
+
+    // Remove trailing backslash which would invalidate the closing quote we add above.
+    if (fixed.endsWith('\\')) {
+      fixed = fixed.slice(0, -1);
+    }
+
+    while (closers.length > 0) {
+      fixed += closers.pop();
+    }
+
+    return fixed;
   }
 
   private static *generateJsonCandidates(initial: string): Iterable<string> {
@@ -501,9 +652,12 @@ export class PurchaseOrderAiReviewService {
       return [
         value,
         this.extractFirstJsonObject(value),
+        this.escapeControlCharsInStrings(value),
+        this.repairPossiblyTruncatedJson(value),
         this.stripTrailingCommas(value),
         this.ensureQuotedKeys(value),
         this.convertSingleQuotedStrings(value),
+        this.stripTrailingCommas(this.repairPossiblyTruncatedJson(value)),
         this.stripTrailingCommas(this.ensureQuotedKeys(value)),
         this.stripTrailingCommas(this.convertSingleQuotedStrings(value)),
         this.convertSingleQuotedStrings(this.ensureQuotedKeys(value)),
@@ -776,4 +930,3 @@ export class PurchaseOrderAiReviewService {
     return { responseSchema, maxOutputTokens };
   }
 }
-
