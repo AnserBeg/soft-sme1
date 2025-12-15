@@ -6,6 +6,21 @@ import { resolveTenantCompanyId } from '../utils/tenantCompany';
 
 const router = express.Router();
 
+async function repairUsersIdSequence(targetPool: typeof pool) {
+  const seqResult = await targetPool.query<{ seq: string | null }>(
+    `SELECT pg_get_serial_sequence('users', 'id') AS seq`,
+  );
+  const seq = seqResult.rows[0]?.seq;
+  if (!seq) {
+    return;
+  }
+
+  await targetPool.query(
+    `SELECT setval($1, COALESCE((SELECT MAX(id) FROM users), 0), true)`,
+    [seq],
+  );
+}
+
 /**
  * Keep the shared auth DB and the tenant DB in sync so multi-tenant logins
  * keep working. We upsert by email to avoid duplicate records when a user
@@ -18,8 +33,8 @@ async function upsertSharedUser(
   accessRole: string,
   companyId: string,
 ) {
-  try {
-    const sharedResult = await sharedPool.query(
+  const attemptInsert = async () =>
+    sharedPool.query(
       `
       INSERT INTO users (email, username, password_hash, access_role, company_id)
       VALUES ($1, $2, $3, $4, $5)
@@ -35,8 +50,17 @@ async function upsertSharedUser(
       [email, username, passwordHash, accessRole, companyId],
     );
 
+  try {
+    const sharedResult = await attemptInsert();
     return sharedResult.rows[0];
   } catch (err: any) {
+    const duplicatePrimaryKey = err?.code === '23505' && err?.constraint === 'users_pkey';
+    if (duplicatePrimaryKey) {
+      await repairUsersIdSequence(sharedPool as any);
+      const sharedResult = await attemptInsert();
+      return sharedResult.rows[0];
+    }
+
     // Some databases might not have a matching unique constraint/index for (company_id, email).
     // Fall back to a safe manual upsert keyed by email, without risking cross-company updates.
     const noConflictTarget =
@@ -94,8 +118,8 @@ async function upsertTenantUser(
   companyId: string,
   sharedUserId: number,
 ) {
-  try {
-    const tenantResult = await pool.query(
+  const attemptInsert = async () =>
+    pool.query(
       `
       INSERT INTO users (email, username, password_hash, access_role, company_id, shared_user_id)
       VALUES ($1, $2, $3, $4, $5, $6)
@@ -112,8 +136,17 @@ async function upsertTenantUser(
       [email, username, passwordHash, accessRole, companyId, sharedUserId],
     );
 
+  try {
+    const tenantResult = await attemptInsert();
     return tenantResult.rows[0];
   } catch (err: any) {
+    const duplicatePrimaryKey = err?.code === '23505' && err?.constraint === 'users_pkey';
+    if (duplicatePrimaryKey) {
+      await repairUsersIdSequence(pool);
+      const tenantResult = await attemptInsert();
+      return tenantResult.rows[0];
+    }
+
     const noConflictTarget =
       err?.code === '42P10' ||
       String(err?.message || '').includes('no unique or exclusion constraint matching the ON CONFLICT specification');
