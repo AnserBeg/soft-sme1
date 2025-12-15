@@ -6,19 +6,48 @@ import { resolveTenantCompanyId } from '../utils/tenantCompany';
 
 const router = express.Router();
 
-async function repairUsersIdSequence(targetPool: typeof pool) {
-  const seqResult = await targetPool.query<{ seq: string | null }>(
+async function repairUsersIdSequence(targetPool: { query: typeof pool.query }) {
+  // Prefer pg_get_serial_sequence, but also fall back to parsing the column default
+  // in case the default points at a non-standard sequence.
+  const candidates: string[] = [];
+
+  const serialSeqResult = await targetPool.query<{ seq: string | null }>(
     `SELECT pg_get_serial_sequence('users', 'id') AS seq`,
   );
-  const seq = seqResult.rows[0]?.seq;
-  if (!seq) {
+  const serialSeq = serialSeqResult.rows[0]?.seq;
+  if (serialSeq) {
+    candidates.push(serialSeq);
+  }
+
+  const defaultExprResult = await targetPool.query<{ default_expr: string | null }>(
+    `
+    SELECT pg_get_expr(d.adbin, d.adrelid) AS default_expr
+    FROM pg_attrdef d
+    JOIN pg_attribute a ON a.attrelid = d.adrelid AND a.attnum = d.adnum
+    JOIN pg_class c ON c.oid = d.adrelid
+    WHERE c.relname = 'users' AND a.attname = 'id'
+    LIMIT 1
+    `,
+  );
+  const defaultExpr = defaultExprResult.rows[0]?.default_expr ?? null;
+  const match = defaultExpr?.match(/nextval\('([^']+)'::regclass\)/i);
+  if (match?.[1]) {
+    candidates.push(match[1]);
+  }
+
+  const uniqueCandidates = Array.from(new Set(candidates)).filter(Boolean);
+  if (uniqueCandidates.length === 0) {
     return;
   }
 
-  await targetPool.query(
-    `SELECT setval($1, COALESCE((SELECT MAX(id) FROM users), 0), true)`,
-    [seq],
+  const maxIdResult = await targetPool.query<{ max_id: number | null }>(
+    `SELECT MAX(id) AS max_id FROM users`,
   );
+  const maxId = Number(maxIdResult.rows[0]?.max_id || 0);
+
+  for (const seq of uniqueCandidates) {
+    await targetPool.query(`SELECT setval($1, $2, true)`, [seq, maxId]);
+  }
 }
 
 /**
@@ -56,9 +85,20 @@ async function upsertSharedUser(
   } catch (err: any) {
     const duplicatePrimaryKey = err?.code === '23505' && err?.constraint === 'users_pkey';
     if (duplicatePrimaryKey) {
-      await repairUsersIdSequence(sharedPool as any);
-      const sharedResult = await attemptInsert();
-      return sharedResult.rows[0];
+      // In case multiple instances race or the sequence is badly out of sync, retry a few times.
+      for (let attempt = 0; attempt < 3; attempt++) {
+        await repairUsersIdSequence(sharedPool);
+        try {
+          const sharedResult = await attemptInsert();
+          return sharedResult.rows[0];
+        } catch (retryErr: any) {
+          if (!(retryErr?.code === '23505' && retryErr?.constraint === 'users_pkey')) {
+            throw retryErr;
+          }
+        }
+      }
+
+      throw err;
     }
 
     // Some databases might not have a matching unique constraint/index for (company_id, email).
@@ -142,9 +182,19 @@ async function upsertTenantUser(
   } catch (err: any) {
     const duplicatePrimaryKey = err?.code === '23505' && err?.constraint === 'users_pkey';
     if (duplicatePrimaryKey) {
-      await repairUsersIdSequence(pool);
-      const tenantResult = await attemptInsert();
-      return tenantResult.rows[0];
+      for (let attempt = 0; attempt < 3; attempt++) {
+        await repairUsersIdSequence(pool);
+        try {
+          const tenantResult = await attemptInsert();
+          return tenantResult.rows[0];
+        } catch (retryErr: any) {
+          if (!(retryErr?.code === '23505' && retryErr?.constraint === 'users_pkey')) {
+            throw retryErr;
+          }
+        }
+      }
+
+      throw err;
     }
 
     const noConflictTarget =
@@ -284,6 +334,12 @@ router.post('/', async (req: Request, res: Response) => {
     if (err.statusCode === 400 && err.code === 'EMAIL_IN_USE_OTHER_COMPANY') {
       res.status(400).json({ error: err.message });
     } else if (err.code === '23505') { // Unique constraint violation
+      if (err.constraint === 'users_pkey') {
+        return res.status(500).json({
+          error: 'Internal server error',
+          details: 'User ID sequence is out of sync; retry or contact support.',
+        });
+      }
       if (err.constraint?.includes('email')) {
         res.status(400).json({ error: 'Email already exists' });
       } else if (err.constraint?.includes('username')) {
