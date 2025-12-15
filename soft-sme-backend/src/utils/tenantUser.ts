@@ -26,47 +26,85 @@ export async function resolveTenantUserId(
 
   // First try an explicit mapping via shared_user_id to avoid ID drift between shared and tenant DBs.
   if (sharedId !== null) {
-    const bySharedId = await pool.query(
-      companyId
-        ? 'SELECT id FROM users WHERE shared_user_id = $1 AND company_id = $2'
-        : 'SELECT id FROM users WHERE shared_user_id = $1',
-      companyId ? [sharedId, companyId] : [sharedId],
+    // Prefer lookup without company_id to support deployments where each tenant has its own DB
+    // and the per-tenant copy uses a local company_id (often "1") instead of the shared company_id.
+    const bySharedIdNoCompany = await pool.query(
+      'SELECT id FROM users WHERE shared_user_id = $1',
+      [sharedId]
     );
-    if (bySharedId.rows.length > 0) {
-      return bySharedId.rows[0].id;
+    if (bySharedIdNoCompany.rows.length > 0) {
+      return bySharedIdNoCompany.rows[0].id;
+    }
+
+    if (companyId) {
+      const bySharedIdWithCompany = await pool.query(
+        'SELECT id FROM users WHERE shared_user_id = $1 AND company_id = $2',
+        [sharedId, companyId]
+      );
+      if (bySharedIdWithCompany.rows.length > 0) {
+        return bySharedIdWithCompany.rows[0].id;
+      }
     }
   }
 
-  const byId = await pool.query(
-    companyId
-      ? 'SELECT id FROM users WHERE id = $1 AND company_id = $2'
-      : 'SELECT id FROM users WHERE id = $1',
-    companyId ? [user.id, companyId] : [user.id]
-  );
-  if (byId.rows.length > 0) {
-    return byId.rows[0].id;
+  // Next, try the raw id as-is (works when tenant DB shares the same users table/ids).
+  // Again, prefer no company_id filter first to support per-tenant DBs.
+  const byIdNoCompany = await pool.query('SELECT id FROM users WHERE id = $1', [
+    user.id,
+  ]);
+  if (byIdNoCompany.rows.length > 0) {
+    return byIdNoCompany.rows[0].id;
+  }
+
+  if (companyId) {
+    const byIdWithCompany = await pool.query(
+      'SELECT id FROM users WHERE id = $1 AND company_id = $2',
+      [user.id, companyId]
+    );
+    if (byIdWithCompany.rows.length > 0) {
+      return byIdWithCompany.rows[0].id;
+    }
   }
 
   if (user.email) {
-    const byEmail = await pool.query(
-      companyId
-        ? 'SELECT id FROM users WHERE email = $1 AND company_id = $2'
-        : 'SELECT id FROM users WHERE email = $1',
-      companyId ? [user.email, companyId] : [user.email]
+    const byEmailNoCompany = await pool.query(
+      'SELECT id FROM users WHERE email = $1',
+      [user.email]
     );
-    if (byEmail.rows.length > 0) {
+    if (byEmailNoCompany.rows.length > 0) {
       // Opportunistically backfill shared_user_id when we can resolve by email.
       if (sharedId !== null) {
         try {
-          await pool.query(
-            'UPDATE users SET shared_user_id = $1 WHERE id = $2',
-            [sharedId, byEmail.rows[0].id],
-          );
+          await pool.query('UPDATE users SET shared_user_id = $1 WHERE id = $2', [
+            sharedId,
+            byEmailNoCompany.rows[0].id,
+          ]);
         } catch {
           /* non-blocking */
         }
       }
-      return byEmail.rows[0].id;
+      return byEmailNoCompany.rows[0].id;
+    }
+
+    if (companyId) {
+      const byEmailWithCompany = await pool.query(
+        'SELECT id FROM users WHERE email = $1 AND company_id = $2',
+        [user.email, companyId]
+      );
+      if (byEmailWithCompany.rows.length > 0) {
+        // Opportunistically backfill shared_user_id when we can resolve by email.
+        if (sharedId !== null) {
+          try {
+            await pool.query(
+              'UPDATE users SET shared_user_id = $1 WHERE id = $2',
+              [sharedId, byEmailWithCompany.rows[0].id]
+            );
+          } catch {
+            /* non-blocking */
+          }
+        }
+        return byEmailWithCompany.rows[0].id;
+      }
     }
   }
 
