@@ -193,35 +193,46 @@ router.post('/login', async (req: Request, res: Response) => {
       return res.status(400).json({ message: 'company_id must be an integer' });
     }
 
-    // Multi-company support: email can exist in multiple companies, so require scoping when ambiguous.
-    const result =
+    // Multi-company support: the same email can exist in multiple companies.
+    // If company_id isn't provided, select the one that matches the supplied password.
+    const candidates =
       companyId !== null
-        ? await pool.query(
-            'SELECT id, username, email, password_hash, company_id, role, access_role FROM users WHERE email = $1 AND company_id = $2',
-            [email, companyId]
-          )
-        : await pool.query(
-            'SELECT id, username, email, password_hash, company_id, role, access_role FROM users WHERE email = $1 ORDER BY company_id ASC',
-            [email]
-          );
+        ? (
+            await pool.query(
+              'SELECT id, username, email, password_hash, company_id, role, access_role FROM users WHERE email = $1 AND company_id = $2',
+              [email, companyId]
+            )
+          ).rows
+        : (
+            await pool.query(
+              'SELECT id, username, email, password_hash, company_id, role, access_role FROM users WHERE email = $1 ORDER BY company_id ASC',
+              [email]
+            )
+          ).rows;
 
-    if (companyId === null && result.rows.length > 1) {
+    if (candidates.length === 0) {
+      return res.status(401).json({ message: 'Invalid email or password' });
+    }
+
+    const matches: any[] = [];
+    for (const candidate of candidates) {
+      if (await bcrypt.compare(password, candidate.password_hash)) {
+        matches.push(candidate);
+      }
+    }
+
+    if (matches.length === 0) {
+      return res.status(401).json({ message: 'Invalid email or password' });
+    }
+
+    if (matches.length > 1) {
       return res.status(400).json({
-        message: 'Multiple companies found for this email. Provide company_id (or x-tenant-id) to login.',
+        message:
+          'Multiple companies matched these credentials. Provide company_id (or x-tenant-id) to login.',
       });
     }
 
-    const user = result.rows[0];
-
-    if (!user) {
-      return res.status(401).json({ message: 'Invalid email or password' });
-    }
-
-    const isPasswordValid = await bcrypt.compare(password, user.password_hash);
-
-    if (!isPasswordValid) {
-      return res.status(401).json({ message: 'Invalid email or password' });
-    }
+    const user = matches[0];
 
     // Create session for user
     const deviceInfo = SessionManager.extractDeviceInfo(req);
