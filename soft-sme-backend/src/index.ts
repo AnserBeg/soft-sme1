@@ -204,6 +204,8 @@ const corsOptions: cors.CorsOptions = {
     'X-Requested-With',
     'Accept',
     'Origin',
+    'x-tenant-id',
+    'X-Tenant-Id',
     // Support axios/fetch cache directives from browsers and proxies
     'Cache-Control',
     'cache-control',

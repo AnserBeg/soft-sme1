@@ -21,7 +21,7 @@ async function upsertSharedUser(
     `
     INSERT INTO users (email, username, password_hash, access_role, company_id)
     VALUES ($1, $2, $3, $4, $5)
-    ON CONFLICT (email)
+    ON CONFLICT (company_id, email)
     DO UPDATE SET 
       username = EXCLUDED.username,
       password_hash = EXCLUDED.password_hash,
@@ -48,7 +48,7 @@ async function upsertTenantUser(
     `
     INSERT INTO users (email, username, password_hash, access_role, company_id, shared_user_id)
     VALUES ($1, $2, $3, $4, $5, $6)
-    ON CONFLICT (email)
+    ON CONFLICT (company_id, email)
     DO UPDATE SET 
       username = EXCLUDED.username,
       password_hash = EXCLUDED.password_hash,

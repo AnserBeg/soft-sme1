@@ -178,16 +178,38 @@ router.post('/change-password', authMiddleware, async (req: Request, res: Respon
 // Login User with Session Management
 router.post('/login', async (req: Request, res: Response) => {
   const { email, password } = req.body;
+  const rawCompanyId = (req.body as any)?.company_id ?? req.headers['x-tenant-id'];
+  const companyId =
+    rawCompanyId === undefined || rawCompanyId === null || rawCompanyId === ''
+      ? null
+      : Number(rawCompanyId);
 
   if (!email || !password) {
     return res.status(400).json({ message: 'Email and password are required' });
   }
 
   try {
-    const result = await pool.query(
-      'SELECT id, username, email, password_hash, company_id, role, access_role FROM users WHERE email = $1',
-      [email]
-    );
+    if (companyId !== null && !Number.isInteger(companyId)) {
+      return res.status(400).json({ message: 'company_id must be an integer' });
+    }
+
+    // Multi-company support: email can exist in multiple companies, so require scoping when ambiguous.
+    const result =
+      companyId !== null
+        ? await pool.query(
+            'SELECT id, username, email, password_hash, company_id, role, access_role FROM users WHERE email = $1 AND company_id = $2',
+            [email, companyId]
+          )
+        : await pool.query(
+            'SELECT id, username, email, password_hash, company_id, role, access_role FROM users WHERE email = $1 ORDER BY company_id ASC',
+            [email]
+          );
+
+    if (companyId === null && result.rows.length > 1) {
+      return res.status(400).json({
+        message: 'Multiple companies found for this email. Provide company_id (or x-tenant-id) to login.',
+      });
+    }
 
     const user = result.rows[0];
 
