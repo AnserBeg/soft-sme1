@@ -31,16 +31,28 @@ api.interceptors.request.use((config) => {
     console.warn('API Request - No token found in localStorage');
   }
 
-  // Multi-tenant: after login the backend returns user.company_id; use it to scope tenant DB.
-  try {
-    const userRaw = localStorage.getItem('userData');
-    const user = userRaw ? JSON.parse(userRaw) : null;
-    const companyId = user?.company_id;
-    if (companyId !== undefined && companyId !== null && companyId !== '') {
-      config.headers['x-tenant-id'] = String(companyId);
+  // Multi-tenant: use stored user.company_id to scope tenant DB, but never send a stale tenant
+  // hint on auth endpoints (login) because the stored user may belong to a different company.
+  const url = config.url || '';
+  const isAuthEndpoint = url.startsWith('/auth/');
+  if (!isAuthEndpoint) {
+    try {
+      const userRaw = localStorage.getItem('userData');
+      const user = userRaw ? JSON.parse(userRaw) : null;
+      const companyId = user?.company_id;
+      if (companyId !== undefined && companyId !== null && companyId !== '') {
+        config.headers['x-tenant-id'] = String(companyId);
+      }
+    } catch {
+      /* ignore */
     }
-  } catch {
-    /* ignore */
+  } else {
+    try {
+      delete (config.headers as any)['x-tenant-id'];
+      delete (config.headers as any)['X-Tenant-Id'];
+    } catch {
+      /* ignore */
+    }
   }
   return config;
 });

@@ -53,6 +53,10 @@ export const useAuthState = () => {
   const login = async (email: string, password: string): Promise<boolean> => {
     setIsLoading(true);
     try {
+      // Clear any stale session before attempting a new login (prevents cross-company confusion)
+      localStorage.removeItem('sessionToken');
+      localStorage.removeItem('userData');
+
       const response = await authAPI.login(email, password);
       
       if (response.sessionToken && response.user) {
@@ -73,7 +77,7 @@ export const useAuthState = () => {
         
         toast({
           title: "Welcome back!",
-          description: `Successfully logged in as ${response.user.email}`,
+          description: `Successfully logged in as ${response.user.email} (company ${response.user.company_id ?? 'unknown'})`,
         });
         
         return true;
