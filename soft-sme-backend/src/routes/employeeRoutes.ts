@@ -2,6 +2,7 @@ import express, { Request, Response } from 'express';
 import { pool } from '../db';
 import { sharedPool } from '../dbShared';
 import bcrypt from 'bcrypt';
+import { resolveTenantCompanyId } from '../utils/tenantCompany';
 
 const router = express.Router();
 
@@ -67,20 +68,21 @@ async function upsertTenantUser(
 // Get all employees for the current user's company
 router.get('/', async (req: Request, res: Response) => {
   try {
-    const company_id = req.user?.company_id;
+    const sharedCompanyId = req.user?.company_id;
+    const tenantCompanyId = await resolveTenantCompanyId(pool, sharedCompanyId);
     
     // Debug logging
-    console.log('Fetching employees for company_id:', company_id);
+    console.log('Fetching employees for company_id:', sharedCompanyId, 'tenantCompanyId:', tenantCompanyId);
     console.log('User object:', req.user);
     
-    if (!company_id) {
+    if (!sharedCompanyId || !tenantCompanyId) {
       console.error('No company_id found in user object');
       return res.status(400).json({ error: 'Company ID not found' });
     }
     
     const result = await pool.query(
       'SELECT id, email, username, access_role FROM users WHERE company_id = $1',
-      [company_id]
+      [tenantCompanyId]
     );
     res.json(result.rows);
   } catch (err: any) {
@@ -97,30 +99,32 @@ router.get('/', async (req: Request, res: Response) => {
 router.post('/', async (req: Request, res: Response) => {
   const { email, username, password, access_role } = req.body;
   try {
-    const company_id = req.user?.company_id;
+    const sharedCompanyId = req.user?.company_id;
+    const tenantCompanyId = await resolveTenantCompanyId(pool, sharedCompanyId);
     
     // Debug logging
     console.log('Creating employee with data:', {
       email,
       username,
       access_role,
-      company_id,
+      company_id: sharedCompanyId,
+      tenantCompanyId,
       user: req.user
     });
     
-    if (!company_id) {
+    if (!sharedCompanyId || !tenantCompanyId) {
       console.error('No company_id found in user object');
       return res.status(400).json({ error: 'Company ID not found' });
     }
     
     const hashedPassword = await bcrypt.hash(password, 10);
-    const sharedUser = await upsertSharedUser(email, username, hashedPassword, access_role, company_id);
+    const sharedUser = await upsertSharedUser(email, username, hashedPassword, access_role, sharedCompanyId);
     const tenantUser = await upsertTenantUser(
       email,
       username,
       hashedPassword,
       access_role,
-      company_id,
+      tenantCompanyId,
       sharedUser.id,
     );
 
@@ -165,14 +169,15 @@ router.put('/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
   const { username, access_role, password } = req.body;
   try {
-    const company_id = req.user?.company_id;
-    if (!company_id) {
+    const sharedCompanyId = req.user?.company_id;
+    const tenantCompanyId = await resolveTenantCompanyId(pool, sharedCompanyId);
+    if (!sharedCompanyId || !tenantCompanyId) {
       return res.status(400).json({ error: 'Company ID not found' });
     }
 
     const existing = await pool.query(
       'SELECT email, username, password_hash FROM users WHERE id = $1 AND company_id = $2',
-      [id, company_id],
+      [id, tenantCompanyId],
     );
 
     if (existing.rows.length === 0) {
@@ -186,10 +191,16 @@ router.put('/:id', async (req: Request, res: Response) => {
 
     const tenantResult = await pool.query(
       'UPDATE users SET username = $1, access_role = $2, password_hash = $3 WHERE id = $4 AND company_id = $5 RETURNING id, email, username, access_role, shared_user_id',
-      [newUsername, newAccessRole, newPasswordHash, id, company_id],
+      [newUsername, newAccessRole, newPasswordHash, id, tenantCompanyId],
     );
 
-    const sharedUser = await upsertSharedUser(current.email, newUsername, newPasswordHash, newAccessRole, company_id);
+    const sharedUser = await upsertSharedUser(
+      current.email,
+      newUsername,
+      newPasswordHash,
+      newAccessRole,
+      sharedCompanyId,
+    );
 
     // Keep the mapping set even if the row pre-dated the shared_user_id column.
     if (!tenantResult.rows[0]?.shared_user_id) {
@@ -210,24 +221,25 @@ router.put('/:id', async (req: Request, res: Response) => {
 router.delete('/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
   try {
-    const company_id = req.user?.company_id;
-    if (!company_id) {
+    const sharedCompanyId = req.user?.company_id;
+    const tenantCompanyId = await resolveTenantCompanyId(pool, sharedCompanyId);
+    if (!sharedCompanyId || !tenantCompanyId) {
       return res.status(400).json({ error: 'Company ID not found' });
     }
 
     const existing = await pool.query(
       'SELECT email FROM users WHERE id = $1 AND company_id = $2',
-      [id, company_id],
+      [id, tenantCompanyId],
     );
 
     if (existing.rows.length === 0) {
       return res.status(404).json({ error: 'Employee not found' });
     }
 
-    await pool.query('DELETE FROM users WHERE id = $1 AND company_id = $2', [id, company_id]);
+    await pool.query('DELETE FROM users WHERE id = $1 AND company_id = $2', [id, tenantCompanyId]);
     await sharedPool.query('DELETE FROM users WHERE email = $1 AND company_id = $2', [
       existing.rows[0].email,
-      company_id,
+      sharedCompanyId,
     ]);
 
     res.json({ success: true });
