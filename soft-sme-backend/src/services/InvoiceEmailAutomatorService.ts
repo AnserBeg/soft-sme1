@@ -161,8 +161,9 @@ export class InvoiceEmailAutomatorService {
     const values: any[] = [];
     let idx = 1;
 
-    const set = (key: string, value: any) => {
-      columns.push(`${key} = $${idx}`);
+    const set = (key: string, value: any, opts: { cast?: string } = {}) => {
+      const cast = opts.cast ? `::${opts.cast}` : '';
+      columns.push(`${key} = $${idx}${cast}`);
       values.push(value);
       idx += 1;
     };
@@ -171,10 +172,34 @@ export class InvoiceEmailAutomatorService {
     if (patch.purchase_id !== undefined) set('purchase_id', patch.purchase_id);
     if (patch.ocr_upload_id !== undefined) set('ocr_upload_id', patch.ocr_upload_id);
     if (patch.ocr_raw_text !== undefined) set('ocr_raw_text', patch.ocr_raw_text);
-    if (patch.ocr_normalized !== undefined) set('ocr_normalized', patch.ocr_normalized);
-    if (patch.ocr_warnings !== undefined) set('ocr_warnings', patch.ocr_warnings);
-    if (patch.ocr_notes !== undefined) set('ocr_notes', patch.ocr_notes);
-    if (patch.ocr_issues !== undefined) set('ocr_issues', patch.ocr_issues);
+    if (patch.ocr_normalized !== undefined) {
+      set(
+        'ocr_normalized',
+        patch.ocr_normalized == null ? null : JSON.stringify(patch.ocr_normalized),
+        { cast: 'jsonb' }
+      );
+    }
+    if (patch.ocr_warnings !== undefined) {
+      set(
+        'ocr_warnings',
+        patch.ocr_warnings == null ? null : JSON.stringify(patch.ocr_warnings),
+        { cast: 'jsonb' }
+      );
+    }
+    if (patch.ocr_notes !== undefined) {
+      set(
+        'ocr_notes',
+        patch.ocr_notes == null ? null : JSON.stringify(patch.ocr_notes),
+        { cast: 'jsonb' }
+      );
+    }
+    if (patch.ocr_issues !== undefined) {
+      set(
+        'ocr_issues',
+        patch.ocr_issues == null ? null : JSON.stringify(patch.ocr_issues),
+        { cast: 'jsonb' }
+      );
+    }
     if (patch.error !== undefined) set('error', patch.error);
 
     if (columns.length === 0) return;

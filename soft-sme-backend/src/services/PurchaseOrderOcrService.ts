@@ -251,25 +251,32 @@ export class PurchaseOrderOcrService {
       .join('\n\n')
       .trim();
 
-    const aiModule = await import('./PurchaseOrderAiReviewService');
-    const aiResult = await aiModule.PurchaseOrderAiReviewService.reviewRawText(combinedRawText);
+    const heuristic = this.normalizeText(combinedRawText, []);
+    const associationModule = await import('./PurchaseOrderOcrAssociationService');
+    const enrichment = await associationModule.PurchaseOrderOcrAssociationService.enrich({
+      normalized: heuristic.normalized,
+      rawText: combinedRawText,
+    });
 
     const warningSet = new Set<string>();
     extractions.forEach((entry) => entry.warnings.forEach((w) => warningSet.add(w)));
-    aiResult.warnings.forEach((w: string) => warningSet.add(w));
+    heuristic.warnings.forEach((w) => warningSet.add(w));
+    enrichment.warnings.forEach((w: string) => warningSet.add(w));
+
+    const noteSet = new Set<string>([...heuristic.notes, ...enrichment.notes]);
 
     const primaryFile = files[0];
     const response: PurchaseOrderOcrResponse = {
-      source: 'ai',
+      source: 'ocr',
       uploadId: crypto.randomUUID(),
       file: this.mapFileMetadata(primaryFile, uploadedAt),
       files: files.map((file) => this.mapFileMetadata(file, uploadedAt)),
       ocr: {
         rawText: combinedRawText,
-        normalized: aiResult.normalized,
+        normalized: enrichment.normalized,
         warnings: Array.from(warningSet),
-        notes: [...aiResult.notes],
-        issues: (aiResult as any).issues,
+        notes: Array.from(noteSet),
+        issues: enrichment.issues,
         processingTimeMs: Date.now() - startTime,
       },
     };
@@ -289,26 +296,32 @@ export class PurchaseOrderOcrService {
 
     const extraction = await this.extractText(file.path, file.mimetype);
 
-    const aiModule = await import('./PurchaseOrderAiReviewService');
-    const aiResult = await aiModule.PurchaseOrderAiReviewService.reviewRawText(extraction.text);
+    const heuristic = this.normalizeText(extraction.text, extraction.rows);
+    const associationModule = await import('./PurchaseOrderOcrAssociationService');
+    const enrichment = await associationModule.PurchaseOrderOcrAssociationService.enrich({
+      normalized: heuristic.normalized,
+      rawText: extraction.text,
+    });
 
     const warningSet = new Set<string>([
       ...extraction.warnings,
-      ...aiResult.warnings,
+      ...heuristic.warnings,
+      ...enrichment.warnings,
     ]);
     const warnings = Array.from(warningSet);
+    const noteSet = new Set<string>([...heuristic.notes, ...enrichment.notes]);
 
     const response: PurchaseOrderOcrResponse = {
-      source: 'ai',
+      source: 'ocr',
       uploadId: crypto.randomUUID(),
       file: this.mapFileMetadata(file, uploadedAt),
       files: [this.mapFileMetadata(file, uploadedAt)],
       ocr: {
         rawText: extraction.text,
-        normalized: aiResult.normalized,
+        normalized: enrichment.normalized,
         warnings,
-        notes: [...aiResult.notes],
-        issues: (aiResult as any).issues,
+        notes: Array.from(noteSet),
+        issues: enrichment.issues,
         processingTimeMs: Date.now() - startTime,
       },
     };
@@ -1450,7 +1463,7 @@ export class PurchaseOrderOcrService {
       throw new Error('Gemini API key not configured');
     }
 
-    const model = process.env.AI_OCR_MODEL || process.env.AI_MODEL || 'gemini-2.5-flash';
+    const model = process.env.AI_OCR_MODEL || process.env.AI_MODEL || 'gemini-2.5-flash-lite';
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
     const fileBytes = await fs.promises.readFile(filePath);
