@@ -37,6 +37,7 @@ import UnifiedProductDialog, { ProductFormValues } from '../components/UnifiedPr
 import UnsavedChangesGuard from '../components/UnsavedChangesGuard';
 import { normalizeQuoteStatus, QuoteStatus } from '../utils/quoteStatus';
 import QuoteTemplatesDialog, { QuoteDescriptionTemplate } from '../components/QuoteTemplatesDialog';
+import QuoteDescriptionPreview from '../components/QuoteDescriptionPreview';
 
 interface CustomerOption {
   label: string;
@@ -215,6 +216,29 @@ const QuoteEditorPage: React.FC = () => {
       }
     }, 0);
   }, [setProductDescription, setIsTemplateDialogOpen, setSuccess]);
+
+  const handleInsertDescriptionTable = useCallback(() => {
+    const tableSnippet = `| Column 1 | Column 2 |\n| --- | --- |\n|  |  |\n`;
+    const textarea = productDescriptionRef.current;
+
+    if (!textarea) {
+      setProductDescription((prev) => `${prev}${prev.endsWith('\n') ? '' : '\n'}${tableSnippet}`);
+      return;
+    }
+
+    const start = textarea.selectionStart ?? textarea.value.length;
+    const end = textarea.selectionEnd ?? textarea.value.length;
+    const before = productDescription.slice(0, start);
+    const after = productDescription.slice(end);
+    const nextValue = `${before}${tableSnippet}${after}`;
+    setProductDescription(nextValue);
+
+    window.requestAnimationFrame(() => {
+      textarea.focus();
+      const nextCursor = start + tableSnippet.length;
+      textarea.setSelectionRange(nextCursor, nextCursor);
+    });
+  }, [productDescription]);
 
   // Set initial signature only once after data is fully loaded
   useEffect(() => {
@@ -1092,14 +1116,19 @@ const QuoteEditorPage: React.FC = () => {
                   <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
                     Product Description
                   </Typography>
-                  <Button
-                    variant="outlined"
-                    size="small"
-                    startIcon={<TableChartIcon fontSize="small" />}
-                    onClick={() => setIsTemplateDialogOpen(true)}
-                  >
-                    Templates
-                  </Button>
+                  <Stack direction="row" spacing={1}>
+                    <Button variant="outlined" size="small" onClick={() => setIsTemplateDialogOpen(true)}>
+                      Templates
+                    </Button>
+                    <Button
+                      variant="outlined"
+                      size="small"
+                      startIcon={<TableChartIcon fontSize="small" />}
+                      onClick={handleInsertDescriptionTable}
+                    >
+                      Insert Table
+                    </Button>
+                  </Stack>
                 </Stack>
                 <TextField
                   placeholder="Add the quote details here..."
@@ -1118,6 +1147,14 @@ const QuoteEditorPage: React.FC = () => {
                     },
                   }}
                 />
+                <Box sx={{ mt: 1.5 }}>
+                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.75 }}>
+                    Preview
+                  </Typography>
+                  <Box sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, p: 1.5, bgcolor: 'background.paper' }}>
+                    <QuoteDescriptionPreview value={productDescription} />
+                  </Box>
+                </Box>
                 <Box sx={{ mt: 1.5, display: 'flex', alignItems: 'center', gap: 1.5 }}>
                   <Button
                     variant="contained"

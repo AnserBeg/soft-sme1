@@ -46,7 +46,22 @@ async function repairUsersIdSequence(targetPool: { query: typeof pool.query }) {
   const maxId = Number(maxIdResult.rows[0]?.max_id || 0);
 
   for (const seq of uniqueCandidates) {
-    await targetPool.query(`SELECT setval($1, $2, true)`, [seq, maxId]);
+    // `setval` is safest when the sequence name is treated as regclass.
+    // Use to_regclass() to avoid raising if the candidate isn't a real sequence.
+    await targetPool.query(
+      `
+      DO $$
+      DECLARE seq_reg regclass;
+      BEGIN
+        seq_reg := to_regclass($1);
+        IF seq_reg IS NULL THEN
+          RETURN;
+        END IF;
+        PERFORM setval(seq_reg, $2::bigint, true);
+      END $$;
+      `,
+      [seq, maxId],
+    );
   }
 }
 

@@ -1,6 +1,8 @@
 import nodemailer from 'nodemailer';
 import { Pool } from 'pg';
 import PDFDocument from 'pdfkit';
+import { escapeHtml, normalizeDocumentText } from '../utils/documentText';
+import { renderQuoteDescriptionHtml, renderQuoteDescriptionPlainText } from '../utils/quoteDescription';
 
 export interface EmailConfig {
   host: string;
@@ -373,6 +375,19 @@ Note: A detailed PDF version of this purchase order is attached to this email.
       ? (data.estimatedCost as number)
       : parseFloat(String(data.estimatedCost)) || 0;
 
+    const safeQuoteNumber = escapeHtml(String(data.quoteNumber ?? ''));
+    const safeCustomerName = escapeHtml(String(data.customerName ?? ''));
+    const safeProductName = escapeHtml(String(data.productName ?? ''));
+    const safeValidUntil = escapeHtml(String(data.validUntil ?? ''));
+    const normalizedDescription = normalizeDocumentText(data.productDescription ?? '');
+    const productDescriptionHtml = renderQuoteDescriptionHtml(normalizedDescription);
+    const productDescriptionText = renderQuoteDescriptionPlainText(normalizedDescription);
+
+    const safeHeaderValue = (value: unknown): string =>
+      String(value ?? '')
+        .replace(/[\r\n]+/g, ' ')
+        .trim();
+
     const productInfoHtml = `
       <h3>Quote Details:</h3>
       <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
@@ -385,8 +400,10 @@ Note: A detailed PDF version of this purchase order is attached to this email.
         </thead>
         <tbody>
           <tr>
-            <td style="border: 1px solid #ddd; padding: 8px;">${data.productName}</td>
-            <td style="border: 1px solid #ddd; padding: 8px;">${data.productDescription || ''}</td>
+            <td style="border: 1px solid #ddd; padding: 8px;">${safeProductName}</td>
+            <td style="border: 1px solid #ddd; padding: 8px;">
+              ${productDescriptionHtml}
+            </td>
             <td style="border: 1px solid #ddd; padding: 8px;">$${safeEstimated.toFixed(2)}</td>
           </tr>
         </tbody>
@@ -394,27 +411,29 @@ Note: A detailed PDF version of this purchase order is attached to this email.
     `;
 
     return {
-      subject: `Quote ${data.quoteNumber} - ${data.customerName}`,
+      subject: `Quote ${safeHeaderValue(data.quoteNumber)} - ${safeHeaderValue(data.customerName)}`,
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
           <h2 style="color: #333;">Quote</h2>
-          <p><strong>Quote Number:</strong> ${data.quoteNumber}</p>
-          <p><strong>Customer:</strong> ${data.customerName}</p>
+          <p><strong>Quote Number:</strong> ${safeQuoteNumber}</p>
+          <p><strong>Customer:</strong> ${safeCustomerName}</p>
           <p><strong>Total Amount:</strong> $${safeEstimated.toFixed(2)}</p>
-          <p><strong>Valid Until:</strong> ${data.validUntil}</p>
+          <p><strong>Valid Until:</strong> ${safeValidUntil}</p>
           ${productInfoHtml}
-          <p>This quote is valid until ${data.validUntil}.</p>
+          <p>This quote is valid until ${safeValidUntil}.</p>
         </div>
       `,
       text: `
-Quote
-Quote Number: ${data.quoteNumber}
-Customer: ${data.customerName}
-Product: ${data.productName}
-Estimated Price: $${safeEstimated.toFixed(2)}
-Valid Until: ${data.validUntil}
-
-This quote is valid until ${data.validUntil}.
+ Quote
+ Quote Number: ${data.quoteNumber}
+ Customer: ${data.customerName}
+ Product: ${data.productName}
+ Description:
+ ${productDescriptionText}
+ Estimated Price: $${safeEstimated.toFixed(2)}
+ Valid Until: ${data.validUntil}
+ 
+ This quote is valid until ${data.validUntil}.
       `
     };
   }

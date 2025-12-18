@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Box,
@@ -25,6 +25,7 @@ import ContentPasteGoIcon from '@mui/icons-material/ContentPasteGo';
 import TableChartIcon from '@mui/icons-material/TableChart';
 import { AxiosError } from 'axios';
 import api from '../api/axios';
+import QuoteDescriptionPreview from './QuoteDescriptionPreview';
 
 export interface QuoteDescriptionTemplate {
   template_id: number;
@@ -76,6 +77,7 @@ const QuoteTemplatesDialog: React.FC<QuoteTemplatesDialogProps> = ({
   const [formErrors, setFormErrors] = useState<{ name?: string; content?: string; submit?: string }>({});
   const [isSaving, setIsSaving] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState<QuoteDescriptionTemplate | null>(null);
+  const contentInputRef = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
     if (!open) {
@@ -178,6 +180,32 @@ const QuoteTemplatesDialog: React.FC<QuoteTemplatesDialogProps> = ({
     } finally {
       setIsSaving(false);
     }
+  };
+
+  const insertTableTemplate = () => {
+    const tableSnippet = `| Column 1 | Column 2 |\n| --- | --- |\n|  |  |\n`;
+    const textarea = contentInputRef.current;
+
+    if (!textarea) {
+      setFormState((prev) => ({
+        ...prev,
+        content: `${prev.content}${prev.content.endsWith('\n') ? '' : '\n'}${tableSnippet}`,
+      }));
+      return;
+    }
+
+    const start = textarea.selectionStart ?? textarea.value.length;
+    const end = textarea.selectionEnd ?? textarea.value.length;
+    const before = formState.content.slice(0, start);
+    const after = formState.content.slice(end);
+    const nextValue = `${before}${tableSnippet}${after}`;
+    setFormState((prev) => ({ ...prev, content: nextValue }));
+
+    window.requestAnimationFrame(() => {
+      textarea.focus();
+      const nextCursor = start + tableSnippet.length;
+      textarea.setSelectionRange(nextCursor, nextCursor);
+    });
   };
 
   const handleDeleteTemplate = async (template: QuoteDescriptionTemplate) => {
@@ -322,8 +350,28 @@ const QuoteTemplatesDialog: React.FC<QuoteTemplatesDialogProps> = ({
               fullWidth
               multiline
               minRows={8}
+              inputRef={contentInputRef}
               InputProps={{ sx: monospaceInputSx }}
             />
+            <Stack direction="row" spacing={1} justifyContent="flex-end">
+              <Button
+                variant="outlined"
+                size="small"
+                startIcon={<TableChartIcon fontSize="small" />}
+                onClick={insertTableTemplate}
+              >
+                Insert Table
+              </Button>
+            </Stack>
+            <Divider />
+            <Box>
+              <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1 }}>
+                Preview
+              </Typography>
+              <Box sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, p: 1.5, bgcolor: 'background.paper' }}>
+                <QuoteDescriptionPreview value={formState.content} />
+              </Box>
+            </Box>
             {formErrors.submit && <Alert severity="error">{formErrors.submit}</Alert>}
           </Stack>
         </DialogContent>

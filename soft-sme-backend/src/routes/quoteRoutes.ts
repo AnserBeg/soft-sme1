@@ -4,6 +4,7 @@ import { getNextSalesOrderSequenceNumberForYear } from '../utils/sequence';
 import { QuoteService } from '../services/QuoteService';
 import PDFDocument from 'pdfkit';
 import { getLogoImageSource } from '../utils/pdfLogoHelper';
+import { renderQuoteDescriptionToPdf } from '../utils/quoteDescription';
 
 const formatCurrency = (value: number | string | null | undefined): string => {
   const amount = Number(value ?? 0);
@@ -568,9 +569,8 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
     const productNameResult = doc.text(quote.product_name || 'N/A', 170, y, { width: 350 });
     y = Math.max(productNameResult.y, y) + 4;
     doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Description:', 50, y);
+    y = renderQuoteDescriptionToPdf(doc, quote.product_description || '', 170, y, 350) + 8;
     doc.font('Helvetica').fontSize(11).fillColor('#000000');
-    const productDescResult = doc.text(quote.product_description || 'N/A', 170, y, { width: 350 });
-    y = Math.max(productDescResult.y, y) + 8;
     // Horizontal line
     doc.moveTo(50, y).lineTo(550, y).strokeColor('#444444').lineWidth(1).stroke();
     y += 14;
