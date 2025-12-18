@@ -26,23 +26,30 @@ export async function resolveTenantUserId(
 
   // First try an explicit mapping via shared_user_id to avoid ID drift between shared and tenant DBs.
   if (sharedId !== null) {
-    // Prefer lookup without company_id to support deployments where each tenant has its own DB
-    // and the per-tenant copy uses a local company_id (often "1") instead of the shared company_id.
-    const bySharedIdNoCompany = await pool.query(
-      'SELECT id FROM users WHERE shared_user_id = $1',
-      [sharedId]
-    );
-    if (bySharedIdNoCompany.rows.length > 0) {
-      return bySharedIdNoCompany.rows[0].id;
-    }
-
-    if (companyId) {
-      const bySharedIdWithCompany = await pool.query(
-        'SELECT id FROM users WHERE shared_user_id = $1 AND company_id = $2',
-        [sharedId, companyId]
+    try {
+      // Prefer lookup without company_id to support deployments where each tenant has its own DB
+      // and the per-tenant copy uses a local company_id (often "1") instead of the shared company_id.
+      const bySharedIdNoCompany = await pool.query(
+        'SELECT id FROM users WHERE shared_user_id = $1',
+        [sharedId]
       );
-      if (bySharedIdWithCompany.rows.length > 0) {
-        return bySharedIdWithCompany.rows[0].id;
+      if (bySharedIdNoCompany.rows.length > 0) {
+        return bySharedIdNoCompany.rows[0].id;
+      }
+
+      if (companyId) {
+        const bySharedIdWithCompany = await pool.query(
+          'SELECT id FROM users WHERE shared_user_id = $1 AND company_id = $2',
+          [sharedId, companyId]
+        );
+        if (bySharedIdWithCompany.rows.length > 0) {
+          return bySharedIdWithCompany.rows[0].id;
+        }
+      }
+    } catch (error: any) {
+      // Older tenant schemas might not have `shared_user_id` yet.
+      if (error?.code !== '42703') {
+        throw error;
       }
     }
   }

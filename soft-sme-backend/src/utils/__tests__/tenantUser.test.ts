@@ -89,5 +89,30 @@ describe('resolveTenantUserId', () => {
       [99, 123]
     );
   });
-});
 
+  test('skips shared_user_id lookup when column missing', async () => {
+    const pool: any = {
+      query: jest.fn(async (sql: string, params: any[]) => {
+        if (sql === 'SELECT id FROM users WHERE shared_user_id = $1') {
+          const err: any = new Error('column "shared_user_id" does not exist');
+          err.code = '42703';
+          throw err;
+        }
+        if (sql === 'SELECT id FROM users WHERE id = $1') {
+          expect(params).toEqual(['24']);
+          return { rows: [{ id: 24 }] };
+        }
+        throw new Error(`unexpected query: ${sql}`);
+      }),
+    };
+
+    const tenantUserId = await resolveTenantUserId(pool, {
+      id: '24',
+      email: 'user@example.com',
+      company_id: '2',
+    });
+
+    expect(tenantUserId).toBe(24);
+    expect(pool.query).toHaveBeenCalledTimes(2);
+  });
+});

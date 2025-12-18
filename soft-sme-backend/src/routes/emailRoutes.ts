@@ -5,12 +5,32 @@ import DocumentEmailService from '../services/DocumentEmailService';
 import { pool } from '../db';
 import { authMiddleware } from '../middleware/authMiddleware';
 import { AgentEmailService } from '../services/agentEmail/service';
+import { resolveTenantUserId } from '../utils/tenantUser';
 
 const router = express.Router();
 const emailService = new EmailService(pool);
 const pdfService = new PDFService(pool);
 const documentEmailService = new DocumentEmailService(pool, emailService, pdfService);
 const agentEmailService = new AgentEmailService(pool);
+
+async function requireTenantUserId(req: Request, res: Response): Promise<number | null> {
+  if (!req.user) {
+    res.status(401).json({ success: false, message: 'User not authenticated' });
+    return null;
+  }
+
+  const tenantUserId = await resolveTenantUserId(pool, req.user);
+  if (!tenantUserId) {
+    res.status(404).json({
+      success: false,
+      message: 'User not found in tenant database',
+      hint: 'Ensure the tenant DB has a users row for this login (or a shared_user_id mapping).',
+    });
+    return null;
+  }
+
+  return tenantUserId;
+}
 
 // Test email configuration
 router.get('/test', async (req: Request, res: Response) => {
@@ -27,7 +47,10 @@ router.get('/test', async (req: Request, res: Response) => {
 router.post('/send', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { to, subject, message, attachments } = req.body;
-    const userId = req.user?.id ? parseInt(req.user.id) : undefined;
+    const userId = await requireTenantUserId(req, res);
+    if (!userId) {
+      return;
+    }
 
     if (!to || !subject || !message) {
       return res.status(400).json({ success: false, message: 'Missing required fields: to, subject, message' });
@@ -51,9 +74,9 @@ router.post('/send', authMiddleware, async (req: Request, res: Response) => {
 
 router.post('/connect/titan', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const userId = req.user?.id ? Number(req.user.id) : null;
+    const userId = await requireTenantUserId(req, res);
     if (!userId) {
-      return res.status(401).json({ success: false, message: 'User not authenticated' });
+      return;
     }
 
     const connection = await agentEmailService.connectTitan(userId, req.body ?? {});
@@ -93,9 +116,9 @@ router.post('/connect/titan', authMiddleware, async (req: Request, res: Response
 
 router.get('/titan/status', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const userId = req.user?.id ? Number(req.user.id) : null;
+    const userId = await requireTenantUserId(req, res);
     if (!userId) {
-      return res.status(401).json({ success: false, message: 'User not authenticated' });
+      return;
     }
 
     try {
@@ -147,9 +170,9 @@ router.get('/titan/status', authMiddleware, async (req: Request, res: Response) 
 
 router.get('/titan/search', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const userId = req.user?.id ? Number(req.user.id) : null;
+    const userId = await requireTenantUserId(req, res);
     if (!userId) {
-      return res.status(401).json({ success: false, message: 'User not authenticated' });
+      return;
     }
 
     const q = (req.query?.q ?? '').toString();
@@ -166,9 +189,9 @@ router.get('/titan/search', authMiddleware, async (req: Request, res: Response) 
 
 router.get('/titan/messages/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const userId = req.user?.id ? Number(req.user.id) : null;
+    const userId = await requireTenantUserId(req, res);
     if (!userId) {
-      return res.status(401).json({ success: false, message: 'User not authenticated' });
+      return;
     }
 
     const message = await agentEmailService.emailRead(userId, req.params.id);
@@ -181,9 +204,9 @@ router.get('/titan/messages/:id', authMiddleware, async (req: Request, res: Resp
 
 router.get('/titan/messages/:id/attachments/:attachmentId', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const userId = req.user?.id ? Number(req.user.id) : null;
+    const userId = await requireTenantUserId(req, res);
     if (!userId) {
-      return res.status(401).json({ success: false, message: 'User not authenticated' });
+      return;
     }
 
     const attachment = await agentEmailService.emailGetAttachment(
@@ -201,9 +224,9 @@ router.get('/titan/messages/:id/attachments/:attachmentId', authMiddleware, asyn
 
 router.post('/disconnect', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const userId = req.user?.id ? Number(req.user.id) : null;
+    const userId = await requireTenantUserId(req, res);
     if (!userId) {
-      return res.status(401).json({ success: false, message: 'User not authenticated' });
+      return;
     }
 
     const result = await agentEmailService.disconnect(userId);
@@ -220,7 +243,10 @@ router.post('/sales-order/:salesOrderId', authMiddleware, async (req: Request, r
   try {
     const { salesOrderId } = req.params;
     const { to } = req.body;
-    const userId = req.user?.id ? parseInt(req.user.id) : undefined;
+    const userId = await requireTenantUserId(req, res);
+    if (!userId) {
+      return;
+    }
 
     if (!to) {
       return res.status(400).json({ success: false, message: 'Missing recipient email' });
@@ -280,7 +306,10 @@ router.post('/purchase-order/:purchaseOrderId', authMiddleware, async (req: Requ
   try {
     const purchaseOrderId = Number(req.params.purchaseOrderId);
     const { to, customMessage } = req.body;
-    const userId = req.user?.id ? parseInt(req.user.id) : undefined;
+    const userId = await requireTenantUserId(req, res);
+    if (!userId) {
+      return;
+    }
 
     if (!Number.isFinite(purchaseOrderId)) {
       return res.status(400).json({ success: false, message: 'Invalid purchase order id' });
@@ -315,7 +344,10 @@ router.post('/quote/:quoteId', authMiddleware, async (req: Request, res: Respons
   try {
     const quoteId = Number(req.params.quoteId);
     const { to } = req.body;
-    const userId = req.user?.id ? parseInt(req.user.id) : undefined;
+    const userId = await requireTenantUserId(req, res);
+    if (!userId) {
+      return;
+    }
 
     if (!Number.isFinite(quoteId)) {
       return res.status(400).json({ success: false, message: 'Invalid quote id' });
@@ -360,9 +392,9 @@ router.get('/logs', async (req: Request, res: Response) => {
 // Get user email settings
 router.get('/user-settings', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const userId = req.user?.id ? parseInt(req.user.id) : undefined;
+    const userId = await requireTenantUserId(req, res);
     if (!userId) {
-      return res.status(401).json({ success: false, message: 'User not authenticated' });
+      return;
     }
 
     const settings = await emailService.getUserEmailSettings(userId);
@@ -382,9 +414,9 @@ router.get('/user-settings', authMiddleware, async (req: Request, res: Response)
 // Save user email settings
 router.post('/user-settings', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const userId = req.user?.id ? parseInt(req.user.id) : undefined;
+    const userId = await requireTenantUserId(req, res);
     if (!userId) {
-      return res.status(401).json({ success: false, message: 'User not authenticated' });
+      return;
     }
 
     const { email_provider, email_host, email_port, email_secure, email_user, email_pass, email_from } = req.body;
@@ -424,9 +456,9 @@ router.post('/user-settings', authMiddleware, async (req: Request, res: Response
 // Test user email connection
 router.post('/test-user-connection', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const userId = req.user?.id ? parseInt(req.user.id) : undefined;
+    const userId = await requireTenantUserId(req, res);
     if (!userId) {
-      return res.status(401).json({ success: false, message: 'User not authenticated' });
+      return;
     }
 
     const success = await emailService.testUserEmailConnection(userId);
@@ -443,9 +475,9 @@ router.post('/test-user-connection', authMiddleware, async (req: Request, res: R
 // Email Template Management Routes
 router.get('/templates', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const userId = req.user?.id ? parseInt(req.user.id) : undefined;
+    const userId = await requireTenantUserId(req, res);
     if (!userId) {
-      return res.status(401).json({ success: false, message: 'User not authenticated' });
+      return;
     }
 
     const templates = await emailService.getUserEmailTemplates(userId);
@@ -459,10 +491,10 @@ router.get('/templates', authMiddleware, async (req: Request, res: Response) => 
 router.get('/templates/:templateId', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { templateId } = req.params;
-    const userId = req.user?.id ? parseInt(req.user.id) : undefined;
+    const userId = await requireTenantUserId(req, res);
     
     if (!userId) {
-      return res.status(401).json({ success: false, message: 'User not authenticated' });
+      return;
     }
 
     const template = await emailService.getEmailTemplate(parseInt(templateId), userId);
@@ -479,9 +511,9 @@ router.get('/templates/:templateId', authMiddleware, async (req: Request, res: R
 
 router.post('/templates', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const userId = req.user?.id ? parseInt(req.user.id) : undefined;
+    const userId = await requireTenantUserId(req, res);
     if (!userId) {
-      return res.status(401).json({ success: false, message: 'User not authenticated' });
+      return;
     }
 
     const { name, type, subject, html_content, text_content, is_default } = req.body;
@@ -509,10 +541,10 @@ router.post('/templates', authMiddleware, async (req: Request, res: Response) =>
 router.put('/templates/:templateId', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { templateId } = req.params;
-    const userId = req.user?.id ? parseInt(req.user.id) : undefined;
+    const userId = await requireTenantUserId(req, res);
     
     if (!userId) {
-      return res.status(401).json({ success: false, message: 'User not authenticated' });
+      return;
     }
 
     const { name, subject, html_content, text_content, is_default } = req.body;
@@ -543,10 +575,10 @@ router.put('/templates/:templateId', authMiddleware, async (req: Request, res: R
 router.delete('/templates/:templateId', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { templateId } = req.params;
-    const userId = req.user?.id ? parseInt(req.user.id) : undefined;
+    const userId = await requireTenantUserId(req, res);
     
     if (!userId) {
-      return res.status(401).json({ success: false, message: 'User not authenticated' });
+      return;
     }
 
     const success = await emailService.deleteEmailTemplate(parseInt(templateId), userId);
@@ -565,10 +597,10 @@ router.delete('/templates/:templateId', authMiddleware, async (req: Request, res
 router.get('/templates/default/:type', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { type } = req.params;
-    const userId = req.user?.id ? parseInt(req.user.id) : undefined;
+    const userId = await requireTenantUserId(req, res);
     
     if (!userId) {
-      return res.status(401).json({ success: false, message: 'User not authenticated' });
+      return;
     }
 
     const template = await emailService.getDefaultTemplate(userId, type as any);
