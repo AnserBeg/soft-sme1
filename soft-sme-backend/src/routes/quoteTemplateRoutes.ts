@@ -68,6 +68,28 @@ const sanitizeTemplateContent = (rawContent: string): string => {
   return stripUnsafeText(rawContent);
 };
 
+const resolveCreatedBy = async (value: unknown): Promise<number | null> => {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  const userId = Number(value);
+  if (!Number.isFinite(userId) || userId <= 0) {
+    return null;
+  }
+
+  try {
+    const result = await pool.query('SELECT 1 FROM users WHERE id = $1 LIMIT 1', [userId]);
+    if (result.rowCount && result.rowCount > 0) {
+      return userId;
+    }
+  } catch (error) {
+    console.warn('quoteTemplateRoutes: failed to validate created_by user id', error);
+  }
+
+  return null;
+};
+
 router.get('/', async (_req: Request, res: Response) => {
   try {
     const result = await pool.query(
@@ -121,7 +143,7 @@ router.post('/', async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, message: 'Template content is required' });
     }
 
-    const createdBy = req.user?.id ? Number(req.user.id) : null;
+    const createdBy = await resolveCreatedBy(req.user?.id);
 
     const insertResult = await pool.query(
       `INSERT INTO quote_description_templates (name, content, created_by)
