@@ -27,12 +27,7 @@ const parseMarkdownTableRow = (line: string): string[] | null => {
     return null;
   }
 
-  const cells = parts.map((part) => part.trim());
-  if (cells.every((cell) => cell.length === 0)) {
-    return null;
-  }
-
-  return cells;
+  return parts.map((part) => part.trim());
 };
 
 const isMarkdownTableDividerRow = (line: string): boolean => {
@@ -244,7 +239,7 @@ export const renderQuoteDescriptionToPdf = (
           const text = cell ?? '';
           const cellHeight = doc.heightOfString(text, { width: columnWidths[colIndex], lineGap: 2 });
           return Math.max(max, cellHeight);
-        }, 0) + 2;
+        }, doc.currentLineHeight(true)) + 2;
 
       ensurePageSpace(rowHeight + 4);
 

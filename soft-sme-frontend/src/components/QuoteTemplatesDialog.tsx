@@ -25,7 +25,13 @@ import ContentPasteGoIcon from '@mui/icons-material/ContentPasteGo';
 import TableChartIcon from '@mui/icons-material/TableChart';
 import { AxiosError } from 'axios';
 import api from '../api/axios';
-import QuoteDescriptionPreview from './QuoteDescriptionPreview';
+import QuoteDescriptionTableEditor from './QuoteDescriptionTableEditor';
+import {
+  createDefaultTwoColumnTable,
+  encodeTableTemplate,
+  tableToMarkdown,
+  tryDecodeTableTemplate,
+} from '../utils/quoteDescriptionTable';
 
 export interface QuoteDescriptionTemplate {
   template_id: number;
@@ -78,6 +84,8 @@ const QuoteTemplatesDialog: React.FC<QuoteTemplatesDialogProps> = ({
   const [isSaving, setIsSaving] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState<QuoteDescriptionTemplate | null>(null);
   const contentInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const [contentMode, setContentMode] = useState<'text' | 'table'>('text');
+  const [tableDraft, setTableDraft] = useState(() => createDefaultTwoColumnTable(18));
 
   useEffect(() => {
     if (!open) {
@@ -112,9 +120,19 @@ const QuoteTemplatesDialog: React.FC<QuoteTemplatesDialogProps> = ({
   const handleOpenForm = (template?: QuoteDescriptionTemplate) => {
     if (template) {
       setEditingTemplate(template);
-      setFormState({ name: template.name, content: template.content });
+      const decoded = tryDecodeTableTemplate(template.content);
+      if (decoded) {
+        setContentMode('table');
+        setTableDraft(decoded.table);
+        setFormState({ name: template.name, content: template.content });
+      } else {
+        setContentMode('text');
+        setFormState({ name: template.name, content: template.content });
+      }
     } else {
       setEditingTemplate(null);
+      setContentMode('text');
+      setTableDraft(createDefaultTwoColumnTable(18));
       setFormState(emptyFormState);
     }
     setFormErrors({});
@@ -127,6 +145,8 @@ const QuoteTemplatesDialog: React.FC<QuoteTemplatesDialogProps> = ({
     }
     setFormOpen(false);
     setEditingTemplate(null);
+    setContentMode('text');
+    setTableDraft(createDefaultTwoColumnTable(18));
     setFormState(emptyFormState);
     setFormErrors({});
   };
@@ -136,7 +156,7 @@ const QuoteTemplatesDialog: React.FC<QuoteTemplatesDialogProps> = ({
     if (!formState.name.trim()) {
       errors.name = 'Template name is required';
     }
-    if (!formState.content.trim()) {
+    if (contentMode === 'text' && !formState.content.trim()) {
       errors.content = 'Template content is required';
     }
     setFormErrors(errors);
@@ -150,9 +170,12 @@ const QuoteTemplatesDialog: React.FC<QuoteTemplatesDialogProps> = ({
 
     try {
       setIsSaving(true);
+      const contentToSave = contentMode === 'table'
+        ? encodeTableTemplate(tableDraft)
+        : formState.content;
       const payload = {
         name: formState.name.trim(),
-        content: formState.content,
+        content: contentToSave,
       };
 
       if (editingTemplate) {
@@ -182,31 +205,7 @@ const QuoteTemplatesDialog: React.FC<QuoteTemplatesDialogProps> = ({
     }
   };
 
-  const insertTableTemplate = () => {
-    const tableSnippet = `| Column 1 | Column 2 |\n| --- | --- |\n|  |  |\n`;
-    const textarea = contentInputRef.current;
-
-    if (!textarea) {
-      setFormState((prev) => ({
-        ...prev,
-        content: `${prev.content}${prev.content.endsWith('\n') ? '' : '\n'}${tableSnippet}`,
-      }));
-      return;
-    }
-
-    const start = textarea.selectionStart ?? textarea.value.length;
-    const end = textarea.selectionEnd ?? textarea.value.length;
-    const before = formState.content.slice(0, start);
-    const after = formState.content.slice(end);
-    const nextValue = `${before}${tableSnippet}${after}`;
-    setFormState((prev) => ({ ...prev, content: nextValue }));
-
-    window.requestAnimationFrame(() => {
-      textarea.focus();
-      const nextCursor = start + tableSnippet.length;
-      textarea.setSelectionRange(nextCursor, nextCursor);
-    });
-  };
+  // (table templates use the grid editor; text mode keeps the textarea)
 
   const handleDeleteTemplate = async (template: QuoteDescriptionTemplate) => {
     const confirmed = window.confirm(`Delete template "${template.name}"?`);
@@ -231,6 +230,13 @@ const QuoteTemplatesDialog: React.FC<QuoteTemplatesDialogProps> = ({
   };
 
   const handleUseTemplate = (template: QuoteDescriptionTemplate) => {
+    const decoded = tryDecodeTableTemplate(template.content);
+    if (decoded) {
+      const markdown = tableToMarkdown(decoded.table);
+      onTemplateSelected({ ...template, content: markdown });
+      return;
+    }
+
     onTemplateSelected(template);
   };
 
@@ -341,37 +347,50 @@ const QuoteTemplatesDialog: React.FC<QuoteTemplatesDialogProps> = ({
               fullWidth
               autoFocus
             />
-            <TextField
-              label="Template Content"
-              value={formState.content}
-              onChange={(event) => setFormState((prev) => ({ ...prev, content: event.target.value }))}
-              error={Boolean(formErrors.content)}
-              helperText={formErrors.content || 'Supports multi-line descriptions and table layouts.'}
-              fullWidth
-              multiline
-              minRows={8}
-              inputRef={contentInputRef}
-              InputProps={{ sx: monospaceInputSx }}
-            />
+
             <Stack direction="row" spacing={1} justifyContent="flex-end">
               <Button
-                variant="outlined"
+                variant={contentMode === 'text' ? 'contained' : 'outlined'}
+                size="small"
+                onClick={() => setContentMode('text')}
+              >
+                Text
+              </Button>
+              <Button
+                variant={contentMode === 'table' ? 'contained' : 'outlined'}
                 size="small"
                 startIcon={<TableChartIcon fontSize="small" />}
-                onClick={insertTableTemplate}
+                onClick={() => setContentMode('table')}
               >
-                Insert Table
+                Table
               </Button>
             </Stack>
-            <Divider />
-            <Box>
-              <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1 }}>
-                Preview
-              </Typography>
-              <Box sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, p: 1.5, bgcolor: 'background.paper' }}>
-                <QuoteDescriptionPreview value={formState.content} />
+
+            {contentMode === 'text' ? (
+              <TextField
+                label="Template Content"
+                value={formState.content}
+                onChange={(event) => setFormState((prev) => ({ ...prev, content: event.target.value }))}
+                error={Boolean(formErrors.content)}
+                helperText={formErrors.content || 'Multi-line text description.'}
+                fullWidth
+                multiline
+                minRows={8}
+                inputRef={contentInputRef}
+                InputProps={{ sx: monospaceInputSx }}
+              />
+            ) : (
+              <Box>
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.75 }}>
+                  Paste from Excel/Sheets to fill cells quickly.
+                </Typography>
+                <QuoteDescriptionTableEditor
+                  value={tableDraft}
+                  onChange={setTableDraft}
+                  disableColumnEditing={false}
+                />
               </Box>
-            </Box>
+            )}
             {formErrors.submit && <Alert severity="error">{formErrors.submit}</Alert>}
           </Stack>
         </DialogContent>

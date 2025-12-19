@@ -37,7 +37,12 @@ import UnifiedProductDialog, { ProductFormValues } from '../components/UnifiedPr
 import UnsavedChangesGuard from '../components/UnsavedChangesGuard';
 import { normalizeQuoteStatus, QuoteStatus } from '../utils/quoteStatus';
 import QuoteTemplatesDialog, { QuoteDescriptionTemplate } from '../components/QuoteTemplatesDialog';
-import QuoteDescriptionPreview from '../components/QuoteDescriptionPreview';
+import QuoteDescriptionTableEditor from '../components/QuoteDescriptionTableEditor';
+import {
+  createDefaultTwoColumnTable,
+  tableToMarkdown,
+  tryParseSingleMarkdownTable,
+} from '../utils/quoteDescriptionTable';
 
 interface CustomerOption {
   label: string;
@@ -178,6 +183,7 @@ const QuoteEditorPage: React.FC = () => {
   const [isEmailModalOpen, setIsEmailModalOpen] = useState(false);
   const [isTemplateDialogOpen, setIsTemplateDialogOpen] = useState(false);
   const [isEstimating, setIsEstimating] = useState(false);
+  const [forceTextDescription, setForceTextDescription] = useState(false);
 
   // Unsaved changes guard: normalized signature structure
   const [initialSignature, setInitialSignature] = useState<string>('');
@@ -200,6 +206,7 @@ const QuoteEditorPage: React.FC = () => {
 
   const handleTemplateInsert = useCallback((template: QuoteDescriptionTemplate) => {
     setProductDescription(template.content);
+    setForceTextDescription(false);
     setIsTemplateDialogOpen(false);
     setSuccess(`Template "${template.name}" inserted into the description.`);
 
@@ -218,27 +225,13 @@ const QuoteEditorPage: React.FC = () => {
   }, [setProductDescription, setIsTemplateDialogOpen, setSuccess]);
 
   const handleInsertDescriptionTable = useCallback(() => {
-    const tableSnippet = `| Column 1 | Column 2 |\n| --- | --- |\n|  |  |\n`;
-    const textarea = productDescriptionRef.current;
-
-    if (!textarea) {
-      setProductDescription((prev) => `${prev}${prev.endsWith('\n') ? '' : '\n'}${tableSnippet}`);
-      return;
-    }
-
-    const start = textarea.selectionStart ?? textarea.value.length;
-    const end = textarea.selectionEnd ?? textarea.value.length;
-    const before = productDescription.slice(0, start);
-    const after = productDescription.slice(end);
-    const nextValue = `${before}${tableSnippet}${after}`;
-    setProductDescription(nextValue);
-
-    window.requestAnimationFrame(() => {
-      textarea.focus();
-      const nextCursor = start + tableSnippet.length;
-      textarea.setSelectionRange(nextCursor, nextCursor);
-    });
+    setProductDescription(tableToMarkdown(createDefaultTwoColumnTable(18)));
+    setForceTextDescription(false);
   }, [productDescription]);
+
+  const parsedSingleTable = useMemo(() => tryParseSingleMarkdownTable(productDescription), [productDescription]);
+  const isTableMode = Boolean(parsedSingleTable) && !forceTextDescription;
+  const currentTable = parsedSingleTable ?? createDefaultTwoColumnTable(18);
 
   // Set initial signature only once after data is fully loaded
   useEffect(() => {
@@ -1128,33 +1121,42 @@ const QuoteEditorPage: React.FC = () => {
                     >
                       Insert Table
                     </Button>
+                    {isTableMode && (
+                      <Button
+                        variant="outlined"
+                        size="small"
+                        onClick={() => setForceTextDescription(true)}
+                      >
+                        Edit As Text
+                      </Button>
+                    )}
                   </Stack>
                 </Stack>
-                <TextField
-                  placeholder="Add the quote details here..."
-                  fullWidth
-                  multiline
-                  minRows={6}
-                  value={productDescription}
-                  onChange={(e) => setProductDescription(e.target.value)}
-                  inputRef={productDescriptionRef}
-                  sx={{
-                    '& .MuiOutlinedInput-root': { borderRadius: 1 },
-                    '& textarea': {
-                      fontSize: 15,
-                      fontFamily: 'Roboto Mono, Consolas, Menlo, monospace',
-                      whiteSpace: 'pre-wrap',
-                    },
-                  }}
-                />
-                <Box sx={{ mt: 1.5 }}>
-                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.75 }}>
-                    Preview
-                  </Typography>
-                  <Box sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, p: 1.5, bgcolor: 'background.paper' }}>
-                    <QuoteDescriptionPreview value={productDescription} />
-                  </Box>
-                </Box>
+                {isTableMode ? (
+                  <QuoteDescriptionTableEditor
+                    value={currentTable}
+                    onChange={(next) => setProductDescription(tableToMarkdown(next))}
+                    disableColumnEditing={false}
+                  />
+                ) : (
+                  <TextField
+                    placeholder="Add the quote details here..."
+                    fullWidth
+                    multiline
+                    minRows={6}
+                    value={productDescription}
+                    onChange={(e) => setProductDescription(e.target.value)}
+                    inputRef={productDescriptionRef}
+                    sx={{
+                      '& .MuiOutlinedInput-root': { borderRadius: 1 },
+                      '& textarea': {
+                        fontSize: 15,
+                        fontFamily: 'Roboto Mono, Consolas, Menlo, monospace',
+                        whiteSpace: 'pre-wrap',
+                      },
+                    }}
+                  />
+                )}
                 <Box sx={{ mt: 1.5, display: 'flex', alignItems: 'center', gap: 1.5 }}>
                   <Button
                     variant="contained"

@@ -25,12 +25,7 @@ const parseMarkdownTableRow = (line: string): string[] | null => {
     return null;
   }
 
-  const cells = parts.map((part) => part.trim());
-  if (cells.every((cell) => cell.length === 0)) {
-    return null;
-  }
-
-  return cells;
+  return parts.map((part) => part.trim());
 };
 
 const isMarkdownTableDividerRow = (line: string): boolean => {
@@ -175,4 +170,3 @@ const QuoteDescriptionPreview: React.FC<QuoteDescriptionPreviewProps> = ({ value
 };
 
 export default QuoteDescriptionPreview;
-

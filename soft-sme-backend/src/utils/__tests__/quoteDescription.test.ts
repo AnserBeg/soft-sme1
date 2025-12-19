@@ -8,6 +8,8 @@ describe('quoteDescription', () => {
       '| A | B |',
       '| --- | --- |',
       '| 1 | 2 |',
+      '|  |  |',
+      '| 3 | 4 |',
       '',
       'Outro',
     ].join('\n');
@@ -17,6 +19,7 @@ describe('quoteDescription', () => {
     expect(blocks[0].kind).toBe('text');
     expect((blocks[0] as any).text).toContain('Intro line');
     expect(blocks[1].kind).toBe('table');
+    expect((blocks[1] as any).rows).toHaveLength(3);
     expect(blocks[2]).toEqual({ kind: 'text', text: 'Outro' });
   });
 
