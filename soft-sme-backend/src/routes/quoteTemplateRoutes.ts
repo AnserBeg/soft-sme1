@@ -1,5 +1,6 @@
 import express, { Request, Response } from 'express';
 import { pool } from '../db';
+import { stripUnsafeText } from '../utils/documentText';
 
 const router = express.Router();
 
@@ -18,6 +19,53 @@ const coerceContent = (value: unknown): string => {
     return '';
   }
   return String(value);
+};
+
+type QuoteTemplateTablePayload = {
+  type: 'table';
+  version: 1;
+  table: { columns: unknown; rows: unknown };
+};
+
+const sanitizeTableTemplateJson = (rawContent: string): string | null => {
+  const trimmed = rawContent.trim();
+  if (!trimmed.startsWith('{')) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed) as Partial<QuoteTemplateTablePayload>;
+    if (parsed?.type !== 'table' || parsed.version !== 1 || !parsed.table) {
+      return null;
+    }
+
+    const columnsRaw = (parsed.table as any).columns;
+    const rowsRaw = (parsed.table as any).rows;
+
+    if (!Array.isArray(columnsRaw) || !Array.isArray(rowsRaw)) {
+      return null;
+    }
+
+    const columns = columnsRaw.map((value: unknown) => stripUnsafeText(typeof value === 'string' ? value : String(value ?? '')));
+    const rows = rowsRaw.map((row: unknown) => {
+      if (!Array.isArray(row)) {
+        return [];
+      }
+      return row.map((value: unknown) => stripUnsafeText(typeof value === 'string' ? value : String(value ?? '')));
+    });
+
+    return JSON.stringify({ type: 'table', version: 1, table: { columns, rows } });
+  } catch {
+    return null;
+  }
+};
+
+const sanitizeTemplateContent = (rawContent: string): string => {
+  const jsonTable = sanitizeTableTemplateJson(rawContent);
+  if (jsonTable) {
+    return jsonTable;
+  }
+  return stripUnsafeText(rawContent);
 };
 
 router.get('/', async (_req: Request, res: Response) => {
@@ -63,7 +111,7 @@ router.get('/:templateId', async (req: Request, res: Response) => {
 router.post('/', async (req: Request, res: Response) => {
   try {
     const name = normalizeTemplateName(req.body?.name);
-    const rawContent = coerceContent(req.body?.content);
+    const rawContent = sanitizeTemplateContent(coerceContent(req.body?.content));
 
     if (!name) {
       return res.status(400).json({ success: false, message: 'Template name is required' });
@@ -97,7 +145,7 @@ router.put('/:templateId', async (req: Request, res: Response) => {
 
   try {
     const name = normalizeTemplateName(req.body?.name);
-    const rawContent = coerceContent(req.body?.content);
+    const rawContent = sanitizeTemplateContent(coerceContent(req.body?.content));
 
     if (!name) {
       return res.status(400).json({ success: false, message: 'Template name is required' });

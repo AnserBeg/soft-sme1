@@ -1,4 +1,4 @@
-import { escapeHtml, normalizeDocumentText } from '../documentText';
+import { escapeHtml, normalizeDocumentText, stripUnsafeText } from '../documentText';
 
 describe('documentText utils', () => {
   test('escapeHtml escapes special characters', () => {
@@ -23,5 +23,9 @@ describe('documentText utils', () => {
     expect(normalizeDocumentText('KING PIN LOCATION\u00E2\u20AC\u2122s')).toBe('KING PIN LOCATION\u2019s');
     expect(normalizeDocumentText(`9\u00E2\u20AC\u00B26`)).toBe('9\u20326');
     expect(normalizeDocumentText('\u00C2 VALUE')).toBe(' VALUE');
+  });
+
+  test('stripUnsafeText removes null bytes and control chars but keeps tabs/newlines', () => {
+    expect(stripUnsafeText(`A\u0000B\u0007C\tD\nE`)).toBe(`ABC\tD\nE`);
   });
 });

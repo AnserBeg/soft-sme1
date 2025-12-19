@@ -1,4 +1,5 @@
 const CONTROL_CHARS_EXCEPT_NEWLINE = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g;
+const CONTROL_CHARS_EXCEPT_COMMON_WHITESPACE = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g;
 const TRADEMARK_LIKE_CHARS = /[\u2122\u00AE\u00A9]/g;
 const NBSP = /\u00A0/g;
 
@@ -87,3 +88,15 @@ export const normalizeDocumentText = (input: unknown): string => {
   return value;
 };
 
+export const stripUnsafeText = (input: unknown): string => {
+  if (input === null || input === undefined) {
+    return '';
+  }
+
+  let value = typeof input === 'string' ? input : String(input);
+  value = value.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  value = value.replace(NBSP, ' ');
+  // Keep tabs/newlines, only strip other control characters (including NUL).
+  value = value.replace(CONTROL_CHARS_EXCEPT_COMMON_WHITESPACE, '');
+  return value;
+};
