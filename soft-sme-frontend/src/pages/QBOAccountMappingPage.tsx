@@ -102,7 +102,21 @@ const QBOAccountMappingPage: React.FC = () => {
 
   const handleConnectToQuickBooks = () => {
     const apiConfig = getApiConfig();
-    const authUrl = `${apiConfig.baseURL}/api/qbo/auth`;
+    let companyId: string | number | undefined;
+    try {
+      const rawUser = localStorage.getItem('user');
+      const user = rawUser ? JSON.parse(rawUser) : null;
+      companyId = user?.company_id;
+    } catch {
+      companyId = undefined;
+    }
+
+    if (!companyId) {
+      toast.error('Missing company context. Please sign in again.');
+      return;
+    }
+
+    const authUrl = `${apiConfig.baseURL}/api/qbo/auth?company_id=${encodeURIComponent(companyId)}`;
     
     // Redirect to backend OAuth endpoint
     window.location.href = authUrl;

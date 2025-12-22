@@ -1,15 +1,18 @@
 import express from 'express';
 import { qboHttp } from '../utils/qboHttp';
 import { pool } from '../db';
+import { decryptQboConnectionRow, encryptQboConnectionFields, maskQboValue } from '../utils/qboCrypto';
+import { resolveTenantCompanyIdFromRequest } from '../utils/companyContext';
 
 const router = express.Router();
 
 // Get QBO accounts for mapping
 router.get('/accounts', async (req, res) => {
   try {
-    // For now, use company_id = 9 (your actual company ID)
-    // TODO: Get this from the user session
-    const companyId = 9;
+    const companyId = await resolveTenantCompanyIdFromRequest(req, pool);
+    if (!companyId) {
+      return res.status(400).json({ error: 'Company ID not found' });
+    }
     
     console.log('Fetching QBO accounts for company_id:', companyId);
     
@@ -20,7 +23,7 @@ router.get('/accounts', async (req, res) => {
       return res.status(400).json({ error: 'QuickBooks connection not found. Please connect your QuickBooks account first.' });
     }
 
-    const qboConnection = qboResult.rows[0];
+    const qboConnection = await decryptQboConnectionRow(qboResult.rows[0]);
     
     // Check if token is expired and refresh if needed
     if (new Date(qboConnection.expires_at) < new Date()) {
@@ -40,15 +43,22 @@ router.get('/accounts', async (req, res) => {
 
         const { access_token, refresh_token, expires_in } = refreshResponse.data;
         
+        const encrypted = await encryptQboConnectionFields({
+          realmId: qboConnection.realm_id,
+          accessToken: access_token,
+          refreshToken: refresh_token,
+        });
+
         // Update tokens in database
         await pool.query(
           `UPDATE qbo_connection SET 
-           access_token = $1, refresh_token = $2, expires_at = $3, updated_at = NOW() 
-           WHERE company_id = $4`,
-          [access_token, refresh_token, new Date(Date.now() + expires_in * 1000), companyId]
+           realm_id = $1, access_token = $2, refresh_token = $3, expires_at = $4, updated_at = NOW() 
+           WHERE company_id = $5`,
+          [encrypted.realmId, encrypted.accessToken, encrypted.refreshToken, new Date(Date.now() + expires_in * 1000), companyId]
         );
 
         qboConnection.access_token = access_token;
+        qboConnection.refresh_token = refresh_token;
       } catch (refreshError) {
         console.error('Error refreshing QBO token:', refreshError instanceof Error ? refreshError.message : String(refreshError));
         return res.status(401).json({ error: 'QuickBooks token expired and could not be refreshed. Please reconnect your account.' });
@@ -105,9 +115,10 @@ router.get('/accounts', async (req, res) => {
 // Get current account mapping
 router.get('/mapping', async (req, res) => {
   try {
-    // For now, use company_id = 9 (your actual company ID)
-    // TODO: Get this from the user session
-    const companyId = 9;
+    const companyId = await resolveTenantCompanyIdFromRequest(req, pool);
+    if (!companyId) {
+      return res.status(400).json({ error: 'Company ID not found' });
+    }
     console.log(`Fetching account mapping for company_id: ${companyId}`);
     
     const result = await pool.query('SELECT * FROM qbo_account_mapping WHERE company_id = $1', [companyId]);
@@ -150,9 +161,10 @@ router.post('/mapping', async (req, res) => {
       return res.status(400).json({ error: 'Inventory, GST, and AP account mappings are required' });
     }
 
-    // For now, use company_id = 9 (your actual company ID)
-    // TODO: Get this from the user session
-    const companyId = 9;
+    const companyId = await resolveTenantCompanyIdFromRequest(req, pool);
+    if (!companyId) {
+      return res.status(400).json({ error: 'Company ID not found' });
+    }
     console.log(`Using company_id: ${companyId}`);
     
     // Upsert mapping
@@ -207,9 +219,10 @@ router.post('/mapping', async (req, res) => {
 // Test QBO connection
 router.get('/test-connection', async (req, res) => {
   try {
-    // For now, use company_id = 9 (your actual company ID)
-    // TODO: Get this from the user session
-    const companyId = 9;
+    const companyId = await resolveTenantCompanyIdFromRequest(req, pool);
+    if (!companyId) {
+      return res.status(400).json({ error: 'Company ID not found' });
+    }
     
     console.log('Testing QBO connection for company_id:', companyId);
     
@@ -219,7 +232,7 @@ router.get('/test-connection', async (req, res) => {
       return res.json({ connected: false, message: 'No QuickBooks connection found' });
     }
 
-    const qboConnection = qboResult.rows[0];
+    const qboConnection = await decryptQboConnectionRow(qboResult.rows[0]);
     const isExpired = new Date(qboConnection.expires_at) < new Date();
 
     if (isExpired) {
@@ -234,7 +247,7 @@ router.get('/test-connection', async (req, res) => {
     res.json({ 
       connected: true, 
       message: 'QuickBooks connection is working',
-      realmId: qboConnection.realm_id,
+      realmIdMasked: maskQboValue(qboConnection.realm_id),
       expiresAt: qboConnection.expires_at
     });
 

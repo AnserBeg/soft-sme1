@@ -1,8 +1,10 @@
 import express, { Request, Response } from 'express';
 import { pool } from '../db';
+import { resolveTenantCompanyIdFromRequest } from '../utils/companyContext';
 import PDFDocument from 'pdfkit';
 import { getNextPurchaseOrderNumberForYear } from '../utils/sequence';
 import { qboHttp } from '../utils/qboHttp'; // Added for QBO API integration
+import { decryptQboConnectionRow, encryptQboConnectionFields } from '../utils/qboCrypto';
 import { getLogoImageSource } from '../utils/pdfLogoHelper';
 import { PurchaseOrderCalculationService } from '../services/PurchaseOrderCalculationService';
 import { PurchaseOrderService } from '../services/PurchaseOrderService';
@@ -402,6 +404,11 @@ router.get('/', async (req, res) => {
 router.post('/:id/export-to-qbo', adminOnly, async (req, res) => {
   const { id } = req.params;
   try {
+    const companyId = await resolveTenantCompanyIdFromRequest(req, pool);
+    if (!companyId) {
+      return res.status(400).json({ error: 'Company ID not found' });
+    }
+
     // Check PO exists and is closed
     const result = await pool.query('SELECT * FROM purchasehistory WHERE purchase_id = $1', [id]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'Not found' });
@@ -410,12 +417,12 @@ router.post('/:id/export-to-qbo', adminOnly, async (req, res) => {
     if (po.exported_to_qbo) return res.status(400).json({ error: 'PO already exported.' });
 
     // Get QBO connection
-    const qboResult = await pool.query('SELECT * FROM qbo_connection WHERE company_id = $1', [9]);
+    const qboResult = await pool.query('SELECT * FROM qbo_connection WHERE company_id = $1', [companyId]);
     if (qboResult.rows.length === 0) {
       return res.status(400).json({ error: 'QuickBooks connection not found. Please connect your QuickBooks account first.' });
     }
 
-    const qboConnection = qboResult.rows[0];
+    const qboConnection = await decryptQboConnectionRow(qboResult.rows[0]);
     
     // Check if token is expired and refresh if needed
     if (new Date(qboConnection.expires_at) < new Date()) {
@@ -435,15 +442,22 @@ router.post('/:id/export-to-qbo', adminOnly, async (req, res) => {
 
         const { access_token, refresh_token, expires_in } = refreshResponse.data;
         
+        const encrypted = await encryptQboConnectionFields({
+          realmId: qboConnection.realm_id,
+          accessToken: access_token,
+          refreshToken: refresh_token,
+        });
+
         // Update tokens in database
         await pool.query(
           `UPDATE qbo_connection SET 
-           access_token = $1, refresh_token = $2, expires_at = $3, updated_at = NOW() 
-           WHERE company_id = $4`,
-          [access_token, refresh_token, new Date(Date.now() + expires_in * 1000), 9]
+           realm_id = $1, access_token = $2, refresh_token = $3, expires_at = $4, updated_at = NOW() 
+           WHERE company_id = $5`,
+          [encrypted.realmId, encrypted.accessToken, encrypted.refreshToken, new Date(Date.now() + expires_in * 1000), companyId]
         );
 
         qboConnection.access_token = access_token;
+        qboConnection.refresh_token = refresh_token;
       } catch (refreshError) {
         console.error('Error refreshing QBO token:', refreshError instanceof Error ? refreshError.message : String(refreshError));
         return res.status(401).json({ error: 'QuickBooks token expired and could not be refreshed. Please reconnect your account.' });
@@ -462,7 +476,7 @@ router.post('/:id/export-to-qbo', adminOnly, async (req, res) => {
     const lineItems = lineItemsResult.rows;
 
     // Get QBO account mapping
-    const accountMappingResult = await pool.query('SELECT * FROM qbo_account_mapping WHERE company_id = $1', [9]);
+    const accountMappingResult = await pool.query('SELECT * FROM qbo_account_mapping WHERE company_id = $1', [companyId]);
     if (accountMappingResult.rows.length === 0) {
       return res.status(400).json({ error: 'QuickBooks account mapping not configured. Please set up account mapping in QBO Settings first.' });
     }
@@ -666,6 +680,11 @@ router.post('/:id/export-to-qbo-with-vendor', adminOnly, async (req, res) => {
   const { vendorData } = req.body;
   
   try {
+    const companyId = await resolveTenantCompanyIdFromRequest(req, pool);
+    if (!companyId) {
+      return res.status(400).json({ error: 'Company ID not found' });
+    }
+
     // Check PO exists and is closed
     const result = await pool.query('SELECT * FROM purchasehistory WHERE purchase_id = $1', [id]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'Not found' });
@@ -674,12 +693,12 @@ router.post('/:id/export-to-qbo-with-vendor', adminOnly, async (req, res) => {
     if (po.exported_to_qbo) return res.status(400).json({ error: 'PO already exported.' });
 
     // Get QBO connection
-    const qboResult = await pool.query('SELECT * FROM qbo_connection WHERE company_id = $1', [9]);
+    const qboResult = await pool.query('SELECT * FROM qbo_connection WHERE company_id = $1', [companyId]);
     if (qboResult.rows.length === 0) {
       return res.status(400).json({ error: 'QuickBooks connection not found. Please connect your QuickBooks account first.' });
     }
 
-    const qboConnection = qboResult.rows[0];
+    const qboConnection = await decryptQboConnectionRow(qboResult.rows[0]);
     
     // Check if token is expired and refresh if needed
     if (new Date(qboConnection.expires_at) < new Date()) {
@@ -699,15 +718,22 @@ router.post('/:id/export-to-qbo-with-vendor', adminOnly, async (req, res) => {
 
         const { access_token, refresh_token, expires_in } = refreshResponse.data;
         
+        const encrypted = await encryptQboConnectionFields({
+          realmId: qboConnection.realm_id,
+          accessToken: access_token,
+          refreshToken: refresh_token,
+        });
+
         // Update tokens in database
         await pool.query(
           `UPDATE qbo_connection SET 
-           access_token = $1, refresh_token = $2, expires_at = $3, updated_at = NOW() 
-           WHERE company_id = $4`,
-          [access_token, refresh_token, new Date(Date.now() + expires_in * 1000), 9]
+           realm_id = $1, access_token = $2, refresh_token = $3, expires_at = $4, updated_at = NOW() 
+           WHERE company_id = $5`,
+          [encrypted.realmId, encrypted.accessToken, encrypted.refreshToken, new Date(Date.now() + expires_in * 1000), companyId]
         );
 
         qboConnection.access_token = access_token;
+        qboConnection.refresh_token = refresh_token;
       } catch (refreshError) {
         console.error('Error refreshing QBO token:', refreshError instanceof Error ? refreshError.message : String(refreshError));
         return res.status(401).json({ error: 'QuickBooks token expired and could not be refreshed. Please reconnect your account.' });
@@ -726,7 +752,7 @@ router.post('/:id/export-to-qbo-with-vendor', adminOnly, async (req, res) => {
     const lineItems = lineItemsResult.rows;
 
     // Get QBO account mapping
-    const accountMappingResult = await pool.query('SELECT * FROM qbo_account_mapping WHERE company_id = $1', [9]);
+    const accountMappingResult = await pool.query('SELECT * FROM qbo_account_mapping WHERE company_id = $1', [companyId]);
     if (accountMappingResult.rows.length === 0) {
       return res.status(400).json({ error: 'QuickBooks account mapping not configured. Please set up account mapping in QBO Settings first.' });
     }

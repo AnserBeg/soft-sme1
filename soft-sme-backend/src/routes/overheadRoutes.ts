@@ -1,14 +1,16 @@
 import express, { Request, Response } from 'express';
 import { pool } from '../db';
+import { resolveTenantCompanyIdFromRequest } from '../utils/companyContext';
 
 const router = express.Router();
 
 // Get overhead expense distribution for a company
 router.get('/distribution', async (req: Request, res: Response) => {
   try {
-    // For now, use company_id = 9 (your actual company ID)
-    // TODO: Get this from the user session
-    const companyId = 9;
+    const companyId = await resolveTenantCompanyIdFromRequest(req, pool);
+    if (!companyId) {
+      return res.status(400).json({ error: 'Company ID not found' });
+    }
     
     const result = await pool.query(
       'SELECT * FROM overhead_expense_distribution WHERE company_id = $1 AND is_active = TRUE ORDER BY id',
@@ -31,9 +33,10 @@ router.post('/distribution', async (req: Request, res: Response) => {
   }
   
   try {
-    // For now, use company_id = 9 (your actual company ID)
-    // TODO: Get this from the user session
-    const companyId = 9;
+    const companyId = await resolveTenantCompanyIdFromRequest(req, pool);
+    if (!companyId) {
+      return res.status(400).json({ error: 'Company ID not found' });
+    }
     
     // Check if total percentage would exceed 100%
     const existingResult = await pool.query(
@@ -73,9 +76,10 @@ router.put('/distribution/:id', async (req: Request, res: Response) => {
   }
   
   try {
-    // For now, use company_id = 9 (your actual company ID)
-    // TODO: Get this from the user session
-    const companyId = 9;
+    const companyId = await resolveTenantCompanyIdFromRequest(req, pool);
+    if (!companyId) {
+      return res.status(400).json({ error: 'Company ID not found' });
+    }
     
     // Check if total percentage would exceed 100% (excluding current record)
     const existingResult = await pool.query(
@@ -114,9 +118,10 @@ router.delete('/distribution/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
   
   try {
-    // For now, use company_id = 9 (your actual company ID)
-    // TODO: Get this from the user session
-    const companyId = 9;
+    const companyId = await resolveTenantCompanyIdFromRequest(req, pool);
+    if (!companyId) {
+      return res.status(400).json({ error: 'Company ID not found' });
+    }
     
     const result = await pool.query(
       'DELETE FROM overhead_expense_distribution WHERE id = $1 AND company_id = $2 RETURNING *',
