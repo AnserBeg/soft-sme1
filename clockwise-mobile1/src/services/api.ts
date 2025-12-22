@@ -60,7 +60,7 @@ api.interceptors.request.use((config) => {
 // Auth API
 export const authAPI = {
   login: async (email: string, password: string) => {
-    const response = await api.post('/auth/login', { email, password });
+    const response = await api.post('/auth/login-mobile', { email, password });
     return response.data;
   },
 };

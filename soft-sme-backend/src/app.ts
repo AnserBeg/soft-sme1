@@ -7,6 +7,7 @@ import compression from 'compression';
 import authRouter from './routes/authRoutes';
 import { authMiddleware } from './middleware/authMiddleware';
 import { tenantContextMiddleware } from './middleware/tenantMiddleware';
+import { ACCESS_ROLES, requireAccessRoles } from './middleware/roleAccessMiddleware';
 import businessProfileRouter from './routes/businessProfile';
 import customerRouter from './routes/customerRoutes';
 import productRouter from './routes/productRoutes';
@@ -37,7 +38,38 @@ import chatRouter from './routes/chatRoutes';
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
 const app = express();
-const authWithTenant = [authMiddleware, tenantContextMiddleware];
+const authWithTenantAndRole = (roles: string[]) => [
+  authMiddleware,
+  tenantContextMiddleware,
+  requireAccessRoles(roles),
+];
+
+const adminOnly = authWithTenantAndRole([ACCESS_ROLES.ADMIN]);
+const salesPurchaseAccess = authWithTenantAndRole([ACCESS_ROLES.SALES_PURCHASE]);
+const timeTrackingAccess = authWithTenantAndRole([
+  ACCESS_ROLES.TIME_TRACKING,
+  ACCESS_ROLES.MOBILE_TIME_TRACKER,
+]);
+const salesOrdersAccess = authWithTenantAndRole([
+  ACCESS_ROLES.SALES_PURCHASE,
+  ACCESS_ROLES.TIME_TRACKING,
+]);
+const inventoryAccess = authWithTenantAndRole([
+  ACCESS_ROLES.SALES_PURCHASE,
+  ACCESS_ROLES.TIME_TRACKING,
+]);
+const settingsAccess = authWithTenantAndRole([
+  ACCESS_ROLES.SALES_PURCHASE,
+  ACCESS_ROLES.TIME_TRACKING,
+]);
+const messagingAccess = authWithTenantAndRole([
+  ACCESS_ROLES.SALES_PURCHASE,
+  ACCESS_ROLES.TIME_TRACKING,
+]);
+const profileDocumentsAccess = authWithTenantAndRole([
+  ACCESS_ROLES.TIME_TRACKING,
+  ACCESS_ROLES.MOBILE_TIME_TRACKER,
+]);
 const SENSITIVE_HEADER_KEYS = new Set([
   'authorization',
   'cookie',
@@ -182,76 +214,76 @@ console.log('Registered auth routes at /api/auth');
 
 // Protected routes
 // Business profile API is available at /api/business-profile
-app.use('/api/business-profile', authWithTenant, businessProfileRouter);
+app.use('/api/business-profile', adminOnly, businessProfileRouter);
 console.log('Registered business profile routes');
 
-app.use('/api/customers', authWithTenant, customerRouter);
+app.use('/api/customers', salesPurchaseAccess, customerRouter);
 console.log('Registered customer routes');
 
-app.use('/api/products', authWithTenant, productRouter);
+app.use('/api/products', salesPurchaseAccess, productRouter);
 console.log('Registered product routes');
 
-app.use('/api/purchase-history', authWithTenant, purchaseHistoryRouter);
+app.use('/api/purchase-history', adminOnly, purchaseHistoryRouter);
 console.log('Registered purchase history routes');
 
-app.use('/api/margin-schedule', authWithTenant, marginScheduleRouter);
+app.use('/api/margin-schedule', adminOnly, marginScheduleRouter);
 console.log('Registered margin schedule routes');
 
-app.use('/api/vendors', authWithTenant, vendorRouter);
+app.use('/api/vendors', salesPurchaseAccess, vendorRouter);
 console.log('Registered vendor routes');
 
-app.use('/api/inventory', authWithTenant, inventoryRouter);
+app.use('/api/inventory', inventoryAccess, inventoryRouter);
 console.log('Registered inventory routes at /api/inventory');
 
-app.use('/api/search', authWithTenant, searchRoutes);
+app.use('/api/search', salesPurchaseAccess, searchRoutes);
 console.log('Registered search routes at /api/search');
 
-app.use('/api/categories', authWithTenant, categoryRouter);
+app.use('/api/categories', adminOnly, categoryRouter);
 console.log('Registered category routes at /api/categories');
 
-app.use('/api/quotes', authWithTenant, quoteRouter);
+app.use('/api/quotes', salesPurchaseAccess, quoteRouter);
 console.log('Registered quote routes');
 
-app.use('/api/quote-templates', authWithTenant, quoteTemplateRouter);
+app.use('/api/quote-templates', salesPurchaseAccess, quoteTemplateRouter);
 console.log('Registered quote template routes');
 
-app.use('/api/sales-orders', authWithTenant, salesOrderRouter);
+app.use('/api/sales-orders', salesOrdersAccess, salesOrderRouter);
 console.log('Registered sales order routes');
 
-app.use('/api/purchase-orders', authWithTenant, purchaseOrderRouter);
+app.use('/api/purchase-orders', salesPurchaseAccess, purchaseOrderRouter);
 console.log('Registered purchase order routes');
 
-app.use('/api/return-orders', authWithTenant, returnOrderRouter);
+app.use('/api/return-orders', salesPurchaseAccess, returnOrderRouter);
 console.log('Registered return order routes');
 
-app.use('/api/employees', authWithTenant, employeeRouter);
+app.use('/api/employees', adminOnly, employeeRouter);
 console.log('Registered employee routes');
 
-app.use('/api/time-tracking', authWithTenant, timeTrackingRouter);
+app.use('/api/time-tracking', timeTrackingAccess, timeTrackingRouter);
 console.log('Registered time tracking routes');
 
-app.use('/api/leave-management', authWithTenant, leaveManagementRouter);
+app.use('/api/leave-management', timeTrackingAccess, leaveManagementRouter);
 console.log('Registered leave management routes');
 
-app.use('/api/attendance', authWithTenant, attendanceRouter);
+app.use('/api/attendance', timeTrackingAccess, attendanceRouter);
 console.log('Registered attendance routes');
 
-app.use('/api/profile-documents', authWithTenant, profileDocumentRouter);
+app.use('/api/profile-documents', profileDocumentsAccess, profileDocumentRouter);
 console.log('Registered profile document routes');
 
-app.use('/api/messaging', authWithTenant, messagingRouter);
+app.use('/api/messaging', messagingAccess, messagingRouter);
 console.log('Registered messaging routes');
 
-app.use('/api/settings', authWithTenant, globalSettingsRouter);
+app.use('/api/settings', settingsAccess, globalSettingsRouter);
 console.log('Registered global settings routes');
 
-app.use('/api/chat', authWithTenant, chatRouter);
+app.use('/api/chat', adminOnly, chatRouter);
 console.log('Registered chat routes');
 
-app.use('/api/email', authWithTenant, emailRouter);
+app.use('/api/email', salesPurchaseAccess, emailRouter);
 console.log('Registered email routes');
 
-app.use('/api/tasks', authWithTenant, taskRouter);
+app.use('/api/tasks', salesPurchaseAccess, taskRouter);
 console.log('Registered task routes');
 
 // Health check endpoint

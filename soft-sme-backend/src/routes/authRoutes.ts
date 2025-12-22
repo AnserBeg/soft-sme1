@@ -35,6 +35,130 @@ interface JwtPayload {
   access_role: string;
 }
 
+type LoginRolePolicy = {
+  allowRoles?: string[];
+  blockRoles?: string[];
+};
+
+const normalizeRole = (role?: string | null) => (role ?? '').trim().toLowerCase();
+
+const matchesRole = (role: string, candidates: string[]) =>
+  candidates.some(candidate => normalizeRole(candidate) === role);
+
+const handleLogin = async (req: Request, res: Response, policy: LoginRolePolicy = {}) => {
+  const { email, password } = req.body;
+  const rawCompanyId = (req.body as any)?.company_id ?? req.headers['x-tenant-id'];
+  const companyId =
+    rawCompanyId === undefined || rawCompanyId === null || rawCompanyId === ''
+      ? null
+      : Number(rawCompanyId);
+
+  if (!email || !password) {
+    return res.status(400).json({ message: 'Email and password are required' });
+  }
+
+  try {
+    if (companyId !== null && !Number.isInteger(companyId)) {
+      return res.status(400).json({ message: 'company_id must be an integer' });
+    }
+
+    // Multi-company support: the same email can exist in multiple companies.
+    // If company_id isn't provided, select the one that matches the supplied password.
+    const candidates =
+      companyId !== null
+        ? (
+            await pool.query(
+              'SELECT id, username, email, password_hash, company_id, role, access_role FROM users WHERE email = $1 AND company_id = $2',
+              [email, companyId]
+            )
+          ).rows
+        : (
+            await pool.query(
+              'SELECT id, username, email, password_hash, company_id, role, access_role FROM users WHERE email = $1 ORDER BY company_id ASC',
+              [email]
+            )
+          ).rows;
+
+    if (candidates.length === 0) {
+      return res.status(401).json({ message: 'Invalid email or password' });
+    }
+
+    const matches: any[] = [];
+    for (const candidate of candidates) {
+      if (await bcrypt.compare(password, candidate.password_hash)) {
+        matches.push(candidate);
+      }
+    }
+
+    if (matches.length === 0) {
+      return res.status(401).json({ message: 'Invalid email or password' });
+    }
+
+    if (matches.length > 1) {
+      return res.status(400).json({
+        message:
+          'Multiple companies matched these credentials. Provide company_id (or x-tenant-id) to login.',
+      });
+    }
+
+    const user = matches[0];
+    const normalizedRole = normalizeRole(user.access_role);
+
+    if (policy.blockRoles && matchesRole(normalizedRole, policy.blockRoles)) {
+      return res.status(403).json({
+        message: 'This account can only sign in using the Clockwise Mobile app.',
+      });
+    }
+
+    if (policy.allowRoles && !matchesRole(normalizedRole, policy.allowRoles)) {
+      return res.status(403).json({
+        message: 'This account is not permitted to sign in with this client.',
+      });
+    }
+
+    // Create session for user
+    const deviceInfo = SessionManager.extractDeviceInfo(req);
+    const locationInfo = SessionManager.extractLocationInfo(req);
+    const ipAddress = req.ip || req.connection.remoteAddress || 'unknown';
+    const userAgent = req.headers['user-agent'] || '';
+
+    const sessionResult = await SessionManager.createSession(
+      user.id,
+      deviceInfo,
+      ipAddress,
+      userAgent,
+      locationInfo
+    );
+    console.log('[DEBUG] SessionManager.createSession result:', sessionResult);
+
+    // Set refresh token as httpOnly, secure cookie
+    res.cookie('refreshToken', sessionResult.refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+      path: '/api/auth',
+    });
+
+    const responsePayload = {
+      sessionToken: sessionResult.sessionToken,
+      refreshToken: sessionResult.refreshToken,
+      user: {
+        id: user.id,
+        email: user.email,
+        company_id: user.company_id,
+        role: user.role,
+        access_role: user.access_role,
+      },
+    };
+    console.log('[DEBUG] /login response payload:', responsePayload);
+    res.json(responsePayload);
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({ message: 'Server error during login' });
+  }
+};
+
 // Register User (This endpoint might become less relevant if all users belong to a company)
 router.post('/register', async (req: Request, res: Response) => {
   const { username, email, password } = req.body;
@@ -195,104 +319,16 @@ router.post('/change-password', authMiddleware, async (req: Request, res: Respon
 
 // Login User with Session Management
 router.post('/login', async (req: Request, res: Response) => {
-  const { email, password } = req.body;
-  const rawCompanyId = (req.body as any)?.company_id ?? req.headers['x-tenant-id'];
-  const companyId =
-    rawCompanyId === undefined || rawCompanyId === null || rawCompanyId === ''
-      ? null
-      : Number(rawCompanyId);
+  return handleLogin(req, res, {
+    blockRoles: ['Mobile Time Tracker', 'Mobile Time Tracking'],
+  });
+});
 
-  if (!email || !password) {
-    return res.status(400).json({ message: 'Email and password are required' });
-  }
-
-  try {
-    if (companyId !== null && !Number.isInteger(companyId)) {
-      return res.status(400).json({ message: 'company_id must be an integer' });
-    }
-
-    // Multi-company support: the same email can exist in multiple companies.
-    // If company_id isn't provided, select the one that matches the supplied password.
-    const candidates =
-      companyId !== null
-        ? (
-            await pool.query(
-              'SELECT id, username, email, password_hash, company_id, role, access_role FROM users WHERE email = $1 AND company_id = $2',
-              [email, companyId]
-            )
-          ).rows
-        : (
-            await pool.query(
-              'SELECT id, username, email, password_hash, company_id, role, access_role FROM users WHERE email = $1 ORDER BY company_id ASC',
-              [email]
-            )
-          ).rows;
-
-    if (candidates.length === 0) {
-      return res.status(401).json({ message: 'Invalid email or password' });
-    }
-
-    const matches: any[] = [];
-    for (const candidate of candidates) {
-      if (await bcrypt.compare(password, candidate.password_hash)) {
-        matches.push(candidate);
-      }
-    }
-
-    if (matches.length === 0) {
-      return res.status(401).json({ message: 'Invalid email or password' });
-    }
-
-    if (matches.length > 1) {
-      return res.status(400).json({
-        message:
-          'Multiple companies matched these credentials. Provide company_id (or x-tenant-id) to login.',
-      });
-    }
-
-    const user = matches[0];
-
-    // Create session for user
-    const deviceInfo = SessionManager.extractDeviceInfo(req);
-    const locationInfo = SessionManager.extractLocationInfo(req);
-    const ipAddress = req.ip || req.connection.remoteAddress || 'unknown';
-    const userAgent = req.headers['user-agent'] || '';
-
-    const sessionResult = await SessionManager.createSession(
-      user.id,
-      deviceInfo,
-      ipAddress,
-      userAgent,
-      locationInfo
-    );
-    console.log('[DEBUG] SessionManager.createSession result:', sessionResult);
-
-    // Set refresh token as httpOnly, secure cookie
-    res.cookie('refreshToken', sessionResult.refreshToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
-      path: '/api/auth',
-    });
-
-    const responsePayload = {
-      sessionToken: sessionResult.sessionToken,
-      refreshToken: sessionResult.refreshToken,
-      user: {
-        id: user.id,
-        email: user.email,
-        company_id: user.company_id,
-        role: user.role,
-        access_role: user.access_role,
-      },
-    };
-    console.log('[DEBUG] /login response payload:', responsePayload);
-    res.json(responsePayload);
-  } catch (error) {
-    console.error('Login error:', error);
-    res.status(500).json({ message: 'Server error during login' });
-  }
+// Mobile-only login (Clockwise Mobile)
+router.post('/login-mobile', async (req: Request, res: Response) => {
+  return handleLogin(req, res, {
+    allowRoles: ['Mobile Time Tracker', 'Mobile Time Tracking'],
+  });
 });
 
 // CSRF token endpoint (for cookie-based refresh flow)
