@@ -1,7 +1,9 @@
 import express, { Request, Response } from 'express';
 import { pool } from '../db';
+import { ACCESS_ROLES, requireAccessRoles } from '../middleware/roleAccessMiddleware';
 
 const router = express.Router();
+const adminOnly = requireAccessRoles([ACCESS_ROLES.ADMIN]);
 
 // Get all categories
 router.get('/', async (req: Request, res: Response) => {
@@ -43,7 +45,7 @@ router.get('/:id', async (req: Request, res: Response) => {
 });
 
 // Create a new category
-router.post('/', async (req: Request, res: Response) => {
+router.post('/', adminOnly, async (req: Request, res: Response) => {
   console.log('categoryRoutes: Received POST request to create category');
   const { category_name, description } = req.body;
 
@@ -84,7 +86,7 @@ router.post('/', async (req: Request, res: Response) => {
 });
 
 // Update a category
-router.put('/:id', async (req: Request, res: Response) => {
+router.put('/:id', adminOnly, async (req: Request, res: Response) => {
   const { id } = req.params;
   console.log('categoryRoutes: Received PUT request to update category ID:', id);
   const { category_name, description } = req.body;
@@ -137,7 +139,7 @@ router.put('/:id', async (req: Request, res: Response) => {
 });
 
 // Delete a category
-router.delete('/:id', async (req: Request, res: Response) => {
+router.delete('/:id', adminOnly, async (req: Request, res: Response) => {
   const { id } = req.params;
   const { reassign = false } = req.query; // New query parameter
   console.log('categoryRoutes: Received DELETE request for category ID:', id, 'reassign:', reassign);
@@ -227,7 +229,7 @@ router.delete('/:id', async (req: Request, res: Response) => {
 // DELETE /api/categories/purge?force=true|false
 // - force=false (default): deletes all categories not in use by any inventory item and not "Uncategorized"
 // - force=true: reassigns all inventory items to "Uncategorized" and deletes all categories except "Uncategorized"
-router.delete('/purge', async (req: Request, res: Response) => {
+router.delete('/purge', adminOnly, async (req: Request, res: Response) => {
   const force = String(req.query.force || 'false').toLowerCase() === 'true';
   console.log(`categoryRoutes: Received PURGE request. force=${force}`);
 

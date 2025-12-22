@@ -293,7 +293,7 @@ console.log('Registered customer routes');
 app.use('/api/products', salesPurchaseAccess, productRoutes);
 console.log('Registered product routes');
 
-app.use('/api/purchase-history', adminOnly, purchaseHistoryRoutes);
+app.use('/api/purchase-history', salesPurchaseAccess, purchaseHistoryRoutes);
 console.log('Registered purchase history routes');
 
 app.use('/api/margin-schedule', adminOnly, marginScheduleRoutes);
@@ -306,7 +306,7 @@ app.use('/api/inventory', inventoryAccess, inventoryRoutes);
 console.log('Registered inventory routes');
 
 // Categories
-app.use('/api/categories', adminOnly, categoryRoutes);
+app.use('/api/categories', salesPurchaseAccess, categoryRoutes);
 console.log('Registered category routes');
 
 app.use('/api/quotes', salesPurchaseAccess, quoteRoutes);
