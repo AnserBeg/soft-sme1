@@ -236,7 +236,7 @@ console.log('Registered leave management routes');
 app.use('/api/attendance', authWithTenant, attendanceRouter);
 console.log('Registered attendance routes');
 
-app.use('/api/profile-documents', profileDocumentRouter);
+app.use('/api/profile-documents', authWithTenant, profileDocumentRouter);
 console.log('Registered profile document routes');
 
 app.use('/api/messaging', authWithTenant, messagingRouter);
@@ -251,7 +251,7 @@ console.log('Registered chat routes');
 app.use('/api/email', authWithTenant, emailRouter);
 console.log('Registered email routes');
 
-app.use('/api/tasks', taskRouter);
+app.use('/api/tasks', authWithTenant, taskRouter);
 console.log('Registered task routes');
 
 // Health check endpoint

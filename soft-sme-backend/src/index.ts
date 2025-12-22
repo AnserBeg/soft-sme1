@@ -343,7 +343,7 @@ app.use('/api/invoice-automator', authWithTenant, invoiceAutomatorRoutes);
 console.log('Registered email routes');
 
 // Profile document routes
-app.use('/api/profile-documents', profileDocumentRoutes);
+app.use('/api/profile-documents', authWithTenant, profileDocumentRoutes);
 console.log('Registered profile document routes');
 
 app.use('/api/messaging', authWithTenant, messagingRoutes);
@@ -352,7 +352,7 @@ console.log('Registered messaging routes');
 app.use('/api/reminders', authWithTenant, reminderRoutes);
 console.log('Registered reminder routes');
 
-app.use('/api/tasks', taskRoutes);
+app.use('/api/tasks', authWithTenant, taskRoutes);
 console.log('Registered task routes');
 
 // Voice/calling routes (feature flag optional)
