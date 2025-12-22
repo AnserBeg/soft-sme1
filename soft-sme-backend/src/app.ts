@@ -120,6 +120,8 @@ const corsOptions: cors.CorsOptions = {
     'X-Requested-With',
     'Cache-Control',
     'cache-control',
+    'x-csrf-token',
+    'X-CSRF-Token',
     'x-tenant-id',
     'X-Tenant-Id',
     'x-device-id',

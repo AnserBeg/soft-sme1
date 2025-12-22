@@ -6,6 +6,7 @@ import { spawn } from 'child_process';
 import cors from 'cors';
 import bodyParser from 'body-parser';
 import expressWs from 'express-ws';
+import cookieParser from 'cookie-parser';
 import { pool } from './db';
 import { authMiddleware } from './middleware/authMiddleware';
 import { tenantContextMiddleware } from './middleware/tenantMiddleware';
@@ -204,6 +205,8 @@ const corsOptions: cors.CorsOptions = {
     'X-Requested-With',
     'Accept',
     'Origin',
+    'x-csrf-token',
+    'X-CSRF-Token',
     'x-tenant-id',
     'X-Tenant-Id',
     // Support axios/fetch cache directives from browsers and proxies
@@ -228,6 +231,7 @@ app.use((req, res, next) => {
 });
 app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
+app.use(cookieParser());
 app.use('/uploads', express.static('uploads'));
 
 // Health check endpoint for connection warmup

@@ -2,6 +2,7 @@ import express, { Request, Response } from 'express';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import path from 'path';
+import csrf from 'csurf';
 import { authMiddleware, adminAuth } from '../middleware/authMiddleware';
 import { noCacheMiddleware } from '../middleware/noCacheMiddleware';
 import { sharedPool as pool } from '../dbShared';
@@ -9,6 +10,21 @@ import { SessionManager } from '../utils/sessionManager';
 
 const router = express.Router();
 router.use(noCacheMiddleware);
+
+const csrfCookieOptions = {
+  httpOnly: true,
+  secure: process.env.NODE_ENV === 'production',
+  sameSite: 'lax' as const,
+  path: '/api/auth',
+};
+
+const csrfProtection = csrf({ cookie: csrfCookieOptions });
+const requireCsrfForCookieRefresh: express.RequestHandler = (req, res, next) => {
+  if (req.cookies?.refreshToken) {
+    return csrfProtection(req, res, next);
+  }
+  return next();
+};
 
 interface JwtPayload {
   id: string;
@@ -279,8 +295,13 @@ router.post('/login', async (req: Request, res: Response) => {
   }
 });
 
+// CSRF token endpoint (for cookie-based refresh flow)
+router.get('/csrf-token', csrfProtection, (req: Request, res: Response) => {
+  res.json({ csrfToken: req.csrfToken() });
+});
+
 // Refresh Session Token
-router.post('/refresh', async (req: Request, res: Response) => {
+router.post('/refresh', requireCsrfForCookieRefresh, async (req: Request, res: Response) => {
   // Try to get refreshToken from cookie first, then body
   const refreshToken = req.cookies?.refreshToken || req.body.refreshToken;
 
@@ -553,6 +574,13 @@ router.post('/force-logout-user/:userId', authMiddleware, adminAuth, async (req:
     console.error('Error forcing user logout:', error);
     res.status(500).json({ message: 'Server error while forcing user logout' });
   }
+});
+
+router.use((err: any, _req: Request, res: Response, next: express.NextFunction) => {
+  if (err?.code === 'EBADCSRFTOKEN') {
+    return res.status(403).json({ message: 'Invalid CSRF token' });
+  }
+  return next(err);
 });
 
 export default router; 
