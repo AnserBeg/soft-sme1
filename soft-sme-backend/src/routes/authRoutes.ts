@@ -11,9 +11,10 @@ import { SessionManager } from '../utils/sessionManager';
 const router = express.Router();
 router.use(noCacheMiddleware);
 
+const secureCookie = process.env.NODE_ENV === 'production' || process.env.COOKIE_SECURE === 'true';
 const csrfCookieOptions = {
   httpOnly: true,
-  secure: process.env.NODE_ENV === 'production',
+  secure: secureCookie,
   sameSite: 'lax' as const,
   path: '/api/auth',
 };
@@ -134,7 +135,7 @@ const handleLogin = async (req: Request, res: Response, policy: LoginRolePolicy 
     // Set refresh token as httpOnly, secure cookie
     res.cookie('refreshToken', sessionResult.refreshToken, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
+      secure: secureCookie,
       sameSite: 'lax',
       maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
       path: '/api/auth',
@@ -353,7 +354,12 @@ router.post('/refresh', requireCsrfForCookieRefresh, async (req: Request, res: R
       const tokenPrefix = refreshToken ? refreshToken.slice(0, 8) : 'none';
       console.log(`[SESSION] Invalid refresh token (${result.reason}) used at ${new Date().toISOString()} token=${tokenPrefix}...`);
       // Clear refresh token cookie so the client stops retrying with a bad token
-      res.clearCookie('refreshToken', { path: '/api/auth' });
+      res.clearCookie('refreshToken', {
+        httpOnly: true,
+        secure: secureCookie,
+        sameSite: 'lax',
+        path: '/api/auth',
+      });
       return res.status(401).json({ message: 'Invalid or expired refresh token' });
     }
 
@@ -364,7 +370,7 @@ router.post('/refresh', requireCsrfForCookieRefresh, async (req: Request, res: R
     // Set new refresh token as httpOnly, secure cookie
     res.cookie('refreshToken', result.refreshToken, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
+      secure: secureCookie,
       sameSite: 'lax',
       maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
       path: '/api/auth',
@@ -460,7 +466,12 @@ router.post('/logout-all', authMiddleware, async (req: Request, res: Response) =
     // Log session invalidation
     console.log(`[SESSION] User ${userId} logged out from all devices at ${new Date().toISOString()}`);
     // Clear refresh token cookie
-    res.clearCookie('refreshToken', { path: '/api/auth' });
+    res.clearCookie('refreshToken', {
+      httpOnly: true,
+      secure: secureCookie,
+      sameSite: 'lax',
+      path: '/api/auth',
+    });
     res.json({ message: 'Logged out from all devices successfully' });
   } catch (error) {
     console.error('Error logging out from all devices:', error);

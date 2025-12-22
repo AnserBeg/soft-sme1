@@ -225,6 +225,20 @@ const invoiceData = {
 - **Database Update**: Store new tokens automatically
 - **Error Handling**: Prompt reconnection if refresh fails
 
+### QBO Data Storage Policy
+
+**Purpose-Limited Storage:**
+- Store only the minimal QBO data required for core app functionality.
+- Approved storage includes: `qbo_connection` tokens, `qbo_account_mapping` IDs, and export flags/IDs on sales orders and purchase orders (`exported_to_qbo`, `qbo_invoice_id`, `qbo_bill_id`, `qbo_export_date`, `qbo_export_status`).
+
+**Prohibited or Avoided Storage:**
+- Do not sync or persist full QBO ledgers, transaction histories, or customer/vendor datasets "just in case."
+- Do not provide an interface that exports QBO data outside the app (for example, bulk CSV exports of QBO customers).
+
+**Caching Guidance:**
+- If short-lived caching is added to reduce QBO API calls, document the fields cached, retention window, and invalidation strategy.
+- Keep cached data minimal, secure, and refreshed or expired promptly.
+
 **Data Synchronization:**
 - **Customer Sync**: Check/create customers in QBO
 - **Item Sync**: Create QBO items for products
