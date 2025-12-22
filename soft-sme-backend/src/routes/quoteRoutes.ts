@@ -1,4 +1,4 @@
-import express, { Request, Response } from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import { pool } from '../db';
 import { getNextSalesOrderSequenceNumberForYear } from '../utils/sequence';
 import { QuoteService } from '../services/QuoteService';
@@ -23,6 +23,32 @@ const formatCurrency = (value: number | string | null | undefined): string => {
 
 const router = express.Router();
 const quoteService = new QuoteService(pool);
+
+const allowedQuoteRoles = new Set([
+  'admin',
+  'sales and purchase',
+  'sales/purchase',
+  'sales',
+  'purchase',
+]);
+
+const normalizeRole = (role?: string | null) => role?.trim().toLowerCase() ?? '';
+
+const requireQuoteAccess = (req: Request, res: Response, next: NextFunction) => {
+  const userRole = normalizeRole(req.user?.access_role);
+
+  if (!userRole) {
+    return res.status(401).json({ error: 'Not authenticated' });
+  }
+
+  if (!allowedQuoteRoles.has(userRole)) {
+    return res.status(403).json({ error: 'Access denied for role' });
+  }
+
+  return next();
+};
+
+router.use(requireQuoteAccess);
 
 // Get all quotes'
 router.get('/', async (req: Request, res: Response) => {

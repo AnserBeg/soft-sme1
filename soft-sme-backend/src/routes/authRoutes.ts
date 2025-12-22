@@ -134,7 +134,7 @@ router.post('/register-company', async (req: Request, res: Response) => {
 });
 
 // Register Employee (Admin Only)
-router.post('/register-employee', authMiddleware, async (req: Request, res: Response) => {
+router.post('/register-employee', authMiddleware, adminAuth, async (req: Request, res: Response) => {
   try {
     const { username, email, password, role = 'Employee', access_role = 'Employee' } = req.body;
 
@@ -433,7 +433,7 @@ router.post('/logout-all', authMiddleware, async (req: Request, res: Response) =
 });
 
 // Update user roles (Admin only)
-router.put('/update-user-roles/:id', authMiddleware, async (req: Request, res: Response) => {
+router.put('/update-user-roles/:id', authMiddleware, adminAuth, async (req: Request, res: Response) => {
   const { role, access_role } = req.body;
   const userId = req.params.id;
 

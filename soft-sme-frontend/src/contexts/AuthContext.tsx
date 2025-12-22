@@ -72,6 +72,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (sessionToken && refreshToken && userData) {
       try {
         const parsedUser = JSON.parse(userData);
+        if (parsedUser?.access_role === 'Mobile Time Tracker') {
+          localStorage.removeItem('sessionToken');
+          localStorage.removeItem('refreshToken');
+          localStorage.removeItem('user');
+          localStorage.setItem(
+            'authRedirectMessage',
+            'Mobile time tracking accounts must sign in using the Clockwise Mobile app.'
+          );
+          return;
+        }
         setUser(parsedUser);
         setIsAuthenticated(true);
         api.defaults.headers.common['Authorization'] = `Bearer ${sessionToken}`;

@@ -66,6 +66,10 @@ const LoginPage: React.FC = () => {
     try {
       const response = await api.post('/api/auth/login', formData);
       const { sessionToken, refreshToken, user } = response.data;
+      if (user.access_role === 'Mobile Time Tracker') {
+        setError('Mobile time tracking accounts must sign in using the Clockwise Mobile app.');
+        return;
+      }
       login(sessionToken, refreshToken, user);
       if (user.access_role === 'Time Tracking') navigate('/time-tracking');
       else if (user.access_role === 'Quotes') navigate('/quotes');

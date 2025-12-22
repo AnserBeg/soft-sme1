@@ -1,5 +1,5 @@
 import express, { Request, Response } from 'express';
-import { authMiddleware } from '../middleware/authMiddleware';
+import { authMiddleware, adminAuth } from '../middleware/authMiddleware';
 import { exec } from 'child_process';
 import fs from 'fs';
 import path from 'path';
@@ -108,7 +108,7 @@ function getDbConnectionDetails(): DbConnectionDetails {
 }
 
 // Get list of available backups
-router.get('/list', authMiddleware, async (req: Request, res: Response) => {
+router.get('/list', authMiddleware, adminAuth, async (req: Request, res: Response) => {
   try {
     const backupDir = getBackupDir();
     
@@ -139,7 +139,7 @@ router.get('/list', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // Create a new backup
-router.post('/create', authMiddleware, async (req: Request, res: Response) => {
+router.post('/create', authMiddleware, adminAuth, async (req: Request, res: Response) => {
   try {
     const backupDir = getBackupDir();
     if (!fs.existsSync(backupDir)) {
@@ -296,7 +296,7 @@ router.post('/create', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // Download a backup file
-router.get('/download/:filename', authMiddleware, async (req: Request, res: Response) => {
+router.get('/download/:filename', authMiddleware, adminAuth, async (req: Request, res: Response) => {
   try {
     const { filename } = req.params;
     const backupDir = getBackupDir();
@@ -314,7 +314,7 @@ router.get('/download/:filename', authMiddleware, async (req: Request, res: Resp
 });
 
 // Delete a backup
-router.delete('/delete/:manifest', authMiddleware, async (req: Request, res: Response) => {
+router.delete('/delete/:manifest', authMiddleware, adminAuth, async (req: Request, res: Response) => {
   try {
     const { manifest } = req.params;
     const backupDir = getBackupDir();
@@ -351,7 +351,7 @@ router.delete('/delete/:manifest', authMiddleware, async (req: Request, res: Res
 });
 
 // Restore from backup
-router.post('/restore/:manifest', authMiddleware, async (req: Request, res: Response) => {
+router.post('/restore/:manifest', authMiddleware, adminAuth, async (req: Request, res: Response) => {
   try {
     const { manifest } = req.params;
     const backupDir = getBackupDir();
@@ -483,7 +483,7 @@ router.post('/restore/:manifest', authMiddleware, async (req: Request, res: Resp
 });
 
 // Get backup statistics
-router.get('/stats', authMiddleware, async (req: Request, res: Response) => {
+router.get('/stats', authMiddleware, adminAuth, async (req: Request, res: Response) => {
   try {
     const backupDir = getBackupDir();
     
@@ -532,7 +532,7 @@ router.get('/stats', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // Schedule automated backup
-router.post('/schedule', authMiddleware, async (req: Request, res: Response) => {
+router.post('/schedule', authMiddleware, adminAuth, async (req: Request, res: Response) => {
   try {
     const { frequency, time } = req.body; // frequency: 'daily', 'weekly', time: 'HH:MM'
     
@@ -566,7 +566,7 @@ router.post('/schedule', authMiddleware, async (req: Request, res: Response) => 
 });
 
 // Get backup settings
-router.get('/settings', authMiddleware, async (req: Request, res: Response) => {
+router.get('/settings', authMiddleware, adminAuth, async (req: Request, res: Response) => {
   try {
     const settingsPath = path.join(__dirname, '../../backup-settings.json');
     let settings = {
@@ -596,7 +596,7 @@ router.get('/settings', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // Save backup settings
-router.post('/settings', authMiddleware, async (req: Request, res: Response) => {
+router.post('/settings', authMiddleware, adminAuth, async (req: Request, res: Response) => {
   try {
     const { customBackupDir, customRestoreDir } = req.body;
     const settingsPath = path.join(__dirname, '../../backup-settings.json');
@@ -615,7 +615,7 @@ router.post('/settings', authMiddleware, async (req: Request, res: Response) => 
 });
 
 // Browse directory (for desktop app)
-router.post('/browse-dir', authMiddleware, async (req: Request, res: Response) => {
+router.post('/browse-dir', authMiddleware, adminAuth, async (req: Request, res: Response) => {
   try {
     const { type } = req.body;
     const title = type === 'backup' ? 'Select Backup Directory' : 'Select Restore Directory';
@@ -640,7 +640,7 @@ const upload = multer({
   }
 });
 
-router.post('/upload', authMiddleware, upload.single('backup'), async (req: Request, res: Response) => {
+router.post('/upload', authMiddleware, adminAuth, upload.single('backup'), async (req: Request, res: Response) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No backup file provided' });
