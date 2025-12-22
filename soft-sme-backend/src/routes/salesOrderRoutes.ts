@@ -5,7 +5,7 @@ import PDFDocument from 'pdfkit';
 import { SalesOrderService } from '../services/SalesOrderService';
 import { InventoryService } from '../services/InventoryService';
 import { qboHttp } from '../utils/qboHttp';
-import { decryptQboConnectionRow, encryptQboConnectionFields } from '../utils/qboCrypto';
+import { ensureFreshQboAccess } from '../utils/qboTokens';
 import { getLogoImageSource } from '../utils/pdfLogoHelper';
 import { resolveTenantUserId } from '../utils/tenantUser';
 
@@ -1074,7 +1074,13 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'QuickBooks account mapping not configured. Please set up account mapping in QBO Settings first.' });
     }
 
-    const qboConnection = await decryptQboConnectionRow(qboResult.rows[0]);
+    let accessContext;
+    try {
+      accessContext = await ensureFreshQboAccess(pool, qboResult.rows[0], companyId);
+    } catch (refreshError) {
+      console.error('Error refreshing QBO token:', refreshError instanceof Error ? refreshError.message : String(refreshError));
+      return res.status(401).json({ error: 'QuickBooks token expired and could not be refreshed. Please reconnect your account.' });
+    }
     const accountMapping = mappingResult.rows[0];
 
     // Validate required account mappings for sales orders
@@ -1130,55 +1136,15 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
     const lineItems = lineItemsResult.rows;
     console.log(`Found ${lineItems.length} line items for SO ${id}`);
 
-    // 4. Check if token is expired and refresh if needed
-    if (new Date(qboConnection.expires_at) < new Date()) {
-      try {
-        const refreshResponse = await qboHttp.post('https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer', {
-          grant_type: 'refresh_token',
-          refresh_token: qboConnection.refresh_token
-        }, {
-          auth: {
-            username: process.env.QBO_CLIENT_ID!,
-            password: process.env.QBO_CLIENT_SECRET!
-          },
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded'
-          }
-        });
-
-        const { access_token, refresh_token, expires_in } = refreshResponse.data;
-        
-        const encrypted = await encryptQboConnectionFields({
-          realmId: qboConnection.realm_id,
-          accessToken: access_token,
-          refreshToken: refresh_token,
-        });
-
-        // Update tokens in database
-        await pool.query(
-          `UPDATE qbo_connection SET 
-           realm_id = $1, access_token = $2, refresh_token = $3, expires_at = $4, updated_at = NOW() 
-           WHERE company_id = $5`,
-          [encrypted.realmId, encrypted.accessToken, encrypted.refreshToken, new Date(Date.now() + expires_in * 1000), companyId]
-        );
-
-        qboConnection.access_token = access_token;
-        qboConnection.refresh_token = refresh_token;
-      } catch (refreshError) {
-        console.error('Error refreshing QBO token:', refreshError instanceof Error ? refreshError.message : String(refreshError));
-        return res.status(401).json({ error: 'QuickBooks token expired and could not be refreshed. Please reconnect your account.' });
-      }
-    }
-
-    // 5. Check if customer exists in QuickBooks
+    // 4. Check if customer exists in QuickBooks
     let qboCustomerId = null;
     try {
       // Search for existing customer
       const customerSearchResponse = await qboHttp.get(
-        `https://sandbox-quickbooks.api.intuit.com/v3/company/${qboConnection.realm_id}/query`,
+        `https://sandbox-quickbooks.api.intuit.com/v3/company/${accessContext.realmId}/query`,
         {
           headers: {
-            'Authorization': `Bearer ${qboConnection.access_token}`,
+            'Authorization': `Bearer ${accessContext.accessToken}`,
             'Accept': 'application/json',
             'Content-Type': 'application/json'
           },
@@ -1335,8 +1301,20 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
     console.log(`Sales Order amounts: estimatedPrice=${estimatedPrice}, gstAmount=${gstAmount}, totalAmount=${totalAmount}`);
 
     // Get or create QBO items for the actual product and GST
-    const productItemId = await getOrCreateQBOItem(salesOrder.product_name, 'Service', accountMapping.qbo_sales_account_id, qboConnection.access_token, qboConnection.realm_id);
-    const gstItemId = await getOrCreateQBOItem('GST', 'Service', accountMapping.qbo_gst_account_id, qboConnection.access_token, qboConnection.realm_id);
+    const productItemId = await getOrCreateQBOItem(
+      salesOrder.product_name,
+      'Service',
+      accountMapping.qbo_sales_account_id,
+      accessContext.accessToken,
+      accessContext.realmId
+    );
+    const gstItemId = await getOrCreateQBOItem(
+      'GST',
+      'Service',
+      accountMapping.qbo_gst_account_id,
+      accessContext.accessToken,
+      accessContext.realmId
+    );
 
     console.log('Using QBO items for export');
 
@@ -1403,11 +1381,11 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
     let qboInvoiceId: string;
     try {
       const invoiceResponse = await qboHttp.post(
-        `https://sandbox-quickbooks.api.intuit.com/v3/company/${qboConnection.realm_id}/invoice`,
+        `https://sandbox-quickbooks.api.intuit.com/v3/company/${accessContext.realmId}/invoice`,
         invoiceData,
         {
           headers: {
-            'Authorization': `Bearer ${qboConnection.access_token}`,
+            'Authorization': `Bearer ${accessContext.accessToken}`,
             'Accept': 'application/json',
             'Content-Type': 'application/json'
           },
@@ -1581,11 +1559,11 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
 
         try {
           const journalResponse = await qboHttp.post(
-            `https://sandbox-quickbooks.api.intuit.com/v3/company/${qboConnection.realm_id}/journalentry`,
+            `https://sandbox-quickbooks.api.intuit.com/v3/company/${accessContext.realmId}/journalentry`,
             journalEntryData,
             {
               headers: {
-                'Authorization': `Bearer ${qboConnection.access_token}`,
+                'Authorization': `Bearer ${accessContext.accessToken}`,
                 'Accept': 'application/json',
                 'Content-Type': 'application/json'
               },
@@ -1675,50 +1653,16 @@ router.post('/:id/export-to-qbo-with-customer', async (req: Request, res: Respon
       return res.status(400).json({ error: 'QuickBooks connection not found. Please connect your QuickBooks account first.' });
     }
 
-    const qboConnection = await decryptQboConnectionRow(qboResult.rows[0]);
-    
-    // Check if token is expired and refresh if needed
-    if (new Date(qboConnection.expires_at) < new Date()) {
-      try {
-        const refreshResponse = await qboHttp.post('https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer', {
-          grant_type: 'refresh_token',
-          refresh_token: qboConnection.refresh_token
-        }, {
-          auth: {
-            username: process.env.QBO_CLIENT_ID!,
-            password: process.env.QBO_CLIENT_SECRET!
-          },
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded'
-          }
-        });
-
-        const { access_token, refresh_token, expires_in } = refreshResponse.data;
-        
-        const encrypted = await encryptQboConnectionFields({
-          realmId: qboConnection.realm_id,
-          accessToken: access_token,
-          refreshToken: refresh_token,
-        });
-
-        // Update tokens in database
-        await pool.query(
-          `UPDATE qbo_connection SET 
-           realm_id = $1, access_token = $2, refresh_token = $3, expires_at = $4, updated_at = NOW() 
-           WHERE company_id = $5`,
-          [encrypted.realmId, encrypted.accessToken, encrypted.refreshToken, new Date(Date.now() + expires_in * 1000), companyId]
-        );
-
-        qboConnection.access_token = access_token;
-        qboConnection.refresh_token = refresh_token;
-      } catch (refreshError) {
-        console.error('Error refreshing QBO token:', refreshError instanceof Error ? refreshError.message : String(refreshError));
-        return res.status(401).json({ error: 'QuickBooks token expired and could not be refreshed. Please reconnect your account.' });
-      }
+    let accessContext;
+    try {
+      accessContext = await ensureFreshQboAccess(pool, qboResult.rows[0], companyId);
+    } catch (refreshError) {
+      console.error('Error refreshing QBO token:', refreshError instanceof Error ? refreshError.message : String(refreshError));
+      return res.status(401).json({ error: 'QuickBooks token expired and could not be refreshed. Please reconnect your account.' });
     }
 
     // Create customer in QBO first
-    const qboCustomerId = await createQBOCustomer(customerData, qboConnection.access_token, qboConnection.realm_id);
+    const qboCustomerId = await createQBOCustomer(customerData, accessContext.accessToken, accessContext.realmId);
 
     // Get SO line items
     const lineItemsResult = await pool.query(`
@@ -1781,8 +1725,20 @@ router.post('/:id/export-to-qbo-with-customer', async (req: Request, res: Respon
     const totalAmount = estimatedPrice + gstAmount; // 1.05 × estimated price
 
     // Get or create QBO items for sales and GST
-    const salesItemId = await getOrCreateQBOItem('Sales', 'Service', accountMapping.qbo_sales_account_id, qboConnection.access_token, qboConnection.realm_id);
-    const gstItemId = await getOrCreateQBOItem('GST', 'Service', accountMapping.qbo_gst_account_id, qboConnection.access_token, qboConnection.realm_id);
+    const salesItemId = await getOrCreateQBOItem(
+      'Sales',
+      'Service',
+      accountMapping.qbo_sales_account_id,
+      accessContext.accessToken,
+      accessContext.realmId
+    );
+    const gstItemId = await getOrCreateQBOItem(
+      'GST',
+      'Service',
+      accountMapping.qbo_gst_account_id,
+      accessContext.accessToken,
+      accessContext.realmId
+    );
 
     console.log('Using QBO items for export');
 
@@ -1824,11 +1780,11 @@ router.post('/:id/export-to-qbo-with-customer', async (req: Request, res: Respon
 
     // Create invoice in QuickBooks
     const invoiceResponse = await qboHttp.post(
-      `https://sandbox-quickbooks.api.intuit.com/v3/company/${qboConnection.realm_id}/invoice`,
+      `https://sandbox-quickbooks.api.intuit.com/v3/company/${accessContext.realmId}/invoice`,
       invoiceData,
       {
         headers: {
-          'Authorization': `Bearer ${qboConnection.access_token}`,
+          'Authorization': `Bearer ${accessContext.accessToken}`,
           'Accept': 'application/json',
           'Content-Type': 'application/json'
         },
@@ -1971,11 +1927,11 @@ router.post('/:id/export-to-qbo-with-customer', async (req: Request, res: Respon
 
         try {
           await qboHttp.post(
-            `https://sandbox-quickbooks.api.intuit.com/v3/company/${qboConnection.realm_id}/journalentry`,
+            `https://sandbox-quickbooks.api.intuit.com/v3/company/${accessContext.realmId}/journalentry`,
             journalEntryData,
             {
               headers: {
-                'Authorization': `Bearer ${qboConnection.access_token}`,
+                'Authorization': `Bearer ${accessContext.accessToken}`,
                 'Accept': 'application/json',
                 'Content-Type': 'application/json'
               },

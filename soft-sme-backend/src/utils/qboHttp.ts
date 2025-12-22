@@ -2,6 +2,7 @@ import axios, { AxiosInstance, AxiosRequestConfig } from 'axios';
 
 const ALLOWED_QBO_HOSTS = new Set([
   'oauth.platform.intuit.com',
+  'developer.api.intuit.com',
   'sandbox-quickbooks.api.intuit.com',
   'quickbooks.api.intuit.com'
 ]);

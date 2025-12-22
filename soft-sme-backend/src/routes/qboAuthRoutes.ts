@@ -2,9 +2,10 @@ import crypto from 'crypto';
 import express from 'express';
 import { qboHttp } from '../utils/qboHttp';
 import { pool, runWithTenantContext } from '../db';
-import { encryptQboConnectionFields, decryptQboConnectionRow, maskQboValue } from '../utils/qboCrypto';
+import { encryptQboConnectionFields } from '../utils/qboCrypto';
 import { getCompanyIdFromRequest } from '../utils/companyContext';
 import { resolveTenantCompanyId } from '../utils/tenantCompany';
+import { ensureFreshQboAccess } from '../utils/qboTokens';
 
 const router = express.Router();
 
@@ -228,19 +229,33 @@ router.get('/status', async (req, res) => {
         return;
       }
       
-      const connection = await decryptQboConnectionRow(result.rows[0]);
-      const isExpired = new Date(connection.expires_at) < new Date();
+      let accessContext;
+      try {
+        accessContext = await ensureFreshQboAccess(pool, result.rows[0], companyId);
+      } catch (refreshError) {
+        console.error(
+          'Error refreshing QBO token during status check:',
+          refreshError instanceof Error ? refreshError.message : String(refreshError)
+        );
+        res.status(401).json({
+          connected: false,
+          isExpired: true,
+          error: 'QuickBooks token expired and could not be refreshed. Please reconnect your account.',
+        });
+        return;
+      }
+
+      const isExpired = accessContext.expiresAt < new Date();
       
       console.log('QBO connection found:', {
-        companyId: connection.company_id,
+        companyId,
         isExpired,
-        expiresAt: connection.expires_at
+        expiresAt: accessContext.expiresAt
       });
       
       res.json({
         connected: true,
-        realmIdMasked: maskQboValue(connection.realm_id),
-        expiresAt: connection.expires_at,
+        expiresAt: accessContext.expiresAt,
         isExpired
       });
     });

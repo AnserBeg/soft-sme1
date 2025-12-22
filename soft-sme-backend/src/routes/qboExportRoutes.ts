@@ -1,8 +1,8 @@
 import express from 'express';
 import { qboHttp } from '../utils/qboHttp';
 import { pool } from '../db';
-import { decryptQboConnectionRow, encryptQboConnectionFields } from '../utils/qboCrypto';
 import { resolveTenantCompanyIdFromRequest } from '../utils/companyContext';
+import { ensureFreshQboAccess } from '../utils/qboTokens';
 
 const router = express.Router();
 const escapeQboQueryValue = (value: string): string => value.replace(/'/g, "''");
@@ -41,7 +41,13 @@ router.post('/export-purchase-order/:poId', async (req, res) => {
       return res.status(400).json({ error: 'QuickBooks account mapping not configured. Please set up account mapping in QBO Settings first.' });
     }
 
-    const qboConnection = await decryptQboConnectionRow(qboResult.rows[0]);
+    let accessContext;
+    try {
+      accessContext = await ensureFreshQboAccess(pool, qboResult.rows[0], companyId);
+    } catch (refreshError) {
+      console.error('Error refreshing QBO token:', refreshError instanceof Error ? refreshError.message : String(refreshError));
+      return res.status(401).json({ error: 'QuickBooks token expired and could not be refreshed. Please reconnect your account.' });
+    }
     const accountMapping = mappingResult.rows[0];
 
     // 2. Get the Purchase Order details
@@ -78,55 +84,15 @@ router.post('/export-purchase-order/:poId', async (req, res) => {
 
     const lineItems = lineItemsResult.rows;
 
-    // 4. Check if token is expired and refresh if needed
-    if (new Date(qboConnection.expires_at) < new Date()) {
-      try {
-        const refreshResponse = await qboHttp.post('https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer', {
-          grant_type: 'refresh_token',
-          refresh_token: qboConnection.refresh_token
-        }, {
-          auth: {
-            username: process.env.QBO_CLIENT_ID!,
-            password: process.env.QBO_CLIENT_SECRET!
-          },
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded'
-          }
-        });
-
-        const { access_token, refresh_token, expires_in } = refreshResponse.data;
-        
-        const encrypted = await encryptQboConnectionFields({
-          realmId: qboConnection.realm_id,
-          accessToken: access_token,
-          refreshToken: refresh_token,
-        });
-
-        // Update tokens in database
-        await pool.query(
-          `UPDATE qbo_connection SET 
-           realm_id = $1, access_token = $2, refresh_token = $3, expires_at = $4, updated_at = NOW() 
-           WHERE company_id = $5`,
-          [encrypted.realmId, encrypted.accessToken, encrypted.refreshToken, new Date(Date.now() + expires_in * 1000), companyId]
-        );
-
-        qboConnection.access_token = access_token;
-        qboConnection.refresh_token = refresh_token;
-      } catch (refreshError) {
-        console.error('Error refreshing QBO token:', refreshError instanceof Error ? refreshError.message : String(refreshError));
-        return res.status(401).json({ error: 'QuickBooks token expired and could not be refreshed. Please reconnect your account.' });
-      }
-    }
-
-    // 5. Check if vendor exists in QuickBooks, create if not
+    // 4. Check if vendor exists in QuickBooks, create if not
     let qboVendorId = null;
     try {
       // Search for existing vendor
       const vendorSearchResponse = await qboHttp.get(
-        `https://sandbox-quickbooks.api.intuit.com/v3/company/${qboConnection.realm_id}/query`,
+        `https://sandbox-quickbooks.api.intuit.com/v3/company/${accessContext.realmId}/query`,
         {
           headers: {
-            'Authorization': `Bearer ${qboConnection.access_token}`,
+            'Authorization': `Bearer ${accessContext.accessToken}`,
             'Accept': 'application/json',
             'Content-Type': 'application/json'
           },
@@ -157,11 +123,11 @@ router.post('/export-purchase-order/:poId', async (req, res) => {
         };
 
         const vendorCreateResponse = await qboHttp.post(
-          `https://sandbox-quickbooks.api.intuit.com/v3/company/${qboConnection.realm_id}/vendor`,
+          `https://sandbox-quickbooks.api.intuit.com/v3/company/${accessContext.realmId}/vendor`,
           newVendorData,
           {
             headers: {
-              'Authorization': `Bearer ${qboConnection.access_token}`,
+              'Authorization': `Bearer ${accessContext.accessToken}`,
               'Accept': 'application/json',
               'Content-Type': 'application/json'
             },
@@ -243,11 +209,11 @@ router.post('/export-purchase-order/:poId', async (req, res) => {
     console.log(`Creating Bill in QuickBooks: lineCount=${billData.Line?.length || 0}`);
 
     const billResponse = await qboHttp.post(
-      `https://sandbox-quickbooks.api.intuit.com/v3/company/${qboConnection.realm_id}/bill`,
+      `https://sandbox-quickbooks.api.intuit.com/v3/company/${accessContext.realmId}/bill`,
       billData,
       {
         headers: {
-          'Authorization': `Bearer ${qboConnection.access_token}`,
+          'Authorization': `Bearer ${accessContext.accessToken}`,
           'Accept': 'application/json',
           'Content-Type': 'application/json'
         },

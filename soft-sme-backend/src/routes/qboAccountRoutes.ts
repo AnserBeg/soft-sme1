@@ -1,8 +1,9 @@
 import express from 'express';
 import { qboHttp } from '../utils/qboHttp';
 import { pool } from '../db';
-import { decryptQboConnectionRow, encryptQboConnectionFields, maskQboValue } from '../utils/qboCrypto';
+import { decryptQboValue } from '../utils/qboCrypto';
 import { resolveTenantCompanyIdFromRequest } from '../utils/companyContext';
+import { ensureFreshQboAccess, revokeQboRefreshToken } from '../utils/qboTokens';
 
 const router = express.Router();
 
@@ -23,55 +24,21 @@ router.get('/accounts', async (req, res) => {
       return res.status(400).json({ error: 'QuickBooks connection not found. Please connect your QuickBooks account first.' });
     }
 
-    const qboConnection = await decryptQboConnectionRow(qboResult.rows[0]);
-    
-    // Check if token is expired and refresh if needed
-    if (new Date(qboConnection.expires_at) < new Date()) {
-      try {
-        const refreshResponse = await qboHttp.post('https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer', {
-          grant_type: 'refresh_token',
-          refresh_token: qboConnection.refresh_token
-        }, {
-          auth: {
-            username: process.env.QBO_CLIENT_ID!,
-            password: process.env.QBO_CLIENT_SECRET!
-          },
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded'
-          }
-        });
-
-        const { access_token, refresh_token, expires_in } = refreshResponse.data;
-        
-        const encrypted = await encryptQboConnectionFields({
-          realmId: qboConnection.realm_id,
-          accessToken: access_token,
-          refreshToken: refresh_token,
-        });
-
-        // Update tokens in database
-        await pool.query(
-          `UPDATE qbo_connection SET 
-           realm_id = $1, access_token = $2, refresh_token = $3, expires_at = $4, updated_at = NOW() 
-           WHERE company_id = $5`,
-          [encrypted.realmId, encrypted.accessToken, encrypted.refreshToken, new Date(Date.now() + expires_in * 1000), companyId]
-        );
-
-        qboConnection.access_token = access_token;
-        qboConnection.refresh_token = refresh_token;
-      } catch (refreshError) {
-        console.error('Error refreshing QBO token:', refreshError instanceof Error ? refreshError.message : String(refreshError));
-        return res.status(401).json({ error: 'QuickBooks token expired and could not be refreshed. Please reconnect your account.' });
-      }
+    let accessContext;
+    try {
+      accessContext = await ensureFreshQboAccess(pool, qboResult.rows[0], companyId);
+    } catch (refreshError) {
+      console.error('Error refreshing QBO token:', refreshError instanceof Error ? refreshError.message : String(refreshError));
+      return res.status(401).json({ error: 'QuickBooks token expired and could not be refreshed. Please reconnect your account.' });
     }
 
     // Fetch real accounts from QBO using correct v3 API endpoint
     console.log('Fetching real QBO accounts using v3 API...');
     const accountsResponse = await qboHttp.get(
-      `https://sandbox-quickbooks.api.intuit.com/v3/company/${qboConnection.realm_id}/query`,
+      `https://sandbox-quickbooks.api.intuit.com/v3/company/${accessContext.realmId}/query`,
       {
         headers: {
-          'Authorization': `Bearer ${qboConnection.access_token}`,
+          'Authorization': `Bearer ${accessContext.accessToken}`,
           'Accept': 'application/json',
           'Content-Type': 'application/json'
         },
@@ -232,10 +199,18 @@ router.get('/test-connection', async (req, res) => {
       return res.json({ connected: false, message: 'No QuickBooks connection found' });
     }
 
-    const qboConnection = await decryptQboConnectionRow(qboResult.rows[0]);
-    const isExpired = new Date(qboConnection.expires_at) < new Date();
+    let accessContext;
+    try {
+      accessContext = await ensureFreshQboAccess(pool, qboResult.rows[0], companyId);
+    } catch (refreshError) {
+      console.error('Error refreshing QBO token:', refreshError instanceof Error ? refreshError.message : String(refreshError));
+      return res.json({
+        connected: false,
+        message: 'QuickBooks token expired and could not be refreshed. Please reconnect your account.'
+      });
+    }
 
-    if (isExpired) {
+    if (accessContext.expiresAt < new Date()) {
       return res.json({ 
         connected: false, 
         message: 'QuickBooks token has expired. Please reconnect your account.' 
@@ -247,13 +222,43 @@ router.get('/test-connection', async (req, res) => {
     res.json({ 
       connected: true, 
       message: 'QuickBooks connection is working',
-      realmIdMasked: maskQboValue(qboConnection.realm_id),
-      expiresAt: qboConnection.expires_at
+      expiresAt: accessContext.expiresAt
     });
 
   } catch (error) {
     console.error('Error testing QBO connection:', error instanceof Error ? error.message : String(error));
     res.status(500).json({ error: 'Failed to test QuickBooks connection' });
+  }
+});
+
+// Disconnect QBO and revoke refresh token
+router.post('/disconnect', async (req, res) => {
+  try {
+    const companyId = await resolveTenantCompanyIdFromRequest(req, pool);
+    if (!companyId) {
+      return res.status(400).json({ error: 'Company ID not found' });
+    }
+
+    const qboResult = await pool.query('SELECT * FROM qbo_connection WHERE company_id = $1', [companyId]);
+    if (qboResult.rows.length === 0) {
+      return res.json({ success: true, message: 'QuickBooks connection already removed' });
+    }
+
+    let refreshToken = await decryptQboValue(qboResult.rows[0].refresh_token);
+    try {
+      await revokeQboRefreshToken(refreshToken);
+    } catch (revokeError) {
+      console.error('Error revoking QBO token:', revokeError instanceof Error ? revokeError.message : String(revokeError));
+    } finally {
+      refreshToken = '';
+    }
+
+    await pool.query('DELETE FROM qbo_connection WHERE company_id = $1', [companyId]);
+
+    res.json({ success: true, message: 'QuickBooks disconnected' });
+  } catch (error) {
+    console.error('Error disconnecting QuickBooks:', error instanceof Error ? error.message : String(error));
+    res.status(500).json({ error: 'Failed to disconnect QuickBooks' });
   }
 });
 
