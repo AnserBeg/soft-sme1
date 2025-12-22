@@ -3,10 +3,12 @@ import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import path from 'path';
 import { authMiddleware, adminAuth } from '../middleware/authMiddleware';
+import { noCacheMiddleware } from '../middleware/noCacheMiddleware';
 import { sharedPool as pool } from '../dbShared';
 import { SessionManager } from '../utils/sessionManager';
 
 const router = express.Router();
+router.use(noCacheMiddleware);
 
 interface JwtPayload {
   id: string;

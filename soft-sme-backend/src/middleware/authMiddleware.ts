@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { sharedPool } from '../dbShared';
 import { SessionManager } from '../utils/sessionManager';
+import { applyNoCacheHeaders } from './noCacheMiddleware';
 
 interface JwtPayload {
   id: string;
@@ -24,6 +25,7 @@ export const authMiddleware = async (
   next: NextFunction
 ) => {
   try {
+    applyNoCacheHeaders(res);
     const authHeader = req.headers.authorization;
 
     if (!authHeader) {
