@@ -64,11 +64,21 @@ import 'react-toastify/dist/ReactToastify.css';
 
 // Protected Route Component
 const PrivateRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { isAuthenticated, user } = useAuth();
+  const { isAuthenticated, user, logout } = useAuth();
   const location = useLocation();
   const path = location.pathname;
   
   if (!isAuthenticated) return <Navigate to="/login" replace />; // Redirect to login if not authenticated
+
+  const normalizedRole = (user?.access_role ?? '').trim().toLowerCase();
+  if (normalizedRole === 'mobile time tracker' || normalizedRole === 'mobile time tracking') {
+    localStorage.setItem(
+      'authRedirectMessage',
+      'Mobile time tracking accounts must sign in using the Clockwise Mobile app.'
+    );
+    logout();
+    return <Navigate to="/login" replace />;
+  }
   
   if (user?.access_role === 'Time Tracking') {
     // Redirect time tracking users to attendance if they try to access the landing page

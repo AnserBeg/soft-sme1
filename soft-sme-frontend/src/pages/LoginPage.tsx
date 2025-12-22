@@ -27,6 +27,12 @@ const LoginPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
 
+  const normalizeRole = (role?: string | null) => (role ?? '').trim().toLowerCase();
+  const isMobileTimeTracker = (role?: string | null) => {
+    const normalized = normalizeRole(role);
+    return normalized === 'mobile time tracker' || normalized === 'mobile time tracking';
+  };
+
   useEffect(() => {
     const storedEmail = localStorage.getItem('rememberedEmail');
     const storedPassword = localStorage.getItem('rememberedPassword');
@@ -66,7 +72,7 @@ const LoginPage: React.FC = () => {
     try {
       const response = await api.post('/api/auth/login', formData);
       const { sessionToken, refreshToken, user } = response.data;
-      if (user.access_role === 'Mobile Time Tracker') {
+      if (isMobileTimeTracker(user?.access_role)) {
         setError('Mobile time tracking accounts must sign in using the Clockwise Mobile app.');
         return;
       }

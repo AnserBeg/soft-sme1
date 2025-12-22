@@ -46,6 +46,13 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+const normalizeRole = (role?: string | null) => (role ?? '').trim().toLowerCase();
+
+const isMobileTimeTracker = (role?: string | null) => {
+  const normalized = normalizeRole(role);
+  return normalized === 'mobile time tracker' || normalized === 'mobile time tracking';
+};
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -72,7 +79,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (sessionToken && refreshToken && userData) {
       try {
         const parsedUser = JSON.parse(userData);
-        if (parsedUser?.access_role === 'Mobile Time Tracker') {
+        if (isMobileTimeTracker(parsedUser?.access_role)) {
           localStorage.removeItem('sessionToken');
           localStorage.removeItem('refreshToken');
           localStorage.removeItem('user');
@@ -96,6 +103,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [currentDeviceId]);
 
   const login = (sessionToken: string, refreshToken: string, userData: User) => {
+    if (isMobileTimeTracker(userData?.access_role)) {
+      localStorage.removeItem('sessionToken');
+      localStorage.removeItem('refreshToken');
+      localStorage.removeItem('user');
+      localStorage.setItem(
+        'authRedirectMessage',
+        'Mobile time tracking accounts must sign in using the Clockwise Mobile app.'
+      );
+      setUser(null);
+      setIsAuthenticated(false);
+      return;
+    }
     localStorage.setItem('sessionToken', sessionToken);
     localStorage.setItem('refreshToken', refreshToken);
     localStorage.setItem('user', JSON.stringify(userData));
