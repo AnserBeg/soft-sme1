@@ -7,6 +7,7 @@ import { getLogoImageSource } from '../utils/pdfLogoHelper';
 import { PurchaseOrderCalculationService } from '../services/PurchaseOrderCalculationService';
 import { PurchaseOrderService } from '../services/PurchaseOrderService';
 import { InventoryService } from '../services/InventoryService';
+import { ACCESS_ROLES, requireAccessRoles } from '../middleware/roleAccessMiddleware';
 
 // Format unit costs with up to 4 decimals; keep at least 2 decimals.
 const formatUnitCost = (value: any): string => {
@@ -86,6 +87,7 @@ async function createVendorMappingsForPO(client: any, lineItems: any[], vendorId
 }
 
 const router = express.Router();
+const adminOnly = requireAccessRoles([ACCESS_ROLES.ADMIN]);
 const calculationService = new PurchaseOrderCalculationService(pool);
 const purchaseOrderService = new PurchaseOrderService(pool);
 const inventoryService = new InventoryService(pool);
@@ -397,7 +399,7 @@ router.get('/', async (req, res) => {
 });
 
 // Export to QBO endpoint (mock)
-router.post('/:id/export-to-qbo', async (req, res) => {
+router.post('/:id/export-to-qbo', adminOnly, async (req, res) => {
   const { id } = req.params;
   try {
     // Check PO exists and is closed
@@ -659,7 +661,7 @@ router.post('/:id/export-to-qbo', async (req, res) => {
 });
 
 // Create vendor in QBO and then export PO
-router.post('/:id/export-to-qbo-with-vendor', async (req, res) => {
+router.post('/:id/export-to-qbo-with-vendor', adminOnly, async (req, res) => {
   const { id } = req.params;
   const { vendorData } = req.body;
   
@@ -2224,7 +2226,7 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
 });
 
 // QBO account mapping endpoints
-router.get('/qbo-account-mapping/:companyId', async (req, res) => {
+router.get('/qbo-account-mapping/:companyId', adminOnly, async (req, res) => {
   const { companyId } = req.params;
   try {
     const result = await pool.query('SELECT * FROM qbo_account_mapping WHERE company_id = $1', [companyId]);
@@ -2236,7 +2238,7 @@ router.get('/qbo-account-mapping/:companyId', async (req, res) => {
   }
 });
 
-router.post('/qbo-account-mapping/:companyId', async (req, res) => {
+router.post('/qbo-account-mapping/:companyId', adminOnly, async (req, res) => {
   const { companyId } = req.params;
   const { qbo_inventory_account_id, qbo_gst_account_id, qbo_ap_account_id, qbo_supply_expense_account_id } = req.body;
   try {

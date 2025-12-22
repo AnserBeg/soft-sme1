@@ -7,7 +7,14 @@ export const ACCESS_ROLES = {
   MOBILE_TIME_TRACKER: 'Mobile Time Tracker',
 } as const;
 
-const normalizeRole = (role?: string | null) => (role ?? '').trim().toLowerCase();
+const normalizeRole = (role?: string | null) =>
+  (role ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[&/]+/g, ' and ')
+    .replace(/[-_]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 
 export const requireAccessRoles = (roles: string[]) => {
   const allowedRoles = new Set(roles.map(normalizeRole));
