@@ -3,7 +3,7 @@ import { pool } from '../db';
 import PDFDocument from 'pdfkit';
 import { SalesOrderService } from '../services/SalesOrderService';
 import { InventoryService } from '../services/InventoryService';
-import axios from 'axios';
+import { qboHttp } from '../utils/qboHttp';
 import { getLogoImageSource } from '../utils/pdfLogoHelper';
 import { resolveTenantUserId } from '../utils/tenantUser';
 
@@ -12,7 +12,7 @@ const escapeQboQueryValue = (value: string): string => value.replace(/'/g, "''")
 // Helper function to check if customer exists in QuickBooks
 async function checkQBOCustomerExists(customerName: string, accessToken: string, realmId: string): Promise<boolean> {
   try {
-    const response = await axios.get(
+    const response = await qboHttp.get(
       `https://sandbox-quickbooks.api.intuit.com/v3/company/${realmId}/query`,
       {
         headers: {
@@ -38,7 +38,7 @@ async function checkQBOCustomerExists(customerName: string, accessToken: string,
 // Helper function to get QBO customer ID
 async function getQBOCustomerId(customerName: string, accessToken: string, realmId: string): Promise<string> {
   try {
-    const response = await axios.get(
+    const response = await qboHttp.get(
       `https://sandbox-quickbooks.api.intuit.com/v3/company/${realmId}/query`,
       {
         headers: {
@@ -68,7 +68,7 @@ async function getQBOCustomerId(customerName: string, accessToken: string, realm
 async function getOrCreateQBOItem(itemName: string, itemType: string, incomeAccountId: string, accessToken: string, realmId: string): Promise<string> {
   try {
     // First, try to find existing item
-    const queryResponse = await axios.get(
+    const queryResponse = await qboHttp.get(
       `https://sandbox-quickbooks.api.intuit.com/v3/company/${realmId}/query`,
       {
         headers: {
@@ -97,7 +97,7 @@ async function getOrCreateQBOItem(itemName: string, itemType: string, incomeAcco
     };
 
     console.log('Creating QBO item');
-    const createResponse = await axios.post(
+    const createResponse = await qboHttp.post(
       `https://sandbox-quickbooks.api.intuit.com/v3/company/${realmId}/item`,
       itemData,
       {
@@ -125,7 +125,7 @@ async function getOrCreateQBOItem(itemName: string, itemType: string, incomeAcco
 // Helper function to create customer in QuickBooks
 async function createQBOCustomer(customerData: any, accessToken: string, realmId: string): Promise<string> {
   try {
-    const createResponse = await axios.post(
+    const createResponse = await qboHttp.post(
       `https://sandbox-quickbooks.api.intuit.com/v3/company/${realmId}/customer`,
       customerData,
       {
@@ -1127,7 +1127,7 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
     // 4. Check if token is expired and refresh if needed
     if (new Date(qboConnection.expires_at) < new Date()) {
       try {
-        const refreshResponse = await axios.post('https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer', {
+        const refreshResponse = await qboHttp.post('https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer', {
           grant_type: 'refresh_token',
           refresh_token: qboConnection.refresh_token
         }, {
@@ -1161,7 +1161,7 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
     let qboCustomerId = null;
     try {
       // Search for existing customer
-      const customerSearchResponse = await axios.get(
+      const customerSearchResponse = await qboHttp.get(
         `https://sandbox-quickbooks.api.intuit.com/v3/company/${qboConnection.realm_id}/query`,
         {
           headers: {
@@ -1389,7 +1389,7 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
     // 8. Create invoice in QuickBooks
     let qboInvoiceId: string;
     try {
-      const invoiceResponse = await axios.post(
+      const invoiceResponse = await qboHttp.post(
         `https://sandbox-quickbooks.api.intuit.com/v3/company/${qboConnection.realm_id}/invoice`,
         invoiceData,
         {
@@ -1567,7 +1567,7 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
         console.log(`Material COGS: ${totalMaterialCOGS}, Labour COGS: ${totalLabourCOGS}, Overhead COGS: ${totalOverheadCOGS}`);
 
         try {
-          const journalResponse = await axios.post(
+          const journalResponse = await qboHttp.post(
             `https://sandbox-quickbooks.api.intuit.com/v3/company/${qboConnection.realm_id}/journalentry`,
             journalEntryData,
             {
@@ -1662,7 +1662,7 @@ router.post('/:id/export-to-qbo-with-customer', async (req: Request, res: Respon
     // Check if token is expired and refresh if needed
     if (new Date(qboConnection.expires_at) < new Date()) {
       try {
-        const refreshResponse = await axios.post('https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer', {
+        const refreshResponse = await qboHttp.post('https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer', {
           grant_type: 'refresh_token',
           refresh_token: qboConnection.refresh_token
         }, {
@@ -1798,7 +1798,7 @@ router.post('/:id/export-to-qbo-with-customer', async (req: Request, res: Respon
     };
 
     // Create invoice in QuickBooks
-    const invoiceResponse = await axios.post(
+    const invoiceResponse = await qboHttp.post(
       `https://sandbox-quickbooks.api.intuit.com/v3/company/${qboConnection.realm_id}/invoice`,
       invoiceData,
       {
@@ -1945,7 +1945,7 @@ router.post('/:id/export-to-qbo-with-customer', async (req: Request, res: Respon
         };
 
         try {
-          await axios.post(
+          await qboHttp.post(
             `https://sandbox-quickbooks.api.intuit.com/v3/company/${qboConnection.realm_id}/journalentry`,
             journalEntryData,
             {

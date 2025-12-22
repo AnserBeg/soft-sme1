@@ -1,5 +1,5 @@
 import express from 'express';
-import axios from 'axios';
+import { qboHttp } from '../utils/qboHttp';
 import { pool } from '../db';
 
 const router = express.Router();
@@ -25,7 +25,7 @@ router.get('/accounts', async (req, res) => {
     // Check if token is expired and refresh if needed
     if (new Date(qboConnection.expires_at) < new Date()) {
       try {
-        const refreshResponse = await axios.post('https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer', {
+        const refreshResponse = await qboHttp.post('https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer', {
           grant_type: 'refresh_token',
           refresh_token: qboConnection.refresh_token
         }, {
@@ -57,7 +57,7 @@ router.get('/accounts', async (req, res) => {
 
     // Fetch real accounts from QBO using correct v3 API endpoint
     console.log('Fetching real QBO accounts using v3 API...');
-    const accountsResponse = await axios.get(
+    const accountsResponse = await qboHttp.get(
       `https://sandbox-quickbooks.api.intuit.com/v3/company/${qboConnection.realm_id}/query`,
       {
         headers: {

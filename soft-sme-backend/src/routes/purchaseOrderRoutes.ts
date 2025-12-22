@@ -2,7 +2,7 @@ import express, { Request, Response } from 'express';
 import { pool } from '../db';
 import PDFDocument from 'pdfkit';
 import { getNextPurchaseOrderNumberForYear } from '../utils/sequence';
-import axios from 'axios'; // Added for QBO API integration
+import { qboHttp } from '../utils/qboHttp'; // Added for QBO API integration
 import { getLogoImageSource } from '../utils/pdfLogoHelper';
 import { PurchaseOrderCalculationService } from '../services/PurchaseOrderCalculationService';
 import { PurchaseOrderService } from '../services/PurchaseOrderService';
@@ -420,7 +420,7 @@ router.post('/:id/export-to-qbo', adminOnly, async (req, res) => {
     // Check if token is expired and refresh if needed
     if (new Date(qboConnection.expires_at) < new Date()) {
       try {
-        const refreshResponse = await axios.post('https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer', {
+        const refreshResponse = await qboHttp.post('https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer', {
           grant_type: 'refresh_token',
           refresh_token: qboConnection.refresh_token
         }, {
@@ -609,7 +609,7 @@ router.post('/:id/export-to-qbo', adminOnly, async (req, res) => {
     }
 
     // Create bill in QBO
-    const qboResponse = await axios.post(
+    const qboResponse = await qboHttp.post(
       `https://sandbox-quickbooks.api.intuit.com/v3/company/${qboConnection.realm_id}/bill`,
       qboBill,
       {
@@ -684,7 +684,7 @@ router.post('/:id/export-to-qbo-with-vendor', adminOnly, async (req, res) => {
     // Check if token is expired and refresh if needed
     if (new Date(qboConnection.expires_at) < new Date()) {
       try {
-        const refreshResponse = await axios.post('https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer', {
+        const refreshResponse = await qboHttp.post('https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer', {
           grant_type: 'refresh_token',
           refresh_token: qboConnection.refresh_token
         }, {
@@ -788,7 +788,7 @@ router.post('/:id/export-to-qbo-with-vendor', adminOnly, async (req, res) => {
     }
 
     // Create bill in QBO
-    const qboResponse = await axios.post(
+    const qboResponse = await qboHttp.post(
       `https://sandbox-quickbooks.api.intuit.com/v3/company/${qboConnection.realm_id}/bill`,
       qboBill,
       {
@@ -837,7 +837,7 @@ router.post('/:id/export-to-qbo-with-vendor', adminOnly, async (req, res) => {
 // Helper function to check if vendor exists in QBO
 async function checkQBOVendorExists(vendorName: string, accessToken: string, realmId: string): Promise<boolean> {
   try {
-    const searchResponse = await axios.get(
+    const searchResponse = await qboHttp.get(
       `https://sandbox-quickbooks.api.intuit.com/v3/company/${realmId}/query`,
       {
         headers: {
@@ -862,7 +862,7 @@ async function checkQBOVendorExists(vendorName: string, accessToken: string, rea
 // Helper function to get vendor ID from QBO (vendor must exist)
 async function getQBOVendorId(vendorName: string, accessToken: string, realmId: string): Promise<string> {
   try {
-    const searchResponse = await axios.get(
+    const searchResponse = await qboHttp.get(
       `https://sandbox-quickbooks.api.intuit.com/v3/company/${realmId}/query`,
       {
         headers: {
@@ -891,7 +891,7 @@ async function getQBOVendorId(vendorName: string, accessToken: string, realmId: 
 // Helper function to create vendor in QBO
 async function createQBOVendor(vendorData: any, accessToken: string, realmId: string): Promise<string> {
   try {
-    const createResponse = await axios.post(
+    const createResponse = await qboHttp.post(
       `https://sandbox-quickbooks.api.intuit.com/v3/company/${realmId}/vendor`,
       vendorData,
       {

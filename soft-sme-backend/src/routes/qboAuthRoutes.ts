@@ -1,5 +1,5 @@
 import express from 'express';
-import axios from 'axios';
+import { qboHttp } from '../utils/qboHttp';
 import { pool } from '../db';
 
 const router = express.Router();
@@ -72,7 +72,7 @@ router.get('/callback', async (req, res) => {
 
   try {
     // Exchange authorization code for tokens
-    const tokenResponse = await axios.post(TOKEN_URL, {
+    const tokenResponse = await qboHttp.post(TOKEN_URL, {
       grant_type: 'authorization_code',
       code,
       redirect_uri: redirectUri

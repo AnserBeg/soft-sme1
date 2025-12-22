@@ -1,5 +1,5 @@
 import express from 'express';
-import axios from 'axios';
+import { qboHttp } from '../utils/qboHttp';
 import { pool } from '../db';
 
 const router = express.Router();
@@ -76,7 +76,7 @@ router.post('/export-purchase-order/:poId', async (req, res) => {
     // 4. Check if token is expired and refresh if needed
     if (new Date(qboConnection.expires_at) < new Date()) {
       try {
-        const refreshResponse = await axios.post('https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer', {
+        const refreshResponse = await qboHttp.post('https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer', {
           grant_type: 'refresh_token',
           refresh_token: qboConnection.refresh_token
         }, {
@@ -110,7 +110,7 @@ router.post('/export-purchase-order/:poId', async (req, res) => {
     let qboVendorId = null;
     try {
       // Search for existing vendor
-      const vendorSearchResponse = await axios.get(
+      const vendorSearchResponse = await qboHttp.get(
         `https://sandbox-quickbooks.api.intuit.com/v3/company/${qboConnection.realm_id}/query`,
         {
           headers: {
@@ -144,7 +144,7 @@ router.post('/export-purchase-order/:poId', async (req, res) => {
           }
         };
 
-        const vendorCreateResponse = await axios.post(
+        const vendorCreateResponse = await qboHttp.post(
           `https://sandbox-quickbooks.api.intuit.com/v3/company/${qboConnection.realm_id}/vendor`,
           newVendorData,
           {
@@ -230,7 +230,7 @@ router.post('/export-purchase-order/:poId', async (req, res) => {
 
     console.log(`Creating Bill in QuickBooks: lineCount=${billData.Line?.length || 0}`);
 
-    const billResponse = await axios.post(
+    const billResponse = await qboHttp.post(
       `https://sandbox-quickbooks.api.intuit.com/v3/company/${qboConnection.realm_id}/bill`,
       billData,
       {
