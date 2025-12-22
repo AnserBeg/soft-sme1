@@ -109,6 +109,13 @@ const corsOptions: cors.CorsOptions = {
 app.use(cors(corsOptions));
 // Explicitly handle preflight for all routes
 app.options('*', cors(corsOptions));
+// Block TRACE/TRACK to reduce XST exposure.
+app.use((req, res, next) => {
+  if (req.method === 'TRACE' || req.method === 'TRACK') {
+    return res.sendStatus(405);
+  }
+  return next();
+});
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));

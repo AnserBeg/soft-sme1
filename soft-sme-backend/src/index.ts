@@ -219,6 +219,13 @@ const corsOptions: cors.CorsOptions = {
 // Apply CORS early and handle preflight globally
 app.options('*', cors(corsOptions));
 app.use(cors(corsOptions));
+// Block TRACE/TRACK to reduce XST exposure.
+app.use((req, res, next) => {
+  if (req.method === 'TRACE' || req.method === 'TRACK') {
+    return res.sendStatus(405);
+  }
+  return next();
+});
 app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
 app.use('/uploads', express.static('uploads'));
