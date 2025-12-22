@@ -1,7 +1,9 @@
 import sanitizeHtml from 'sanitize-html';
 import { stripUnsafeText } from './documentText';
 
-type SanitizerOptions = NonNullable<Parameters<typeof sanitizeHtml>[1]>;
+type AllowedAttributes = Record<string, string[]>;
+type AllowedSchemesByTag = Record<string, string[]>;
+type AllowedStyles = Record<string, Record<string, Array<RegExp | string>>>;
 
 const EMAIL_ALLOWED_TAGS = sanitizeHtml.defaults.allowedTags.concat([
   'img',
@@ -16,7 +18,7 @@ const EMAIL_ALLOWED_TAGS = sanitizeHtml.defaults.allowedTags.concat([
   'div',
 ]);
 
-const EMAIL_ALLOWED_ATTRIBUTES: SanitizerOptions['allowedAttributes'] = {
+const EMAIL_ALLOWED_ATTRIBUTES: AllowedAttributes = {
   ...sanitizeHtml.defaults.allowedAttributes,
   '*': ['class', 'style'],
   a: ['href', 'name', 'target', 'rel'],
@@ -26,12 +28,12 @@ const EMAIL_ALLOWED_ATTRIBUTES: SanitizerOptions['allowedAttributes'] = {
   th: ['colspan', 'rowspan', 'align', 'valign', 'width'],
 };
 
-const EMAIL_ALLOWED_SCHEMES_BY_TAG: SanitizerOptions['allowedSchemesByTag'] = {
+const EMAIL_ALLOWED_SCHEMES_BY_TAG: AllowedSchemesByTag = {
   a: ['http', 'https', 'mailto'],
   img: ['http', 'https', 'data'],
 };
 
-const EMAIL_ALLOWED_STYLES: SanitizerOptions['allowedStyles'] = {
+const EMAIL_ALLOWED_STYLES: AllowedStyles = {
   '*': {
     'color': [
       /^#(?:[0-9a-fA-F]{3}){1,2}$/,
