@@ -5,6 +5,7 @@ import { QuoteService } from '../services/QuoteService';
 import PDFDocument from 'pdfkit';
 import { getLogoImageSource } from '../utils/pdfLogoHelper';
 import { renderQuoteDescriptionToPdf } from '../utils/quoteDescription';
+import { sanitizePlainText } from '../utils/htmlSanitizer';
 
 const formatCurrency = (value: number | string | null | undefined): string => {
   const amount = Number(value ?? 0);
@@ -103,7 +104,8 @@ router.put('/:id', async (req: Request, res: Response) => {
     vehicle_model
   } = req.body;
 
-  if (!customer_id || !quote_date || !valid_until || !product_name || !estimated_cost) {
+  const sanitizedProductName = sanitizePlainText(product_name).trim();
+  if (!customer_id || !quote_date || !valid_until || !sanitizedProductName || !estimated_cost) {
     return res.status(400).json({ error: 'Missing required fields' });
   }
 
@@ -120,8 +122,14 @@ router.put('/:id', async (req: Request, res: Response) => {
 
     const existingQuote = quoteCheck.rows[0];
 
-    const sanitizedStatus = typeof status === 'string' && status.trim() ? status.trim() : '';
+    const sanitizedStatus = sanitizePlainText(status).trim();
     const statusToUse = sanitizedStatus || existingQuote.status || 'Open';
+    const sanitizedProductDescription = sanitizePlainText(product_description).trim() || null;
+    const sanitizedTerms = sanitizePlainText(terms).trim() || null;
+    const sanitizedCustomerPoNumber = sanitizePlainText(customer_po_number).trim() || null;
+    const sanitizedVinNumber = sanitizePlainText(vin_number).trim() || null;
+    const sanitizedVehicleMake = sanitizePlainText(vehicle_make).trim() || null;
+    const sanitizedVehicleModel = sanitizePlainText(vehicle_model).trim() || null;
 
     // Verify that the customer exists
     const customerCheck = await client.query('SELECT customer_id FROM customermaster WHERE customer_id = $1', [customer_id]);
@@ -150,15 +158,15 @@ router.put('/:id', async (req: Request, res: Response) => {
         customer_id,
         quote_date,
         valid_until,
-        product_name,
-        product_description,
+        sanitizedProductName,
+        sanitizedProductDescription,
         estimated_cost,
         statusToUse,
-        terms || null,
-        customer_po_number || null,
-        vin_number || null,
-        vehicle_make || null,
-        vehicle_model || null,
+        sanitizedTerms,
+        sanitizedCustomerPoNumber,
+        sanitizedVinNumber,
+        sanitizedVehicleMake,
+        sanitizedVehicleModel,
         id
       ]
     );

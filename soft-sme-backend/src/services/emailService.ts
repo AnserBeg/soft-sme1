@@ -2,6 +2,7 @@ import nodemailer from 'nodemailer';
 import { Pool } from 'pg';
 import PDFDocument from 'pdfkit';
 import { escapeHtml, normalizeDocumentText } from '../utils/documentText';
+import { sanitizeEmailHtml, sanitizePlainText } from '../utils/htmlSanitizer';
 import { renderQuoteDescriptionHtml, renderQuoteDescriptionPlainText } from '../utils/quoteDescription';
 
 export interface EmailConfig {
@@ -226,17 +227,22 @@ export class EmailService {
     totalAmount: number;
     items: Array<{ part_number: string; quantity: number; unit_price: number }>;
   }): EmailTemplate {
-    const itemsHtml = data.items.map(item => 
-      `<tr><td>${item.part_number}</td><td>${item.quantity}</td><td>$${item.unit_price.toFixed(2)}</td></tr>`
-    ).join('');
+    const safeSalesOrderNumber = escapeHtml(String(data.salesOrderNumber ?? ''));
+    const safeCustomerName = escapeHtml(String(data.customerName ?? ''));
+    const itemsHtml = data.items.map(item => {
+      const safePartNumber = escapeHtml(String(item.part_number ?? ''));
+      const safeQuantity = escapeHtml(String(item.quantity ?? ''));
+      const safeUnitPrice = Number.isFinite(item.unit_price) ? item.unit_price : 0;
+      return `<tr><td>${safePartNumber}</td><td>${safeQuantity}</td><td>$${safeUnitPrice.toFixed(2)}</td></tr>`;
+    }).join('');
 
     return {
       subject: `Sales Order ${data.salesOrderNumber} - ${data.customerName}`,
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
           <h2 style="color: #333;">Sales Order Confirmation</h2>
-          <p><strong>Order Number:</strong> ${data.salesOrderNumber}</p>
-          <p><strong>Customer:</strong> ${data.customerName}</p>
+          <p><strong>Order Number:</strong> ${safeSalesOrderNumber}</p>
+          <p><strong>Customer:</strong> ${safeCustomerName}</p>
           <p><strong>Total Amount:</strong> $${data.totalAmount.toFixed(2)}</p>
           
           <h3>Order Items:</h3>
@@ -287,9 +293,14 @@ Thank you for your business!
       telephone_number: string;
     };
   }): EmailTemplate {
-    const itemsHtml = data.items.map(item => 
-      `<tr><td>${item.part_number}</td><td>${item.quantity}</td><td>$${item.unit_cost.toFixed(2)}</td></tr>`
-    ).join('');
+    const safePurchaseOrderNumber = escapeHtml(String(data.purchaseOrderNumber ?? ''));
+    const safeVendorName = escapeHtml(String(data.vendorName ?? ''));
+    const itemsHtml = data.items.map(item => {
+      const safePartNumber = escapeHtml(String(item.part_number ?? ''));
+      const safeQuantity = escapeHtml(String(item.quantity ?? ''));
+      const safeUnitCost = Number.isFinite(item.unit_cost) ? item.unit_cost : 0;
+      return `<tr><td>${safePartNumber}</td><td>${safeQuantity}</td><td>$${safeUnitCost.toFixed(2)}</td></tr>`;
+    }).join('');
 
     const companyAddress = [
       data.companyInfo?.street_address,
@@ -297,16 +308,16 @@ Thank you for your business!
       data.companyInfo?.province,
       data.companyInfo?.country,
       data.companyInfo?.postal_code
-    ].filter(Boolean).join(', ');
+    ].filter(Boolean).map((value) => escapeHtml(String(value))).join(', ');
 
     const companyInfoHtml = data.companyInfo ? `
       <div style="margin-bottom: 20px; padding: 15px; background-color: #f8f9fa; border-radius: 5px;">
         <h3 style="margin: 0 0 10px 0; color: #333;">From:</h3>
-        <p style="margin: 5px 0; font-weight: bold;">${data.companyInfo.business_name}</p>
-        <p style="margin: 5px 0;">${data.companyInfo.street_address}</p>
+        <p style="margin: 5px 0; font-weight: bold;">${escapeHtml(String(data.companyInfo.business_name ?? ''))}</p>
+        <p style="margin: 5px 0;">${escapeHtml(String(data.companyInfo.street_address ?? ''))}</p>
         <p style="margin: 5px 0;">${companyAddress}</p>
-        <p style="margin: 5px 0;">Email: ${data.companyInfo.email}</p>
-        <p style="margin: 5px 0;">Phone: ${data.companyInfo.telephone_number}</p>
+        <p style="margin: 5px 0;">Email: ${escapeHtml(String(data.companyInfo.email ?? ''))}</p>
+        <p style="margin: 5px 0;">Phone: ${escapeHtml(String(data.companyInfo.telephone_number ?? ''))}</p>
       </div>
     ` : '';
 
@@ -316,8 +327,8 @@ Thank you for your business!
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
           ${companyInfoHtml}
           <h2 style="color: #333;">Purchase Order</h2>
-          <p><strong>PO Number:</strong> ${data.purchaseOrderNumber}</p>
-          <p><strong>Vendor:</strong> ${data.vendorName}</p>
+          <p><strong>PO Number:</strong> ${safePurchaseOrderNumber}</p>
+          <p><strong>Vendor:</strong> ${safeVendorName}</p>
           <p><strong>Total Amount:</strong> $${data.totalAmount.toFixed(2)}</p>
           
           <h3>Order Items:</h3>
@@ -334,7 +345,7 @@ Thank you for your business!
             </tbody>
           </table>
           
-          ${data.customMessage ? `<div style="margin: 20px 0; padding: 15px; background-color: #f9f9f9; border-left: 4px solid #2196F3;"><p style="margin: 0;"><strong>Additional Message:</strong></p><p style="margin: 10px 0 0 0; white-space: pre-wrap;">${data.customMessage}</p></div>` : ''}
+          ${data.customMessage ? `<div style="margin: 20px 0; padding: 15px; background-color: #f9f9f9; border-left: 4px solid #2196F3;"><p style="margin: 0;"><strong>Additional Message:</strong></p><p style="margin: 10px 0 0 0; white-space: pre-wrap;">${escapeHtml(String(data.customMessage))}</p></div>` : ''}
           <p>Please process this order as soon as possible.</p>
           <p><strong>Note:</strong> A detailed PDF version of this purchase order is attached to this email.</p>
         </div>
@@ -439,14 +450,16 @@ Note: A detailed PDF version of this purchase order is attached to this email.
   }
 
   getCustomEmailTemplate(subject: string, message: string): EmailTemplate {
+    const normalizedMessage = normalizeDocumentText(message ?? '');
+    const safeMessageHtml = escapeHtml(normalizedMessage);
     return {
       subject,
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <div style="white-space: pre-wrap;">${message}</div>
+          <div style="white-space: pre-wrap;">${safeMessageHtml}</div>
         </div>
       `,
-      text: message
+      text: normalizedMessage
     };
   }
 
@@ -739,6 +752,8 @@ Note: A detailed PDF version of this purchase order is attached to this email.
     is_default?: boolean;
   }): Promise<number> {
     try {
+      const sanitizedHtml = sanitizeEmailHtml(templateData.html_content);
+      const sanitizedText = templateData.text_content ? sanitizePlainText(templateData.text_content) : undefined;
       const result = await this.pool.query(`
         INSERT INTO email_templates 
         (user_id, name, type, subject, html_content, text_content, is_default, created_at, updated_at)
@@ -749,8 +764,8 @@ Note: A detailed PDF version of this purchase order is attached to this email.
         templateData.name,
         templateData.type,
         templateData.subject,
-        templateData.html_content,
-        templateData.text_content,
+        sanitizedHtml,
+        sanitizedText,
         templateData.is_default || false
       ]);
 
@@ -796,6 +811,8 @@ Note: A detailed PDF version of this purchase order is attached to this email.
     is_default?: boolean;
   }): Promise<boolean> {
     try {
+      const sanitizedHtml = sanitizeEmailHtml(templateData.html_content);
+      const sanitizedText = templateData.text_content ? sanitizePlainText(templateData.text_content) : undefined;
       await this.pool.query(`
         UPDATE email_templates 
         SET name = $1, subject = $2, html_content = $3, text_content = $4, is_default = $5, updated_at = CURRENT_TIMESTAMP
@@ -803,8 +820,8 @@ Note: A detailed PDF version of this purchase order is attached to this email.
       `, [
         templateData.name,
         templateData.subject,
-        templateData.html_content,
-        templateData.text_content,
+        sanitizedHtml,
+        sanitizedText,
         templateData.is_default || false,
         templateId,
         userId

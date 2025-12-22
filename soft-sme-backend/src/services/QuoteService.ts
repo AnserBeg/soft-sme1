@@ -1,5 +1,6 @@
 import { Pool, PoolClient } from 'pg';
 import { getNextQuoteSequenceNumberForYear } from '../utils/sequence';
+import { sanitizePlainText } from '../utils/htmlSanitizer';
 
 export interface CreateQuoteInput {
   customer_id: number | string;
@@ -49,7 +50,7 @@ export class QuoteService {
         throw new Error('valid_until is required to create a quote');
       }
 
-      const productName = (input.product_name ?? '').toString().trim();
+      const productName = sanitizePlainText(input.product_name ?? '').trim();
       if (!productName) {
         throw new Error('product_name is required to create a quote');
       }
@@ -62,16 +63,15 @@ export class QuoteService {
       const quoteDateIso = new Date(input.quote_date).toISOString();
       const validUntilIso = new Date(input.valid_until).toISOString();
 
-      const status = typeof input.status === 'string' && input.status.trim()
-        ? input.status.trim()
-        : 'Open';
+      const sanitizedStatus = sanitizePlainText(input.status).trim();
+      const status = sanitizedStatus || 'Open';
 
-      const terms = input.terms ? String(input.terms) : null;
-      const customerPoNumber = input.customer_po_number ? String(input.customer_po_number) : null;
-      const vinNumber = input.vin_number ? String(input.vin_number) : null;
-      const vehicleMake = input.vehicle_make ? String(input.vehicle_make) : null;
-      const vehicleModel = input.vehicle_model ? String(input.vehicle_model) : null;
-      const productDescription = input.product_description ? String(input.product_description) : null;
+      const terms = sanitizePlainText(input.terms).trim() || null;
+      const customerPoNumber = sanitizePlainText(input.customer_po_number).trim() || null;
+      const vinNumber = sanitizePlainText(input.vin_number).trim() || null;
+      const vehicleMake = sanitizePlainText(input.vehicle_make).trim() || null;
+      const vehicleModel = sanitizePlainText(input.vehicle_model).trim() || null;
+      const productDescription = sanitizePlainText(input.product_description).trim() || null;
 
       const customerCheck = await client.query('SELECT customer_id FROM customermaster WHERE customer_id = $1', [customerId]);
       if (customerCheck.rowCount === 0) {
