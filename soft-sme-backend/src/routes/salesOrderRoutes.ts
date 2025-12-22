@@ -28,7 +28,7 @@ async function checkQBOCustomerExists(customerName: string, accessToken: string,
     const customers = response.data.QueryResponse?.Customer || [];
     return customers.length > 0;
   } catch (error) {
-    console.error('Error checking QBO customer:', error);
+    console.error('Error checking QBO customer:', error instanceof Error ? error.message : String(error));
     return false;
   }
 }
@@ -57,7 +57,7 @@ async function getQBOCustomerId(customerName: string, accessToken: string, realm
     }
     throw new Error(`Customer '${customerName}' not found in QuickBooks`);
   } catch (error) {
-    console.error('Error getting QBO customer ID:', error);
+    console.error('Error getting QBO customer ID:', error instanceof Error ? error.message : String(error));
     throw error;
   }
 }
@@ -78,7 +78,7 @@ async function getOrCreateQBOItem(itemName: string, itemType: string, incomeAcco
     );
 
     if (queryResponse.data.QueryResponse.Item && queryResponse.data.QueryResponse.Item.length > 0) {
-      console.log(`Found existing QBO item: ${itemName} (ID: ${queryResponse.data.QueryResponse.Item[0].Id})`);
+      console.log('Found existing QBO item');
       return queryResponse.data.QueryResponse.Item[0].Id;
     }
 
@@ -91,7 +91,7 @@ async function getOrCreateQBOItem(itemName: string, itemType: string, incomeAcco
       }
     };
 
-    console.log(`Creating QBO item: ${itemName} with account ${incomeAccountId}`);
+    console.log('Creating QBO item');
     const createResponse = await axios.post(
       `https://sandbox-quickbooks.api.intuit.com/v3/company/${realmId}/item`,
       itemData,
@@ -106,10 +106,13 @@ async function getOrCreateQBOItem(itemName: string, itemType: string, incomeAcco
     );
 
     const itemId = createResponse.data.Item.Id;
-    console.log(`Successfully created QBO item: ${itemName} (ID: ${itemId})`);
+    console.log('Successfully created QBO item');
     return itemId;
   } catch (error: any) {
-    console.error(`Error getting/creating QBO item ${itemName}:`, error.response?.data || error.message);
+    console.error(`Error getting/creating QBO item ${itemName}:`, {
+      status: error.response?.status,
+      message: error.message,
+    });
     throw error;
   }
 }
@@ -132,7 +135,7 @@ async function createQBOCustomer(customerData: any, accessToken: string, realmId
 
     return createResponse.data.Customer.Id;
   } catch (error) {
-    console.error('Error creating QBO customer:', error);
+    console.error('Error creating QBO customer:', error instanceof Error ? error.message : String(error));
     throw new Error(`Failed to create customer '${customerData.DisplayName}' in QuickBooks`);
   }
 }
@@ -1144,7 +1147,7 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
 
         qboConnection.access_token = access_token;
       } catch (refreshError) {
-        console.error('Error refreshing QBO token:', refreshError);
+        console.error('Error refreshing QBO token:', refreshError instanceof Error ? refreshError.message : String(refreshError));
         return res.status(401).json({ error: 'QuickBooks token expired and could not be refreshed. Please reconnect your account.' });
       }
     }
@@ -1171,10 +1174,10 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
       const customers = customerSearchResponse.data.QueryResponse?.Customer || [];
       if (customers.length > 0) {
         qboCustomerId = customers[0].Id;
-        console.log(`Found existing QBO customer: ${salesOrder.customer_name} (ID: ${qboCustomerId})`);
+        console.log('Found existing QBO customer');
       } else {
         // Customer doesn't exist - return error with customer data for creation
-        console.log(`Customer not found in QuickBooks: ${salesOrder.customer_name}`);
+        console.log('Customer not found in QuickBooks');
         
         // Get customer details from customermaster
         const customerResult = await pool.query(
@@ -1217,7 +1220,7 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
         });
       }
     } catch (customerError) {
-      console.error('Error checking customer:', customerError);
+      console.error('Error checking customer:', customerError instanceof Error ? customerError.message : String(customerError));
       return res.status(500).json({ error: 'Failed to check customer in QuickBooks' });
     }
 
@@ -1317,7 +1320,7 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
     const productItemId = await getOrCreateQBOItem(salesOrder.product_name, 'Service', accountMapping.qbo_sales_account_id, qboConnection.access_token, qboConnection.realm_id);
     const gstItemId = await getOrCreateQBOItem('GST', 'Service', accountMapping.qbo_gst_account_id, qboConnection.access_token, qboConnection.realm_id);
 
-    console.log(`Using QBO items: Product=${productItemId}, GST=${gstItemId}`);
+    console.log('Using QBO items for export');
 
     // Create invoice with proper account mapping
     const invoiceData = {
@@ -1373,10 +1376,10 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
       }
     };
 
-    console.log(`Creating Invoice with: Sales=${estimatedPrice}, GST=${gstAmount}, Total=${totalAmount}`);
-    console.log(`Accounts: GST=${accountMapping.qbo_gst_account_id}, AR=${accountMapping.qbo_ar_account_id}`);
+    console.log('Creating Invoice in QuickBooks');
+    console.log('QBO accounts resolved for export');
 
-    console.log('Creating Invoice in QuickBooks with data:', JSON.stringify(invoiceData, null, 2));
+    console.log(`Creating Invoice in QuickBooks: lineCount=${invoiceData.Line?.length || 0}`);
 
     // 8. Create invoice in QuickBooks
     let qboInvoiceId: string;
@@ -1395,16 +1398,18 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
       );
 
       qboInvoiceId = invoiceResponse.data.Invoice.Id;
-      console.log(`Successfully created QBO Invoice with ID: ${qboInvoiceId}`);
+      console.log('Successfully created QBO Invoice');
     } catch (invoiceError: any) {
-      console.error('QuickBooks Invoice creation error:', JSON.stringify(invoiceError.response?.data, null, 2));
-      console.error('Full error object:', JSON.stringify(invoiceError, null, 2));
+      console.error('QuickBooks Invoice creation error', {
+        status: invoiceError.response?.status,
+        message: invoiceError.message,
+      });
       return res.status(400).json({ 
         error: 'Failed to create invoice in QuickBooks',
         details: invoiceError.response?.data || invoiceError.message
       });
     }
-    console.log(`Successfully created QBO Invoice with ID: ${qboInvoiceId}`);
+    console.log('Successfully created QBO Invoice');
 
     // 9. Create journal entry for COGS and inventory reduction
     let totalMaterialCOGS = 0;
@@ -1552,7 +1557,7 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
           PrivateNote: `Cost of Goods Sold for Sales Order #${salesOrder.sales_order_number} (Materials: ${materialItems.length}, Labour: ${labourItems.length})`
         };
 
-        console.log('Creating Journal Entry for COGS:', JSON.stringify(journalEntryData, null, 2));
+        console.log(`Creating Journal Entry for COGS: lineCount=${journalEntryData.Line?.length || 0}`);
         console.log(`Total journal entry lines: ${journalEntryLines.length}`);
         console.log(`Material COGS: ${totalMaterialCOGS}, Labour COGS: ${totalLabourCOGS}, Overhead COGS: ${totalOverheadCOGS}`);
 
@@ -1570,10 +1575,13 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
             }
           );
 
-          console.log(`Successfully created COGS Journal Entry with ID: ${journalResponse.data.JournalEntry.Id}`);
-          console.log('Journal Entry Response:', JSON.stringify(journalResponse.data, null, 2));
+          console.log('Successfully created COGS Journal Entry');
+          console.log('Journal Entry Response received from QBO');
         } catch (journalError: any) {
-          console.error('Error creating COGS journal entry:', journalError.response?.data || journalError.message);
+          console.error('Error creating COGS journal entry', {
+            status: journalError.response?.status,
+            message: journalError.message,
+          });
           // Continue even if journal entry fails
         }
       } else {
@@ -1619,7 +1627,7 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
     });
 
   } catch (error) {
-    console.error('Error exporting Sales Order to QuickBooks:', error);
+    console.error('Error exporting Sales Order to QuickBooks:', error instanceof Error ? error.message : String(error));
     res.status(500).json({ error: 'Failed to export Sales Order to QuickBooks' });
   }
 });
@@ -1674,7 +1682,7 @@ router.post('/:id/export-to-qbo-with-customer', async (req: Request, res: Respon
 
         qboConnection.access_token = access_token;
       } catch (refreshError) {
-        console.error('Error refreshing QBO token:', refreshError);
+        console.error('Error refreshing QBO token:', refreshError instanceof Error ? refreshError.message : String(refreshError));
         return res.status(401).json({ error: 'QuickBooks token expired and could not be refreshed. Please reconnect your account.' });
       }
     }
@@ -1746,7 +1754,7 @@ router.post('/:id/export-to-qbo-with-customer', async (req: Request, res: Respon
     const salesItemId = await getOrCreateQBOItem('Sales', 'Service', accountMapping.qbo_sales_account_id, qboConnection.access_token, qboConnection.realm_id);
     const gstItemId = await getOrCreateQBOItem('GST', 'Service', accountMapping.qbo_gst_account_id, qboConnection.access_token, qboConnection.realm_id);
 
-    console.log(`Using QBO items: Sales=${salesItemId}, GST=${gstItemId}`);
+    console.log('Using QBO items for export');
 
     // Create invoice with proper account mapping
     const invoiceData = {
@@ -1945,7 +1953,10 @@ router.post('/:id/export-to-qbo-with-customer', async (req: Request, res: Respon
             }
           );
         } catch (journalError: any) {
-          console.error('Error creating COGS journal entry:', journalError.response?.data || journalError.message);
+          console.error('Error creating COGS journal entry', {
+            status: journalError.response?.status,
+            message: journalError.message,
+          });
         }
       }
     }
@@ -1987,7 +1998,10 @@ router.post('/:id/export-to-qbo-with-customer', async (req: Request, res: Respon
     });
 
   } catch (error: any) {
-    console.error('Error creating customer and exporting Sales Order to QuickBooks:', error);
+    console.error(
+      'Error creating customer and exporting Sales Order to QuickBooks:',
+      error instanceof Error ? error.message : String(error)
+    );
     res.status(500).json({ 
       error: 'Failed to create customer and export Sales Order to QuickBooks',
       details: error.message 

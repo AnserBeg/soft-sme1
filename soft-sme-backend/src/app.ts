@@ -38,6 +38,29 @@ dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
 const app = express();
 const authWithTenant = [authMiddleware, tenantContextMiddleware];
+const SENSITIVE_HEADER_KEYS = new Set([
+  'authorization',
+  'cookie',
+  'set-cookie',
+  'x-api-key',
+  'x-auth-token',
+  'x-access-token',
+  'x-refresh-token',
+]);
+
+const sanitizeHeaders = (headers: Record<string, unknown>): Record<string, unknown> => {
+  const sanitized: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(headers)) {
+    const lowerKey = key.toLowerCase();
+    const shouldRedact =
+      SENSITIVE_HEADER_KEYS.has(lowerKey) ||
+      lowerKey.includes('token') ||
+      lowerKey.includes('secret') ||
+      lowerKey.includes('password');
+    sanitized[key] = shouldRedact ? '[REDACTED]' : value;
+  }
+  return sanitized;
+};
 
 // Enable compression for better performance
 app.use(compression());
@@ -142,7 +165,7 @@ if (process.env.NODE_ENV !== 'production') {
     console.log('=== Incoming Request ===');
     console.log(`Method: ${req.method}`);
     console.log(`Path: ${req.path}`);
-    console.log(`Headers:`, req.headers);
+    console.log('Headers:', sanitizeHeaders(req.headers));
     console.log('======================');
     next();
   });

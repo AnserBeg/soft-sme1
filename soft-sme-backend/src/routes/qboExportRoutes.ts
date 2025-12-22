@@ -24,7 +24,7 @@ router.post('/export-purchase-order/:poId', async (req, res) => {
     console.log(`Account mapping result: ${mappingResult.rows.length} rows found`);
     
     if (mappingResult.rows.length > 0) {
-      console.log('Found mapping:', mappingResult.rows[0]);
+      console.log('QBO account mapping found');
     }
 
     if (qboResult.rows.length === 0) {
@@ -100,7 +100,7 @@ router.post('/export-purchase-order/:poId', async (req, res) => {
 
         qboConnection.access_token = access_token;
       } catch (refreshError) {
-        console.error('Error refreshing QBO token:', refreshError);
+        console.error('Error refreshing QBO token:', refreshError instanceof Error ? refreshError.message : String(refreshError));
         return res.status(401).json({ error: 'QuickBooks token expired and could not be refreshed. Please reconnect your account.' });
       }
     }
@@ -127,10 +127,10 @@ router.post('/export-purchase-order/:poId', async (req, res) => {
       const vendors = vendorSearchResponse.data.QueryResponse?.Vendor || [];
       if (vendors.length > 0) {
         qboVendorId = vendors[0].Id;
-        console.log(`Found existing QBO vendor: ${purchaseOrder.vendor_name} (ID: ${qboVendorId})`);
+        console.log('Found existing QBO vendor');
       } else {
         // Create new vendor
-        console.log(`Creating new QBO vendor: ${purchaseOrder.vendor_name}`);
+        console.log('Creating new QBO vendor');
         const newVendorData = {
           DisplayName: purchaseOrder.vendor_name,
           PrimaryEmailAddr: purchaseOrder.vendor_email ? { Address: purchaseOrder.vendor_email } : undefined,
@@ -157,10 +157,10 @@ router.post('/export-purchase-order/:poId', async (req, res) => {
         );
 
         qboVendorId = vendorCreateResponse.data.Vendor.Id;
-        console.log(`Created new QBO vendor with ID: ${qboVendorId}`);
+        console.log('Created new QBO vendor');
       }
     } catch (vendorError) {
-      console.error('Error handling vendor:', vendorError);
+      console.error('Error handling vendor:', vendorError instanceof Error ? vendorError.message : String(vendorError));
       return res.status(500).json({ error: 'Failed to handle vendor in QuickBooks' });
     }
 
@@ -227,7 +227,7 @@ router.post('/export-purchase-order/:poId', async (req, res) => {
       PrivateNote: `Exported from Aiven Purchase Order #${purchaseOrder.purchase_id}`
     };
 
-    console.log('Creating Bill in QuickBooks with data:', JSON.stringify(billData, null, 2));
+    console.log(`Creating Bill in QuickBooks: lineCount=${billData.Line?.length || 0}`);
 
     const billResponse = await axios.post(
       `https://sandbox-quickbooks.api.intuit.com/v3/company/${qboConnection.realm_id}/bill`,
@@ -243,7 +243,7 @@ router.post('/export-purchase-order/:poId', async (req, res) => {
     );
 
     const qboBillId = billResponse.data.Bill.Id;
-    console.log(`Successfully created QBO Bill with ID: ${qboBillId}`);
+    console.log('Successfully created QBO Bill');
 
     // 7. Update PO with QBO export info
     await pool.query(
@@ -268,7 +268,7 @@ router.post('/export-purchase-order/:poId', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error exporting PO to QuickBooks:', error);
+    console.error('Error exporting PO to QuickBooks:', error instanceof Error ? error.message : String(error));
     res.status(500).json({ error: 'Failed to export Purchase Order to QuickBooks' });
   }
 });
@@ -295,7 +295,7 @@ router.get('/export-status/:poId', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error getting export status:', error);
+    console.error('Error getting export status:', error instanceof Error ? error.message : String(error));
     res.status(500).json({ error: 'Failed to get export status' });
   }
 });

@@ -50,7 +50,7 @@ router.get('/accounts', async (req, res) => {
 
         qboConnection.access_token = access_token;
       } catch (refreshError) {
-        console.error('Error refreshing QBO token:', refreshError);
+        console.error('Error refreshing QBO token:', refreshError instanceof Error ? refreshError.message : String(refreshError));
         return res.status(401).json({ error: 'QuickBooks token expired and could not be refreshed. Please reconnect your account.' });
       }
     }
@@ -72,7 +72,8 @@ router.get('/accounts', async (req, res) => {
       }
     );
 
-    console.log('QBO API Response:', accountsResponse.status, accountsResponse.data);
+    const accountCount = accountsResponse.data?.QueryResponse?.Account?.length || 0;
+    console.log('QBO API Response:', accountsResponse.status, `accounts=${accountCount}`);
     const accounts = accountsResponse.data.QueryResponse?.Account || accountsResponse.data.Account || accountsResponse.data || [];
     
     if (accounts.length === 0) {
@@ -96,7 +97,7 @@ router.get('/accounts', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error fetching QBO accounts:', error);
+    console.error('Error fetching QBO accounts:', error instanceof Error ? error.message : String(error));
     res.status(500).json({ error: 'Failed to fetch QuickBooks accounts' });
   }
 });
@@ -117,10 +118,10 @@ router.get('/mapping', async (req, res) => {
       return res.json({ mapping: null });
     }
     
-    console.log('Returning mapping:', result.rows[0]);
+    console.log('Returning account mapping');
     res.json({ mapping: result.rows[0] });
   } catch (error) {
-    console.error('Error fetching account mapping:', error);
+    console.error('Error fetching account mapping:', error instanceof Error ? error.message : String(error));
     res.status(500).json({ error: 'Failed to fetch account mapping' });
   }
 });
@@ -143,21 +144,7 @@ router.post('/mapping', async (req, res) => {
         } = req.body;
   
   try {
-    console.log('Saving account mapping with data:', { 
-      qbo_inventory_account_id, 
-      qbo_gst_account_id, 
-      qbo_ap_account_id, 
-      qbo_supply_expense_account_id,
-      qbo_sales_account_id,
-      qbo_labour_sales_account_id,
-      qbo_ar_account_id,
-      qbo_cogs_account_id,
-      qbo_cost_of_labour_account_id,
-      qbo_cost_of_materials_account_id,
-      qbo_labour_expense_reduction_account_id,
-      qbo_overhead_cogs_account_id
-    });
-    
+    console.log('Saving account mapping for company');
     // Validate required fields
     if (!qbo_inventory_account_id || !qbo_gst_account_id || !qbo_ap_account_id) {
       return res.status(400).json({ error: 'Inventory, GST, and AP account mappings are required' });
@@ -204,7 +191,7 @@ router.post('/mapping', async (req, res) => {
         [companyId, qbo_inventory_account_id, qbo_gst_account_id, qbo_ap_account_id, qbo_supply_expense_account_id, qbo_sales_account_id, qbo_labour_sales_account_id, qbo_ar_account_id, qbo_cogs_account_id, qbo_cost_of_labour_account_id, qbo_cost_of_materials_account_id, qbo_labour_expense_reduction_account_id, qbo_overhead_cogs_account_id]
     );
 
-    console.log('Account mapping saved successfully:', result.rows[0]);
+    console.log('Account mapping saved successfully');
 
     res.json({ 
       success: true, 
@@ -212,7 +199,7 @@ router.post('/mapping', async (req, res) => {
       message: 'Account mapping saved successfully'
     });
   } catch (error) {
-    console.error('Error saving account mapping:', error);
+    console.error('Error saving account mapping:', error instanceof Error ? error.message : String(error));
     res.status(500).json({ error: 'Failed to save account mapping' });
   }
 });
@@ -252,7 +239,7 @@ router.get('/test-connection', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error testing QBO connection:', error);
+    console.error('Error testing QBO connection:', error instanceof Error ? error.message : String(error));
     res.status(500).json({ error: 'Failed to test QuickBooks connection' });
   }
 });

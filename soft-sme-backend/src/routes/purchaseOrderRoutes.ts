@@ -443,7 +443,7 @@ router.post('/:id/export-to-qbo', async (req, res) => {
 
         qboConnection.access_token = access_token;
       } catch (refreshError) {
-        console.error('Error refreshing QBO token:', refreshError);
+        console.error('Error refreshing QBO token:', refreshError instanceof Error ? refreshError.message : String(refreshError));
         return res.status(401).json({ error: 'QuickBooks token expired and could not be refreshed. Please reconnect your account.' });
       }
     }
@@ -494,7 +494,7 @@ router.post('/:id/export-to-qbo', async (req, res) => {
     const supplyLineItems = [];
     console.log('=== QBO Export Debug ===');
     console.log('Total line items:', lineItems.length);
-    console.log('Account mapping:', accountMapping);
+    console.log('QBO account mapping loaded');
     
     for (const item of lineItems) {
       // Check if this part exists in inventory and get its part_type
@@ -620,10 +620,8 @@ router.post('/:id/export-to-qbo', async (req, res) => {
       }
     );
 
-    console.log('QBO API Response:', JSON.stringify(qboResponse.data, null, 2));
-    console.log('QBO Bill ID:', qboResponse.data.Bill?.Id);
-    console.log('QBO Bill Total Amount:', qboResponse.data.Bill?.TotalAmt);
-    console.log('QBO Bill Line Items:', qboResponse.data.Bill?.Line?.length || 0);
+    const qboBillLineCount = qboResponse.data?.Bill?.Line?.length || 0;
+    console.log('QBO API Response:', qboResponse.status, `lines=${qboBillLineCount}`);
 
     // Mark as exported
     await pool.query(
@@ -653,7 +651,7 @@ router.post('/:id/export-to-qbo', async (req, res) => {
     });
 
   } catch (err) {
-    console.error('Error exporting PO to QBO:', err);
+    console.error('Error exporting PO to QBO:', err instanceof Error ? err.message : String(err));
     const errorMessage = err instanceof Error ? err.message : 'Unknown error';
     await pool.query('UPDATE purchasehistory SET qbo_export_status = $1 WHERE purchase_id = $2', [errorMessage, id]);
     res.status(500).json({ error: 'Failed to export to QuickBooks.', details: errorMessage });
@@ -709,7 +707,7 @@ router.post('/:id/export-to-qbo-with-vendor', async (req, res) => {
 
         qboConnection.access_token = access_token;
       } catch (refreshError) {
-        console.error('Error refreshing QBO token:', refreshError);
+        console.error('Error refreshing QBO token:', refreshError instanceof Error ? refreshError.message : String(refreshError));
         return res.status(401).json({ error: 'QuickBooks token expired and could not be refreshed. Please reconnect your account.' });
       }
     }
@@ -827,7 +825,7 @@ router.post('/:id/export-to-qbo-with-vendor', async (req, res) => {
     });
 
   } catch (err) {
-    console.error('Error exporting PO to QBO with vendor creation:', err);
+    console.error('Error exporting PO to QBO with vendor creation:', err instanceof Error ? err.message : String(err));
     const errorMessage = err instanceof Error ? err.message : 'Unknown error';
     await pool.query('UPDATE purchasehistory SET qbo_export_status = $1 WHERE purchase_id = $2', [errorMessage, id]);
     res.status(500).json({ error: 'Failed to export to QuickBooks.', details: errorMessage });
@@ -854,7 +852,7 @@ async function checkQBOVendorExists(vendorName: string, accessToken: string, rea
 
     return !!(searchResponse.data.QueryResponse?.Vendor && searchResponse.data.QueryResponse.Vendor.length > 0);
   } catch (error) {
-    console.error('Error checking QBO vendor existence:', error);
+    console.error('Error checking QBO vendor existence:', error instanceof Error ? error.message : String(error));
     return false;
   }
 }
@@ -883,7 +881,7 @@ async function getQBOVendorId(vendorName: string, accessToken: string, realmId: 
 
     throw new Error(`Vendor '${vendorName}' not found in QuickBooks`);
   } catch (error) {
-    console.error('Error getting QBO vendor ID:', error);
+    console.error('Error getting QBO vendor ID:', error instanceof Error ? error.message : String(error));
     throw new Error(`Vendor '${vendorName}' not found in QuickBooks`);
   }
 }
@@ -906,7 +904,7 @@ async function createQBOVendor(vendorData: any, accessToken: string, realmId: st
 
     return createResponse.data.Vendor.Id;
   } catch (error) {
-    console.error('Error creating QBO vendor:', error);
+    console.error('Error creating QBO vendor:', error instanceof Error ? error.message : String(error));
     throw new Error(`Failed to create vendor '${vendorData.DisplayName}' in QuickBooks`);
   }
 }
@@ -2233,7 +2231,7 @@ router.get('/qbo-account-mapping/:companyId', async (req, res) => {
     if (result.rows.length === 0) return res.status(404).json({ error: 'No mapping found' });
     res.json(result.rows[0]);
   } catch (err) {
-    console.error('Error fetching QBO account mapping:', err);
+    console.error('Error fetching QBO account mapping:', err instanceof Error ? err.message : String(err));
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -2257,7 +2255,7 @@ router.post('/qbo-account-mapping/:companyId', async (req, res) => {
     );
     res.json(result.rows[0]);
   } catch (err) {
-    console.error('Error saving QBO account mapping:', err);
+    console.error('Error saving QBO account mapping:', err instanceof Error ? err.message : String(err));
     res.status(500).json({ error: 'Internal server error' });
   }
 });
