@@ -7,6 +7,8 @@ import axios from 'axios';
 import { getLogoImageSource } from '../utils/pdfLogoHelper';
 import { resolveTenantUserId } from '../utils/tenantUser';
 
+const escapeQboQueryValue = (value: string): string => value.replace(/'/g, "''");
+
 // Helper function to check if customer exists in QuickBooks
 async function checkQBOCustomerExists(customerName: string, accessToken: string, realmId: string): Promise<boolean> {
   try {
@@ -19,7 +21,7 @@ async function checkQBOCustomerExists(customerName: string, accessToken: string,
           'Content-Type': 'application/json'
         },
         params: {
-          query: `SELECT * FROM Customer WHERE DisplayName = '${customerName}'`,
+          query: `SELECT * FROM Customer WHERE DisplayName = '${escapeQboQueryValue(customerName)}'`,
           minorversion: '75'
         }
       }
@@ -45,7 +47,7 @@ async function getQBOCustomerId(customerName: string, accessToken: string, realm
           'Content-Type': 'application/json'
         },
         params: {
-          query: `SELECT * FROM Customer WHERE DisplayName = '${customerName}'`,
+          query: `SELECT * FROM Customer WHERE DisplayName = '${escapeQboQueryValue(customerName)}'`,
           minorversion: '75'
         }
       }
@@ -67,13 +69,16 @@ async function getOrCreateQBOItem(itemName: string, itemType: string, incomeAcco
   try {
     // First, try to find existing item
     const queryResponse = await axios.get(
-      `https://sandbox-quickbooks.api.intuit.com/v3/company/${realmId}/query?query=select%20Id,Name%20from%20Item%20where%20Name%20=%20'${encodeURIComponent(itemName)}'`,
+      `https://sandbox-quickbooks.api.intuit.com/v3/company/${realmId}/query`,
       {
         headers: {
           'Authorization': `Bearer ${accessToken}`,
           'Accept': 'application/json'
         },
-        params: { minorversion: '75' }
+        params: {
+          query: `SELECT Id,Name FROM Item WHERE Name = '${escapeQboQueryValue(itemName)}'`,
+          minorversion: '75'
+        }
       }
     );
 
@@ -1165,7 +1170,7 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
             'Content-Type': 'application/json'
           },
           params: {
-            query: `SELECT * FROM Customer WHERE DisplayName = '${salesOrder.customer_name}'`,
+            query: `SELECT * FROM Customer WHERE DisplayName = '${escapeQboQueryValue(salesOrder.customer_name)}'`,
             minorversion: '75'
           }
         }

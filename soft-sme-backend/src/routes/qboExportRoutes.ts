@@ -3,6 +3,7 @@ import axios from 'axios';
 import { pool } from '../db';
 
 const router = express.Router();
+const escapeQboQueryValue = (value: string): string => value.replace(/'/g, "''");
 
 // Export closed Purchase Order to QuickBooks as a Bill
 router.post('/export-purchase-order/:poId', async (req, res) => {
@@ -118,7 +119,7 @@ router.post('/export-purchase-order/:poId', async (req, res) => {
             'Content-Type': 'application/json'
           },
           params: {
-            query: `SELECT * FROM Vendor WHERE DisplayName = '${purchaseOrder.vendor_name}'`,
+            query: `SELECT * FROM Vendor WHERE DisplayName = '${escapeQboQueryValue(purchaseOrder.vendor_name)}'`,
             minorversion: '75'
           }
         }
