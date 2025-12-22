@@ -6,6 +6,7 @@ import { encryptQboConnectionFields } from '../utils/qboCrypto';
 import { getCompanyIdFromRequest } from '../utils/companyContext';
 import { resolveTenantCompanyId } from '../utils/tenantCompany';
 import { ensureFreshQboAccess } from '../utils/qboTokens';
+import { authMiddleware } from '../middleware/authMiddleware';
 
 const router = express.Router();
 
@@ -87,11 +88,19 @@ const decodeState = (state: unknown): QboStatePayload | null => {
 };
 
 // Step 1: Redirect to QBO OAuth2 authorization URL
-router.get('/auth', (req, res) => {
+router.get('/auth', authMiddleware, (req, res) => {
   const clientId = process.env.QBO_CLIENT_ID;
   const redirectUri = process.env.QBO_REDIRECT_URI || '';
   const scope = 'com.intuit.quickbooks.accounting';
   const companyId = getCompanyIdFromRequest(req);
+  if (!clientId || !redirectUri) {
+    console.error('Missing QBO OAuth configuration for auth redirect.');
+    return res.redirect(
+      buildFrontendRedirectUrl(
+        '/business-profile?qbo_status=error&qbo_message=Missing+QuickBooks+OAuth+configuration'
+      )
+    );
+  }
   if (!companyId) {
     return res.redirect(
       buildFrontendRedirectUrl('/business-profile?qbo_status=error&qbo_message=Missing+company+context')
@@ -128,6 +137,15 @@ router.get('/callback', async (req, res) => {
   const clientSecret = process.env.QBO_CLIENT_SECRET;
   const redirectUri = process.env.QBO_REDIRECT_URI || '';
 
+  if (!clientId || !clientSecret || !redirectUri) {
+    console.error('Missing QBO OAuth configuration for callback.');
+    return res.redirect(
+      buildFrontendRedirectUrl(
+        '/business-profile?qbo_status=error&qbo_message=Missing+QuickBooks+OAuth+configuration'
+      )
+    );
+  }
+
   const statePayload = decodeState(state);
 
   if (!code || !realmId || !statePayload) {
@@ -147,19 +165,20 @@ router.get('/callback', async (req, res) => {
         throw new Error('Missing company context');
       }
 
-      // Exchange authorization code for tokens
-      const tokenResponse = await qboHttp.post(TOKEN_URL, {
+      // Exchange authorization code for tokens (Intuit requires form-encoded body)
+      const tokenBody = new URLSearchParams({
         grant_type: 'authorization_code',
-        code,
-        redirect_uri: redirectUri
-      }, {
+        code: String(code),
+        redirect_uri: redirectUri,
+      });
+      const tokenResponse = await qboHttp.post(TOKEN_URL, tokenBody.toString(), {
         auth: {
           username: clientId!,
-          password: clientSecret!
+          password: clientSecret!,
         },
         headers: {
-          'Content-Type': 'application/x-www-form-urlencoded'
-        }
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
       });
 
       const { access_token, refresh_token, expires_in } = tokenResponse.data;
@@ -204,7 +223,7 @@ router.get('/callback', async (req, res) => {
 });
 
 // Check connection status
-router.get('/status', async (req, res) => {
+router.get('/status', authMiddleware, async (req, res) => {
   try {
     const requestedCompanyId = getCompanyIdFromRequest(req);
     if (!requestedCompanyId) {

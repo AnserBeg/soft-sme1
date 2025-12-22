@@ -7,6 +7,7 @@ import cors from 'cors';
 import bodyParser from 'body-parser';
 import expressWs from 'express-ws';
 import cookieParser from 'cookie-parser';
+import helmet from 'helmet';
 import { pool } from './db';
 import { authMiddleware } from './middleware/authMiddleware';
 import { tenantContextMiddleware } from './middleware/tenantMiddleware';
@@ -76,6 +77,7 @@ try {
 // Subagent analytics removed - simplified AI implementation
 
 const app = express();
+app.disable('x-powered-by');
 const PORT = Number(process.env.PORT) || 10000;
 const HOST = process.env.HOST || '0.0.0.0';
 
@@ -257,6 +259,31 @@ const corsOptions: cors.CorsOptions = {
 // Apply CORS early and handle preflight globally
 app.options('*', cors(corsOptions));
 app.use(cors(corsOptions));
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'"],
+        objectSrc: ["'none'"],
+        baseUri: ["'self'"],
+        frameAncestors: ["'none'"],
+      },
+    },
+    frameguard: { action: 'deny' },
+    noSniff: true,
+    crossOriginEmbedderPolicy: false,
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+    strictTransportSecurity:
+      process.env.NODE_ENV === 'production' || process.env.COOKIE_SECURE === 'true'
+        ? {
+            maxAge: 15552000,
+            includeSubDomains: true,
+            preload: true,
+          }
+        : false,
+  })
+);
 // Block TRACE/TRACK to reduce XST exposure.
 app.use((req, res, next) => {
   if (req.method === 'TRACE' || req.method === 'TRACK') {

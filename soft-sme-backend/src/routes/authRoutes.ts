@@ -5,17 +5,47 @@ import path from 'path';
 import csrf from 'csurf';
 import { authMiddleware, adminAuth } from '../middleware/authMiddleware';
 import { noCacheMiddleware } from '../middleware/noCacheMiddleware';
+import {
+  csrfTokenRateLimiter,
+  loginMobileRateLimiter,
+  loginRateLimiter,
+  passwordChangeRateLimiter,
+  refreshRateLimiter,
+  registerCompanyRateLimiter,
+  registerRateLimiter,
+} from '../middleware/rateLimiters';
 import { sharedPool as pool } from '../dbShared';
 import { SessionManager } from '../utils/sessionManager';
 
 const router = express.Router();
 router.use(noCacheMiddleware);
 
+type SameSiteSetting = 'lax' | 'strict' | 'none';
+
+const parseSameSite = (value: string | undefined, fallback: SameSiteSetting): SameSiteSetting => {
+  const normalized = (value ?? '').toString().trim().toLowerCase();
+  if (normalized === 'none' || normalized === 'lax' || normalized === 'strict') {
+    return normalized as SameSiteSetting;
+  }
+  return fallback;
+};
+
 const secureCookie = process.env.NODE_ENV === 'production' || process.env.COOKIE_SECURE === 'true';
+const refreshCookieSameSite = parseSameSite(process.env.REFRESH_COOKIE_SAMESITE, 'lax');
+const csrfCookieSameSite = parseSameSite(process.env.CSRF_COOKIE_SAMESITE, refreshCookieSameSite);
+const refreshCookieSecure = refreshCookieSameSite === 'none' ? true : secureCookie;
+const csrfCookieSecure = csrfCookieSameSite === 'none' ? true : secureCookie;
+const shouldExposeRefreshToken = process.env.NODE_ENV !== 'production';
 const csrfCookieOptions = {
   httpOnly: true,
-  secure: secureCookie,
-  sameSite: 'lax' as const,
+  secure: csrfCookieSecure,
+  sameSite: csrfCookieSameSite,
+  path: '/api/auth',
+};
+const refreshCookieBaseOptions = {
+  httpOnly: true,
+  secure: refreshCookieSecure,
+  sameSite: refreshCookieSameSite,
   path: '/api/auth',
 };
 
@@ -134,16 +164,12 @@ const handleLogin = async (req: Request, res: Response, policy: LoginRolePolicy 
 
     // Set refresh token as httpOnly, secure cookie
     res.cookie('refreshToken', sessionResult.refreshToken, {
-      httpOnly: true,
-      secure: secureCookie,
-      sameSite: 'lax',
+      ...refreshCookieBaseOptions,
       maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
-      path: '/api/auth',
     });
 
-    const responsePayload = {
+    const responsePayload: Record<string, unknown> = {
       sessionToken: sessionResult.sessionToken,
-      refreshToken: sessionResult.refreshToken,
       user: {
         id: user.id,
         email: user.email,
@@ -152,7 +178,9 @@ const handleLogin = async (req: Request, res: Response, policy: LoginRolePolicy 
         access_role: user.access_role,
       },
     };
-    console.log('[DEBUG] /login response payload:', responsePayload);
+    if (shouldExposeRefreshToken) {
+      responsePayload.refreshToken = sessionResult.refreshToken;
+    }
     res.json(responsePayload);
   } catch (error) {
     console.error('Login error:', error);
@@ -161,7 +189,7 @@ const handleLogin = async (req: Request, res: Response, policy: LoginRolePolicy 
 };
 
 // Register User (This endpoint might become less relevant if all users belong to a company)
-router.post('/register', async (req: Request, res: Response) => {
+router.post('/register', registerRateLimiter, async (req: Request, res: Response) => {
   const { username, email, password } = req.body;
 
   if (!username || !email || !password) {
@@ -186,7 +214,7 @@ router.post('/register', async (req: Request, res: Response) => {
 });
 
 // Register a new company and admin user
-router.post('/register-company', async (req: Request, res: Response) => {
+router.post('/register-company', registerCompanyRateLimiter, async (req: Request, res: Response) => {
   try {
     const { company_name, admin_username, admin_email, admin_password } = req.body;
 
@@ -229,10 +257,14 @@ router.post('/register-company', async (req: Request, res: Response) => {
         locationInfo
       );
 
-      // Return user data and tokens
-      res.status(201).json({
+      // Set refresh token as httpOnly, secure cookie
+      res.cookie('refreshToken', refreshToken, {
+        ...refreshCookieBaseOptions,
+        maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+      });
+
+      const responsePayload: Record<string, unknown> = {
         sessionToken,
-        refreshToken,
         user: {
           id: user.id,
           email: user.email,
@@ -241,7 +273,11 @@ router.post('/register-company', async (req: Request, res: Response) => {
           role: user.role,
           access_role: user.access_role,
         },
-      });
+      };
+      if (shouldExposeRefreshToken) {
+        responsePayload.refreshToken = refreshToken;
+      }
+      res.status(201).json(responsePayload);
     } catch (error) {
       await client.query('ROLLBACK');
       console.error('Transaction error:', error);
@@ -282,7 +318,7 @@ router.post('/register-employee', authMiddleware, adminAuth, async (req: Request
 });
 
 // Change Password (Authenticated Users)
-router.post('/change-password', authMiddleware, async (req: Request, res: Response) => {
+router.post('/change-password', authMiddleware, passwordChangeRateLimiter, async (req: Request, res: Response) => {
   const { oldPassword, newPassword } = req.body;
   const userId = req.user?.id;
 
@@ -319,26 +355,26 @@ router.post('/change-password', authMiddleware, async (req: Request, res: Respon
 });
 
 // Login User with Session Management
-router.post('/login', async (req: Request, res: Response) => {
+router.post('/login', loginRateLimiter, async (req: Request, res: Response) => {
   return handleLogin(req, res, {
     blockRoles: ['Mobile Time Tracker', 'Mobile Time Tracking'],
   });
 });
 
 // Mobile-only login (Clockwise Mobile)
-router.post('/login-mobile', async (req: Request, res: Response) => {
+router.post('/login-mobile', loginMobileRateLimiter, async (req: Request, res: Response) => {
   return handleLogin(req, res, {
     allowRoles: ['Mobile Time Tracker', 'Mobile Time Tracking'],
   });
 });
 
 // CSRF token endpoint (for cookie-based refresh flow)
-router.get('/csrf-token', csrfProtection, (req: Request, res: Response) => {
+router.get('/csrf-token', csrfTokenRateLimiter, csrfProtection, (req: Request, res: Response) => {
   res.json({ csrfToken: req.csrfToken() });
 });
 
 // Refresh Session Token
-router.post('/refresh', requireCsrfForCookieRefresh, async (req: Request, res: Response) => {
+router.post('/refresh', refreshRateLimiter, requireCsrfForCookieRefresh, async (req: Request, res: Response) => {
   // Try to get refreshToken from cookie first, then body
   const refreshToken = req.cookies?.refreshToken || req.body.refreshToken;
 
@@ -355,10 +391,7 @@ router.post('/refresh', requireCsrfForCookieRefresh, async (req: Request, res: R
       console.log(`[SESSION] Invalid refresh token (${result.reason}) used at ${new Date().toISOString()} token=${tokenPrefix}...`);
       // Clear refresh token cookie so the client stops retrying with a bad token
       res.clearCookie('refreshToken', {
-        httpOnly: true,
-        secure: secureCookie,
-        sameSite: 'lax',
-        path: '/api/auth',
+        ...refreshCookieBaseOptions,
       });
       return res.status(401).json({ message: 'Invalid or expired refresh token' });
     }
@@ -369,18 +402,17 @@ router.post('/refresh', requireCsrfForCookieRefresh, async (req: Request, res: R
 
     // Set new refresh token as httpOnly, secure cookie
     res.cookie('refreshToken', result.refreshToken, {
-      httpOnly: true,
-      secure: secureCookie,
-      sameSite: 'lax',
+      ...refreshCookieBaseOptions,
       maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
-      path: '/api/auth',
     });
 
-    // Return both tokens so the client can persist the rotated refresh token
-    res.json({
+    const responsePayload: Record<string, unknown> = {
       sessionToken: result.sessionToken,
-      refreshToken: result.refreshToken,
-    });
+    };
+    if (shouldExposeRefreshToken) {
+      responsePayload.refreshToken = result.refreshToken;
+    }
+    res.json(responsePayload);
   } catch (error) {
     console.error('Refresh token error:', error);
     res.status(500).json({ message: 'Server error during token refresh' });
@@ -467,10 +499,7 @@ router.post('/logout-all', authMiddleware, async (req: Request, res: Response) =
     console.log(`[SESSION] User ${userId} logged out from all devices at ${new Date().toISOString()}`);
     // Clear refresh token cookie
     res.clearCookie('refreshToken', {
-      httpOnly: true,
-      secure: secureCookie,
-      sameSite: 'lax',
-      path: '/api/auth',
+      ...refreshCookieBaseOptions,
     });
     res.json({ message: 'Logged out from all devices successfully' });
   } catch (error) {

@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import cookieParser from 'cookie-parser';
 import compression from 'compression';
+import helmet from 'helmet';
 import authRouter from './routes/authRoutes';
 import { authMiddleware } from './middleware/authMiddleware';
 import { tenantContextMiddleware } from './middleware/tenantMiddleware';
@@ -38,6 +39,7 @@ import chatRouter from './routes/chatRoutes';
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
 const app = express();
+app.disable('x-powered-by');
 const authWithTenantAndRole = (roles: string[]) => [
   authMiddleware,
   tenantContextMiddleware,
@@ -96,6 +98,31 @@ const sanitizeHeaders = (headers: Record<string, unknown>): Record<string, unkno
 
 // Enable compression for better performance
 app.use(compression());
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'"],
+        objectSrc: ["'none'"],
+        baseUri: ["'self'"],
+        frameAncestors: ["'none'"],
+      },
+    },
+    frameguard: { action: 'deny' },
+    noSniff: true,
+    crossOriginEmbedderPolicy: false,
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+    strictTransportSecurity:
+      process.env.NODE_ENV === 'production' || process.env.COOKIE_SECURE === 'true'
+        ? {
+            maxAge: 15552000,
+            includeSubDomains: true,
+            preload: true,
+          }
+        : false,
+  })
+);
 
 // Set keep-alive headers for better connection reuse
 app.use((req, res, next) => {
