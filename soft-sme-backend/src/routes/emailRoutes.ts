@@ -428,6 +428,13 @@ router.post('/user-settings', authMiddleware, async (req: Request, res: Response
       });
     }
 
+    if (typeof email_pass === 'string' && email_pass.trim().length > 0 && email_pass.trim().length < 8) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email password must be at least 8 characters'
+      });
+    }
+
     // If no password provided, we'll keep the existing password
     if (!email_pass) {
       console.log('No password provided - will keep existing password for user:', userId);

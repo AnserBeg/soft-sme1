@@ -4,6 +4,7 @@ import PDFDocument from 'pdfkit';
 import { escapeHtml, normalizeDocumentText } from '../utils/documentText';
 import { sanitizeEmailHtml, sanitizePlainText } from '../utils/htmlSanitizer';
 import { renderQuoteDescriptionHtml, renderQuoteDescriptionPlainText } from '../utils/quoteDescription';
+import { decryptEmailCredential, encryptEmailCredential } from '../utils/emailCredentialCrypto';
 
 export interface EmailConfig {
   host: string;
@@ -73,13 +74,16 @@ export class EmailService {
 
   // Create user-specific transporter
   private async createUserTransporter(userEmailSettings: any): Promise<nodemailer.Transporter> {
+    const decryptedPass = userEmailSettings.email_pass
+      ? await decryptEmailCredential(userEmailSettings.email_pass)
+      : '';
     return nodemailer.createTransport({
       host: userEmailSettings.email_host,
       port: userEmailSettings.email_port,
       secure: userEmailSettings.email_secure,
       auth: {
         user: userEmailSettings.email_user,
-        pass: userEmailSettings.email_pass // In production, this should be decrypted
+        pass: decryptedPass
       }
     });
   }
@@ -642,9 +646,10 @@ Note: A detailed PDF version of this purchase order is attached to this email.
     email_from?: string;
   }): Promise<boolean> {
     try {
+      const hasNewPassword = typeof emailSettings.email_pass === 'string' && emailSettings.email_pass.length > 0;
       // If no password provided, get existing password
       let finalPassword = emailSettings.email_pass;
-      if (!finalPassword) {
+      if (!hasNewPassword) {
         const existingSettings = await this.getUserEmailSettings(userId);
         if (existingSettings) {
           finalPassword = existingSettings.email_pass;
@@ -653,6 +658,10 @@ Note: A detailed PDF version of this purchase order is attached to this email.
           console.error('No password provided and no existing settings found for user:', userId);
           return false;
         }
+      }
+
+      if (hasNewPassword && typeof finalPassword === 'string') {
+        finalPassword = await encryptEmailCredential(finalPassword);
       }
 
       const finalFromEmail = emailSettings.email_from || emailSettings.email_user;
