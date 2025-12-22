@@ -45,6 +45,31 @@ type QboStatePayload = {
 const getStateSecret = (): string =>
   process.env.QBO_STATE_SECRET || process.env.QBO_CLIENT_SECRET || '';
 
+const requireQboAuthConfig = (): { clientId: string; redirectUri: string } => {
+  const clientId = process.env.QBO_CLIENT_ID;
+  const redirectUri = process.env.QBO_REDIRECT_URI || '';
+  if (!clientId || !redirectUri) {
+    throw new Error('Missing QBO OAuth configuration');
+  }
+  return { clientId, redirectUri };
+};
+
+const buildQboAuthUrl = (companyId: number): string => {
+  const { clientId, redirectUri } = requireQboAuthConfig();
+  const scope = 'com.intuit.quickbooks.accounting';
+  const state = encodeState({
+    companyId: String(companyId),
+    nonce: crypto.randomBytes(16).toString('hex'),
+    ts: Date.now(),
+  });
+
+  return `${AUTHORIZATION_URL}?client_id=${clientId}` +
+    `&scope=${encodeURIComponent(scope)}` +
+    `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+    `&response_type=code` +
+    `&state=${state}`;
+};
+
 const encodeState = (payload: QboStatePayload): string => {
   const secret = getStateSecret();
   if (!secret) {
@@ -89,45 +114,38 @@ const decodeState = (state: unknown): QboStatePayload | null => {
 
 // Step 1: Redirect to QBO OAuth2 authorization URL
 router.get('/auth', authMiddleware, (req, res) => {
-  const clientId = process.env.QBO_CLIENT_ID;
-  const redirectUri = process.env.QBO_REDIRECT_URI || '';
-  const scope = 'com.intuit.quickbooks.accounting';
   const companyId = getCompanyIdFromRequest(req);
-  if (!clientId || !redirectUri) {
-    console.error('Missing QBO OAuth configuration for auth redirect.');
-    return res.redirect(
-      buildFrontendRedirectUrl(
-        '/business-profile?qbo_status=error&qbo_message=Missing+QuickBooks+OAuth+configuration'
-      )
-    );
-  }
   if (!companyId) {
     return res.redirect(
       buildFrontendRedirectUrl('/business-profile?qbo_status=error&qbo_message=Missing+company+context')
     );
   }
 
-  let state: string;
   try {
-    state = encodeState({
-      companyId: String(companyId),
-      nonce: crypto.randomBytes(16).toString('hex'),
-      ts: Date.now(),
-    });
+    const url = buildQboAuthUrl(companyId);
+    return res.redirect(url);
   } catch (error) {
     console.error('Failed to build QBO OAuth state:', error instanceof Error ? error.message : String(error));
     return res.redirect(
       buildFrontendRedirectUrl('/business-profile?qbo_status=error&qbo_message=Failed+to+start+QuickBooks+connection')
     );
   }
+});
 
-  const url = `${AUTHORIZATION_URL}?client_id=${clientId}` +
-    `&scope=${encodeURIComponent(scope)}` +
-    `&redirect_uri=${encodeURIComponent(redirectUri)}` +
-    `&response_type=code` +
-    `&state=${state}`;
+// Step 1a: Return the QBO OAuth2 authorization URL for SPA redirects
+router.get('/auth-url', authMiddleware, (req, res) => {
+  const companyId = getCompanyIdFromRequest(req);
+  if (!companyId) {
+    return res.status(400).json({ error: 'Missing company context' });
+  }
 
-  res.redirect(url);
+  try {
+    const url = buildQboAuthUrl(companyId);
+    return res.json({ url });
+  } catch (error) {
+    console.error('Failed to build QBO OAuth URL:', error instanceof Error ? error.message : String(error));
+    return res.status(400).json({ error: 'Failed to start QuickBooks connection' });
+  }
 });
 
 // Step 2: Handle OAuth2 callback and token exchange

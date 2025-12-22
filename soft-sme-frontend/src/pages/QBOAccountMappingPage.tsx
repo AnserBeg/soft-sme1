@@ -34,7 +34,6 @@ import ErrorIcon from '@mui/icons-material/Error';
 import SearchIcon from '@mui/icons-material/Search';
 import api from '../api/axios';
 import { toast } from 'react-toastify';
-import { getApiConfig } from '../config/api';
 
 interface QBOAccount {
   Id: string;
@@ -100,8 +99,7 @@ const QBOAccountMappingPage: React.FC = () => {
     loadData();
   }, []);
 
-  const handleConnectToQuickBooks = () => {
-    const apiConfig = getApiConfig();
+  const handleConnectToQuickBooks = async () => {
     let companyId: string | number | undefined;
     try {
       const rawUser = localStorage.getItem('user');
@@ -116,10 +114,21 @@ const QBOAccountMappingPage: React.FC = () => {
       return;
     }
 
-    const authUrl = `${apiConfig.baseURL}/api/qbo/auth?company_id=${encodeURIComponent(companyId)}`;
-    
-    // Redirect to backend OAuth endpoint
-    window.location.href = authUrl;
+    try {
+      const response = await api.get('/api/qbo/auth-url', {
+        params: { company_id: companyId },
+      });
+      const authUrl = response.data?.url;
+      if (!authUrl) {
+        throw new Error('Missing QuickBooks authorization URL');
+      }
+      // Redirect to Intuit OAuth endpoint
+      window.location.href = authUrl;
+    } catch (error: any) {
+      console.error('Error starting QuickBooks connection:', error);
+      const message = error?.response?.data?.error || 'Failed to start QuickBooks connection';
+      toast.error(message);
+    }
   };
 
   const loadData = async () => {
