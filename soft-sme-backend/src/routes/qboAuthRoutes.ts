@@ -7,6 +7,28 @@ const router = express.Router();
 // QuickBooks OAuth2 URLs
 const AUTHORIZATION_URL = 'https://appcenter.intuit.com/connect/oauth2';
 const TOKEN_URL = 'https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer';
+const DEFAULT_FRONTEND_BASE_URL = 'http://localhost:3000';
+const FRONTEND_REDIRECT_ALLOWLIST = new Set(
+  [
+    DEFAULT_FRONTEND_BASE_URL,
+    'https://softsme.phoenixtrailers.ca',
+    'https://app.aivenerp.com',
+    'https://soft-smetest-front.onrender.com',
+    process.env.CORS_ORIGIN,
+  ].filter(Boolean)
+);
+
+const getFrontendBaseUrl = (): string => {
+  const candidate = process.env.CORS_ORIGIN || DEFAULT_FRONTEND_BASE_URL;
+  return FRONTEND_REDIRECT_ALLOWLIST.has(candidate) ? candidate : DEFAULT_FRONTEND_BASE_URL;
+};
+
+const buildFrontendRedirectUrl = (pathWithQuery: string): string => {
+  if (!pathWithQuery.startsWith('/')) {
+    throw new Error('Frontend redirect path must be relative');
+  }
+  return new URL(pathWithQuery, getFrontendBaseUrl()).toString();
+};
 
 // Step 1: Redirect to QBO OAuth2 authorization URL
 router.get('/auth', (req, res) => {
@@ -41,7 +63,11 @@ router.get('/callback', async (req, res) => {
 
   if (!code || !realmId) {
     // Redirect to frontend with error
-    return res.redirect(`http://localhost:3000/business-profile?qbo_status=error&qbo_message=Missing+authorization+code+or+realm+ID`);
+    return res.redirect(
+      buildFrontendRedirectUrl(
+        '/business-profile?qbo_status=error&qbo_message=Missing+authorization+code+or+realm+ID'
+      )
+    );
   }
 
   try {
@@ -84,11 +110,19 @@ router.get('/callback', async (req, res) => {
     );
 
     // Redirect to frontend with success
-    res.redirect(`http://localhost:3000/business-profile?qbo_status=success&qbo_message=Successfully+connected+to+QuickBooks+Online`);
+    res.redirect(
+      buildFrontendRedirectUrl(
+        '/business-profile?qbo_status=success&qbo_message=Successfully+connected+to+QuickBooks+Online'
+      )
+    );
   } catch (error) {
     console.error('Error exchanging authorization code for tokens:', error);
     // Redirect to frontend with error
-    res.redirect(`http://localhost:3000/business-profile?qbo_status=error&qbo_message=Failed+to+complete+QuickBooks+connection`);
+    res.redirect(
+      buildFrontendRedirectUrl(
+        '/business-profile?qbo_status=error&qbo_message=Failed+to+complete+QuickBooks+connection'
+      )
+    );
   }
 });
 
