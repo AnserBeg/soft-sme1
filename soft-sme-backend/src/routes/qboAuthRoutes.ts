@@ -36,6 +36,11 @@ const buildFrontendRedirectUrl = (pathWithQuery: string): string => {
   return new URL(pathWithQuery, getFrontendBaseUrl()).toString();
 };
 
+const buildFrontendErrorRedirect = (message: string): string => {
+  const safeMessage = encodeURIComponent(message || 'QuickBooks connection failed');
+  return buildFrontendRedirectUrl(`/business-profile?qbo_status=error&qbo_message=${safeMessage}`);
+};
+
 type QboStatePayload = {
   companyId: string;
   nonce: string;
@@ -116,9 +121,7 @@ const decodeState = (state: unknown): QboStatePayload | null => {
 router.get('/auth', authMiddleware, (req, res) => {
   const companyId = getCompanyIdFromRequest(req);
   if (!companyId) {
-    return res.redirect(
-      buildFrontendRedirectUrl('/business-profile?qbo_status=error&qbo_message=Missing+company+context')
-    );
+    return res.redirect(buildFrontendErrorRedirect('Missing company context'));
   }
 
   try {
@@ -126,9 +129,7 @@ router.get('/auth', authMiddleware, (req, res) => {
     return res.redirect(url);
   } catch (error) {
     console.error('Failed to build QBO OAuth state:', error instanceof Error ? error.message : String(error));
-    return res.redirect(
-      buildFrontendRedirectUrl('/business-profile?qbo_status=error&qbo_message=Failed+to+start+QuickBooks+connection')
-    );
+    return res.redirect(buildFrontendErrorRedirect('Failed to start QuickBooks connection'));
   }
 });
 
@@ -157,22 +158,19 @@ router.get('/callback', async (req, res) => {
 
   if (!clientId || !clientSecret || !redirectUri) {
     console.error('Missing QBO OAuth configuration for callback.');
-    return res.redirect(
-      buildFrontendRedirectUrl(
-        '/business-profile?qbo_status=error&qbo_message=Missing+QuickBooks+OAuth+configuration'
-      )
-    );
+    return res.redirect(buildFrontendErrorRedirect('Missing QuickBooks OAuth configuration'));
+  }
+
+  if (!process.env.QBO_TOKEN_SECRET) {
+    console.error('Missing QBO_TOKEN_SECRET for encryption.');
+    return res.redirect(buildFrontendErrorRedirect('Missing QuickBooks token secret'));
   }
 
   const statePayload = decodeState(state);
 
   if (!code || !realmId || !statePayload) {
     // Redirect to frontend with error
-    return res.redirect(
-      buildFrontendRedirectUrl(
-        '/business-profile?qbo_status=error&qbo_message=Missing+authorization+code+or+realm+ID'
-      )
-    );
+    return res.redirect(buildFrontendErrorRedirect('Missing authorization code or realm ID'));
   }
 
   try {
@@ -229,14 +227,24 @@ router.get('/callback', async (req, res) => {
         )
       );
     });
-  } catch (error) {
-    console.error('Error exchanging authorization code for tokens:', error instanceof Error ? error.message : String(error));
+  } catch (error: any) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    const responseStatus = error?.response?.status;
+    const responseData = error?.response?.data;
+    const responseError =
+      responseData?.error_description || responseData?.error || responseData?.Fault?.Error?.[0]?.Message;
+
+    console.error('Error exchanging authorization code for tokens:', {
+      message: errorMessage,
+      status: responseStatus,
+      data: responseData,
+    });
+
+    const redirectMessage = responseError
+      ? `QuickBooks connection failed: ${responseError}`
+      : 'Failed to complete QuickBooks connection';
     // Redirect to frontend with error
-    res.redirect(
-      buildFrontendRedirectUrl(
-        '/business-profile?qbo_status=error&qbo_message=Failed+to+complete+QuickBooks+connection'
-      )
-    );
+    res.redirect(buildFrontendErrorRedirect(redirectMessage));
   }
 });
 
