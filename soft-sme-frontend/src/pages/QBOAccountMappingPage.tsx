@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Container,
   Paper,
@@ -24,7 +24,7 @@ import {
   TextField,
   Autocomplete,
 } from '@mui/material';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import SaveIcon from '@mui/icons-material/Save';
 import RefreshIcon from '@mui/icons-material/Refresh';
@@ -73,6 +73,7 @@ interface QBOConnectionStatus {
 
 const QBOAccountMappingPage: React.FC = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [accounts, setAccounts] = useState<QBOAccount[]>([]);
@@ -97,6 +98,16 @@ const QBOAccountMappingPage: React.FC = () => {
   const [selectedAccountType, setSelectedAccountType] = useState<string>('');
   const [accountSearchTerm, setAccountSearchTerm] = useState<string>('');
 
+  const companyIdOverride = useMemo(() => {
+    const params = new URLSearchParams(location.search);
+    const raw = params.get('company_id') ?? params.get('companyId');
+    if (!raw) {
+      return null;
+    }
+    const parsed = Number(raw);
+    return Number.isInteger(parsed) ? parsed : null;
+  }, [location.search]);
+
   useEffect(() => {
     loadData();
   }, []);
@@ -109,6 +120,10 @@ const QBOAccountMappingPage: React.FC = () => {
       companyId = user?.company_id;
     } catch {
       companyId = undefined;
+    }
+
+    if (companyIdOverride) {
+      companyId = companyIdOverride;
     }
 
     if (!companyId) {
@@ -136,18 +151,19 @@ const QBOAccountMappingPage: React.FC = () => {
   const loadData = async () => {
     setLoading(true);
     try {
+      const params = companyIdOverride ? { company_id: companyIdOverride } : undefined;
       // Check connection status
-      const statusResponse = await api.get('/api/qbo-accounts/test-connection');
+      const statusResponse = await api.get('/api/qbo-accounts/test-connection', { params });
       setConnectionStatus(statusResponse.data);
 
       if (statusResponse.data.connected) {
         // Load accounts
-        const accountsResponse = await api.get('/api/qbo-accounts/accounts');
+        const accountsResponse = await api.get('/api/qbo-accounts/accounts', { params });
         setAccounts(accountsResponse.data.accounts);
         setAccountTypes(accountsResponse.data.accountTypes);
 
         // Load current mapping
-        const mappingResponse = await api.get('/api/qbo-accounts/mapping');
+        const mappingResponse = await api.get('/api/qbo-accounts/mapping', { params });
         if (mappingResponse.data.mapping) {
           setMapping(mappingResponse.data.mapping);
           setSelectedInventoryAccount(mappingResponse.data.mapping.qbo_inventory_account_id);
@@ -180,20 +196,26 @@ const QBOAccountMappingPage: React.FC = () => {
 
     setSaving(true);
     try {
-      const response = await api.post('/api/qbo-accounts/mapping', {
-        qbo_inventory_account_id: selectedInventoryAccount,
-        qbo_gst_account_id: selectedGSTAccount,
-        qbo_ap_account_id: selectedAPAccount,
-        qbo_supply_expense_account_id: selectedSupplyExpenseAccount,
-        qbo_sales_account_id: selectedSalesAccount,
-        qbo_labour_sales_account_id: selectedLabourSalesAccount,
-        qbo_ar_account_id: selectedARAccount,
-        qbo_cogs_account_id: selectedCOGSAccount,
-              qbo_cost_of_labour_account_id: selectedCostOfLabourAccount,
-      qbo_cost_of_materials_account_id: selectedCostOfMaterialsAccount,
-      qbo_labour_expense_reduction_account_id: selectedLabourExpenseReductionAccount,
-      qbo_overhead_cogs_account_id: selectedOverheadCOGSAccount,
-      });
+      const response = await api.post(
+        '/api/qbo-accounts/mapping',
+        {
+          qbo_inventory_account_id: selectedInventoryAccount,
+          qbo_gst_account_id: selectedGSTAccount,
+          qbo_ap_account_id: selectedAPAccount,
+          qbo_supply_expense_account_id: selectedSupplyExpenseAccount,
+          qbo_sales_account_id: selectedSalesAccount,
+          qbo_labour_sales_account_id: selectedLabourSalesAccount,
+          qbo_ar_account_id: selectedARAccount,
+          qbo_cogs_account_id: selectedCOGSAccount,
+          qbo_cost_of_labour_account_id: selectedCostOfLabourAccount,
+          qbo_cost_of_materials_account_id: selectedCostOfMaterialsAccount,
+          qbo_labour_expense_reduction_account_id: selectedLabourExpenseReductionAccount,
+          qbo_overhead_cogs_account_id: selectedOverheadCOGSAccount,
+        },
+        {
+          params: companyIdOverride ? { company_id: companyIdOverride } : undefined,
+        }
+      );
 
       setMapping(response.data.mapping);
       toast.success('Account mapping saved successfully');
@@ -208,7 +230,13 @@ const QBOAccountMappingPage: React.FC = () => {
   const handleDisconnectQuickBooks = async () => {
     setDisconnecting(true);
     try {
-      await api.post('/api/qbo-accounts/disconnect');
+      await api.post(
+        '/api/qbo-accounts/disconnect',
+        null,
+        {
+          params: companyIdOverride ? { company_id: companyIdOverride } : undefined,
+        }
+      );
       setConnectionStatus({ connected: false, message: 'QuickBooks disconnected' });
       setAccounts([]);
       setAccountTypes({});

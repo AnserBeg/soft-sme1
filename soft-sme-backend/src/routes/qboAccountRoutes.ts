@@ -3,14 +3,37 @@ import { qboHttp } from '../utils/qboHttp';
 import { pool } from '../db';
 import { decryptQboValue } from '../utils/qboCrypto';
 import { resolveTenantCompanyIdFromRequest } from '../utils/companyContext';
+import { resolveTenantCompanyId } from '../utils/tenantCompany';
 import { ensureFreshQboAccess, revokeQboRefreshToken } from '../utils/qboTokens';
 
 const router = express.Router();
 
+const getCompanyIdOverrideFromQuery = (req: express.Request): number | null => {
+  const raw =
+    req.query?.company_id ??
+    req.query?.companyId;
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) ? parsed : null;
+};
+
+const resolveQboCompanyId = async (
+  req: express.Request
+): Promise<number | null> => {
+  const overrideCompanyId = getCompanyIdOverrideFromQuery(req);
+  if (overrideCompanyId) {
+    const tenantCompanyId = await resolveTenantCompanyId(pool, String(overrideCompanyId));
+    const parsed = Number(tenantCompanyId);
+    return Number.isInteger(parsed) ? parsed : null;
+  }
+
+  return resolveTenantCompanyIdFromRequest(req, pool);
+};
+
 // Get QBO accounts for mapping
 router.get('/accounts', async (req, res) => {
   try {
-    const companyId = await resolveTenantCompanyIdFromRequest(req, pool);
+    const companyId = await resolveQboCompanyId(req);
     if (!companyId) {
       return res.status(400).json({ error: 'Company ID not found' });
     }
@@ -82,7 +105,7 @@ router.get('/accounts', async (req, res) => {
 // Get current account mapping
 router.get('/mapping', async (req, res) => {
   try {
-    const companyId = await resolveTenantCompanyIdFromRequest(req, pool);
+    const companyId = await resolveQboCompanyId(req);
     if (!companyId) {
       return res.status(400).json({ error: 'Company ID not found' });
     }
@@ -128,7 +151,7 @@ router.post('/mapping', async (req, res) => {
       return res.status(400).json({ error: 'Inventory, GST, and AP account mappings are required' });
     }
 
-    const companyId = await resolveTenantCompanyIdFromRequest(req, pool);
+    const companyId = await resolveQboCompanyId(req);
     if (!companyId) {
       return res.status(400).json({ error: 'Company ID not found' });
     }
@@ -186,7 +209,7 @@ router.post('/mapping', async (req, res) => {
 // Test QBO connection
 router.get('/test-connection', async (req, res) => {
   try {
-    const companyId = await resolveTenantCompanyIdFromRequest(req, pool);
+    const companyId = await resolveQboCompanyId(req);
     if (!companyId) {
       return res.status(400).json({ error: 'Company ID not found' });
     }
@@ -234,7 +257,7 @@ router.get('/test-connection', async (req, res) => {
 // Disconnect QBO and revoke refresh token
 router.post('/disconnect', async (req, res) => {
   try {
-    const companyId = await resolveTenantCompanyIdFromRequest(req, pool);
+    const companyId = await resolveQboCompanyId(req);
     if (!companyId) {
       return res.status(400).json({ error: 'Company ID not found' });
     }

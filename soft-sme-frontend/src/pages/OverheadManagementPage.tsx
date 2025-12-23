@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Container,
   Paper,
@@ -25,7 +25,7 @@ import {
   Autocomplete,
   IconButton,
 } from '@mui/material';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import SaveIcon from '@mui/icons-material/Save';
 import RefreshIcon from '@mui/icons-material/Refresh';
@@ -69,6 +69,7 @@ interface QBOConnectionStatus {
 
 const OverheadManagementPage: React.FC = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [accounts, setAccounts] = useState<QBOAccount[]>([]);
@@ -86,6 +87,16 @@ const OverheadManagementPage: React.FC = () => {
     description: ''
   });
 
+  const companyIdOverride = useMemo(() => {
+    const params = new URLSearchParams(location.search);
+    const raw = params.get('company_id') ?? params.get('companyId');
+    if (!raw) {
+      return null;
+    }
+    const parsed = Number(raw);
+    return Number.isInteger(parsed) ? parsed : null;
+  }, [location.search]);
+
   useEffect(() => {
     loadData();
   }, []);
@@ -93,8 +104,9 @@ const OverheadManagementPage: React.FC = () => {
   const loadData = async () => {
     setLoading(true);
     try {
+      const params = companyIdOverride ? { company_id: companyIdOverride } : undefined;
       const [accountsRes, distributionsRes] = await Promise.all([
-        api.get('/api/qbo-accounts/accounts'),
+        api.get('/api/qbo-accounts/accounts', { params }),
         api.get('/api/overhead/distribution')
       ]);
 

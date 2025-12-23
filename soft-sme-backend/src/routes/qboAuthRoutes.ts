@@ -49,6 +49,23 @@ type QboStatePayload = {
 const getStateSecret = (): string =>
   process.env.QBO_STATE_SECRET || process.env.QBO_CLIENT_SECRET || '';
 
+const getCompanyIdOverrideFromQuery = (req: express.Request): number | null => {
+  const raw =
+    req.query?.company_id ??
+    req.query?.companyId;
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) ? parsed : null;
+};
+
+const getRequestedCompanyId = (req: express.Request): number | null => {
+  const overrideCompanyId = getCompanyIdOverrideFromQuery(req);
+  if (overrideCompanyId) {
+    return overrideCompanyId;
+  }
+  return getCompanyIdFromRequest(req);
+};
+
 const requireQboAuthConfig = (): { clientId: string; redirectUri: string } => {
   const clientId = process.env.QBO_CLIENT_ID;
   const redirectUri = process.env.QBO_REDIRECT_URI || '';
@@ -119,7 +136,7 @@ const decodeState = (state: unknown): QboStatePayload | null => {
 
 // Step 1: Redirect to QBO OAuth2 authorization URL
 router.get('/auth', authMiddleware, async (req, res) => {
-  const companyId = getCompanyIdFromRequest(req);
+  const companyId = getRequestedCompanyId(req);
   if (!companyId) {
     return res.redirect(buildFrontendErrorRedirect('Missing company context'));
   }
@@ -135,7 +152,7 @@ router.get('/auth', authMiddleware, async (req, res) => {
 
 // Step 1a: Return the QBO OAuth2 authorization URL for SPA redirects
 router.get('/auth-url', authMiddleware, async (req, res) => {
-  const companyId = getCompanyIdFromRequest(req);
+  const companyId = getRequestedCompanyId(req);
   if (!companyId) {
     return res.status(400).json({ error: 'Missing company context' });
   }
@@ -252,7 +269,7 @@ router.get('/callback', async (req, res) => {
 // Check connection status
 router.get('/status', authMiddleware, async (req, res) => {
   try {
-    const requestedCompanyId = getCompanyIdFromRequest(req);
+    const requestedCompanyId = getRequestedCompanyId(req);
     if (!requestedCompanyId) {
       return res.status(400).json({ error: 'Company ID not found' });
     }
