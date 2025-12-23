@@ -57,6 +57,8 @@ import TasksDashboardPage from './pages/TasksDashboardPage';
 import ReturnOrdersPage from './pages/ReturnOrdersPage';
 import ReturnOrderDetailPage from './pages/ReturnOrderDetailPage';
 import FieldVisibilitySettingsPage from './pages/FieldVisibilitySettingsPage';
+import LegalEulaPage from './pages/LegalEulaPage';
+import PrivacyPolicyPage from './pages/PrivacyPolicyPage';
 import { useEffect, useState, useRef } from 'react';
 import { syncPending, getPendingCount } from './services/offlineSync';
 import { ToastContainer, toast } from 'react-toastify';
@@ -143,6 +145,8 @@ const AppRoutes: React.FC = () => {
       {/* Public Routes */}
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<CompanyRegisterPage />} />
+      <Route path="/eula" element={<LegalEulaPage />} />
+      <Route path="/privacy-policy" element={<PrivacyPolicyPage />} />
 
       {/* Protected Routes */}
       <Route
