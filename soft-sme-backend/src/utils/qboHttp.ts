@@ -1,4 +1,5 @@
 import axios, { AxiosInstance, AxiosRequestConfig } from 'axios';
+import { logger } from './logger';
 
 const ALLOWED_QBO_HOSTS = new Set([
   'oauth.platform.intuit.com',
@@ -48,6 +49,31 @@ const createQboHttpClient = (): AxiosInstance => {
     assertQboHost(resolvedUrl);
     return config;
   });
+  client.interceptors.response.use(
+    (response) => {
+      const intuitTid = response.headers?.['intuit_tid'] || response.headers?.['intuit-tid'];
+      if (intuitTid) {
+        logger.info('QBO response received', {
+          intuitTid,
+          status: response.status,
+          url: resolveRequestUrl(response.config),
+        });
+      }
+      return response;
+    },
+    (error) => {
+      const response = error?.response;
+      const intuitTid = response?.headers?.['intuit_tid'] || response?.headers?.['intuit-tid'];
+      if (intuitTid) {
+        logger.info('QBO error response received', {
+          intuitTid,
+          status: response?.status,
+          url: resolveRequestUrl(response?.config || {}),
+        });
+      }
+      return Promise.reject(error);
+    }
+  );
   return client;
 };
 
