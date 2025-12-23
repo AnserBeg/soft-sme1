@@ -99,13 +99,13 @@ const handleLogin = async (req: Request, res: Response, policy: LoginRolePolicy 
       companyId !== null
         ? (
             await pool.query(
-              'SELECT id, username, email, password_hash, company_id, role, access_role FROM users WHERE email = $1 AND company_id = $2',
+              'SELECT id, username, email, password_hash, company_id, role, access_role, eula_accepted_at, privacy_accepted_at FROM users WHERE email = $1 AND company_id = $2',
               [email, companyId]
             )
           ).rows
         : (
             await pool.query(
-              'SELECT id, username, email, password_hash, company_id, role, access_role FROM users WHERE email = $1 ORDER BY company_id ASC',
+              'SELECT id, username, email, password_hash, company_id, role, access_role, eula_accepted_at, privacy_accepted_at FROM users WHERE email = $1 ORDER BY company_id ASC',
               [email]
             )
           ).rows;
@@ -176,6 +176,8 @@ const handleLogin = async (req: Request, res: Response, policy: LoginRolePolicy 
         company_id: user.company_id,
         role: user.role,
         access_role: user.access_role,
+        eula_accepted_at: user.eula_accepted_at,
+        privacy_accepted_at: user.privacy_accepted_at,
       },
     };
     if (shouldExposeRefreshToken) {
@@ -235,7 +237,7 @@ router.post('/register-company', registerCompanyRateLimiter, async (req: Request
 
       // Create admin user
       const userResult = await client.query(
-        'INSERT INTO users (username, email, password_hash, company_id, role, access_role) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, username, email, company_id, role, access_role',
+        'INSERT INTO users (username, email, password_hash, company_id, role, access_role) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, username, email, company_id, role, access_role, eula_accepted_at, privacy_accepted_at',
         [admin_username, admin_email, hashedPassword, companyId, 'Admin', 'Admin']
       );
 
@@ -272,6 +274,8 @@ router.post('/register-company', registerCompanyRateLimiter, async (req: Request
           company_id: user.company_id,
           role: user.role,
           access_role: user.access_role,
+          eula_accepted_at: user.eula_accepted_at,
+          privacy_accepted_at: user.privacy_accepted_at,
         },
       };
       if (shouldExposeRefreshToken) {
@@ -423,7 +427,7 @@ router.post('/refresh', refreshRateLimiter, requireCsrfForCookieRefresh, async (
 router.get('/me', authMiddleware, async (req: Request, res: Response) => {
   try {
     const result = await pool.query(
-      'SELECT id, username, email, company_id, role, access_role FROM users WHERE id = $1',
+      'SELECT id, username, email, company_id, role, access_role, eula_accepted_at, privacy_accepted_at FROM users WHERE id = $1',
       [req.user?.id]
     );
 
@@ -439,6 +443,8 @@ router.get('/me', authMiddleware, async (req: Request, res: Response) => {
       company_id: user.company_id,
       role: user.role,
       access_role: user.access_role,
+      eula_accepted_at: user.eula_accepted_at,
+      privacy_accepted_at: user.privacy_accepted_at,
     });
   } catch (error) {
     console.error('Error fetching user:', error);
@@ -505,6 +511,32 @@ router.post('/logout-all', authMiddleware, async (req: Request, res: Response) =
   } catch (error) {
     console.error('Error logging out from all devices:', error);
     res.status(500).json({ message: 'Server error while logging out' });
+  }
+});
+
+// Accept EULA + Privacy Policy (once)
+router.post('/accept-legal', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const result = await pool.query(
+      `UPDATE users
+       SET eula_accepted_at = COALESCE(eula_accepted_at, CURRENT_TIMESTAMP),
+           privacy_accepted_at = COALESCE(privacy_accepted_at, CURRENT_TIMESTAMP)
+       WHERE id = $1
+       RETURNING eula_accepted_at, privacy_accepted_at`,
+      [req.user?.id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    res.json({
+      eula_accepted_at: result.rows[0].eula_accepted_at,
+      privacy_accepted_at: result.rows[0].privacy_accepted_at,
+    });
+  } catch (error) {
+    console.error('Error accepting legal documents:', error);
+    res.status(500).json({ message: 'Server error while accepting legal documents' });
   }
 });
 

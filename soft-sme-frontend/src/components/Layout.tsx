@@ -51,6 +51,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { getPendingCount } from '../services/offlineSync';
 import { useMessaging } from '../contexts/MessagingContext';
 import AssistantWidget from './AssistantWidget';
+import api from '../api/axios';
+import LegalAgreementDialog from './LegalAgreementDialog';
 
 const drawerWidth = 240;
 const defaultAssistantWidth = 360;
@@ -65,13 +67,43 @@ const Layout: React.FC = () => {
   const [mobileOpen, setMobileOpen] = React.useState(false);
   const navigate = useNavigate();
   const location = useLocation();
-  const { logout, user } = useAuth();
+  const { logout, user, updateUser } = useAuth();
   const { unreadConversationCount } = useMessaging();
   const [pendingCount, setPendingCount] = useState<number>(0);
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [assistantWidth, setAssistantWidth] = useState(defaultAssistantWidth);
   const [backendUnavailable, setBackendUnavailable] = useState<boolean>(Boolean((window as any).__backendUnavailableSince));
   const [isOffline, setIsOffline] = useState<boolean>(typeof navigator !== 'undefined' ? navigator.onLine === false : false);
+  const [legalOpen, setLegalOpen] = useState(false);
+  const [legalSaving, setLegalSaving] = useState(false);
+  const [legalError, setLegalError] = useState<string | null>(null);
+
+  const needsLegalAcceptance = Boolean(user && (!user.eula_accepted_at || !user.privacy_accepted_at));
+
+  useEffect(() => {
+    setLegalOpen(needsLegalAcceptance);
+    if (!needsLegalAcceptance) {
+      setLegalError(null);
+      setLegalSaving(false);
+    }
+  }, [needsLegalAcceptance]);
+
+  const handleAcceptLegal = async () => {
+    setLegalSaving(true);
+    setLegalError(null);
+    try {
+      const response = await api.post('/api/auth/accept-legal');
+      updateUser({
+        eula_accepted_at: response.data?.eula_accepted_at ?? null,
+        privacy_accepted_at: response.data?.privacy_accepted_at ?? null,
+      });
+      setLegalOpen(false);
+    } catch (error: any) {
+      setLegalError(error?.response?.data?.message || 'Failed to save acceptance. Please try again.');
+    } finally {
+      setLegalSaving(false);
+    }
+  };
 
   useEffect(() => {
     let mounted = true;
@@ -371,6 +403,12 @@ const Layout: React.FC = () => {
         desktopMaxWidth={maxAssistantWidth}
         desktopHandleWidth={assistantResizeHandleWidth}
         desktopBottomOffset={assistantDesktopBottomOffset}
+      />
+      <LegalAgreementDialog
+        open={legalOpen}
+        loading={legalSaving}
+        error={legalError}
+        onAccept={handleAcceptLegal}
       />
     </Box>
   );

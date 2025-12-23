@@ -7,6 +7,8 @@ interface User {
   email: string;
   company_id: string;
   access_role: string;
+  eula_accepted_at?: string | null;
+  privacy_accepted_at?: string | null;
 }
 
 interface Session {
@@ -37,6 +39,7 @@ interface AuthContextType {
   isAuthenticated: boolean;
   login: (sessionToken: string, refreshToken: string, userData: User) => void;
   logout: () => void;
+  updateUser: (updates: Partial<User>) => void;
   logoutFromAllDevices: () => Promise<void>;
   refreshSession: () => Promise<boolean>;
   getUserSessions: () => Promise<Session[]>;
@@ -136,6 +139,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setIsAuthenticated(false);
   };
 
+  const updateUser = (updates: Partial<User>) => {
+    setUser((prev) => {
+      if (!prev) return prev;
+      const nextUser = { ...prev, ...updates };
+      localStorage.setItem('user', JSON.stringify(nextUser));
+      return nextUser;
+    });
+  };
+
   const logoutFromAllDevices = async () => {
     try {
       await api.post('/api/auth/logout-all');
@@ -195,6 +207,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       isAuthenticated, 
       login, 
       logout, 
+      updateUser,
       logoutFromAllDevices,
       refreshSession,
       getUserSessions,
