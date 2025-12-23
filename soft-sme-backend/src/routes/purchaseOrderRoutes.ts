@@ -5,6 +5,7 @@ import PDFDocument from 'pdfkit';
 import { getNextPurchaseOrderNumberForYear } from '../utils/sequence';
 import { qboHttp } from '../utils/qboHttp'; // Added for QBO API integration
 import { ensureFreshQboAccess } from '../utils/qboTokens';
+import { getQboApiBaseUrl } from '../utils/qboBaseUrl';
 import { getLogoImageSource } from '../utils/pdfLogoHelper';
 import { PurchaseOrderCalculationService } from '../services/PurchaseOrderCalculationService';
 import { PurchaseOrderService } from '../services/PurchaseOrderService';
@@ -590,7 +591,7 @@ router.post('/:id/export-to-qbo', adminOnly, async (req, res) => {
 
     // Create bill in QBO
     const qboResponse = await qboHttp.post(
-      `https://sandbox-quickbooks.api.intuit.com/v3/company/${accessContext.realmId}/bill`,
+      `${getQboApiBaseUrl()}/v3/company/${accessContext.realmId}/bill`,
       qboBill,
       {
         headers: {
@@ -747,7 +748,7 @@ router.post('/:id/export-to-qbo-with-vendor', adminOnly, async (req, res) => {
 
     // Create bill in QBO
     const qboResponse = await qboHttp.post(
-      `https://sandbox-quickbooks.api.intuit.com/v3/company/${accessContext.realmId}/bill`,
+      `${getQboApiBaseUrl()}/v3/company/${accessContext.realmId}/bill`,
       qboBill,
       {
         headers: {
@@ -796,7 +797,7 @@ router.post('/:id/export-to-qbo-with-vendor', adminOnly, async (req, res) => {
 async function checkQBOVendorExists(vendorName: string, accessToken: string, realmId: string): Promise<boolean> {
   try {
     const searchResponse = await qboHttp.get(
-      `https://sandbox-quickbooks.api.intuit.com/v3/company/${realmId}/query`,
+      `${getQboApiBaseUrl()}/v3/company/${realmId}/query`,
       {
         headers: {
           'Authorization': `Bearer ${accessToken}`,
@@ -821,7 +822,7 @@ async function checkQBOVendorExists(vendorName: string, accessToken: string, rea
 async function getQBOVendorId(vendorName: string, accessToken: string, realmId: string): Promise<string> {
   try {
     const searchResponse = await qboHttp.get(
-      `https://sandbox-quickbooks.api.intuit.com/v3/company/${realmId}/query`,
+      `${getQboApiBaseUrl()}/v3/company/${realmId}/query`,
       {
         headers: {
           'Authorization': `Bearer ${accessToken}`,
@@ -850,7 +851,7 @@ async function getQBOVendorId(vendorName: string, accessToken: string, realmId: 
 async function createQBOVendor(vendorData: any, accessToken: string, realmId: string): Promise<string> {
   try {
     const createResponse = await qboHttp.post(
-      `https://sandbox-quickbooks.api.intuit.com/v3/company/${realmId}/vendor`,
+      `${getQboApiBaseUrl()}/v3/company/${realmId}/vendor`,
       vendorData,
       {
         headers: {

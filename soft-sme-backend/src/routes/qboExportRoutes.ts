@@ -3,6 +3,7 @@ import { qboHttp } from '../utils/qboHttp';
 import { pool } from '../db';
 import { resolveTenantCompanyIdFromRequest } from '../utils/companyContext';
 import { ensureFreshQboAccess } from '../utils/qboTokens';
+import { getQboApiBaseUrl } from '../utils/qboBaseUrl';
 
 const router = express.Router();
 const escapeQboQueryValue = (value: string): string => value.replace(/'/g, "''");
@@ -89,7 +90,7 @@ router.post('/export-purchase-order/:poId', async (req, res) => {
     try {
       // Search for existing vendor
       const vendorSearchResponse = await qboHttp.get(
-        `https://sandbox-quickbooks.api.intuit.com/v3/company/${accessContext.realmId}/query`,
+        `${getQboApiBaseUrl()}/v3/company/${accessContext.realmId}/query`,
         {
           headers: {
             'Authorization': `Bearer ${accessContext.accessToken}`,
@@ -123,7 +124,7 @@ router.post('/export-purchase-order/:poId', async (req, res) => {
         };
 
         const vendorCreateResponse = await qboHttp.post(
-          `https://sandbox-quickbooks.api.intuit.com/v3/company/${accessContext.realmId}/vendor`,
+          `${getQboApiBaseUrl()}/v3/company/${accessContext.realmId}/vendor`,
           newVendorData,
           {
             headers: {
@@ -209,7 +210,7 @@ router.post('/export-purchase-order/:poId', async (req, res) => {
     console.log(`Creating Bill in QuickBooks: lineCount=${billData.Line?.length || 0}`);
 
     const billResponse = await qboHttp.post(
-      `https://sandbox-quickbooks.api.intuit.com/v3/company/${accessContext.realmId}/bill`,
+      `${getQboApiBaseUrl()}/v3/company/${accessContext.realmId}/bill`,
       billData,
       {
         headers: {

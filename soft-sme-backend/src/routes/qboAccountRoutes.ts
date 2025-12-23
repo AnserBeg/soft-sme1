@@ -2,9 +2,10 @@ import express from 'express';
 import { qboHttp } from '../utils/qboHttp';
 import { pool } from '../db';
 import { decryptQboValue } from '../utils/qboCrypto';
-import { resolveTenantCompanyIdFromRequest } from '../utils/companyContext';
+import { getCompanyIdFromRequest, resolveTenantCompanyIdFromRequest } from '../utils/companyContext';
 import { resolveTenantCompanyId } from '../utils/tenantCompany';
 import { ensureFreshQboAccess, revokeQboRefreshToken } from '../utils/qboTokens';
+import { getQboApiBaseUrl } from '../utils/qboBaseUrl';
 
 const router = express.Router();
 
@@ -21,13 +22,32 @@ const resolveQboCompanyId = async (
   req: express.Request
 ): Promise<number | null> => {
   const overrideCompanyId = getCompanyIdOverrideFromQuery(req);
-  if (overrideCompanyId) {
-    const tenantCompanyId = await resolveTenantCompanyId(pool, String(overrideCompanyId));
-    const parsed = Number(tenantCompanyId);
-    return Number.isInteger(parsed) ? parsed : null;
+  const requestedCompanyId = overrideCompanyId ?? getCompanyIdFromRequest(req);
+  if (!requestedCompanyId) {
+    return null;
   }
 
-  return resolveTenantCompanyIdFromRequest(req, pool);
+  const tenantCompanyId = await resolveTenantCompanyId(pool, String(requestedCompanyId));
+  const normalized = Number(tenantCompanyId);
+  if (!Number.isInteger(normalized)) {
+    return null;
+  }
+
+  if (normalized !== requestedCompanyId) {
+    try {
+      const exists = await pool.query(
+        'SELECT 1 FROM qbo_connection WHERE company_id = $1 LIMIT 1',
+        [requestedCompanyId]
+      );
+      if (exists.rows.length > 0) {
+        return requestedCompanyId;
+      }
+    } catch {
+      /* best-effort */
+    }
+  }
+
+  return normalized;
 };
 
 // Get QBO accounts for mapping
@@ -58,7 +78,7 @@ router.get('/accounts', async (req, res) => {
     // Fetch real accounts from QBO using correct v3 API endpoint
     console.log('Fetching real QBO accounts using v3 API...');
     const accountsResponse = await qboHttp.get(
-      `https://sandbox-quickbooks.api.intuit.com/v3/company/${accessContext.realmId}/query`,
+      `${getQboApiBaseUrl()}/v3/company/${accessContext.realmId}/query`,
       {
         headers: {
           'Authorization': `Bearer ${accessContext.accessToken}`,

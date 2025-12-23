@@ -8,6 +8,7 @@ import { qboHttp } from '../utils/qboHttp';
 import { ensureFreshQboAccess } from '../utils/qboTokens';
 import { getLogoImageSource } from '../utils/pdfLogoHelper';
 import { resolveTenantUserId } from '../utils/tenantUser';
+import { getQboApiBaseUrl } from '../utils/qboBaseUrl';
 
 const escapeQboQueryValue = (value: string): string => value.replace(/'/g, "''");
 
@@ -15,7 +16,7 @@ const escapeQboQueryValue = (value: string): string => value.replace(/'/g, "''")
 async function checkQBOCustomerExists(customerName: string, accessToken: string, realmId: string): Promise<boolean> {
   try {
     const response = await qboHttp.get(
-      `https://sandbox-quickbooks.api.intuit.com/v3/company/${realmId}/query`,
+      `${getQboApiBaseUrl()}/v3/company/${realmId}/query`,
       {
         headers: {
           'Authorization': `Bearer ${accessToken}`,
@@ -41,7 +42,7 @@ async function checkQBOCustomerExists(customerName: string, accessToken: string,
 async function getQBOCustomerId(customerName: string, accessToken: string, realmId: string): Promise<string> {
   try {
     const response = await qboHttp.get(
-      `https://sandbox-quickbooks.api.intuit.com/v3/company/${realmId}/query`,
+      `${getQboApiBaseUrl()}/v3/company/${realmId}/query`,
       {
         headers: {
           'Authorization': `Bearer ${accessToken}`,
@@ -71,7 +72,7 @@ async function getOrCreateQBOItem(itemName: string, itemType: string, incomeAcco
   try {
     // First, try to find existing item
     const queryResponse = await qboHttp.get(
-      `https://sandbox-quickbooks.api.intuit.com/v3/company/${realmId}/query`,
+      `${getQboApiBaseUrl()}/v3/company/${realmId}/query`,
       {
         headers: {
           'Authorization': `Bearer ${accessToken}`,
@@ -100,7 +101,7 @@ async function getOrCreateQBOItem(itemName: string, itemType: string, incomeAcco
 
     console.log('Creating QBO item');
     const createResponse = await qboHttp.post(
-      `https://sandbox-quickbooks.api.intuit.com/v3/company/${realmId}/item`,
+      `${getQboApiBaseUrl()}/v3/company/${realmId}/item`,
       itemData,
       {
         headers: {
@@ -128,7 +129,7 @@ async function getOrCreateQBOItem(itemName: string, itemType: string, incomeAcco
 async function createQBOCustomer(customerData: any, accessToken: string, realmId: string): Promise<string> {
   try {
     const createResponse = await qboHttp.post(
-      `https://sandbox-quickbooks.api.intuit.com/v3/company/${realmId}/customer`,
+      `${getQboApiBaseUrl()}/v3/company/${realmId}/customer`,
       customerData,
       {
         headers: {
@@ -1141,7 +1142,7 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
     try {
       // Search for existing customer
       const customerSearchResponse = await qboHttp.get(
-        `https://sandbox-quickbooks.api.intuit.com/v3/company/${accessContext.realmId}/query`,
+        `${getQboApiBaseUrl()}/v3/company/${accessContext.realmId}/query`,
         {
           headers: {
             'Authorization': `Bearer ${accessContext.accessToken}`,
@@ -1384,7 +1385,7 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
     let qboInvoiceId: string;
     try {
       const invoiceResponse = await qboHttp.post(
-        `https://sandbox-quickbooks.api.intuit.com/v3/company/${accessContext.realmId}/invoice`,
+        `${getQboApiBaseUrl()}/v3/company/${accessContext.realmId}/invoice`,
         invoiceData,
         {
           headers: {
@@ -1573,7 +1574,7 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
 
         try {
           const journalResponse = await qboHttp.post(
-            `https://sandbox-quickbooks.api.intuit.com/v3/company/${accessContext.realmId}/journalentry`,
+            `${getQboApiBaseUrl()}/v3/company/${accessContext.realmId}/journalentry`,
             journalEntryData,
             {
               headers: {
@@ -1797,7 +1798,7 @@ router.post('/:id/export-to-qbo-with-customer', async (req: Request, res: Respon
 
     // Create invoice in QuickBooks
     const invoiceResponse = await qboHttp.post(
-      `https://sandbox-quickbooks.api.intuit.com/v3/company/${accessContext.realmId}/invoice`,
+      `${getQboApiBaseUrl()}/v3/company/${accessContext.realmId}/invoice`,
       invoiceData,
       {
         headers: {
@@ -1955,7 +1956,7 @@ router.post('/:id/export-to-qbo-with-customer', async (req: Request, res: Respon
 
         try {
           await qboHttp.post(
-            `https://sandbox-quickbooks.api.intuit.com/v3/company/${accessContext.realmId}/journalentry`,
+            `${getQboApiBaseUrl()}/v3/company/${accessContext.realmId}/journalentry`,
             journalEntryData,
             {
               headers: {
