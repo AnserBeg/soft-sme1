@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import express from 'express';
 import { qboHttp } from '../utils/qboHttp';
+import { getQboAuthEndpoints } from '../utils/qboDiscovery';
 import { pool, runWithTenantContext } from '../db';
 import { encryptQboConnectionFields } from '../utils/qboCrypto';
 import { getCompanyIdFromRequest } from '../utils/companyContext';
@@ -10,9 +11,7 @@ import { authMiddleware } from '../middleware/authMiddleware';
 
 const router = express.Router();
 
-// QuickBooks OAuth2 URLs
-const AUTHORIZATION_URL = 'https://appcenter.intuit.com/connect/oauth2';
-const TOKEN_URL = 'https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer';
+// QuickBooks OAuth2 URLs come from the Intuit discovery document.
 const DEFAULT_FRONTEND_BASE_URL = 'http://localhost:3000';
 const FRONTEND_REDIRECT_ALLOWLIST = new Set(
   [
@@ -59,8 +58,9 @@ const requireQboAuthConfig = (): { clientId: string; redirectUri: string } => {
   return { clientId, redirectUri };
 };
 
-const buildQboAuthUrl = (companyId: number): string => {
+const buildQboAuthUrl = async (companyId: number): Promise<string> => {
   const { clientId, redirectUri } = requireQboAuthConfig();
+  const { authorizationEndpoint } = await getQboAuthEndpoints();
   const scope = 'com.intuit.quickbooks.accounting';
   const state = encodeState({
     companyId: String(companyId),
@@ -68,7 +68,7 @@ const buildQboAuthUrl = (companyId: number): string => {
     ts: Date.now(),
   });
 
-  return `${AUTHORIZATION_URL}?client_id=${clientId}` +
+  return `${authorizationEndpoint}?client_id=${clientId}` +
     `&scope=${encodeURIComponent(scope)}` +
     `&redirect_uri=${encodeURIComponent(redirectUri)}` +
     `&response_type=code` +
@@ -118,14 +118,14 @@ const decodeState = (state: unknown): QboStatePayload | null => {
 };
 
 // Step 1: Redirect to QBO OAuth2 authorization URL
-router.get('/auth', authMiddleware, (req, res) => {
+router.get('/auth', authMiddleware, async (req, res) => {
   const companyId = getCompanyIdFromRequest(req);
   if (!companyId) {
     return res.redirect(buildFrontendErrorRedirect('Missing company context'));
   }
 
   try {
-    const url = buildQboAuthUrl(companyId);
+    const url = await buildQboAuthUrl(companyId);
     return res.redirect(url);
   } catch (error) {
     console.error('Failed to build QBO OAuth state:', error instanceof Error ? error.message : String(error));
@@ -134,14 +134,14 @@ router.get('/auth', authMiddleware, (req, res) => {
 });
 
 // Step 1a: Return the QBO OAuth2 authorization URL for SPA redirects
-router.get('/auth-url', authMiddleware, (req, res) => {
+router.get('/auth-url', authMiddleware, async (req, res) => {
   const companyId = getCompanyIdFromRequest(req);
   if (!companyId) {
     return res.status(400).json({ error: 'Missing company context' });
   }
 
   try {
-    const url = buildQboAuthUrl(companyId);
+    const url = await buildQboAuthUrl(companyId);
     return res.json({ url });
   } catch (error) {
     console.error('Failed to build QBO OAuth URL:', error instanceof Error ? error.message : String(error));
@@ -182,12 +182,13 @@ router.get('/callback', async (req, res) => {
       }
 
       // Exchange authorization code for tokens (Intuit requires form-encoded body)
+      const { tokenEndpoint } = await getQboAuthEndpoints();
       const tokenBody = new URLSearchParams({
         grant_type: 'authorization_code',
         code: String(code),
         redirect_uri: redirectUri,
       });
-      const tokenResponse = await qboHttp.post(TOKEN_URL, tokenBody.toString(), {
+      const tokenResponse = await qboHttp.post(tokenEndpoint, tokenBody.toString(), {
         auth: {
           username: clientId!,
           password: clientSecret!,

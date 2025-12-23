@@ -1,8 +1,7 @@
 import { Pool } from 'pg';
 import { qboHttp } from './qboHttp';
 import { decryptQboValue, encryptQboConnectionFields } from './qboCrypto';
-
-const TOKEN_URL = 'https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer';
+import { getQboAuthEndpoints } from './qboDiscovery';
 const DEFAULT_REFRESH_BUFFER_MS = 5 * 60 * 1000;
 
 type QboConnectionRow = {
@@ -57,22 +56,20 @@ export const ensureFreshQboAccess = async (
     const { clientId, clientSecret } = requireQboClientCredentials();
     let refreshToken = await decryptQboValue(row.refresh_token);
 
-    const refreshResponse = await qboHttp.post(
-      TOKEN_URL,
-      {
-        grant_type: 'refresh_token',
-        refresh_token: refreshToken,
+    const { tokenEndpoint } = await getQboAuthEndpoints();
+    const refreshBody = new URLSearchParams({
+      grant_type: 'refresh_token',
+      refresh_token: refreshToken,
+    });
+    const refreshResponse = await qboHttp.post(tokenEndpoint, refreshBody.toString(), {
+      auth: {
+        username: clientId,
+        password: clientSecret,
       },
-      {
-        auth: {
-          username: clientId,
-          password: clientSecret,
-        },
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-      }
-    );
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+    });
 
     const { access_token, refresh_token, expires_in } = refreshResponse.data;
     const newExpiresAt = new Date(Date.now() + Number(expires_in) * 1000);
@@ -103,12 +100,13 @@ export const ensureFreshQboAccess = async (
 
 export const revokeQboRefreshToken = async (refreshToken: string): Promise<void> => {
   const { clientId, clientSecret } = requireQboClientCredentials();
+  const { revocationEndpoint } = await getQboAuthEndpoints();
   const body = new URLSearchParams({
     token: refreshToken,
     token_type_hint: 'refresh_token',
   });
 
-  await qboHttp.post('https://developer.api.intuit.com/v2/oauth2/tokens/revoke', body.toString(), {
+  await qboHttp.post(revocationEndpoint, body.toString(), {
     auth: {
       username: clientId,
       password: clientSecret,
