@@ -1214,15 +1214,18 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
     const labourItems: any[] = [];
     const overheadItems: any[] = [];
 
-    // Separate line items by type (ignore SUPPLY items)
+    // Separate line items by type (ignore supply and non-stock items)
     lineItems.forEach(item => {
+      const partType = String(item.part_type || '').toLowerCase();
       if (item.part_number === 'LABOUR') {
         labourItems.push(item);
       } else if (item.part_number === 'OVERHEAD') {
         overheadItems.push(item);
-      } else if (item.part_number === 'SUPPLY') {
-        // Ignore SUPPLY items - they should not be exported to QuickBooks
+      } else if (item.part_number === 'SUPPLY' || partType === 'supply') {
+        // Ignore supply items - they should not be exported to QuickBooks
         console.log(`Skipping SUPPLY line item for QBO export: ${item.part_number}`);
+      } else if (partType && partType !== 'stock') {
+        console.log(`Skipping non-stock line item for QBO COGS: ${item.part_number} (part_type=${partType})`);
       } else {
         materialItems.push(item);
       }
@@ -1503,45 +1506,56 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
         });
       }
 
-      // Add overhead COGS entries (if any overhead)
+      // Add overhead allocation entries (if any overhead)
       if (totalOverheadCOGS > 0 && accountMapping.qbo_overhead_cogs_account_id) {
-        // Debit Overhead COGS Account (expense)
-        journalEntryLines.push({
-          Description: `Cost of Overhead for SO #${salesOrder.sales_order_number}`,
-          Amount: totalOverheadCOGS,
-          DetailType: 'JournalEntryLineDetail',
-          JournalEntryLineDetail: {
-            PostingType: 'Debit',
-            AccountRef: {
-              value: accountMapping.qbo_overhead_cogs_account_id
-            }
-          }
-        });
-
-        // Get expense distribution and create multiple credit lines
         const distributionResult = await pool.query(
           'SELECT * FROM overhead_expense_distribution WHERE company_id = $1 AND is_active = TRUE ORDER BY id',
           [companyId]
         );
 
         if (distributionResult.rows.length > 0) {
+          let totalAllocated = 0;
+          let totalPercentage = 0;
+
           for (const dist of distributionResult.rows) {
-            const creditAmount = totalOverheadCOGS * (dist.percentage / 100);
+            const allocationAmount = totalOverheadCOGS * (dist.percentage / 100);
+            totalAllocated += allocationAmount;
+            totalPercentage += dist.percentage;
+
+            // Increase overhead expense accounts by allocation
             journalEntryLines.push({
-              Description: `Overhead reduction - ${dist.description} (${dist.percentage}%)`,
-              Amount: creditAmount,
+              Description: `Overhead allocation - ${dist.description} (${dist.percentage}%)`,
+              Amount: allocationAmount,
               DetailType: 'JournalEntryLineDetail',
               JournalEntryLineDetail: {
-                PostingType: 'Credit',
+                PostingType: 'Debit',
                 AccountRef: {
                   value: dist.expense_account_id
                 }
               }
             });
           }
+
+          if (totalPercentage > 0 && totalPercentage != 100) {
+            console.warn(`Overhead distribution totals ${totalPercentage}%. Journal entry will use allocated total only.`);
+          }
+
+          if (totalAllocated > 0) {
+            // Offset overhead allocations against the overhead COGS account
+            journalEntryLines.push({
+              Description: `Overhead allocation offset for SO #${salesOrder.sales_order_number}`,
+              Amount: totalAllocated,
+              DetailType: 'JournalEntryLineDetail',
+              JournalEntryLineDetail: {
+                PostingType: 'Credit',
+                AccountRef: {
+                  value: accountMapping.qbo_overhead_cogs_account_id
+                }
+              }
+            });
+          }
         } else {
-          // If no distribution is configured, credit to a default account or log warning
-          console.warn('No overhead expense distribution configured. Overhead COGS will not be properly allocated.');
+          console.warn('No overhead expense distribution configured. Overhead allocations were skipped.');
         }
       }
 
@@ -1691,6 +1705,7 @@ router.post('/:id/export-to-qbo-with-customer', async (req: Request, res: Respon
     const supplyItems: any[] = [];
 
     lineItems.forEach(item => {
+      const partType = String(item.part_type || '').toLowerCase();
       if (item.part_number === 'LABOUR') {
         labourItems.push(item);
       } else if (item.part_number === 'OVERHEAD') {
@@ -1698,8 +1713,10 @@ router.post('/:id/export-to-qbo-with-customer', async (req: Request, res: Respon
       } else if (item.part_number === 'SUPPLY') {
         // Ignore SUPPLY line items - they should not be exported to QuickBooks
         console.log(`Skipping SUPPLY line item for QBO export: ${item.part_number}`);
-      } else if (item.part_type === 'supply') {
+      } else if (partType === 'supply') {
         supplyItems.push(item);
+      } else if (partType && partType !== 'stock') {
+        console.log(`Skipping non-stock line item for QBO COGS: ${item.part_number} (part_type=${partType})`);
       } else {
         materialItems.push(item);
       }
@@ -1875,45 +1892,56 @@ router.post('/:id/export-to-qbo-with-customer', async (req: Request, res: Respon
         });
       }
 
-      // Add overhead COGS entries (if any overhead)
+      // Add overhead allocation entries (if any overhead)
       if (totalOverheadCOGS > 0 && accountMapping.qbo_overhead_cogs_account_id) {
-        // Debit Overhead COGS Account (expense)
-        journalEntryLines.push({
-          Description: `Cost of Overhead for SO #${salesOrder.sales_order_number}`,
-          Amount: totalOverheadCOGS,
-          DetailType: 'JournalEntryLineDetail',
-          JournalEntryLineDetail: {
-            PostingType: 'Debit',
-            AccountRef: {
-              value: accountMapping.qbo_overhead_cogs_account_id
-            }
-          }
-        });
-
-        // Get expense distribution and create multiple credit lines
         const distributionResult = await pool.query(
           'SELECT * FROM overhead_expense_distribution WHERE company_id = $1 AND is_active = TRUE ORDER BY id',
           [companyId]
         );
 
         if (distributionResult.rows.length > 0) {
+          let totalAllocated = 0;
+          let totalPercentage = 0;
+
           for (const dist of distributionResult.rows) {
-            const creditAmount = totalOverheadCOGS * (dist.percentage / 100);
+            const allocationAmount = totalOverheadCOGS * (dist.percentage / 100);
+            totalAllocated += allocationAmount;
+            totalPercentage += dist.percentage;
+
+            // Increase overhead expense accounts by allocation
             journalEntryLines.push({
-              Description: `Overhead reduction - ${dist.description} (${dist.percentage}%)`,
-              Amount: creditAmount,
+              Description: `Overhead allocation - ${dist.description} (${dist.percentage}%)`,
+              Amount: allocationAmount,
               DetailType: 'JournalEntryLineDetail',
               JournalEntryLineDetail: {
-                PostingType: 'Credit',
+                PostingType: 'Debit',
                 AccountRef: {
                   value: dist.expense_account_id
                 }
               }
             });
           }
+
+          if (totalPercentage > 0 && totalPercentage != 100) {
+            console.warn(`Overhead distribution totals ${totalPercentage}%. Journal entry will use allocated total only.`);
+          }
+
+          if (totalAllocated > 0) {
+            // Offset overhead allocations against the overhead COGS account
+            journalEntryLines.push({
+              Description: `Overhead allocation offset for SO #${salesOrder.sales_order_number}`,
+              Amount: totalAllocated,
+              DetailType: 'JournalEntryLineDetail',
+              JournalEntryLineDetail: {
+                PostingType: 'Credit',
+                AccountRef: {
+                  value: accountMapping.qbo_overhead_cogs_account_id
+                }
+              }
+            });
+          }
         } else {
-          // If no distribution is configured, credit to a default account or log warning
-          console.warn('No overhead expense distribution configured. Overhead COGS will not be properly allocated.');
+          console.warn('No overhead expense distribution configured. Overhead allocations were skipped.');
         }
       }
 
