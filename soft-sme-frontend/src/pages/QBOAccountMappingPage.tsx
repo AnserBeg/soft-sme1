@@ -92,6 +92,8 @@ const QBOAccountMappingPage: React.FC = () => {
   const [selectedLabourExpenseReductionAccount, setSelectedLabourExpenseReductionAccount] = useState<string>('');
   const [selectedOverheadCOGSAccount, setSelectedOverheadCOGSAccount] = useState<string>('');
   const [showAccountDialog, setShowAccountDialog] = useState(false);
+  const [showDisconnectDialog, setShowDisconnectDialog] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
   const [selectedAccountType, setSelectedAccountType] = useState<string>('');
   const [accountSearchTerm, setAccountSearchTerm] = useState<string>('');
 
@@ -203,6 +205,37 @@ const QBOAccountMappingPage: React.FC = () => {
     }
   };
 
+  const handleDisconnectQuickBooks = async () => {
+    setDisconnecting(true);
+    try {
+      await api.post('/api/qbo-accounts/disconnect');
+      setConnectionStatus({ connected: false, message: 'QuickBooks disconnected' });
+      setAccounts([]);
+      setAccountTypes({});
+      setMapping(null);
+      setSelectedInventoryAccount('');
+      setSelectedGSTAccount('');
+      setSelectedAPAccount('');
+      setSelectedSupplyExpenseAccount('');
+      setSelectedSalesAccount('');
+      setSelectedLabourSalesAccount('');
+      setSelectedARAccount('');
+      setSelectedCOGSAccount('');
+      setSelectedCostOfLabourAccount('');
+      setSelectedCostOfMaterialsAccount('');
+      setSelectedLabourExpenseReductionAccount('');
+      setSelectedOverheadCOGSAccount('');
+      toast.success('QuickBooks disconnected');
+      setShowDisconnectDialog(false);
+    } catch (error: any) {
+      console.error('Error disconnecting QuickBooks:', error);
+      const message = error?.response?.data?.error || 'Failed to disconnect QuickBooks';
+      toast.error(message);
+    } finally {
+      setDisconnecting(false);
+    }
+  };
+
   const getAccountDisplayName = (account: QBOAccount) => {
     const accountNumber = account.AccountNumber ? `#${account.AccountNumber}` : '';
     return `${account.Name} ${accountNumber} (${account.AccountType})`;
@@ -290,14 +323,26 @@ const QBOAccountMappingPage: React.FC = () => {
             QuickBooks Account Mapping
           </Typography>
         </Box>
-        <Button
-          variant="outlined"
-          startIcon={<AccountBalanceIcon />}
-          onClick={handleConnectToQuickBooks}
-          sx={{ borderRadius: 2, fontWeight: 600 }}
-        >
-          Connect to QuickBooks
-        </Button>
+        <Stack direction="row" spacing={2}>
+          <Button
+            variant="outlined"
+            startIcon={<AccountBalanceIcon />}
+            onClick={handleConnectToQuickBooks}
+            sx={{ borderRadius: 2, fontWeight: 600 }}
+          >
+            Connect to QuickBooks
+          </Button>
+          {connectionStatus?.connected && (
+            <Button
+              variant="outlined"
+              color="error"
+              onClick={() => setShowDisconnectDialog(true)}
+              sx={{ borderRadius: 2, fontWeight: 600 }}
+            >
+              Disconnect
+            </Button>
+          )}
+        </Stack>
       </Box>
 
       {/* Connection Status */}
@@ -804,6 +849,28 @@ const QBOAccountMappingPage: React.FC = () => {
       )}
 
       {renderAccountDialog()}
+      <Dialog open={showDisconnectDialog} onClose={() => setShowDisconnectDialog(false)}>
+        <DialogTitle>Disconnect QuickBooks?</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2">
+            This will remove the current QuickBooks connection for your company. You'll need
+            to reconnect and review account mappings for the new company.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setShowDisconnectDialog(false)} disabled={disconnecting}>
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            color="error"
+            onClick={handleDisconnectQuickBooks}
+            disabled={disconnecting}
+          >
+            {disconnecting ? 'Disconnecting...' : 'Disconnect'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Container>
   );
 };
