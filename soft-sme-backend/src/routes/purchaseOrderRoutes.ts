@@ -460,17 +460,6 @@ router.post('/:id/export-to-qbo', adminOnly, async (req, res) => {
       });
     }
     const exportDate = new Date().toISOString().slice(0, 10);
-    const exportDate = new Date().toISOString().slice(0, 10);
-    const taxableTaxCodeId = await resolveTaxableQboTaxCodeId(
-      accessContext.accessToken,
-      accessContext.realmId
-    );
-    if (!taxableTaxCodeId) {
-      return res.status(400).json({
-        error: 'QBO_TAX_CODE_NOT_FOUND',
-        message: 'QuickBooks requires a taxable tax code on bill lines. Please create or activate a GST/HST tax code in QBO and try again.'
-      });
-    }
 
     // Check if vendor exists in QuickBooks first
     const vendorExists = await checkQBOVendorExists(vendor.vendor_name, accessContext.accessToken, accessContext.realmId);
@@ -704,6 +693,17 @@ router.post('/:id/export-to-qbo-with-vendor', adminOnly, async (req, res) => {
       return res.status(400).json({ error: 'QuickBooks account mapping not configured. Please set up account mapping in QBO Settings first.' });
     }
     const accountMapping = accountMappingResult.rows[0];
+    const taxableTaxCodeId = await resolveTaxableQboTaxCodeId(
+      accessContext.accessToken,
+      accessContext.realmId
+    );
+    if (!taxableTaxCodeId) {
+      return res.status(400).json({
+        error: 'QBO_TAX_CODE_NOT_FOUND',
+        message: 'QuickBooks requires a taxable tax code on bill lines. Please create or activate a GST/HST tax code in QBO and try again.'
+      });
+    }
+    const exportDate = new Date().toISOString().slice(0, 10);
 
     // Create vendor in QBO first
     const qboVendorId = await createQBOVendor(vendorData, accessContext.accessToken, accessContext.realmId);
