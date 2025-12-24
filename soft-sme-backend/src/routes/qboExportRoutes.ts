@@ -4,6 +4,7 @@ import { pool } from '../db';
 import { resolveTenantCompanyIdFromRequest } from '../utils/companyContext';
 import { ensureFreshQboAccess } from '../utils/qboTokens';
 import { getQboApiBaseUrl } from '../utils/qboBaseUrl';
+import { resolveTaxableQboTaxCodeId } from '../utils/qboTaxCodes';
 
 const router = express.Router();
 const escapeQboQueryValue = (value: string): string => value.replace(/'/g, "''");
@@ -50,6 +51,17 @@ router.post('/export-purchase-order/:poId', async (req, res) => {
       return res.status(401).json({ error: 'QuickBooks token expired and could not be refreshed. Please reconnect your account.' });
     }
     const accountMapping = mappingResult.rows[0];
+
+    const taxableTaxCodeId = await resolveTaxableQboTaxCodeId(
+      accessContext.accessToken,
+      accessContext.realmId
+    );
+    if (!taxableTaxCodeId) {
+      return res.status(400).json({
+        error: 'QBO_TAX_CODE_NOT_FOUND',
+        message: 'QuickBooks requires a taxable tax code on bill lines. Please create or activate a GST/HST tax code in QBO and try again.'
+      });
+    }
 
     // 2. Get the Purchase Order details
     const poResult = await pool.query(`
@@ -157,7 +169,10 @@ router.post('/export-purchase-order/:poId', async (req, res) => {
           AccountRef: {
             value: accountMapping.qbo_inventory_account_id
           },
-          BillableStatus: 'NotBillable'
+          BillableStatus: 'NotBillable',
+          TaxCodeRef: {
+            value: taxableTaxCodeId
+          }
         }
       });
     });
@@ -169,29 +184,18 @@ router.post('/export-purchase-order/:poId', async (req, res) => {
         billLineItems.push({
           DetailType: 'AccountBasedExpenseLineDetail',
           Amount: parseFloat(item.unit_cost) * parseFloat(item.quantity),
-          AccountBasedExpenseLineDetail: {
-            AccountRef: {
-              value: accountMapping.qbo_supply_expense_account_id
-            },
-            BillableStatus: 'NotBillable'
-          }
-        });
-      });
-    }
-
-    // Add GST line item if there's GST
-    if (purchaseOrder.total_gst_amount && purchaseOrder.total_gst_amount > 0) {
-      billLineItems.push({
-        DetailType: 'AccountBasedExpenseLineDetail',
-        Amount: parseFloat(purchaseOrder.total_gst_amount),
         AccountBasedExpenseLineDetail: {
           AccountRef: {
-            value: accountMapping.qbo_gst_account_id
+            value: accountMapping.qbo_supply_expense_account_id
           },
-          BillableStatus: 'NotBillable'
+          BillableStatus: 'NotBillable',
+          TaxCodeRef: {
+            value: taxableTaxCodeId
+          }
         }
       });
-    }
+    });
+  }
 
     const exportDate = new Date().toISOString().slice(0, 10);
 

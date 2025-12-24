@@ -6,6 +6,7 @@ import { getNextPurchaseOrderNumberForYear } from '../utils/sequence';
 import { qboHttp } from '../utils/qboHttp'; // Added for QBO API integration
 import { ensureFreshQboAccess } from '../utils/qboTokens';
 import { getQboApiBaseUrl } from '../utils/qboBaseUrl';
+import { resolveTaxableQboTaxCodeId } from '../utils/qboTaxCodes';
 import { getLogoImageSource } from '../utils/pdfLogoHelper';
 import { PurchaseOrderCalculationService } from '../services/PurchaseOrderCalculationService';
 import { PurchaseOrderService } from '../services/PurchaseOrderService';
@@ -448,6 +449,28 @@ router.post('/:id/export-to-qbo', adminOnly, async (req, res) => {
       return res.status(400).json({ error: 'QuickBooks account mapping not configured. Please set up account mapping in QBO Settings first.' });
     }
     const accountMapping = accountMappingResult.rows[0];
+    const taxableTaxCodeId = await resolveTaxableQboTaxCodeId(
+      accessContext.accessToken,
+      accessContext.realmId
+    );
+    if (!taxableTaxCodeId) {
+      return res.status(400).json({
+        error: 'QBO_TAX_CODE_NOT_FOUND',
+        message: 'QuickBooks requires a taxable tax code on bill lines. Please create or activate a GST/HST tax code in QBO and try again.'
+      });
+    }
+    const exportDate = new Date().toISOString().slice(0, 10);
+    const exportDate = new Date().toISOString().slice(0, 10);
+    const taxableTaxCodeId = await resolveTaxableQboTaxCodeId(
+      accessContext.accessToken,
+      accessContext.realmId
+    );
+    if (!taxableTaxCodeId) {
+      return res.status(400).json({
+        error: 'QBO_TAX_CODE_NOT_FOUND',
+        message: 'QuickBooks requires a taxable tax code on bill lines. Please create or activate a GST/HST tax code in QBO and try again.'
+      });
+    }
 
     // Check if vendor exists in QuickBooks first
     const vendorExists = await checkQBOVendorExists(vendor.vendor_name, accessContext.accessToken, accessContext.realmId);
@@ -527,7 +550,10 @@ router.post('/:id/export-to-qbo', adminOnly, async (req, res) => {
           AccountRef: {
             value: accountMapping.qbo_inventory_account_id
           },
-          BillableStatus: 'NotBillable'
+          BillableStatus: 'NotBillable',
+          TaxCodeRef: {
+            value: taxableTaxCodeId
+          }
         }
       });
     });
@@ -544,13 +570,16 @@ router.post('/:id/export-to-qbo', adminOnly, async (req, res) => {
         qboBillLines.push({
           Amount: amount,
           DetailType: 'AccountBasedExpenseLineDetail',
-          AccountBasedExpenseLineDetail: {
-            AccountRef: {
-              value: accountMapping.qbo_supply_expense_account_id
-            },
-            BillableStatus: 'NotBillable'
+        AccountBasedExpenseLineDetail: {
+          AccountRef: {
+            value: accountMapping.qbo_supply_expense_account_id
+          },
+          BillableStatus: 'NotBillable',
+          TaxCodeRef: {
+            value: taxableTaxCodeId
           }
-        });
+        }
+      });
       });
     } else {
       console.log('Supply items not added because:', {
@@ -570,24 +599,9 @@ router.post('/:id/export-to-qbo', adminOnly, async (req, res) => {
         value: accountMapping.qbo_ap_account_id
       },
       DocNumber: po.purchase_number,
-      TxnDate: po.purchase_date || po.date,
-      PrivateNote: `Imported from Aiven - PO: ${po.purchase_number}`,
-      TotalAmt: parseFloat(po.total_amount)
+      TxnDate: exportDate,
+      PrivateNote: `Imported from Aiven - PO: ${po.purchase_number}`
     };
-
-    // Add GST line if applicable
-    if (parseFloat(po.total_gst_amount) > 0) {
-      qboBill.Line.push({
-        Amount: parseFloat(po.total_gst_amount),
-        DetailType: 'AccountBasedExpenseLineDetail',
-        AccountBasedExpenseLineDetail: {
-          AccountRef: {
-            value: accountMapping.qbo_gst_account_id
-          },
-          BillableStatus: 'NotBillable'
-        }
-      });
-    }
 
     // Create bill in QBO
     const qboResponse = await qboHttp.post(
@@ -720,31 +734,20 @@ router.post('/:id/export-to-qbo-with-vendor', adminOnly, async (req, res) => {
           AccountRef: {
             value: accountMapping.qbo_inventory_account_id
           },
-          BillableStatus: 'NotBillable'
+          BillableStatus: 'NotBillable',
+          TaxCodeRef: {
+            value: taxableTaxCodeId
+          }
         }
       })),
       APAccountRef: {
         value: accountMapping.qbo_ap_account_id
       },
       DocNumber: po.purchase_number,
-      TxnDate: po.purchase_date,
+      TxnDate: exportDate,
       DueDate: po.purchase_date,
       PrivateNote: `Exported from Aiven Purchase Order #${po.purchase_id}`
     };
-
-    // Add GST line item if there's GST
-    if (po.total_gst_amount && parseFloat(po.total_gst_amount) > 0) {
-      qboBill.Line.push({
-        Amount: parseFloat(po.total_gst_amount),
-        DetailType: 'AccountBasedExpenseLineDetail',
-        AccountBasedExpenseLineDetail: {
-          AccountRef: {
-            value: accountMapping.qbo_gst_account_id
-          },
-          BillableStatus: 'NotBillable'
-        }
-      });
-    }
 
     // Create bill in QBO
     const qboResponse = await qboHttp.post(

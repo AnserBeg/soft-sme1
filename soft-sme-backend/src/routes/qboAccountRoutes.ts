@@ -167,8 +167,8 @@ router.post('/mapping', async (req, res) => {
   try {
     console.log('Saving account mapping for company');
     // Validate required fields
-    if (!qbo_inventory_account_id || !qbo_gst_account_id || !qbo_ap_account_id) {
-      return res.status(400).json({ error: 'Inventory, GST, and AP account mappings are required' });
+    if (!qbo_inventory_account_id || !qbo_ap_account_id) {
+      return res.status(400).json({ error: 'Inventory and AP account mappings are required' });
     }
 
     const companyId = await resolveQboCompanyId(req);

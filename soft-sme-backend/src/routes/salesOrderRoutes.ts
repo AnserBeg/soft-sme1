@@ -9,52 +9,9 @@ import { ensureFreshQboAccess } from '../utils/qboTokens';
 import { getLogoImageSource } from '../utils/pdfLogoHelper';
 import { resolveTenantUserId } from '../utils/tenantUser';
 import { getQboApiBaseUrl } from '../utils/qboBaseUrl';
+import { resolveTaxableQboTaxCodeId } from '../utils/qboTaxCodes';
 
 const escapeQboQueryValue = (value: string): string => value.replace(/'/g, "''");
-
-const resolveNonTaxableQboTaxCodeId = async (
-  accessToken: string,
-  realmId: string
-): Promise<string | null> => {
-  try {
-    const response = await qboHttp.get(
-      `${getQboApiBaseUrl()}/v3/company/${realmId}/query`,
-      {
-        headers: {
-          'Authorization': `Bearer ${accessToken}`,
-          'Accept': 'application/json',
-          'Content-Type': 'application/json'
-        },
-        params: {
-          query: 'SELECT Id, Name FROM TaxCode WHERE Active = true',
-          minorversion: '75'
-        }
-      }
-    );
-
-    const taxCodes = response.data.QueryResponse?.TaxCode || [];
-    if (!Array.isArray(taxCodes) || taxCodes.length === 0) {
-      return null;
-    }
-
-    const preferredNames = new Set(['non', 'non-taxable', 'nontaxable', 'exempt', 'zero', 'zero-rated']);
-    const exactMatch = taxCodes.find((code: any) =>
-      preferredNames.has(String(code.Name || '').trim().toLowerCase())
-    );
-    if (exactMatch?.Id) {
-      return exactMatch.Id;
-    }
-
-    const partialMatch = taxCodes.find((code: any) => {
-      const name = String(code.Name || '').trim().toLowerCase();
-      return ['non', 'exempt', 'zero'].some((token) => name.includes(token));
-    });
-    return partialMatch?.Id || null;
-  } catch (error) {
-    console.error('Error fetching QBO tax codes:', error instanceof Error ? error.message : String(error));
-    return null;
-  }
-};
 
 const buildShipFromAddr = (profile?: {
   street_address?: string;
@@ -1385,7 +1342,7 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
 
     console.log(`Sales Order amounts: estimatedPrice=${estimatedPrice}, gstAmount=${gstAmount}, totalAmount=${totalAmount}`);
 
-    // Get or create QBO items for the actual product and GST
+    // Get or create QBO item for the actual product
     const productItemId = await getOrCreateQBOItem(
       salesOrder.product_name,
       'Service',
@@ -1393,22 +1350,14 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
       accessContext.accessToken,
       accessContext.realmId
     );
-    const gstItemId = await getOrCreateQBOItem(
-      'GST',
-      'Service',
-      accountMapping.qbo_gst_account_id,
+    const taxableTaxCodeId = await resolveTaxableQboTaxCodeId(
       accessContext.accessToken,
       accessContext.realmId
     );
-
-    const nonTaxCodeId = await resolveNonTaxableQboTaxCodeId(
-      accessContext.accessToken,
-      accessContext.realmId
-    );
-    if (!nonTaxCodeId) {
+    if (!taxableTaxCodeId) {
       return res.status(400).json({
-        error: 'QBO_NON_TAX_CODE_NOT_FOUND',
-        message: 'QuickBooks requires a tax code on invoice lines. Please create a non-taxable tax code (commonly named NON) in QBO and try again.'
+        error: 'QBO_TAX_CODE_NOT_FOUND',
+        message: 'QuickBooks requires a taxable tax code on invoice lines. Please create or activate a GST/HST tax code in QBO and try again.'
       });
     }
 
@@ -1435,26 +1384,11 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
             Qty: 1,
             UnitPrice: estimatedPrice,
             TaxCodeRef: {
-              value: nonTaxCodeId
+              value: taxableTaxCodeId
             }
           }
         },
-        // GST Account: 5% of estimated price
-        ...(gstAmount > 0 ? [{
-          DetailType: 'SalesItemLineDetail',
-          Amount: gstAmount,
-          Description: 'GST (5%)',
-          SalesItemLineDetail: {
-            ItemRef: {
-              value: gstItemId
-            },
-            Qty: 1,
-            UnitPrice: gstAmount,
-            TaxCodeRef: {
-              value: nonTaxCodeId
-            }
-          }
-        }] : [])
+        // QBO computes GST/HST using the tax code on the main line
       ],
       DocNumber: salesOrder.sales_order_number,
       TxnDate: exportDate,
@@ -1727,7 +1661,8 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
         overheadCOGS: totalOverheadCOGS ? totalOverheadCOGS.toFixed(2) : '0.00',
         totalCOGS: ((totalMaterialCOGS || 0) + (totalLabourCOGS || 0) + (totalOverheadCOGS || 0)).toFixed(2)
       },
-      gstExported: gstAmount > 0,
+      gstExported: false,
+      gstHandledByQbo: true,
       inventoryUpdated: materialItems.length
     });
 
@@ -1837,7 +1772,7 @@ router.post('/:id/export-to-qbo-with-customer', async (req: Request, res: Respon
     const gstAmount = estimatedPrice * 0.05; // 5% GST
     const totalAmount = estimatedPrice + gstAmount; // 1.05 × estimated price
 
-    // Get or create QBO items for sales and GST
+    // Get or create QBO item for sales
     const salesItemId = await getOrCreateQBOItem(
       'Sales',
       'Service',
@@ -1845,22 +1780,14 @@ router.post('/:id/export-to-qbo-with-customer', async (req: Request, res: Respon
       accessContext.accessToken,
       accessContext.realmId
     );
-    const gstItemId = await getOrCreateQBOItem(
-      'GST',
-      'Service',
-      accountMapping.qbo_gst_account_id,
+    const taxableTaxCodeId = await resolveTaxableQboTaxCodeId(
       accessContext.accessToken,
       accessContext.realmId
     );
-
-    const nonTaxCodeId = await resolveNonTaxableQboTaxCodeId(
-      accessContext.accessToken,
-      accessContext.realmId
-    );
-    if (!nonTaxCodeId) {
+    if (!taxableTaxCodeId) {
       return res.status(400).json({
-        error: 'QBO_NON_TAX_CODE_NOT_FOUND',
-        message: 'QuickBooks requires a tax code on invoice lines. Please create a non-taxable tax code (commonly named NON) in QBO and try again.'
+        error: 'QBO_TAX_CODE_NOT_FOUND',
+        message: 'QuickBooks requires a taxable tax code on invoice lines. Please create or activate a GST/HST tax code in QBO and try again.'
       });
     }
 
@@ -1887,25 +1814,11 @@ router.post('/:id/export-to-qbo-with-customer', async (req: Request, res: Respon
             Qty: 1,
             UnitPrice: estimatedPrice,
             TaxCodeRef: {
-              value: nonTaxCodeId
+              value: taxableTaxCodeId
             }
           }
         },
-        {
-          Amount: gstAmount,
-          DetailType: 'SalesItemLineDetail',
-          Description: 'GST (5%)',
-          SalesItemLineDetail: {
-            ItemRef: {
-              value: gstItemId
-            },
-            Qty: 1,
-            UnitPrice: gstAmount,
-            TaxCodeRef: {
-              value: nonTaxCodeId
-            }
-          }
-        }
+        // QBO computes GST/HST using the tax code on the main line
       ]
     };
 
