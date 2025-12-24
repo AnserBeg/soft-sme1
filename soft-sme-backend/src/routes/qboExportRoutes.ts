@@ -193,6 +193,8 @@ router.post('/export-purchase-order/:poId', async (req, res) => {
       });
     }
 
+    const exportDate = new Date().toISOString();
+
     const billData = {
       VendorRef: {
         value: qboVendorId
@@ -202,7 +204,7 @@ router.post('/export-purchase-order/:poId', async (req, res) => {
         value: accountMapping.qbo_ap_account_id
       },
       DocNumber: `PO-${purchaseOrder.purchase_id}`,
-      TxnDate: purchaseOrder.purchase_date,
+      TxnDate: exportDate,
       DueDate: purchaseOrder.purchase_date,
       PrivateNote: `Exported from Aiven Purchase Order #${purchaseOrder.purchase_id}`
     };

@@ -1158,6 +1158,7 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
       'SELECT street_address, city, province, country, postal_code FROM business_profile ORDER BY id DESC LIMIT 1'
     );
     const shipFromAddr = buildShipFromAddr(businessProfileResult.rows[0]);
+    const exportDate = new Date().toISOString();
 
     // 3. Get SO line items
     const lineItemsResult = await pool.query(`
@@ -1395,7 +1396,7 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
         }] : [])
       ],
       DocNumber: salesOrder.sales_order_number,
-      TxnDate: salesOrder.sales_date,
+      TxnDate: exportDate,
       DueDate: salesOrder.sales_date,
       PrivateNote: `Exported from Aiven Sales Order #${salesOrder.sales_order_number}`,
       CustomerMemo: {
@@ -1730,6 +1731,7 @@ router.post('/:id/export-to-qbo-with-customer', async (req: Request, res: Respon
       return res.status(400).json({ error: 'QuickBooks account mapping not configured. Please set up account mapping in QBO Settings first.' });
     }
     const accountMapping = accountMappingResult.rows[0];
+    const exportDate = new Date().toISOString();
 
     // Separate line items by type and validate for supply items (ignore SUPPLY line items)
     const materialItems: any[] = [];
@@ -1794,6 +1796,7 @@ router.post('/:id/export-to-qbo-with-customer', async (req: Request, res: Respon
 
     // Create invoice with proper account mapping
     const invoiceData = {
+      TxnDate: exportDate,
       CustomerRef: {
         value: qboCustomerId
       },
