@@ -12,6 +12,37 @@ import { getQboApiBaseUrl } from '../utils/qboBaseUrl';
 
 const escapeQboQueryValue = (value: string): string => value.replace(/'/g, "''");
 
+const buildShipFromAddr = (profile?: {
+  street_address?: string;
+  city?: string;
+  province?: string;
+  postal_code?: string;
+  country?: string;
+}) => {
+  if (!profile) {
+    return null;
+  }
+
+  const addr: Record<string, string> = {};
+  if (profile.street_address) {
+    addr.Line1 = profile.street_address;
+  }
+  if (profile.city) {
+    addr.City = profile.city;
+  }
+  if (profile.province) {
+    addr.CountrySubDivisionCode = profile.province;
+  }
+  if (profile.postal_code) {
+    addr.PostalCode = profile.postal_code;
+  }
+  if (profile.country) {
+    addr.Country = profile.country;
+  }
+
+  return Object.keys(addr).length > 0 ? addr : null;
+};
+
 // Helper function to check if customer exists in QuickBooks
 async function checkQBOCustomerExists(customerName: string, accessToken: string, realmId: string): Promise<boolean> {
   try {
@@ -1123,6 +1154,11 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Sales Order already exported to QuickBooks.' });
     }
 
+    const businessProfileResult = await pool.query(
+      'SELECT street_address, city, province, country, postal_code FROM business_profile ORDER BY id DESC LIMIT 1'
+    );
+    const shipFromAddr = buildShipFromAddr(businessProfileResult.rows[0]);
+
     // 3. Get SO line items
     const lineItemsResult = await pool.query(`
       SELECT 
@@ -1365,12 +1401,7 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
       CustomerMemo: {
         value: salesOrder.terms || ''
       },
-      ShipFromAddr: {
-        Line1: 'Your Company Address', // TODO: Get from business profile
-        City: 'Your City',
-        CountrySubDivisionCode: 'Your State',
-        PostalCode: 'Your Postal Code'
-      },
+      ...(shipFromAddr ? { ShipFromAddr: shipFromAddr } : {}),
       BillEmail: {
         Address: salesOrder.customer_email
       }
@@ -1403,6 +1434,7 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
       console.error('QuickBooks Invoice creation error', {
         status: invoiceError.response?.status,
         message: invoiceError.message,
+        data: invoiceError.response?.data
       });
       return res.status(400).json({ 
         error: 'Failed to create invoice in QuickBooks',
