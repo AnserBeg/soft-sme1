@@ -1507,32 +1507,39 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
       }
 
       // Add labour COGS entries (if any labour)
-      if (totalLabourCOGS > 0 && accountMapping.qbo_cost_of_labour_account_id) {
-        // Debit Cost of Labour Account (expense)
-        journalEntryLines.push({
-          Description: `Cost of Labour for SO #${salesOrder.sales_order_number}`,
-          Amount: totalLabourCOGS,
-          DetailType: 'JournalEntryLineDetail',
-          JournalEntryLineDetail: {
-            PostingType: 'Debit',
-            AccountRef: {
-              value: accountMapping.qbo_cost_of_labour_account_id
+      if (totalLabourCOGS > 0) {
+        if (!accountMapping.qbo_cost_of_labour_account_id || !accountMapping.qbo_labour_expense_reduction_account_id) {
+          console.warn('Labour COGS skipped due to missing QBO labour account mapping.', {
+            costOfLabourAccount: accountMapping.qbo_cost_of_labour_account_id,
+            labourExpenseReductionAccount: accountMapping.qbo_labour_expense_reduction_account_id
+          });
+        } else {
+          // Debit Cost of Labour Account (expense)
+          journalEntryLines.push({
+            Description: `Cost of Labour for SO #${salesOrder.sales_order_number}`,
+            Amount: totalLabourCOGS,
+            DetailType: 'JournalEntryLineDetail',
+            JournalEntryLineDetail: {
+              PostingType: 'Debit',
+              AccountRef: {
+                value: accountMapping.qbo_cost_of_labour_account_id
+              }
             }
-          }
-        });
+          });
 
-        // Credit Labour Expense Reduction Account (reducing the expense)
-        journalEntryLines.push({
-          Description: `Labour expense reduction for SO #${salesOrder.sales_order_number}`,
-          Amount: totalLabourCOGS,
-          DetailType: 'JournalEntryLineDetail',
-          JournalEntryLineDetail: {
-            PostingType: 'Credit',
-            AccountRef: {
-              value: accountMapping.qbo_labour_expense_reduction_account_id
+          // Credit Labour Expense Reduction Account (reducing the expense)
+          journalEntryLines.push({
+            Description: `Labour expense reduction for SO #${salesOrder.sales_order_number}`,
+            Amount: totalLabourCOGS,
+            DetailType: 'JournalEntryLineDetail',
+            JournalEntryLineDetail: {
+              PostingType: 'Credit',
+              AccountRef: {
+                value: accountMapping.qbo_labour_expense_reduction_account_id
+              }
             }
-          }
-        });
+          });
+        }
       }
 
       // Add overhead allocation entries (if any overhead)
@@ -1591,7 +1598,7 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
       if (journalEntryLines.length > 0) {
         const journalEntryData = {
           Line: journalEntryLines,
-          TxnDate: salesOrder.sales_date,
+          TxnDate: exportDate,
           DocNumber: `COGS-${salesOrder.sales_order_number}`,
           PrivateNote: `Cost of Goods Sold for Sales Order #${salesOrder.sales_order_number} (Materials: ${materialItems.length}, Labour: ${labourItems.length})`
         };
@@ -1893,30 +1900,37 @@ router.post('/:id/export-to-qbo-with-customer', async (req: Request, res: Respon
       }
 
       // Add labour COGS entries (if any labour)
-      if (totalLabourCOGS > 0 && accountMapping.qbo_cost_of_labour_account_id) {
-        journalEntryLines.push({
-          Description: `Cost of Labour for SO #${salesOrder.sales_order_number}`,
-          Amount: totalLabourCOGS,
-          DetailType: 'JournalEntryLineDetail',
-          JournalEntryLineDetail: {
-            PostingType: 'Debit',
-            AccountRef: {
-              value: accountMapping.qbo_cost_of_labour_account_id
+      if (totalLabourCOGS > 0) {
+        if (!accountMapping.qbo_cost_of_labour_account_id || !accountMapping.qbo_labour_expense_reduction_account_id) {
+          console.warn('Labour COGS skipped due to missing QBO labour account mapping.', {
+            costOfLabourAccount: accountMapping.qbo_cost_of_labour_account_id,
+            labourExpenseReductionAccount: accountMapping.qbo_labour_expense_reduction_account_id
+          });
+        } else {
+          journalEntryLines.push({
+            Description: `Cost of Labour for SO #${salesOrder.sales_order_number}`,
+            Amount: totalLabourCOGS,
+            DetailType: 'JournalEntryLineDetail',
+            JournalEntryLineDetail: {
+              PostingType: 'Debit',
+              AccountRef: {
+                value: accountMapping.qbo_cost_of_labour_account_id
+              }
             }
-          }
-        });
+          });
 
-        journalEntryLines.push({
-          Description: `Labour expense reduction for SO #${salesOrder.sales_order_number}`,
-          Amount: totalLabourCOGS,
-          DetailType: 'JournalEntryLineDetail',
-          JournalEntryLineDetail: {
-            PostingType: 'Credit',
-            AccountRef: {
-              value: accountMapping.qbo_labour_expense_reduction_account_id
+          journalEntryLines.push({
+            Description: `Labour expense reduction for SO #${salesOrder.sales_order_number}`,
+            Amount: totalLabourCOGS,
+            DetailType: 'JournalEntryLineDetail',
+            JournalEntryLineDetail: {
+              PostingType: 'Credit',
+              AccountRef: {
+                value: accountMapping.qbo_labour_expense_reduction_account_id
+              }
             }
-          }
-        });
+          });
+        }
       }
 
       // Add overhead allocation entries (if any overhead)
@@ -1975,7 +1989,7 @@ router.post('/:id/export-to-qbo-with-customer', async (req: Request, res: Respon
       if (journalEntryLines.length > 0) {
         const journalEntryData = {
           Line: journalEntryLines,
-          TxnDate: salesOrder.sales_date,
+          TxnDate: exportDate,
           DocNumber: `COGS-${salesOrder.sales_order_number}`,
           PrivateNote: `Cost of Goods Sold for Sales Order #${salesOrder.sales_order_number} (Materials: ${materialItems.length}, Labour: ${labourItems.length})`
         };
