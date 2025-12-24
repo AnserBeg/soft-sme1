@@ -1158,7 +1158,7 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
       'SELECT street_address, city, province, country, postal_code FROM business_profile ORDER BY id DESC LIMIT 1'
     );
     const shipFromAddr = buildShipFromAddr(businessProfileResult.rows[0]);
-    const exportDate = new Date().toISOString();
+    const exportDate = new Date().toISOString().slice(0, 10);
 
     // 3. Get SO line items
     const lineItemsResult = await pool.query(`

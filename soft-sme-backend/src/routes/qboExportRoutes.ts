@@ -193,7 +193,7 @@ router.post('/export-purchase-order/:poId', async (req, res) => {
       });
     }
 
-    const exportDate = new Date().toISOString();
+    const exportDate = new Date().toISOString().slice(0, 10);
 
     const billData = {
       VendorRef: {
