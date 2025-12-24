@@ -12,6 +12,50 @@ import { getQboApiBaseUrl } from '../utils/qboBaseUrl';
 
 const escapeQboQueryValue = (value: string): string => value.replace(/'/g, "''");
 
+const resolveNonTaxableQboTaxCodeId = async (
+  accessToken: string,
+  realmId: string
+): Promise<string | null> => {
+  try {
+    const response = await qboHttp.get(
+      `${getQboApiBaseUrl()}/v3/company/${realmId}/query`,
+      {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Accept': 'application/json',
+          'Content-Type': 'application/json'
+        },
+        params: {
+          query: 'SELECT Id, Name FROM TaxCode WHERE Active = true',
+          minorversion: '75'
+        }
+      }
+    );
+
+    const taxCodes = response.data.QueryResponse?.TaxCode || [];
+    if (!Array.isArray(taxCodes) || taxCodes.length === 0) {
+      return null;
+    }
+
+    const preferredNames = new Set(['non', 'non-taxable', 'nontaxable', 'exempt', 'zero', 'zero-rated']);
+    const exactMatch = taxCodes.find((code: any) =>
+      preferredNames.has(String(code.Name || '').trim().toLowerCase())
+    );
+    if (exactMatch?.Id) {
+      return exactMatch.Id;
+    }
+
+    const partialMatch = taxCodes.find((code: any) => {
+      const name = String(code.Name || '').trim().toLowerCase();
+      return ['non', 'exempt', 'zero'].some((token) => name.includes(token));
+    });
+    return partialMatch?.Id || null;
+  } catch (error) {
+    console.error('Error fetching QBO tax codes:', error instanceof Error ? error.message : String(error));
+    return null;
+  }
+};
+
 const buildShipFromAddr = (profile?: {
   street_address?: string;
   city?: string;
@@ -1357,6 +1401,17 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
       accessContext.realmId
     );
 
+    const nonTaxCodeId = await resolveNonTaxableQboTaxCodeId(
+      accessContext.accessToken,
+      accessContext.realmId
+    );
+    if (!nonTaxCodeId) {
+      return res.status(400).json({
+        error: 'QBO_NON_TAX_CODE_NOT_FOUND',
+        message: 'QuickBooks requires a tax code on invoice lines. Please create a non-taxable tax code (commonly named NON) in QBO and try again.'
+      });
+    }
+
     console.log('Using QBO items for export');
 
     // Create invoice with proper account mapping
@@ -1378,7 +1433,10 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
               value: productItemId
             },
             Qty: 1,
-            UnitPrice: estimatedPrice
+            UnitPrice: estimatedPrice,
+            TaxCodeRef: {
+              value: nonTaxCodeId
+            }
           }
         },
         // GST Account: 5% of estimated price
@@ -1391,7 +1449,10 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
               value: gstItemId
             },
             Qty: 1,
-            UnitPrice: gstAmount
+            UnitPrice: gstAmount,
+            TaxCodeRef: {
+              value: nonTaxCodeId
+            }
           }
         }] : [])
       ],
@@ -1731,7 +1792,7 @@ router.post('/:id/export-to-qbo-with-customer', async (req: Request, res: Respon
       return res.status(400).json({ error: 'QuickBooks account mapping not configured. Please set up account mapping in QBO Settings first.' });
     }
     const accountMapping = accountMappingResult.rows[0];
-    const exportDate = new Date().toISOString();
+    const exportDate = new Date().toISOString().slice(0, 10);
 
     // Separate line items by type and validate for supply items (ignore SUPPLY line items)
     const materialItems: any[] = [];
@@ -1792,6 +1853,17 @@ router.post('/:id/export-to-qbo-with-customer', async (req: Request, res: Respon
       accessContext.realmId
     );
 
+    const nonTaxCodeId = await resolveNonTaxableQboTaxCodeId(
+      accessContext.accessToken,
+      accessContext.realmId
+    );
+    if (!nonTaxCodeId) {
+      return res.status(400).json({
+        error: 'QBO_NON_TAX_CODE_NOT_FOUND',
+        message: 'QuickBooks requires a tax code on invoice lines. Please create a non-taxable tax code (commonly named NON) in QBO and try again.'
+      });
+    }
+
     console.log('Using QBO items for export');
 
     // Create invoice with proper account mapping
@@ -1813,7 +1885,10 @@ router.post('/:id/export-to-qbo-with-customer', async (req: Request, res: Respon
               value: salesItemId
             },
             Qty: 1,
-            UnitPrice: estimatedPrice
+            UnitPrice: estimatedPrice,
+            TaxCodeRef: {
+              value: nonTaxCodeId
+            }
           }
         },
         {
@@ -1825,7 +1900,10 @@ router.post('/:id/export-to-qbo-with-customer', async (req: Request, res: Respon
               value: gstItemId
             },
             Qty: 1,
-            UnitPrice: gstAmount
+            UnitPrice: gstAmount,
+            TaxCodeRef: {
+              value: nonTaxCodeId
+            }
           }
         }
       ]
