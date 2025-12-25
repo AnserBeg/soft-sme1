@@ -262,6 +262,14 @@ const isValidEmail = (value: any): value is string => {
   return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(trimmed);
 };
 
+const roundCurrency = (value: any): number => {
+  const num = Number(value);
+  if (!Number.isFinite(num)) {
+    return 0;
+  }
+  return Math.round((num + Number.EPSILON) * 100) / 100;
+};
+
 // Helper function to recalculate aggregated parts to order
 async function recalculateAggregatedPartsToOrder() {
   try {
@@ -1489,14 +1497,17 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
     let totalMaterialCOGS = 0;
     let totalLabourCOGS = 0;
     let totalOverheadCOGS = 0;
-    
+
+    let journalEntryId: string | null = null;
+    let journalEntryError: any = null;
+
     if (materialItems.length > 0 || labourItems.length > 0) {
       const journalEntryLines = [];
 
       // Calculate COGS for material items
       for (const item of materialItems) {
         // For sales orders, use the actual line item amount as COGS
-        const itemCOGS = parseFloat(item.line_amount);
+        const itemCOGS = roundCurrency(item.line_amount);
         totalMaterialCOGS += itemCOGS;
 
         console.log(`COGS for material ${item.part_number}: ${itemCOGS} (line amount)`);
@@ -1506,7 +1517,7 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
       // Calculate COGS for labour items (use actual values from time entries)
       for (const item of labourItems) {
         // For labour, use the actual calculated values from time entries
-        const itemCOGS = parseFloat(item.line_amount);
+        const itemCOGS = roundCurrency(item.line_amount);
         totalLabourCOGS += itemCOGS;
 
         console.log(`COGS calculation for labour ${item.part_number}: quantity_sold=${item.quantity_sold}, unit_price=${item.unit_price}, line_amount=${item.line_amount}, itemCOGS=${itemCOGS}`);
@@ -1516,7 +1527,7 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
       // Calculate COGS for overhead items (use actual values from time entries)
       for (const item of overheadItems) {
         // For overhead, use the actual calculated values from time entries
-        const itemCOGS = parseFloat(item.line_amount);
+        const itemCOGS = roundCurrency(item.line_amount);
         totalOverheadCOGS += itemCOGS;
 
         console.log(`COGS calculation for overhead ${item.part_number}: quantity_sold=${item.quantity_sold}, unit_price=${item.unit_price}, line_amount=${item.line_amount}, itemCOGS=${itemCOGS}`);
@@ -1528,7 +1539,7 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
         // Debit Cost of Materials Account (expense)
         journalEntryLines.push({
           Description: `Cost of Materials for SO #${salesOrder.sales_order_number}`,
-          Amount: totalMaterialCOGS,
+          Amount: roundCurrency(totalMaterialCOGS),
           DetailType: 'JournalEntryLineDetail',
           JournalEntryLineDetail: {
             PostingType: 'Debit',
@@ -1541,7 +1552,7 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
         // Credit Inventory Account (reducing inventory for materials only)
         journalEntryLines.push({
           Description: `Inventory reduction for materials - SO #${salesOrder.sales_order_number}`,
-          Amount: totalMaterialCOGS,
+          Amount: roundCurrency(totalMaterialCOGS),
           DetailType: 'JournalEntryLineDetail',
           JournalEntryLineDetail: {
             PostingType: 'Credit',
@@ -1563,7 +1574,7 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
           // Debit Cost of Labour Account (expense)
           journalEntryLines.push({
             Description: `Cost of Labour for SO #${salesOrder.sales_order_number}`,
-            Amount: totalLabourCOGS,
+            Amount: roundCurrency(totalLabourCOGS),
             DetailType: 'JournalEntryLineDetail',
             JournalEntryLineDetail: {
               PostingType: 'Debit',
@@ -1576,7 +1587,7 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
           // Credit Labour Expense Reduction Account (reducing the expense)
           journalEntryLines.push({
             Description: `Labour expense reduction for SO #${salesOrder.sales_order_number}`,
-            Amount: totalLabourCOGS,
+            Amount: roundCurrency(totalLabourCOGS),
             DetailType: 'JournalEntryLineDetail',
             JournalEntryLineDetail: {
               PostingType: 'Credit',
@@ -1600,7 +1611,7 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
           let totalPercentage = 0;
 
           for (const dist of distributionResult.rows) {
-            const allocationAmount = totalOverheadCOGS * (dist.percentage / 100);
+            const allocationAmount = roundCurrency(totalOverheadCOGS * (dist.percentage / 100));
             totalAllocated += allocationAmount;
             totalPercentage += dist.percentage;
 
@@ -1626,7 +1637,7 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
             // Offset overhead allocations against the overhead COGS account
             journalEntryLines.push({
               Description: `Overhead allocation offset for SO #${salesOrder.sales_order_number}`,
-              Amount: totalAllocated,
+              Amount: roundCurrency(totalAllocated),
               DetailType: 'JournalEntryLineDetail',
               JournalEntryLineDetail: {
                 PostingType: 'Credit',
@@ -1667,12 +1678,15 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
             }
           );
 
+          journalEntryId = journalResponse.data?.JournalEntry?.Id || null;
           console.log('Successfully created COGS Journal Entry');
           console.log('Journal Entry Response received from QBO');
         } catch (journalError: any) {
+          journalEntryError = journalError.response?.data || journalError.message;
           console.error('Error creating COGS journal entry', {
             status: journalError.response?.status,
             message: journalError.message,
+            data: journalError.response?.data
           });
           // Continue even if journal entry fails
         }
@@ -1714,6 +1728,8 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
         overheadCOGS: totalOverheadCOGS ? totalOverheadCOGS.toFixed(2) : '0.00',
         totalCOGS: ((totalMaterialCOGS || 0) + (totalLabourCOGS || 0) + (totalOverheadCOGS || 0)).toFixed(2)
       },
+      journalEntryId: journalEntryId,
+      journalEntryError: journalEntryError,
       gstExported: false,
       gstHandledByQbo: true,
       inventoryUpdated: materialItems.length
@@ -1902,26 +1918,29 @@ router.post('/:id/export-to-qbo-with-customer', async (req: Request, res: Respon
     let totalMaterialCOGS = 0;
     let totalLabourCOGS = 0;
     let totalOverheadCOGS = 0;
-    
+
+    let journalEntryId: string | null = null;
+    let journalEntryError: any = null;
+
     if (materialItems.length > 0 || labourItems.length > 0) {
       const journalEntryLines = [];
 
       // Calculate COGS for material items
       for (const item of materialItems) {
         // For sales orders, use the actual line item amount as COGS
-        const itemCOGS = parseFloat(item.line_amount);
+        const itemCOGS = roundCurrency(item.line_amount);
         totalMaterialCOGS += itemCOGS;
       }
 
       // Calculate COGS for labour items
       for (const item of labourItems) {
-        const itemCOGS = parseFloat(item.line_amount);
+        const itemCOGS = roundCurrency(item.line_amount);
         totalLabourCOGS += itemCOGS;
       }
 
       // Calculate COGS for overhead items
       for (const item of overheadItems) {
-        const itemCOGS = parseFloat(item.line_amount);
+        const itemCOGS = roundCurrency(item.line_amount);
         totalOverheadCOGS += itemCOGS;
       }
 
@@ -1929,7 +1948,7 @@ router.post('/:id/export-to-qbo-with-customer', async (req: Request, res: Respon
       if (totalMaterialCOGS > 0) {
         journalEntryLines.push({
           Description: `Cost of Materials for SO #${salesOrder.sales_order_number}`,
-          Amount: totalMaterialCOGS,
+          Amount: roundCurrency(totalMaterialCOGS),
           DetailType: 'JournalEntryLineDetail',
           JournalEntryLineDetail: {
             PostingType: 'Debit',
@@ -1941,7 +1960,7 @@ router.post('/:id/export-to-qbo-with-customer', async (req: Request, res: Respon
 
         journalEntryLines.push({
           Description: `Inventory reduction for materials - SO #${salesOrder.sales_order_number}`,
-          Amount: totalMaterialCOGS,
+          Amount: roundCurrency(totalMaterialCOGS),
           DetailType: 'JournalEntryLineDetail',
           JournalEntryLineDetail: {
             PostingType: 'Credit',
@@ -1962,7 +1981,7 @@ router.post('/:id/export-to-qbo-with-customer', async (req: Request, res: Respon
         } else {
           journalEntryLines.push({
             Description: `Cost of Labour for SO #${salesOrder.sales_order_number}`,
-            Amount: totalLabourCOGS,
+            Amount: roundCurrency(totalLabourCOGS),
             DetailType: 'JournalEntryLineDetail',
             JournalEntryLineDetail: {
               PostingType: 'Debit',
@@ -1974,7 +1993,7 @@ router.post('/:id/export-to-qbo-with-customer', async (req: Request, res: Respon
 
           journalEntryLines.push({
             Description: `Labour expense reduction for SO #${salesOrder.sales_order_number}`,
-            Amount: totalLabourCOGS,
+            Amount: roundCurrency(totalLabourCOGS),
             DetailType: 'JournalEntryLineDetail',
             JournalEntryLineDetail: {
               PostingType: 'Credit',
@@ -1998,7 +2017,7 @@ router.post('/:id/export-to-qbo-with-customer', async (req: Request, res: Respon
           let totalPercentage = 0;
 
           for (const dist of distributionResult.rows) {
-            const allocationAmount = totalOverheadCOGS * (dist.percentage / 100);
+            const allocationAmount = roundCurrency(totalOverheadCOGS * (dist.percentage / 100));
             totalAllocated += allocationAmount;
             totalPercentage += dist.percentage;
 
@@ -2024,7 +2043,7 @@ router.post('/:id/export-to-qbo-with-customer', async (req: Request, res: Respon
             // Offset overhead allocations against the overhead COGS account
             journalEntryLines.push({
               Description: `Overhead allocation offset for SO #${salesOrder.sales_order_number}`,
-              Amount: totalAllocated,
+              Amount: roundCurrency(totalAllocated),
               DetailType: 'JournalEntryLineDetail',
               JournalEntryLineDetail: {
                 PostingType: 'Credit',
@@ -2048,7 +2067,7 @@ router.post('/:id/export-to-qbo-with-customer', async (req: Request, res: Respon
         };
 
         try {
-          await qboHttp.post(
+          const journalResponse = await qboHttp.post(
             `${getQboApiBaseUrl()}/v3/company/${accessContext.realmId}/journalentry`,
             journalEntryData,
             {
@@ -2060,10 +2079,13 @@ router.post('/:id/export-to-qbo-with-customer', async (req: Request, res: Respon
               params: { minorversion: '75' }
             }
           );
+          journalEntryId = journalResponse.data?.JournalEntry?.Id || null;
         } catch (journalError: any) {
+          journalEntryError = journalError.response?.data || journalError.message;
           console.error('Error creating COGS journal entry', {
             status: journalError.response?.status,
             message: journalError.message,
+            data: journalError.response?.data
           });
         }
       }
@@ -2102,7 +2124,9 @@ router.post('/:id/export-to-qbo-with-customer', async (req: Request, res: Respon
         labourCOGS: totalLabourCOGS ? totalLabourCOGS.toFixed(2) : '0.00',
         overheadCOGS: totalOverheadCOGS ? totalOverheadCOGS.toFixed(2) : '0.00',
         totalCOGS: ((totalMaterialCOGS || 0) + (totalLabourCOGS || 0) + (totalOverheadCOGS || 0)).toFixed(2)
-      }
+      },
+      journalEntryId: journalEntryId,
+      journalEntryError: journalEntryError
     });
 
   } catch (error: any) {
