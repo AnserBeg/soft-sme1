@@ -255,6 +255,17 @@ router.post('/export-purchase-order/:poId', async (req, res) => {
     });
 
   } catch (error) {
+    const response = (error as any)?.response;
+    const fault = response?.data?.Fault;
+    const firstError = Array.isArray(fault?.Error) ? fault.Error[0] : null;
+    if (firstError) {
+      console.error('QBO validation fault:', {
+        code: firstError.code,
+        message: firstError.Message,
+        detail: firstError.Detail,
+        element: firstError.element
+      });
+    }
     console.error('Error exporting PO to QuickBooks:', error instanceof Error ? error.message : String(error));
     res.status(500).json({ error: 'Failed to export Purchase Order to QuickBooks' });
   }

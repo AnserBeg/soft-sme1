@@ -416,6 +416,19 @@ const formatQboError = (err: unknown) => {
   };
 };
 
+const logQboFault = (data: any) => {
+  const fault = data?.Fault;
+  const firstError = Array.isArray(fault?.Error) ? fault.Error[0] : null;
+  if (firstError) {
+    console.error('QBO validation fault:', {
+      code: firstError.code,
+      message: firstError.Message,
+      detail: firstError.Detail,
+      element: firstError.element
+    });
+  }
+};
+
 // Export to QBO endpoint (mock)
 router.post('/:id/export-to-qbo', adminOnly, async (req, res) => {
   const { id } = req.params;
@@ -653,6 +666,9 @@ router.post('/:id/export-to-qbo', adminOnly, async (req, res) => {
 
   } catch (err) {
     const qboError = formatQboError(err);
+    if (qboError?.data?.Fault) {
+      logQboFault(qboError.data);
+    }
     console.error('Error exporting PO to QBO:', qboError);
     await pool.query('UPDATE purchasehistory SET qbo_export_status = $1 WHERE purchase_id = $2', [qboError.message, id]);
     res.status(500).json({
