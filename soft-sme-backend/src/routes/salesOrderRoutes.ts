@@ -219,6 +219,22 @@ const normalizeWantedTimeOfDay = (value: any): 'morning' | 'afternoon' | 'evenin
   return null;
 };
 
+const toQboDate = (value: any): string | null => {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+  return date.toISOString().slice(0, 10);
+};
+
+const isValidEmail = (value: any): value is string => {
+  if (typeof value !== 'string') return false;
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(trimmed);
+};
+
 // Helper function to recalculate aggregated parts to order
 async function recalculateAggregatedPartsToOrder() {
   try {
@@ -1160,6 +1176,7 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
     );
     const shipFromAddr = buildShipFromAddr(businessProfileResult.rows[0]);
     const exportDate = new Date().toISOString().slice(0, 10);
+    const dueDate = toQboDate(salesOrder.sales_date);
 
     // 3. Get SO line items
     const lineItemsResult = await pool.query(`
@@ -1392,15 +1409,15 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
       ],
       DocNumber: salesOrder.sales_order_number,
       TxnDate: exportDate,
-      DueDate: salesOrder.sales_date,
+      ...(dueDate ? { DueDate: dueDate } : {}),
       PrivateNote: `Exported from Aiven Sales Order #${salesOrder.sales_order_number}`,
       CustomerMemo: {
         value: salesOrder.terms || ''
       },
       ...(shipFromAddr ? { ShipFromAddr: shipFromAddr } : {}),
-      BillEmail: {
-        Address: salesOrder.customer_email
-      }
+      ...(isValidEmail(salesOrder.customer_email)
+        ? { BillEmail: { Address: salesOrder.customer_email.trim() } }
+        : {})
     };
 
     console.log('Creating Invoice in QuickBooks');
