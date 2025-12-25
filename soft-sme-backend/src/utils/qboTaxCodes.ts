@@ -19,6 +19,13 @@ const isTaxablePartialName = (name: string): boolean => {
   return TAXABLE_TOKENS.some((token) => normalized.includes(token));
 };
 
+const hasSalesTaxRates = (code: any): boolean => {
+  const list = code?.SalesTaxRateList?.TaxRateDetail;
+  return Array.isArray(list) && list.length > 0;
+};
+
+const getTaxCodeName = (code: any): string => String(code?.Name || '');
+
 export const resolveTaxableQboTaxCodeId = async (
   accessToken: string,
   realmId: string
@@ -33,7 +40,7 @@ export const resolveTaxableQboTaxCodeId = async (
           'Content-Type': 'application/json'
         },
         params: {
-          query: 'SELECT Id, Name FROM TaxCode WHERE Active = true',
+          query: 'SELECT Id, Name, SalesTaxRateList FROM TaxCode WHERE Active = true',
           minorversion: '75'
         }
       }
@@ -44,22 +51,25 @@ export const resolveTaxableQboTaxCodeId = async (
       return null;
     }
 
-    const taxableCodes = taxCodes.filter((code: any) => !isNonTaxCodeName(String(code.Name || '')));
+    const taxableCodes = taxCodes.filter((code: any) => !isNonTaxCodeName(getTaxCodeName(code)));
     if (taxableCodes.length === 0) {
       return null;
     }
 
-    const exactMatch = taxableCodes.find((code: any) =>
-      isTaxablePreferredName(String(code.Name || ''))
+    const salesTaxableCodes = taxableCodes.filter((code: any) => hasSalesTaxRates(code));
+    const preferredPool = salesTaxableCodes.length > 0 ? salesTaxableCodes : taxableCodes;
+
+    const exactMatch = preferredPool.find((code: any) =>
+      isTaxablePreferredName(getTaxCodeName(code))
     );
     if (exactMatch?.Id) {
       return exactMatch.Id;
     }
 
-    const partialMatch = taxableCodes.find((code: any) =>
-      isTaxablePartialName(String(code.Name || ''))
+    const partialMatch = preferredPool.find((code: any) =>
+      isTaxablePartialName(getTaxCodeName(code))
     );
-    return partialMatch?.Id || taxableCodes[0]?.Id || null;
+    return partialMatch?.Id || preferredPool[0]?.Id || null;
   } catch (error) {
     console.error('Error fetching QBO tax codes:', error instanceof Error ? error.message : String(error));
     return null;
