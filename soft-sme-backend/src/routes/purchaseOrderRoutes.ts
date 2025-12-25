@@ -402,6 +402,20 @@ router.get('/', async (req, res) => {
   }
 });
 
+const escapeQboQueryValue = (value: string): string => value.replace(/'/g, "''");
+
+const formatQboError = (err: unknown) => {
+  const response = (err as any)?.response;
+  if (!response) {
+    return { message: err instanceof Error ? err.message : String(err) };
+  }
+  return {
+    message: err instanceof Error ? err.message : String(err),
+    status: response.status,
+    data: response.data
+  };
+};
+
 // Export to QBO endpoint (mock)
 router.post('/:id/export-to-qbo', adminOnly, async (req, res) => {
   const { id } = req.params;
@@ -637,10 +651,14 @@ router.post('/:id/export-to-qbo', adminOnly, async (req, res) => {
     });
 
   } catch (err) {
-    console.error('Error exporting PO to QBO:', err instanceof Error ? err.message : String(err));
-    const errorMessage = err instanceof Error ? err.message : 'Unknown error';
-    await pool.query('UPDATE purchasehistory SET qbo_export_status = $1 WHERE purchase_id = $2', [errorMessage, id]);
-    res.status(500).json({ error: 'Failed to export to QuickBooks.', details: errorMessage });
+    const qboError = formatQboError(err);
+    console.error('Error exporting PO to QBO:', qboError);
+    await pool.query('UPDATE purchasehistory SET qbo_export_status = $1 WHERE purchase_id = $2', [qboError.message, id]);
+    res.status(500).json({
+      error: 'Failed to export to QuickBooks.',
+      details: qboError.message,
+      qbo: qboError.status ? { status: qboError.status, data: qboError.data } : undefined
+    });
   }
 });
 
@@ -808,7 +826,7 @@ async function checkQBOVendorExists(vendorName: string, accessToken: string, rea
           'Content-Type': 'application/json'
         },
         params: {
-          query: `SELECT * FROM Vendor WHERE DisplayName = '${vendorName}'`,
+          query: `SELECT * FROM Vendor WHERE DisplayName = '${escapeQboQueryValue(vendorName)}'`,
           minorversion: '75'
         }
       }
@@ -833,7 +851,7 @@ async function getQBOVendorId(vendorName: string, accessToken: string, realmId: 
           'Content-Type': 'application/json'
         },
         params: {
-          query: `SELECT * FROM Vendor WHERE DisplayName = '${vendorName}'`,
+          query: `SELECT * FROM Vendor WHERE DisplayName = '${escapeQboQueryValue(vendorName)}'`,
           minorversion: '75'
         }
       }
