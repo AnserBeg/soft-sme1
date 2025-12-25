@@ -142,7 +142,7 @@ The Aiven database contains **30 actual tables** with comprehensive business man
 
 - **qbo_account_mapping** (1 record)
   - Mapping between Aiven and QuickBooks accounts
-  - Key fields: company_id, qbo_inventory_account_id, qbo_gst_account_id, qbo_ap_account_id, qbo_ar_account_id
+  - Key fields: company_id, qbo_inventory_account_id, qbo_ap_account_id, qbo_ar_account_id
   - Additional mappings for sales, labour, COGS, and expense accounts
 
 ### User Management

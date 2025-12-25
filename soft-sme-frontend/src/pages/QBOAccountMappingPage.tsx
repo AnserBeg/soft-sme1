@@ -49,7 +49,6 @@ interface AccountMapping {
   id: number;
   company_id: number;
   qbo_inventory_account_id: string;
-  qbo_gst_account_id: string;
   qbo_ap_account_id: string;
   qbo_supply_expense_account_id?: string;
   qbo_sales_account_id?: string;
@@ -81,7 +80,6 @@ const QBOAccountMappingPage: React.FC = () => {
   const [mapping, setMapping] = useState<AccountMapping | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<QBOConnectionStatus | null>(null);
   const [selectedInventoryAccount, setSelectedInventoryAccount] = useState<string>('');
-  const [selectedGSTAccount, setSelectedGSTAccount] = useState<string>('');
   const [selectedAPAccount, setSelectedAPAccount] = useState<string>('');
   const [selectedSupplyExpenseAccount, setSelectedSupplyExpenseAccount] = useState<string>('');
   const [selectedSalesAccount, setSelectedSalesAccount] = useState<string>('');
@@ -167,7 +165,6 @@ const QBOAccountMappingPage: React.FC = () => {
         if (mappingResponse.data.mapping) {
           setMapping(mappingResponse.data.mapping);
           setSelectedInventoryAccount(mappingResponse.data.mapping.qbo_inventory_account_id);
-          setSelectedGSTAccount(mappingResponse.data.mapping.qbo_gst_account_id);
           setSelectedAPAccount(mappingResponse.data.mapping.qbo_ap_account_id);
           setSelectedSupplyExpenseAccount(mappingResponse.data.mapping.qbo_supply_expense_account_id || '');
           setSelectedSalesAccount(mappingResponse.data.mapping.qbo_sales_account_id || '');
@@ -189,7 +186,7 @@ const QBOAccountMappingPage: React.FC = () => {
   };
 
   const handleSaveMapping = async () => {
-    if (!selectedInventoryAccount || !selectedGSTAccount || !selectedAPAccount) {
+    if (!selectedInventoryAccount || !selectedAPAccount) {
       toast.error('Please select all required accounts');
       return;
     }
@@ -200,7 +197,6 @@ const QBOAccountMappingPage: React.FC = () => {
         '/api/qbo-accounts/mapping',
         {
           qbo_inventory_account_id: selectedInventoryAccount,
-          qbo_gst_account_id: selectedGSTAccount,
           qbo_ap_account_id: selectedAPAccount,
           qbo_supply_expense_account_id: selectedSupplyExpenseAccount,
           qbo_sales_account_id: selectedSalesAccount,
@@ -242,7 +238,6 @@ const QBOAccountMappingPage: React.FC = () => {
       setAccountTypes({});
       setMapping(null);
       setSelectedInventoryAccount('');
-      setSelectedGSTAccount('');
       setSelectedAPAccount('');
       setSelectedSupplyExpenseAccount('');
       setSelectedSalesAccount('');
@@ -447,10 +442,10 @@ const QBOAccountMappingPage: React.FC = () => {
                  <strong>How this works:</strong> Configure your QuickBooks accounts to map to your business transactions. Accounts used by both purchase orders and sales orders are shown at the top.
                </Typography>
                <Typography variant="body2" sx={{ mt: 1 }}>
-                 <strong>Purchase Orders:</strong> Stock items → Inventory Account, Supply items → Supply Expense Account, GST → GST Account, Total → Accounts Payable.
+                 <strong>Purchase Orders:</strong> Stock items → Inventory Account, Supply items → Supply Expense Account, Total → Accounts Payable.
                </Typography>
                <Typography variant="body2" sx={{ mt: 1 }}>
-                 <strong>Sales Orders:</strong> Materials → Sales Account, Labour → Labour Sales Account, GST → GST Account, Total → Accounts Receivable, Costs → COGS Account.
+                 <strong>Sales Orders:</strong> Materials → Sales Account, Labour → Labour Sales Account, Total → Accounts Receivable, Costs → COGS Account.
                </Typography>
              </Alert>
 
@@ -461,7 +456,7 @@ const QBOAccountMappingPage: React.FC = () => {
                  label="Search accounts by name, number, or description"
                  value={accountSearchTerm}
                  onChange={(e) => setAccountSearchTerm(e.target.value)}
-                 placeholder="e.g., 1200, Inventory, GST..."
+                 placeholder="e.g., 1200, Inventory, AP..."
                  size="small"
                  InputProps={{
                    startAdornment: <SearchIcon sx={{ mr: 1, color: 'text.secondary' }} />,
@@ -474,27 +469,6 @@ const QBOAccountMappingPage: React.FC = () => {
                Shared Accounts (Purchase Orders & Sales Orders)
              </Typography>
              <Grid container spacing={3}>
-               {/* GST/Tax Account */}
-               <Grid item xs={12} md={6}>
-                 <FormControl fullWidth>
-                   <InputLabel>GST/Tax Account</InputLabel>
-                   <Select
-                     value={selectedGSTAccount}
-                     onChange={(e) => setSelectedGSTAccount(e.target.value)}
-                     label="GST/Tax Account"
-                   >
-                     {getAccountOptions('Liability').map((account) => (
-                       <MenuItem key={account.Id} value={account.Id}>
-                         {getAccountDisplayName(account)}
-                       </MenuItem>
-                     ))}
-                   </Select>
-                 </FormControl>
-                 <Typography variant="caption" color="text.secondary">
-                   Account for GST/HST/tax tracking (used by both purchase orders and sales orders)
-                 </Typography>
-               </Grid>
-
                {/* Inventory Account */}
                <Grid item xs={12} md={6}>
                  <FormControl fullWidth>
@@ -741,7 +715,7 @@ const QBOAccountMappingPage: React.FC = () => {
                 variant="contained"
                 startIcon={<SaveIcon />}
                 onClick={handleSaveMapping}
-                disabled={saving || !selectedInventoryAccount || !selectedGSTAccount || !selectedAPAccount}
+                disabled={saving || !selectedInventoryAccount || !selectedAPAccount}
               >
                 {saving ? 'Saving...' : 'Save Mapping'}
               </Button>
@@ -767,14 +741,6 @@ const QBOAccountMappingPage: React.FC = () => {
                   Shared Accounts (Purchase Orders & Sales Orders)
                 </Typography>
                 <Grid container spacing={2}>
-                  <Grid item xs={12} md={6}>
-                    <Typography variant="body2" color="text.secondary">
-                      GST/Tax: {(() => {
-                        const account = accounts.find(a => a.Id === mapping.qbo_gst_account_id);
-                        return account ? `${account.Name}${account.AccountNumber ? ` (#${account.AccountNumber})` : ''}` : 'Not configured';
-                      })()}
-                    </Typography>
-                  </Grid>
                   <Grid item xs={12} md={6}>
                     <Typography variant="body2" color="text.secondary">
                       Inventory: {(() => {

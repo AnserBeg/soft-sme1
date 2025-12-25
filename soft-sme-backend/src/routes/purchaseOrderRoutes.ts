@@ -2202,20 +2202,19 @@ router.get('/qbo-account-mapping/:companyId', adminOnly, async (req, res) => {
 
 router.post('/qbo-account-mapping/:companyId', adminOnly, async (req, res) => {
   const { companyId } = req.params;
-  const { qbo_inventory_account_id, qbo_gst_account_id, qbo_ap_account_id, qbo_supply_expense_account_id } = req.body;
+  const { qbo_inventory_account_id, qbo_ap_account_id, qbo_supply_expense_account_id } = req.body;
   try {
     // Upsert mapping
     const result = await pool.query(
-      `INSERT INTO qbo_account_mapping (company_id, qbo_inventory_account_id, qbo_gst_account_id, qbo_ap_account_id, qbo_supply_expense_account_id)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO qbo_account_mapping (company_id, qbo_inventory_account_id, qbo_ap_account_id, qbo_supply_expense_account_id)
+       VALUES ($1, $2, $3, $4)
        ON CONFLICT (company_id) DO UPDATE SET
          qbo_inventory_account_id = EXCLUDED.qbo_inventory_account_id,
-         qbo_gst_account_id = EXCLUDED.qbo_gst_account_id,
          qbo_ap_account_id = EXCLUDED.qbo_ap_account_id,
          qbo_supply_expense_account_id = EXCLUDED.qbo_supply_expense_account_id,
          updated_at = NOW()
        RETURNING *`,
-      [companyId, qbo_inventory_account_id, qbo_gst_account_id, qbo_ap_account_id, qbo_supply_expense_account_id]
+      [companyId, qbo_inventory_account_id, qbo_ap_account_id, qbo_supply_expense_account_id]
     );
     res.json(result.rows[0]);
   } catch (err) {

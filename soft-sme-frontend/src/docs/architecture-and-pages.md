@@ -363,7 +363,7 @@
   - GET `/api/qbo-accounts/accounts` → accounts grouped by classification (Asset/Liability/Revenue/Expense) + `accountTypes` catalog.
   - GET `/api/qbo-accounts/mapping` → current mapping.
 - Save mapping:
-  - POST `/api/qbo-accounts/mapping` with selected account IDs; required: `qbo_inventory_account_id`, `qbo_gst_account_id`, `qbo_ap_account_id`; optional: `qbo_supply_expense_account_id`, `qbo_sales_account_id`, `qbo_labour_sales_account_id`, `qbo_ar_account_id`, `qbo_cogs_account_id`, `qbo_cost_of_labour_account_id`, `qbo_cost_of_materials_account_id`, `qbo_labour_expense_reduction_account_id`, `qbo_overhead_cogs_account_id`.
+  - POST `/api/qbo-accounts/mapping` with selected account IDs; required: `qbo_inventory_account_id`, `qbo_ap_account_id`; optional: `qbo_supply_expense_account_id`, `qbo_sales_account_id`, `qbo_labour_sales_account_id`, `qbo_ar_account_id`, `qbo_cogs_account_id`, `qbo_cost_of_labour_account_id`, `qbo_cost_of_materials_account_id`, `qbo_labour_expense_reduction_account_id`, `qbo_overhead_cogs_account_id`.
 - How exports use mapping (typical):
   - Purchase Orders: Inventory, GST, AP; Supply items may post to Supply Expense.
   - Sales Orders: AR, Sales (Revenue), GST. Cost side journals to COGS (materials/labour/overhead), if enabled.

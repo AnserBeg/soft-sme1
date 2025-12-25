@@ -136,7 +136,6 @@ const tokenResponse = await axios.post(TOKEN_URL, {
 **Account Types:**
 - **Sales Account**: Revenue account for sales
 - **Accounts Receivable**: Customer payment tracking
-- **GST Account**: Tax collection account
 - **Cost of Goods Sold**: Product cost tracking
 - **Inventory Account**: Stock asset account
 - **Labour Expense**: Employee cost tracking
@@ -149,7 +148,6 @@ CREATE TABLE qbo_account_mapping (
   company_id INTEGER NOT NULL,
   qbo_sales_account_id VARCHAR(255),
   qbo_ar_account_id VARCHAR(255),
-  qbo_gst_account_id VARCHAR(255),
   qbo_cogs_account_id VARCHAR(255),
   qbo_inventory_account_id VARCHAR(255),
   qbo_cost_of_labour_account_id VARCHAR(255),
@@ -589,7 +587,6 @@ CREATE TABLE qbo_account_mapping (
   company_id INTEGER NOT NULL,
   qbo_sales_account_id VARCHAR(255),
   qbo_ar_account_id VARCHAR(255),
-  qbo_gst_account_id VARCHAR(255),
   qbo_cogs_account_id VARCHAR(255),
   qbo_inventory_account_id VARCHAR(255),
   qbo_cost_of_labour_account_id VARCHAR(255),
