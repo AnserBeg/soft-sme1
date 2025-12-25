@@ -7,6 +7,7 @@ import { qboHttp } from '../utils/qboHttp'; // Added for QBO API integration
 import { ensureFreshQboAccess } from '../utils/qboTokens';
 import { getQboApiBaseUrl } from '../utils/qboBaseUrl';
 import { getLogoImageSource } from '../utils/pdfLogoHelper';
+import { resolvePurchaseTaxableQboTaxCodeId } from '../utils/qboTaxCodes';
 import { PurchaseOrderCalculationService } from '../services/PurchaseOrderCalculationService';
 import { PurchaseOrderService } from '../services/PurchaseOrderService';
 import { InventoryService } from '../services/InventoryService';
@@ -462,6 +463,15 @@ router.post('/:id/export-to-qbo', adminOnly, async (req, res) => {
       return res.status(400).json({ error: 'QuickBooks account mapping not configured. Please set up account mapping in QBO Settings first.' });
     }
     const accountMapping = accountMappingResult.rows[0];
+    const taxableTaxCodeId = await resolvePurchaseTaxableQboTaxCodeId(
+      accessContext.accessToken,
+      accessContext.realmId
+    );
+    if (!taxableTaxCodeId) {
+      console.warn('No taxable QBO purchase tax code found; bill lines may be treated as out-of-scope.');
+    } else {
+      console.log('Using QBO purchase tax code for bill lines:', taxableTaxCodeId);
+    }
     const exportDate = new Date().toISOString().slice(0, 10);
 
     // Check if vendor exists in QuickBooks first
@@ -535,6 +545,7 @@ router.post('/:id/export-to-qbo', adminOnly, async (req, res) => {
       console.log(`  - Unit cost: ${item.unit_cost} (parsed: ${parseFloat(item.unit_cost)})`);
       console.log(`  - Quantity: ${item.quantity} (parsed: ${parseFloat(item.quantity)})`);
       console.log(`  - Calculated amount: ${amount}`);
+      const taxCodeRef = taxableTaxCodeId ? { TaxCodeRef: { value: taxableTaxCodeId } } : {};
       qboBillLines.push({
         Amount: amount,
         DetailType: 'AccountBasedExpenseLineDetail',
@@ -542,7 +553,8 @@ router.post('/:id/export-to-qbo', adminOnly, async (req, res) => {
           AccountRef: {
             value: accountMapping.qbo_inventory_account_id
           },
-          BillableStatus: 'NotBillable'
+          BillableStatus: 'NotBillable',
+          ...taxCodeRef
         }
       });
     });
@@ -556,6 +568,7 @@ router.post('/:id/export-to-qbo', adminOnly, async (req, res) => {
         console.log(`  - Unit cost: ${item.unit_cost} (parsed: ${parseFloat(item.unit_cost)})`);
         console.log(`  - Quantity: ${item.quantity} (parsed: ${parseFloat(item.quantity)})`);
         console.log(`  - Calculated amount: ${amount}`);
+        const taxCodeRef = taxableTaxCodeId ? { TaxCodeRef: { value: taxableTaxCodeId } } : {};
         qboBillLines.push({
           Amount: amount,
           DetailType: 'AccountBasedExpenseLineDetail',
@@ -563,7 +576,8 @@ router.post('/:id/export-to-qbo', adminOnly, async (req, res) => {
           AccountRef: {
             value: accountMapping.qbo_supply_expense_account_id
           },
-          BillableStatus: 'NotBillable'
+          BillableStatus: 'NotBillable',
+          ...taxCodeRef
         }
       });
       });
@@ -694,6 +708,15 @@ router.post('/:id/export-to-qbo-with-vendor', adminOnly, async (req, res) => {
       return res.status(400).json({ error: 'QuickBooks account mapping not configured. Please set up account mapping in QBO Settings first.' });
     }
     const accountMapping = accountMappingResult.rows[0];
+    const taxableTaxCodeId = await resolvePurchaseTaxableQboTaxCodeId(
+      accessContext.accessToken,
+      accessContext.realmId
+    );
+    if (!taxableTaxCodeId) {
+      console.warn('No taxable QBO purchase tax code found; bill lines may be treated as out-of-scope.');
+    } else {
+      console.log('Using QBO purchase tax code for bill lines:', taxableTaxCodeId);
+    }
     const exportDate = new Date().toISOString().slice(0, 10);
 
     // Create vendor in QBO first
@@ -718,16 +741,20 @@ router.post('/:id/export-to-qbo-with-vendor', adminOnly, async (req, res) => {
       VendorRef: {
         value: qboVendorId
       },
-      Line: stockLineItems.map((item: any) => ({
-        Amount: parseFloat(item.unit_cost) * parseFloat(item.quantity), // Individual item cost
-        DetailType: 'AccountBasedExpenseLineDetail',
-        AccountBasedExpenseLineDetail: {
-          AccountRef: {
-            value: accountMapping.qbo_inventory_account_id
-          },
-          BillableStatus: 'NotBillable'
-        }
-      })),
+      Line: stockLineItems.map((item: any) => {
+        const taxCodeRef = taxableTaxCodeId ? { TaxCodeRef: { value: taxableTaxCodeId } } : {};
+        return {
+          Amount: parseFloat(item.unit_cost) * parseFloat(item.quantity), // Individual item cost
+          DetailType: 'AccountBasedExpenseLineDetail',
+          AccountBasedExpenseLineDetail: {
+            AccountRef: {
+              value: accountMapping.qbo_inventory_account_id
+            },
+            BillableStatus: 'NotBillable',
+            ...taxCodeRef
+          }
+        };
+      }),
       APAccountRef: {
         value: accountMapping.qbo_ap_account_id
       },

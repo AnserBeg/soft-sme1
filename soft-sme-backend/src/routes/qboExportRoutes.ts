@@ -4,6 +4,7 @@ import { pool } from '../db';
 import { resolveTenantCompanyIdFromRequest } from '../utils/companyContext';
 import { ensureFreshQboAccess } from '../utils/qboTokens';
 import { getQboApiBaseUrl } from '../utils/qboBaseUrl';
+import { resolvePurchaseTaxableQboTaxCodeId } from '../utils/qboTaxCodes';
 
 const router = express.Router();
 const escapeQboQueryValue = (value: string): string => value.replace(/'/g, "''");
@@ -50,6 +51,16 @@ router.post('/export-purchase-order/:poId', async (req, res) => {
       return res.status(401).json({ error: 'QuickBooks token expired and could not be refreshed. Please reconnect your account.' });
     }
     const accountMapping = mappingResult.rows[0];
+
+    const taxableTaxCodeId = await resolvePurchaseTaxableQboTaxCodeId(
+      accessContext.accessToken,
+      accessContext.realmId
+    );
+    if (!taxableTaxCodeId) {
+      console.warn('No taxable QBO purchase tax code found; bill lines may be treated as out-of-scope.');
+    } else {
+      console.log('Using QBO purchase tax code for bill lines:', taxableTaxCodeId);
+    }
 
     // 2. Get the Purchase Order details
     const poResult = await pool.query(`
@@ -150,6 +161,7 @@ router.post('/export-purchase-order/:poId', async (req, res) => {
     // Add stock items to inventory account
     const stockItems = lineItems.filter(item => item.part_type === 'stock');
     stockItems.forEach(item => {
+      const taxCodeRef = taxableTaxCodeId ? { TaxCodeRef: { value: taxableTaxCodeId } } : {};
       billLineItems.push({
         DetailType: 'AccountBasedExpenseLineDetail',
         Amount: parseFloat(item.unit_cost) * parseFloat(item.quantity),
@@ -157,7 +169,8 @@ router.post('/export-purchase-order/:poId', async (req, res) => {
           AccountRef: {
             value: accountMapping.qbo_inventory_account_id
           },
-          BillableStatus: 'NotBillable'
+          BillableStatus: 'NotBillable',
+          ...taxCodeRef
         }
       });
     });
@@ -166,6 +179,7 @@ router.post('/export-purchase-order/:poId', async (req, res) => {
     const supplyItems = lineItems.filter(item => item.part_type === 'supply');
     if (accountMapping.qbo_supply_expense_account_id && supplyItems.length > 0) {
       supplyItems.forEach(item => {
+        const taxCodeRef = taxableTaxCodeId ? { TaxCodeRef: { value: taxableTaxCodeId } } : {};
         billLineItems.push({
           DetailType: 'AccountBasedExpenseLineDetail',
           Amount: parseFloat(item.unit_cost) * parseFloat(item.quantity),
@@ -173,7 +187,8 @@ router.post('/export-purchase-order/:poId', async (req, res) => {
           AccountRef: {
             value: accountMapping.qbo_supply_expense_account_id
           },
-          BillableStatus: 'NotBillable'
+          BillableStatus: 'NotBillable',
+          ...taxCodeRef
         }
       });
     });
