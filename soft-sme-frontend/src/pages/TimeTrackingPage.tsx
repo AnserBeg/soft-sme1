@@ -13,7 +13,6 @@ import {
   TableHead,
   TableRow,
   FormControl,
-  FormControlLabel,
   InputLabel,
   Select,
   MenuItem,
@@ -23,8 +22,7 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
-  TextField,
-  Switch
+  TextField
 } from '@mui/material';
 
 import {
@@ -52,7 +50,6 @@ const TimeTrackingPage: React.FC = () => {
   const [activeTimeEntries, setActiveTimeEntries] = useState<TimeEntry[]>([]);
   const [selectedProfile, setSelectedProfile] = useState<number | ''>('');
   const [selectedSO, setSelectedSO] = useState<number | ''>('');
-  const [showClosedSalesOrders, setShowClosedSalesOrders] = useState(false);
   const [loading, setLoading] = useState(true);
   const [activeLoading, setActiveLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -84,13 +81,6 @@ const TimeTrackingPage: React.FC = () => {
   useEffect(() => {
     fetchData();
   }, []);
-
-  useEffect(() => {
-    if (!loading) {
-      fetchSalesOrders(showClosedSalesOrders);
-      setSelectedSO('');
-    }
-  }, [showClosedSalesOrders, loading]);
 
   useEffect(() => {
     if (selectedProfile) {
@@ -130,7 +120,7 @@ const TimeTrackingPage: React.FC = () => {
     return () => clearInterval(interval);
   }, []);
 
-  const fetchSalesOrders = async (includeClosed = showClosedSalesOrders) => {
+  const fetchSalesOrders = async (includeClosed = false) => {
     try {
       const salesOrdersData = await getSalesOrders(includeClosed);
       console.log('Sales orders data received:', salesOrdersData);
@@ -147,7 +137,7 @@ const TimeTrackingPage: React.FC = () => {
       setLoading(true);
       const profilesData = await getProfiles();
       setProfiles(profilesData);
-      await fetchSalesOrders(showClosedSalesOrders);
+      await fetchSalesOrders(false);
       fetchActiveTimeEntries(profilesData);
       setError(null);
     } catch (err) {
@@ -360,16 +350,6 @@ const TimeTrackingPage: React.FC = () => {
             <Paper sx={{ p: 2 }}>
               <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
                 <Typography variant="h6">Sales Order</Typography>
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={showClosedSalesOrders}
-                      onChange={(e) => setShowClosedSalesOrders(e.target.checked)}
-                      color="primary"
-                    />
-                  }
-                  label="Show closed"
-                />
               </Box>
             <FormControl fullWidth>
               <InputLabel>Select Sales Order</InputLabel>

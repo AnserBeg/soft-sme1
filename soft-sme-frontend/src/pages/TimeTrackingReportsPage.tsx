@@ -104,6 +104,7 @@ const TimeTrackingReportsPage: React.FC = () => {
   const [reports, setReports] = useState<TimeEntryReport[]>([]);
   const [selectedProfile, setSelectedProfile] = useState<number | ''>('');
   const [selectedSO, setSelectedSO] = useState<number | ''>('');
+  const [showClosedSalesOrders, setShowClosedSalesOrders] = useState(false);
   // Set default date range: from 14 days ago to yesterday (14-day period ending yesterday)
   const today = new Date();
   const yesterday = new Date();
@@ -160,12 +161,30 @@ const TimeTrackingReportsPage: React.FC = () => {
     fetchData();
   }, []);
 
+  const fetchSalesOrders = async (includeClosed = showClosedSalesOrders) => {
+    try {
+      const salesOrdersData = await getSalesOrders(includeClosed);
+      setSalesOrders(salesOrdersData);
+      setError(null);
+    } catch (err) {
+      setError('Failed to fetch sales orders. Please try again.');
+      console.error('Error fetching sales orders:', err);
+    }
+  };
+
+  const handleToggleClosedSalesOrders = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const checked = event.target.checked;
+    setShowClosedSalesOrders(checked);
+    setSelectedSO('');
+    await fetchSalesOrders(checked);
+  };
+
   const fetchData = async () => {
     try {
       setLoading(true);
       const [profilesData, salesOrdersData] = await Promise.all([
         getProfiles(),
-        getSalesOrders()
+        getSalesOrders(showClosedSalesOrders)
       ]);
       setProfiles(profilesData);
       setSalesOrders(salesOrdersData);
@@ -709,6 +728,18 @@ const TimeTrackingReportsPage: React.FC = () => {
                     ))}
                   </Select>
                 </FormControl>
+              </Grid>
+              <Grid item xs={12} md={2}>
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={showClosedSalesOrders}
+                      onChange={handleToggleClosedSalesOrders}
+                      color="primary"
+                    />
+                  }
+                  label="Show closed sales orders"
+                />
               </Grid>
               <Grid item xs={12} md={2}>
                 <LocalizationProvider dateAdapter={AdapterDateFns}>
