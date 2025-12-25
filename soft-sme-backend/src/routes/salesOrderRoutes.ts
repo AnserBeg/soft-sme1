@@ -44,6 +44,33 @@ const buildShipFromAddr = (profile?: {
   return Object.keys(addr).length > 0 ? addr : null;
 };
 
+const buildCustomerAddr = (customer?: {
+  customer_address?: string;
+  customer_city?: string;
+  customer_state?: string;
+  customer_postal_code?: string;
+}): Record<string, string> | null => {
+  if (!customer) {
+    return null;
+  }
+
+  const addr: Record<string, string> = {};
+  if (customer.customer_address) {
+    addr.Line1 = customer.customer_address;
+  }
+  if (customer.customer_city) {
+    addr.City = customer.customer_city;
+  }
+  if (customer.customer_state) {
+    addr.CountrySubDivisionCode = customer.customer_state;
+  }
+  if (customer.customer_postal_code) {
+    addr.PostalCode = customer.customer_postal_code;
+  }
+
+  return Object.keys(addr).length > 0 ? addr : null;
+};
+
 // Helper function to check if customer exists in QuickBooks
 async function checkQBOCustomerExists(customerName: string, accessToken: string, realmId: string): Promise<boolean> {
   try {
@@ -1175,6 +1202,7 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
       'SELECT street_address, city, province, country, postal_code FROM business_profile ORDER BY id DESC LIMIT 1'
     );
     const shipFromAddr = buildShipFromAddr(businessProfileResult.rows[0]);
+    const shipToAddr = buildCustomerAddr(salesOrder);
     const exportDate = new Date().toISOString().slice(0, 10);
     const dueDate = toQboDate(salesOrder.sales_date);
 
@@ -1415,6 +1443,7 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
         value: salesOrder.terms || ''
       },
       ...(shipFromAddr ? { ShipFromAddr: shipFromAddr } : {}),
+      ...(shipToAddr ? { ShipAddr: shipToAddr, BillAddr: shipToAddr } : {}),
       ...(isValidEmail(salesOrder.customer_email)
         ? { BillEmail: { Address: salesOrder.customer_email.trim() } }
         : {})
@@ -1745,6 +1774,11 @@ router.post('/:id/export-to-qbo-with-customer', async (req: Request, res: Respon
 
     const lineItems = lineItemsResult.rows;
 
+    const customerAddr = customerData?.BillAddr
+      ? customerData.BillAddr
+      : null;
+    const customerEmail = customerData?.PrimaryEmailAddr?.Address;
+
     // Get QBO account mapping
     const accountMappingResult = await pool.query('SELECT * FROM qbo_account_mapping WHERE company_id = $1', [companyId]);
     if (accountMappingResult.rows.length === 0) {
@@ -1826,6 +1860,7 @@ router.post('/:id/export-to-qbo-with-customer', async (req: Request, res: Respon
       ARAccountRef: {
         value: accountMapping.qbo_ar_account_id
       },
+      ...(customerAddr ? { ShipAddr: customerAddr, BillAddr: customerAddr } : {}),
       Line: [
         {
           Amount: estimatedPrice,
@@ -1843,7 +1878,8 @@ router.post('/:id/export-to-qbo-with-customer', async (req: Request, res: Respon
           }
         },
         // QBO computes GST/HST using the tax code on the main line
-      ]
+      ],
+      ...(isValidEmail(customerEmail) ? { BillEmail: { Address: customerEmail.trim() } } : {})
     };
 
     // Create invoice in QuickBooks
