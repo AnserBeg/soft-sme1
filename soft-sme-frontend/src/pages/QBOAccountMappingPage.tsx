@@ -45,12 +45,20 @@ interface QBOAccount {
   AccountNumber?: string;
 }
 
+interface QBOTaxCode {
+  Id: string;
+  Name: string;
+  SalesTaxRateList?: { TaxRateDetail?: Array<{ TaxRateRef?: { value?: string } }> };
+  PurchaseTaxRateList?: { TaxRateDetail?: Array<{ TaxRateRef?: { value?: string } }> };
+}
+
 interface AccountMapping {
   id: number;
   company_id: number;
   qbo_inventory_account_id: string;
   qbo_ap_account_id: string;
   qbo_supply_expense_account_id?: string;
+  qbo_purchase_tax_code_id?: string;
   qbo_sales_account_id?: string;
   qbo_labour_sales_account_id?: string;
   qbo_ar_account_id?: string;
@@ -77,11 +85,13 @@ const QBOAccountMappingPage: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [accounts, setAccounts] = useState<QBOAccount[]>([]);
   const [accountTypes, setAccountTypes] = useState<any>({});
+  const [taxCodes, setTaxCodes] = useState<QBOTaxCode[]>([]);
   const [mapping, setMapping] = useState<AccountMapping | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<QBOConnectionStatus | null>(null);
   const [selectedInventoryAccount, setSelectedInventoryAccount] = useState<string>('');
   const [selectedAPAccount, setSelectedAPAccount] = useState<string>('');
   const [selectedSupplyExpenseAccount, setSelectedSupplyExpenseAccount] = useState<string>('');
+  const [selectedPurchaseTaxCode, setSelectedPurchaseTaxCode] = useState<string>('');
   const [selectedSalesAccount, setSelectedSalesAccount] = useState<string>('');
   const [selectedLabourSalesAccount, setSelectedLabourSalesAccount] = useState<string>('');
   const [selectedARAccount, setSelectedARAccount] = useState<string>('');
@@ -160,6 +170,9 @@ const QBOAccountMappingPage: React.FC = () => {
         setAccounts(accountsResponse.data.accounts);
         setAccountTypes(accountsResponse.data.accountTypes);
 
+        const taxCodesResponse = await api.get('/api/qbo-accounts/tax-codes', { params });
+        setTaxCodes(taxCodesResponse.data.taxCodes || []);
+
         // Load current mapping
         const mappingResponse = await api.get('/api/qbo-accounts/mapping', { params });
         if (mappingResponse.data.mapping) {
@@ -167,6 +180,7 @@ const QBOAccountMappingPage: React.FC = () => {
           setSelectedInventoryAccount(mappingResponse.data.mapping.qbo_inventory_account_id);
           setSelectedAPAccount(mappingResponse.data.mapping.qbo_ap_account_id);
           setSelectedSupplyExpenseAccount(mappingResponse.data.mapping.qbo_supply_expense_account_id || '');
+          setSelectedPurchaseTaxCode(mappingResponse.data.mapping.qbo_purchase_tax_code_id || '');
           setSelectedSalesAccount(mappingResponse.data.mapping.qbo_sales_account_id || '');
           setSelectedLabourSalesAccount(mappingResponse.data.mapping.qbo_labour_sales_account_id || '');
           setSelectedARAccount(mappingResponse.data.mapping.qbo_ar_account_id || '');
@@ -199,6 +213,7 @@ const QBOAccountMappingPage: React.FC = () => {
           qbo_inventory_account_id: selectedInventoryAccount,
           qbo_ap_account_id: selectedAPAccount,
           qbo_supply_expense_account_id: selectedSupplyExpenseAccount,
+          qbo_purchase_tax_code_id: selectedPurchaseTaxCode || null,
           qbo_sales_account_id: selectedSalesAccount,
           qbo_labour_sales_account_id: selectedLabourSalesAccount,
           qbo_ar_account_id: selectedARAccount,
@@ -240,6 +255,7 @@ const QBOAccountMappingPage: React.FC = () => {
       setSelectedInventoryAccount('');
       setSelectedAPAccount('');
       setSelectedSupplyExpenseAccount('');
+      setSelectedPurchaseTaxCode('');
       setSelectedSalesAccount('');
       setSelectedLabourSalesAccount('');
       setSelectedARAccount('');
@@ -263,6 +279,8 @@ const QBOAccountMappingPage: React.FC = () => {
     const accountNumber = account.AccountNumber ? `#${account.AccountNumber}` : '';
     return `${account.Name} ${accountNumber} (${account.AccountType})`;
   };
+
+  const getTaxCodeDisplayName = (taxCode: QBOTaxCode) => `${taxCode.Name} (Id: ${taxCode.Id})`;
 
   const getAccountOptions = (classification: string) => {
     let filteredAccounts = accounts.filter(acc => acc.Classification === classification);
@@ -496,52 +514,76 @@ const QBOAccountMappingPage: React.FC = () => {
                Purchase Order Account Mapping
              </Typography>
              
-             <Grid container spacing={3}>
-               {/* Supply Expense Account */}
-               <Grid item xs={12} md={6}>
-                 <FormControl fullWidth>
-                   <InputLabel>Supply Expense Account</InputLabel>
-                   <Select
-                     value={selectedSupplyExpenseAccount}
-                     onChange={(e) => setSelectedSupplyExpenseAccount(e.target.value)}
-                     label="Supply Expense Account"
-                   >
-                     <MenuItem value="">
-                       <em>Optional - Select an expense account</em>
-                     </MenuItem>
-                     {getAccountOptions('Expense').map((account) => (
-                       <MenuItem key={account.Id} value={account.Id}>
-                         {getAccountDisplayName(account)}
+               <Grid container spacing={3}>
+                 {/* Supply Expense Account */}
+                 <Grid item xs={12} md={6}>
+                   <FormControl fullWidth>
+                     <InputLabel>Supply Expense Account</InputLabel>
+                     <Select
+                       value={selectedSupplyExpenseAccount}
+                       onChange={(e) => setSelectedSupplyExpenseAccount(e.target.value)}
+                       label="Supply Expense Account"
+                     >
+                       <MenuItem value="">
+                         <em>Optional - Select an expense account</em>
                        </MenuItem>
-                     ))}
-                   </Select>
-                 </FormControl>
-                 <Typography variant="caption" color="text.secondary">
-                   Account for supply items (e.g., Office Supplies, Tools, etc.) - Optional
-                 </Typography>
-               </Grid>
+                       {getAccountOptions('Expense').map((account) => (
+                         <MenuItem key={account.Id} value={account.Id}>
+                           {getAccountDisplayName(account)}
+                         </MenuItem>
+                       ))}
+                     </Select>
+                   </FormControl>
+                   <Typography variant="caption" color="text.secondary">
+                     Account for supply items (e.g., Office Supplies, Tools, etc.) - Optional
+                   </Typography>
+                 </Grid>
+  
+                 {/* AP Account */}
+                 <Grid item xs={12} md={6}>
+                   <FormControl fullWidth>
+                     <InputLabel>Accounts Payable</InputLabel>
+                     <Select
+                       value={selectedAPAccount}
+                       onChange={(e) => setSelectedAPAccount(e.target.value)}
+                       label="Accounts Payable"
+                     >
+                       {getAccountOptions('Liability').map((account) => (
+                         <MenuItem key={account.Id} value={account.Id}>
+                           {getAccountDisplayName(account)}
+                         </MenuItem>
+                       ))}
+                     </Select>
+                   </FormControl>
+                   <Typography variant="caption" color="text.secondary">
+                     Account for tracking vendor payables (usually "Accounts Payable")
+                   </Typography>
+                 </Grid>
 
-               {/* AP Account */}
-               <Grid item xs={12} md={6}>
-                 <FormControl fullWidth>
-                   <InputLabel>Accounts Payable</InputLabel>
-                   <Select
-                     value={selectedAPAccount}
-                     onChange={(e) => setSelectedAPAccount(e.target.value)}
-                     label="Accounts Payable"
-                   >
-                     {getAccountOptions('Liability').map((account) => (
-                       <MenuItem key={account.Id} value={account.Id}>
-                         {getAccountDisplayName(account)}
+                 {/* Purchase Tax Code */}
+                 <Grid item xs={12} md={6}>
+                   <FormControl fullWidth>
+                     <InputLabel>Purchase Tax Code</InputLabel>
+                     <Select
+                       value={selectedPurchaseTaxCode}
+                       onChange={(e) => setSelectedPurchaseTaxCode(e.target.value)}
+                       label="Purchase Tax Code"
+                     >
+                       <MenuItem value="">
+                         <em>Optional - Let QuickBooks decide</em>
                        </MenuItem>
-                     ))}
-                   </Select>
-                 </FormControl>
-                 <Typography variant="caption" color="text.secondary">
-                   Account for tracking vendor payables (usually "Accounts Payable")
-                 </Typography>
+                       {taxCodes.map((taxCode) => (
+                         <MenuItem key={taxCode.Id} value={taxCode.Id}>
+                           {getTaxCodeDisplayName(taxCode)}
+                         </MenuItem>
+                       ))}
+                     </Select>
+                   </FormControl>
+                   <Typography variant="caption" color="text.secondary">
+                     Tax code applied to bill lines for GST/HST; set this if QuickBooks marks purchases out of scope.
+                   </Typography>
+                 </Grid>
                </Grid>
-             </Grid>
 
                            {/* Sales Order Account Mapping */}
               <Typography variant="h6" sx={{ mt: 4, mb: 2 }}>
@@ -755,24 +797,32 @@ const QBOAccountMappingPage: React.FC = () => {
                 <Typography variant="subtitle2" color="primary" sx={{ mt: 2, mb: 1 }}>
                   Purchase Order Accounts
                 </Typography>
-                <Grid container spacing={2}>
-                  <Grid item xs={12} md={6}>
-                    <Typography variant="body2" color="text.secondary">
-                      Supply Expense: {(() => {
-                        const account = accounts.find(a => a.Id === mapping.qbo_supply_expense_account_id);
-                        return account ? `${account.Name}${account.AccountNumber ? ` (#${account.AccountNumber})` : ''}` : 'Not configured';
-                      })()}
-                    </Typography>
+                  <Grid container spacing={2}>
+                    <Grid item xs={12} md={6}>
+                      <Typography variant="body2" color="text.secondary">
+                        Supply Expense: {(() => {
+                          const account = accounts.find(a => a.Id === mapping.qbo_supply_expense_account_id);
+                          return account ? `${account.Name}${account.AccountNumber ? ` (#${account.AccountNumber})` : ''}` : 'Not configured';
+                        })()}
+                      </Typography>
+                    </Grid>
+                    <Grid item xs={12} md={6}>
+                      <Typography variant="body2" color="text.secondary">
+                        Accounts Payable: {(() => {
+                          const account = accounts.find(a => a.Id === mapping.qbo_ap_account_id);
+                          return account ? `${account.Name}${account.AccountNumber ? ` (#${account.AccountNumber})` : ''}` : 'Not configured';
+                        })()}
+                      </Typography>
+                    </Grid>
+                    <Grid item xs={12} md={6}>
+                      <Typography variant="body2" color="text.secondary">
+                        Purchase Tax Code: {(() => {
+                          const taxCode = taxCodes.find(tc => tc.Id === mapping.qbo_purchase_tax_code_id);
+                          return taxCode ? `${taxCode.Name} (Id: ${taxCode.Id})` : 'Not configured';
+                        })()}
+                      </Typography>
+                    </Grid>
                   </Grid>
-                  <Grid item xs={12} md={6}>
-                    <Typography variant="body2" color="text.secondary">
-                      Accounts Payable: {(() => {
-                        const account = accounts.find(a => a.Id === mapping.qbo_ap_account_id);
-                        return account ? `${account.Name}${account.AccountNumber ? ` (#${account.AccountNumber})` : ''}` : 'Not configured';
-                      })()}
-                    </Typography>
-                  </Grid>
-                </Grid>
 
                                  {/* Sales Order Accounts */}
                  <Typography variant="subtitle2" color="primary" sx={{ mt: 2, mb: 1 }}>

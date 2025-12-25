@@ -463,14 +463,17 @@ router.post('/:id/export-to-qbo', adminOnly, async (req, res) => {
       return res.status(400).json({ error: 'QuickBooks account mapping not configured. Please set up account mapping in QBO Settings first.' });
     }
     const accountMapping = accountMappingResult.rows[0];
-    const taxableTaxCodeId = await resolvePurchaseTaxableQboTaxCodeId(
+    const mappedTaxCodeId = (accountMapping.qbo_purchase_tax_code_id || '').trim();
+    const taxableTaxCodeId = mappedTaxCodeId || await resolvePurchaseTaxableQboTaxCodeId(
       accessContext.accessToken,
       accessContext.realmId
     );
     if (!taxableTaxCodeId) {
       console.warn('No taxable QBO purchase tax code found; bill lines may be treated as out-of-scope.');
+    } else if (mappedTaxCodeId) {
+      console.log('Using mapped QBO purchase tax code for bill lines:', taxableTaxCodeId);
     } else {
-      console.log('Using QBO purchase tax code for bill lines:', taxableTaxCodeId);
+      console.log('Using resolved QBO purchase tax code for bill lines:', taxableTaxCodeId);
     }
     const exportDate = new Date().toISOString().slice(0, 10);
 
@@ -709,14 +712,17 @@ router.post('/:id/export-to-qbo-with-vendor', adminOnly, async (req, res) => {
       return res.status(400).json({ error: 'QuickBooks account mapping not configured. Please set up account mapping in QBO Settings first.' });
     }
     const accountMapping = accountMappingResult.rows[0];
-    const taxableTaxCodeId = await resolvePurchaseTaxableQboTaxCodeId(
+    const mappedTaxCodeId = (accountMapping.qbo_purchase_tax_code_id || '').trim();
+    const taxableTaxCodeId = mappedTaxCodeId || await resolvePurchaseTaxableQboTaxCodeId(
       accessContext.accessToken,
       accessContext.realmId
     );
     if (!taxableTaxCodeId) {
       console.warn('No taxable QBO purchase tax code found; bill lines may be treated as out-of-scope.');
+    } else if (mappedTaxCodeId) {
+      console.log('Using mapped QBO purchase tax code for bill lines:', taxableTaxCodeId);
     } else {
-      console.log('Using QBO purchase tax code for bill lines:', taxableTaxCodeId);
+      console.log('Using resolved QBO purchase tax code for bill lines:', taxableTaxCodeId);
     }
     const exportDate = new Date().toISOString().slice(0, 10);
 
@@ -2219,19 +2225,20 @@ router.get('/qbo-account-mapping/:companyId', adminOnly, async (req, res) => {
 
 router.post('/qbo-account-mapping/:companyId', adminOnly, async (req, res) => {
   const { companyId } = req.params;
-  const { qbo_inventory_account_id, qbo_ap_account_id, qbo_supply_expense_account_id } = req.body;
+  const { qbo_inventory_account_id, qbo_ap_account_id, qbo_supply_expense_account_id, qbo_purchase_tax_code_id } = req.body;
   try {
     // Upsert mapping
     const result = await pool.query(
-      `INSERT INTO qbo_account_mapping (company_id, qbo_inventory_account_id, qbo_ap_account_id, qbo_supply_expense_account_id)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO qbo_account_mapping (company_id, qbo_inventory_account_id, qbo_ap_account_id, qbo_supply_expense_account_id, qbo_purchase_tax_code_id)
+       VALUES ($1, $2, $3, $4, $5)
        ON CONFLICT (company_id) DO UPDATE SET
          qbo_inventory_account_id = EXCLUDED.qbo_inventory_account_id,
          qbo_ap_account_id = EXCLUDED.qbo_ap_account_id,
          qbo_supply_expense_account_id = EXCLUDED.qbo_supply_expense_account_id,
+         qbo_purchase_tax_code_id = EXCLUDED.qbo_purchase_tax_code_id,
          updated_at = NOW()
        RETURNING *`,
-      [companyId, qbo_inventory_account_id, qbo_ap_account_id, qbo_supply_expense_account_id]
+      [companyId, qbo_inventory_account_id, qbo_ap_account_id, qbo_supply_expense_account_id, qbo_purchase_tax_code_id]
     );
     res.json(result.rows[0]);
   } catch (err) {

@@ -52,14 +52,17 @@ router.post('/export-purchase-order/:poId', async (req, res) => {
     }
     const accountMapping = mappingResult.rows[0];
 
-    const taxableTaxCodeId = await resolvePurchaseTaxableQboTaxCodeId(
+    const mappedTaxCodeId = (accountMapping.qbo_purchase_tax_code_id || '').trim();
+    const taxableTaxCodeId = mappedTaxCodeId || await resolvePurchaseTaxableQboTaxCodeId(
       accessContext.accessToken,
       accessContext.realmId
     );
     if (!taxableTaxCodeId) {
       console.warn('No taxable QBO purchase tax code found; bill lines may be treated as out-of-scope.');
+    } else if (mappedTaxCodeId) {
+      console.log('Using mapped QBO purchase tax code for bill lines:', taxableTaxCodeId);
     } else {
-      console.log('Using QBO purchase tax code for bill lines:', taxableTaxCodeId);
+      console.log('Using resolved QBO purchase tax code for bill lines:', taxableTaxCodeId);
     }
 
     // 2. Get the Purchase Order details

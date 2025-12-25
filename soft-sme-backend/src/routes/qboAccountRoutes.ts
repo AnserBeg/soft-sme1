@@ -122,6 +122,52 @@ router.get('/accounts', async (req, res) => {
   }
 });
 
+// Get QBO tax codes for mapping
+router.get('/tax-codes', async (req, res) => {
+  try {
+    const companyId = await resolveQboCompanyId(req);
+    if (!companyId) {
+      return res.status(400).json({ error: 'Company ID not found' });
+    }
+
+    console.log('Fetching QBO tax codes for company_id:', companyId);
+
+    const qboResult = await pool.query('SELECT * FROM qbo_connection WHERE company_id = $1', [companyId]);
+    if (qboResult.rows.length === 0) {
+      return res.status(400).json({ error: 'QuickBooks connection not found. Please connect your QuickBooks account first.' });
+    }
+
+    let accessContext;
+    try {
+      accessContext = await ensureFreshQboAccess(pool, qboResult.rows[0], companyId);
+    } catch (refreshError) {
+      console.error('Error refreshing QBO token:', refreshError instanceof Error ? refreshError.message : String(refreshError));
+      return res.status(401).json({ error: 'QuickBooks token expired and could not be refreshed. Please reconnect your account.' });
+    }
+
+    const taxCodesResponse = await qboHttp.get(
+      `${getQboApiBaseUrl()}/v3/company/${accessContext.realmId}/query`,
+      {
+        headers: {
+          'Authorization': `Bearer ${accessContext.accessToken}`,
+          'Accept': 'application/json',
+          'Content-Type': 'application/json'
+        },
+        params: {
+          query: 'SELECT Id, Name, Active, SalesTaxRateList, PurchaseTaxRateList FROM TaxCode WHERE Active = true ORDER BY Name',
+          minorversion: '75'
+        }
+      }
+    );
+
+    const taxCodes = taxCodesResponse.data?.QueryResponse?.TaxCode || [];
+    res.json({ taxCodes });
+  } catch (error) {
+    console.error('Error fetching QBO tax codes:', error instanceof Error ? error.message : String(error));
+    res.status(500).json({ error: 'Failed to fetch QuickBooks tax codes' });
+  }
+});
+
 // Get current account mapping
 router.get('/mapping', async (req, res) => {
   try {
@@ -160,7 +206,8 @@ router.post('/mapping', async (req, res) => {
           qbo_cost_of_labour_account_id,
           qbo_cost_of_materials_account_id,
           qbo_labour_expense_reduction_account_id,
-          qbo_overhead_cogs_account_id
+          qbo_overhead_cogs_account_id,
+          qbo_purchase_tax_code_id
         } = req.body;
   
   try {
@@ -190,9 +237,10 @@ router.post('/mapping', async (req, res) => {
         qbo_cost_of_labour_account_id,
         qbo_cost_of_materials_account_id,
         qbo_labour_expense_reduction_account_id,
-        qbo_overhead_cogs_account_id
+        qbo_overhead_cogs_account_id,
+        qbo_purchase_tax_code_id
       )
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
         ON CONFLICT (company_id) DO UPDATE SET
         qbo_inventory_account_id = EXCLUDED.qbo_inventory_account_id,
         qbo_ap_account_id = EXCLUDED.qbo_ap_account_id,
@@ -205,9 +253,10 @@ router.post('/mapping', async (req, res) => {
         qbo_cost_of_materials_account_id = EXCLUDED.qbo_cost_of_materials_account_id,
         qbo_labour_expense_reduction_account_id = EXCLUDED.qbo_labour_expense_reduction_account_id,
         qbo_overhead_cogs_account_id = EXCLUDED.qbo_overhead_cogs_account_id,
+        qbo_purchase_tax_code_id = EXCLUDED.qbo_purchase_tax_code_id,
         updated_at = NOW()
         RETURNING *`,
-        [companyId, qbo_inventory_account_id, qbo_ap_account_id, qbo_supply_expense_account_id, qbo_sales_account_id, qbo_labour_sales_account_id, qbo_ar_account_id, qbo_cogs_account_id, qbo_cost_of_labour_account_id, qbo_cost_of_materials_account_id, qbo_labour_expense_reduction_account_id, qbo_overhead_cogs_account_id]
+        [companyId, qbo_inventory_account_id, qbo_ap_account_id, qbo_supply_expense_account_id, qbo_sales_account_id, qbo_labour_sales_account_id, qbo_ar_account_id, qbo_cogs_account_id, qbo_cost_of_labour_account_id, qbo_cost_of_materials_account_id, qbo_labour_expense_reduction_account_id, qbo_overhead_cogs_account_id, qbo_purchase_tax_code_id]
     );
 
     console.log('Account mapping saved successfully');
