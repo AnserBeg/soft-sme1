@@ -1565,9 +1565,12 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
 
       // Add labour COGS entries (if any labour)
       if (totalLabourCOGS > 0) {
-        if (!accountMapping.qbo_cost_of_labour_account_id || !accountMapping.qbo_labour_expense_reduction_account_id) {
+        const labourDebitAccount =
+          accountMapping.qbo_cost_of_labour_account_id || accountMapping.qbo_cogs_account_id;
+        if (!labourDebitAccount || !accountMapping.qbo_labour_expense_reduction_account_id) {
           console.warn('Labour COGS skipped due to missing QBO labour account mapping.', {
             costOfLabourAccount: accountMapping.qbo_cost_of_labour_account_id,
+            cogsAccount: accountMapping.qbo_cogs_account_id,
             labourExpenseReductionAccount: accountMapping.qbo_labour_expense_reduction_account_id
           });
         } else {
@@ -1579,7 +1582,7 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
             JournalEntryLineDetail: {
               PostingType: 'Debit',
               AccountRef: {
-                value: accountMapping.qbo_cost_of_labour_account_id
+                value: labourDebitAccount
               }
             }
           });
@@ -1973,9 +1976,12 @@ router.post('/:id/export-to-qbo-with-customer', async (req: Request, res: Respon
 
       // Add labour COGS entries (if any labour)
       if (totalLabourCOGS > 0) {
-        if (!accountMapping.qbo_cost_of_labour_account_id || !accountMapping.qbo_labour_expense_reduction_account_id) {
+        const labourDebitAccount =
+          accountMapping.qbo_cost_of_labour_account_id || accountMapping.qbo_cogs_account_id;
+        if (!labourDebitAccount || !accountMapping.qbo_labour_expense_reduction_account_id) {
           console.warn('Labour COGS skipped due to missing QBO labour account mapping.', {
             costOfLabourAccount: accountMapping.qbo_cost_of_labour_account_id,
+            cogsAccount: accountMapping.qbo_cogs_account_id,
             labourExpenseReductionAccount: accountMapping.qbo_labour_expense_reduction_account_id
           });
         } else {
@@ -1986,7 +1992,7 @@ router.post('/:id/export-to-qbo-with-customer', async (req: Request, res: Respon
             JournalEntryLineDetail: {
               PostingType: 'Debit',
               AccountRef: {
-                value: accountMapping.qbo_cost_of_labour_account_id
+                value: labourDebitAccount
               }
             }
           });
