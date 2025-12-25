@@ -590,6 +590,7 @@ router.post('/:id/export-to-qbo', adminOnly, async (req, res) => {
     
     console.log('Final QBO bill lines count:', qboBillLines.length);
 
+    const billDocNumber = (po.bill_number || '').trim() || po.purchase_number;
     const qboBill = {
       VendorRef: {
         value: await getQBOVendorId(vendor.vendor_name, accessContext.accessToken, accessContext.realmId)
@@ -598,7 +599,7 @@ router.post('/:id/export-to-qbo', adminOnly, async (req, res) => {
       APAccountRef: {
         value: accountMapping.qbo_ap_account_id
       },
-      DocNumber: po.purchase_number,
+      DocNumber: billDocNumber,
       TxnDate: exportDate,
       PrivateNote: `Imported from Aiven - PO: ${po.purchase_number}`
     };
@@ -737,6 +738,7 @@ router.post('/:id/export-to-qbo-with-vendor', adminOnly, async (req, res) => {
     }
 
     // Create QBO Bill with individual line items for stock items
+    const billDocNumber = (po.bill_number || '').trim() || po.purchase_number;
     const qboBill = {
       VendorRef: {
         value: qboVendorId
@@ -758,7 +760,7 @@ router.post('/:id/export-to-qbo-with-vendor', adminOnly, async (req, res) => {
       APAccountRef: {
         value: accountMapping.qbo_ap_account_id
       },
-      DocNumber: po.purchase_number,
+      DocNumber: billDocNumber,
       TxnDate: exportDate,
       DueDate: po.purchase_date,
       PrivateNote: `Exported from Aiven Purchase Order #${po.purchase_id}`

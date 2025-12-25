@@ -196,6 +196,7 @@ router.post('/export-purchase-order/:poId', async (req, res) => {
 
     const exportDate = new Date().toISOString().slice(0, 10);
 
+    const billDocNumber = (purchaseOrder.bill_number || '').trim() || purchaseOrder.purchase_number || `PO-${purchaseOrder.purchase_id}`;
     const billData = {
       VendorRef: {
         value: qboVendorId
@@ -204,7 +205,7 @@ router.post('/export-purchase-order/:poId', async (req, res) => {
       APAccountRef: {
         value: accountMapping.qbo_ap_account_id
       },
-      DocNumber: `PO-${purchaseOrder.purchase_id}`,
+      DocNumber: billDocNumber,
       TxnDate: exportDate,
       DueDate: purchaseOrder.purchase_date,
       PrivateNote: `Exported from Aiven Purchase Order #${purchaseOrder.purchase_id}`
