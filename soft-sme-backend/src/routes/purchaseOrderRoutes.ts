@@ -6,7 +6,6 @@ import { getNextPurchaseOrderNumberForYear } from '../utils/sequence';
 import { qboHttp } from '../utils/qboHttp'; // Added for QBO API integration
 import { ensureFreshQboAccess } from '../utils/qboTokens';
 import { getQboApiBaseUrl } from '../utils/qboBaseUrl';
-import { resolveTaxableQboTaxCodeId } from '../utils/qboTaxCodes';
 import { getLogoImageSource } from '../utils/pdfLogoHelper';
 import { PurchaseOrderCalculationService } from '../services/PurchaseOrderCalculationService';
 import { PurchaseOrderService } from '../services/PurchaseOrderService';
@@ -463,16 +462,6 @@ router.post('/:id/export-to-qbo', adminOnly, async (req, res) => {
       return res.status(400).json({ error: 'QuickBooks account mapping not configured. Please set up account mapping in QBO Settings first.' });
     }
     const accountMapping = accountMappingResult.rows[0];
-    const taxableTaxCodeId = await resolveTaxableQboTaxCodeId(
-      accessContext.accessToken,
-      accessContext.realmId
-    );
-    if (!taxableTaxCodeId) {
-      return res.status(400).json({
-        error: 'QBO_TAX_CODE_NOT_FOUND',
-        message: 'QuickBooks requires a taxable tax code on bill lines. Please create or activate a GST/HST tax code in QBO and try again.'
-      });
-    }
     const exportDate = new Date().toISOString().slice(0, 10);
 
     // Check if vendor exists in QuickBooks first
@@ -553,10 +542,7 @@ router.post('/:id/export-to-qbo', adminOnly, async (req, res) => {
           AccountRef: {
             value: accountMapping.qbo_inventory_account_id
           },
-          BillableStatus: 'NotBillable',
-          TaxCodeRef: {
-            value: taxableTaxCodeId
-          }
+          BillableStatus: 'NotBillable'
         }
       });
     });
@@ -577,10 +563,7 @@ router.post('/:id/export-to-qbo', adminOnly, async (req, res) => {
           AccountRef: {
             value: accountMapping.qbo_supply_expense_account_id
           },
-          BillableStatus: 'NotBillable',
-          TaxCodeRef: {
-            value: taxableTaxCodeId
-          }
+          BillableStatus: 'NotBillable'
         }
       });
       });
@@ -711,16 +694,6 @@ router.post('/:id/export-to-qbo-with-vendor', adminOnly, async (req, res) => {
       return res.status(400).json({ error: 'QuickBooks account mapping not configured. Please set up account mapping in QBO Settings first.' });
     }
     const accountMapping = accountMappingResult.rows[0];
-    const taxableTaxCodeId = await resolveTaxableQboTaxCodeId(
-      accessContext.accessToken,
-      accessContext.realmId
-    );
-    if (!taxableTaxCodeId) {
-      return res.status(400).json({
-        error: 'QBO_TAX_CODE_NOT_FOUND',
-        message: 'QuickBooks requires a taxable tax code on bill lines. Please create or activate a GST/HST tax code in QBO and try again.'
-      });
-    }
     const exportDate = new Date().toISOString().slice(0, 10);
 
     // Create vendor in QBO first
@@ -752,10 +725,7 @@ router.post('/:id/export-to-qbo-with-vendor', adminOnly, async (req, res) => {
           AccountRef: {
             value: accountMapping.qbo_inventory_account_id
           },
-          BillableStatus: 'NotBillable',
-          TaxCodeRef: {
-            value: taxableTaxCodeId
-          }
+          BillableStatus: 'NotBillable'
         }
       })),
       APAccountRef: {

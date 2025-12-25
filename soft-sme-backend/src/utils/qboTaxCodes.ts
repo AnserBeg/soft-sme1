@@ -24,11 +24,17 @@ const hasSalesTaxRates = (code: any): boolean => {
   return Array.isArray(list) && list.length > 0;
 };
 
+const hasPurchaseTaxRates = (code: any): boolean => {
+  const list = code?.PurchaseTaxRateList?.TaxRateDetail;
+  return Array.isArray(list) && list.length > 0;
+};
+
 const getTaxCodeName = (code: any): string => String(code?.Name || '');
 
-export const resolveTaxableQboTaxCodeId = async (
+const resolveTaxCodeId = async (
   accessToken: string,
-  realmId: string
+  realmId: string,
+  preferPurchaseRates: boolean
 ): Promise<string | null> => {
   try {
     const response = await qboHttp.get(
@@ -40,7 +46,7 @@ export const resolveTaxableQboTaxCodeId = async (
           'Content-Type': 'application/json'
         },
         params: {
-          query: 'SELECT Id, Name, SalesTaxRateList FROM TaxCode WHERE Active = true',
+          query: 'SELECT Id, Name, SalesTaxRateList, PurchaseTaxRateList FROM TaxCode WHERE Active = true',
           minorversion: '75'
         }
       }
@@ -56,8 +62,9 @@ export const resolveTaxableQboTaxCodeId = async (
       return null;
     }
 
-    const salesTaxableCodes = taxableCodes.filter((code: any) => hasSalesTaxRates(code));
-    const preferredPool = salesTaxableCodes.length > 0 ? salesTaxableCodes : taxableCodes;
+    const rateFilter = preferPurchaseRates ? hasPurchaseTaxRates : hasSalesTaxRates;
+    const rateMatched = taxableCodes.filter((code: any) => rateFilter(code));
+    const preferredPool = rateMatched.length > 0 ? rateMatched : taxableCodes;
 
     const exactMatch = preferredPool.find((code: any) =>
       isTaxablePreferredName(getTaxCodeName(code))
@@ -75,3 +82,15 @@ export const resolveTaxableQboTaxCodeId = async (
     return null;
   }
 };
+
+export const resolveTaxableQboTaxCodeId = async (
+  accessToken: string,
+  realmId: string
+): Promise<string | null> => {
+  return resolveTaxCodeId(accessToken, realmId, false);
+};
+
+export const resolvePurchaseTaxableQboTaxCodeId = async (
+  accessToken: string,
+  realmId: string
+): Promise<string | null> => resolveTaxCodeId(accessToken, realmId, true);
