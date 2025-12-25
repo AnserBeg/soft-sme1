@@ -4,7 +4,7 @@ import { pool } from '../db';
 import { resolveTenantCompanyIdFromRequest } from '../utils/companyContext';
 import { ensureFreshQboAccess } from '../utils/qboTokens';
 import { getQboApiBaseUrl } from '../utils/qboBaseUrl';
-import { resolvePurchaseTaxableQboTaxCodeId } from '../utils/qboTaxCodes';
+import { fetchQboTaxCodeById, resolvePurchaseTaxableQboTaxCodeId } from '../utils/qboTaxCodes';
 
 const router = express.Router();
 const escapeQboQueryValue = (value: string): string => value.replace(/'/g, "''");
@@ -53,6 +53,23 @@ router.post('/export-purchase-order/:poId', async (req, res) => {
     const accountMapping = mappingResult.rows[0];
 
     const mappedTaxCodeId = (accountMapping.qbo_purchase_tax_code_id || '').trim();
+    const mappedTaxCode = mappedTaxCodeId
+      ? await fetchQboTaxCodeById(accessContext.accessToken, accessContext.realmId, mappedTaxCodeId)
+      : null;
+    if (mappedTaxCodeId && mappedTaxCode) {
+      const purchaseRates = mappedTaxCode?.PurchaseTaxRateList?.TaxRateDetail || [];
+      console.log('Mapped QBO purchase tax code details:', {
+        id: mappedTaxCode.Id,
+        name: mappedTaxCode.Name,
+        purchaseRateCount: Array.isArray(purchaseRates) ? purchaseRates.length : 0
+      });
+      if (!Array.isArray(purchaseRates) || purchaseRates.length === 0) {
+        return res.status(400).json({
+          error: 'QBO_PURCHASE_TAX_CODE_INVALID',
+          message: 'Selected QBO purchase tax code has no purchase tax rates. Choose a tax code with GST/HST purchase rates.'
+        });
+      }
+    }
     const taxableTaxCodeId = mappedTaxCodeId || await resolvePurchaseTaxableQboTaxCodeId(
       accessContext.accessToken,
       accessContext.realmId
@@ -197,7 +214,9 @@ router.post('/export-purchase-order/:poId', async (req, res) => {
     });
   }
 
-    const exportDate = new Date().toISOString().slice(0, 10);
+    const exportDate = purchaseOrder.purchase_date
+      ? new Date(purchaseOrder.purchase_date).toISOString().slice(0, 10)
+      : new Date().toISOString().slice(0, 10);
 
     const billDocNumber = (purchaseOrder.bill_number || '').trim() || purchaseOrder.purchase_number || `PO-${purchaseOrder.purchase_id}`;
     const billData = {

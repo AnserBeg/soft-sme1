@@ -7,7 +7,7 @@ import { qboHttp } from '../utils/qboHttp'; // Added for QBO API integration
 import { ensureFreshQboAccess } from '../utils/qboTokens';
 import { getQboApiBaseUrl } from '../utils/qboBaseUrl';
 import { getLogoImageSource } from '../utils/pdfLogoHelper';
-import { resolvePurchaseTaxableQboTaxCodeId } from '../utils/qboTaxCodes';
+import { fetchQboTaxCodeById, resolvePurchaseTaxableQboTaxCodeId } from '../utils/qboTaxCodes';
 import { PurchaseOrderCalculationService } from '../services/PurchaseOrderCalculationService';
 import { PurchaseOrderService } from '../services/PurchaseOrderService';
 import { InventoryService } from '../services/InventoryService';
@@ -477,6 +477,23 @@ router.post('/:id/export-to-qbo', adminOnly, async (req, res) => {
     }
     const accountMapping = accountMappingResult.rows[0];
     const mappedTaxCodeId = (accountMapping.qbo_purchase_tax_code_id || '').trim();
+    const mappedTaxCode = mappedTaxCodeId
+      ? await fetchQboTaxCodeById(accessContext.accessToken, accessContext.realmId, mappedTaxCodeId)
+      : null;
+    if (mappedTaxCodeId && mappedTaxCode) {
+      const purchaseRates = mappedTaxCode?.PurchaseTaxRateList?.TaxRateDetail || [];
+      console.log('Mapped QBO purchase tax code details:', {
+        id: mappedTaxCode.Id,
+        name: mappedTaxCode.Name,
+        purchaseRateCount: Array.isArray(purchaseRates) ? purchaseRates.length : 0
+      });
+      if (!Array.isArray(purchaseRates) || purchaseRates.length === 0) {
+        return res.status(400).json({
+          error: 'QBO_PURCHASE_TAX_CODE_INVALID',
+          message: 'Selected QBO purchase tax code has no purchase tax rates. Choose a tax code with GST/HST purchase rates.'
+        });
+      }
+    }
     const taxableTaxCodeId = mappedTaxCodeId || await resolvePurchaseTaxableQboTaxCodeId(
       accessContext.accessToken,
       accessContext.realmId
@@ -488,7 +505,9 @@ router.post('/:id/export-to-qbo', adminOnly, async (req, res) => {
     } else {
       console.log('Using resolved QBO purchase tax code for bill lines:', taxableTaxCodeId);
     }
-    const exportDate = new Date().toISOString().slice(0, 10);
+    const exportDate = po.purchase_date
+      ? new Date(po.purchase_date).toISOString().slice(0, 10)
+      : new Date().toISOString().slice(0, 10);
 
     // Check if vendor exists in QuickBooks first
     const vendorExists = await checkQBOVendorExists(vendor.vendor_name, accessContext.accessToken, accessContext.realmId);
@@ -729,6 +748,23 @@ router.post('/:id/export-to-qbo-with-vendor', adminOnly, async (req, res) => {
     }
     const accountMapping = accountMappingResult.rows[0];
     const mappedTaxCodeId = (accountMapping.qbo_purchase_tax_code_id || '').trim();
+    const mappedTaxCode = mappedTaxCodeId
+      ? await fetchQboTaxCodeById(accessContext.accessToken, accessContext.realmId, mappedTaxCodeId)
+      : null;
+    if (mappedTaxCodeId && mappedTaxCode) {
+      const purchaseRates = mappedTaxCode?.PurchaseTaxRateList?.TaxRateDetail || [];
+      console.log('Mapped QBO purchase tax code details:', {
+        id: mappedTaxCode.Id,
+        name: mappedTaxCode.Name,
+        purchaseRateCount: Array.isArray(purchaseRates) ? purchaseRates.length : 0
+      });
+      if (!Array.isArray(purchaseRates) || purchaseRates.length === 0) {
+        return res.status(400).json({
+          error: 'QBO_PURCHASE_TAX_CODE_INVALID',
+          message: 'Selected QBO purchase tax code has no purchase tax rates. Choose a tax code with GST/HST purchase rates.'
+        });
+      }
+    }
     const taxableTaxCodeId = mappedTaxCodeId || await resolvePurchaseTaxableQboTaxCodeId(
       accessContext.accessToken,
       accessContext.realmId
@@ -740,7 +776,9 @@ router.post('/:id/export-to-qbo-with-vendor', adminOnly, async (req, res) => {
     } else {
       console.log('Using resolved QBO purchase tax code for bill lines:', taxableTaxCodeId);
     }
-    const exportDate = new Date().toISOString().slice(0, 10);
+    const exportDate = po.purchase_date
+      ? new Date(po.purchase_date).toISOString().slice(0, 10)
+      : new Date().toISOString().slice(0, 10);
 
     // Create vendor in QBO first
     const qboVendorId = await createQBOVendor(vendorData, accessContext.accessToken, accessContext.realmId);

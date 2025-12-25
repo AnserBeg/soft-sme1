@@ -31,6 +31,40 @@ const hasPurchaseTaxRates = (code: any): boolean => {
 
 const getTaxCodeName = (code: any): string => String(code?.Name || '');
 
+export const fetchQboTaxCodeById = async (
+  accessToken: string,
+  realmId: string,
+  taxCodeId: string
+): Promise<any | null> => {
+  const trimmed = taxCodeId.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  try {
+    const response = await qboHttp.get(
+      `${getQboApiBaseUrl()}/v3/company/${realmId}/query`,
+      {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Accept': 'application/json',
+          'Content-Type': 'application/json'
+        },
+        params: {
+          query: `SELECT Id, Name, SalesTaxRateList, PurchaseTaxRateList FROM TaxCode WHERE Id = '${trimmed}'`,
+          minorversion: '75'
+        }
+      }
+    );
+
+    const taxCodes = response.data.QueryResponse?.TaxCode || [];
+    return Array.isArray(taxCodes) && taxCodes.length > 0 ? taxCodes[0] : null;
+  } catch (error) {
+    console.error('Error fetching QBO tax code by id:', error instanceof Error ? error.message : String(error));
+    return null;
+  }
+};
+
 const resolveTaxCodeId = async (
   accessToken: string,
   realmId: string,
