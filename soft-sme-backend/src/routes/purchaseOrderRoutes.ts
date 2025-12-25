@@ -634,6 +634,7 @@ router.post('/:id/export-to-qbo', adminOnly, async (req, res) => {
       APAccountRef: {
         value: accountMapping.qbo_ap_account_id
       },
+      GlobalTaxCalculation: 'TaxExcluded',
       DocNumber: billDocNumber,
       TxnDate: exportDate,
       PrivateNote: `Imported from Aiven - PO: ${po.purchase_number}`
@@ -820,6 +821,7 @@ router.post('/:id/export-to-qbo-with-vendor', adminOnly, async (req, res) => {
       APAccountRef: {
         value: accountMapping.qbo_ap_account_id
       },
+      GlobalTaxCalculation: 'TaxExcluded',
       DocNumber: billDocNumber,
       TxnDate: exportDate,
       DueDate: po.purchase_date,

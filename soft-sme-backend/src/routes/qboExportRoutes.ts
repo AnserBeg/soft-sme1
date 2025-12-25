@@ -227,6 +227,7 @@ router.post('/export-purchase-order/:poId', async (req, res) => {
       APAccountRef: {
         value: accountMapping.qbo_ap_account_id
       },
+      GlobalTaxCalculation: 'TaxExcluded',
       DocNumber: billDocNumber,
       TxnDate: exportDate,
       DueDate: purchaseOrder.purchase_date,
