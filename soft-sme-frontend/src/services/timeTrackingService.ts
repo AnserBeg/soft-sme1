@@ -16,6 +16,7 @@ export interface SalesOrder {
   product_name?: string;
   customer_name?: string;
   default_hourly_rate?: number;
+  status?: string;
 }
 
 export interface TimeEntry {
@@ -127,13 +128,16 @@ export const updateProfile = async (id: number, name: string, email: string, pho
 };
 
 // Sales order endpoints
-export const getSalesOrders = async (): Promise<SalesOrder[]> => {
+export const getSalesOrders = async (includeClosed = false): Promise<SalesOrder[]> => {
+  const cacheKey = includeClosed ? 'tt_sales_orders_cache_all' : 'tt_sales_orders_cache';
   try {
-    const response = await api.get('/api/time-tracking/sales-orders');
-    localStorage.setItem('tt_sales_orders_cache', JSON.stringify(response.data));
+    const response = await api.get('/api/time-tracking/sales-orders', {
+      params: includeClosed ? { include_closed: 'true' } : undefined
+    });
+    localStorage.setItem(cacheKey, JSON.stringify(response.data));
     return response.data;
   } catch (err) {
-    const cached = localStorage.getItem('tt_sales_orders_cache');
+    const cached = localStorage.getItem(cacheKey);
     return cached ? JSON.parse(cached) : [];
   }
 };

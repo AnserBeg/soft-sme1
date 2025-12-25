@@ -1013,22 +1013,25 @@ router.put('/profiles/:id', async (req: Request, res: Response) => {
 
 router.get('/sales-orders', async (req: Request, res: Response) => {
   try {
+    const includeClosed = ['true', '1', 'yes'].includes(String(req.query.include_closed || '').toLowerCase());
     // First, let's check what columns exist and what data we have
     const schemaCheck = await pool.query(
       "SELECT column_name FROM information_schema.columns WHERE table_name = 'salesorderhistory' AND column_name = 'product_name'"
     );
     console.log('Product name column exists:', schemaCheck.rows.length > 0);
     
+    const whereClause = includeClosed ? '' : "WHERE soh.status = 'Open'";
     const result = await pool.query(
       `SELECT 
         soh.sales_order_id as id, 
         soh.sales_order_number as number, 
         soh.product_name,
         soh.unit_number,
+        soh.status,
         COALESCE(cm.customer_name, 'Unknown Customer') as customer_name
        FROM salesorderhistory soh
        LEFT JOIN customermaster cm ON soh.customer_id = cm.customer_id
-       WHERE soh.status = 'Open'
+       ${whereClause}
        ORDER BY soh.sales_order_number`
     );
     console.log('Sales orders API response:', result.rows);
