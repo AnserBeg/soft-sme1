@@ -221,20 +221,29 @@ type AttendanceShiftWindow = {
   clock_out: string | null;
 };
 
+function normalizeToMinute(date: Date): Date {
+  const normalized = new Date(date.getTime());
+  normalized.setSeconds(0, 0);
+  return normalized;
+}
+
 function isTimeRangeCoveredByAttendanceShifts(start: Date, end: Date, shifts: AttendanceShiftWindow[]): boolean {
   if (shifts.length === 0) {
     return false;
   }
 
+  const normalizedStart = normalizeToMinute(start);
+  const normalizedEnd = normalizeToMinute(end);
+
   const sorted = shifts
     .map(shift => ({
-      start: new Date(shift.clock_in),
-      end: shift.clock_out ? new Date(shift.clock_out) : null,
+      start: normalizeToMinute(new Date(shift.clock_in)),
+      end: shift.clock_out ? normalizeToMinute(new Date(shift.clock_out)) : null,
     }))
     .sort((a, b) => a.start.getTime() - b.start.getTime());
 
-  const endTime = end.getTime();
-  let cursor = start.getTime();
+  const endTime = normalizedEnd.getTime();
+  let cursor = normalizedStart.getTime();
 
   for (const shift of sorted) {
     const shiftStart = shift.start.getTime();
@@ -478,7 +487,7 @@ router.post('/time-entries/clock-in', async (req: Request, res: Response) => {
     const unit_price = rateRes.rows.length > 0 ? parseFloat(rateRes.rows[0].value) : 0;
 
     const result = await pool.query(
-      'INSERT INTO time_entries (profile_id, sales_order_id, clock_in, unit_price) VALUES ($1, $2, NOW(), $3) RETURNING *',
+      'INSERT INTO time_entries (profile_id, sales_order_id, clock_in, unit_price) VALUES ($1, $2, date_trunc(\'minute\', NOW()), $3) RETURNING *',
       [profile_id, so_id, unit_price]
     );
     
@@ -520,14 +529,14 @@ router.post('/time-entries/:id/clock-out', async (req: Request, res: Response) =
     const dailyBreakStart = breakStartRes.rows.length > 0 ? breakStartRes.rows[0].value : null;
     const dailyBreakEnd = breakEndRes.rows.length > 0 ? breakEndRes.rows[0].value : null;
 
-    const clockOutTime = new Date();
+    const clockOutTime = normalizeToMinute(new Date());
     const timeEntryRes = await pool.query('SELECT clock_in FROM time_entries WHERE id = $1', [id]);
 
     if (timeEntryRes.rows.length === 0) {
       return res.status(404).json({ error: 'Time entry not found' });
     }
 
-    const clockInTime = new Date(timeEntryRes.rows[0].clock_in);
+    const clockInTime = normalizeToMinute(new Date(timeEntryRes.rows[0].clock_in));
     const effectiveDuration = calculateEffectiveDuration(
       clockInTime,
       clockOutTime,
@@ -622,8 +631,8 @@ router.post('/time-entries/manual', async (req: Request, res: Response) => {
 
   try {
     const requestTimeZone = req.headers['x-timezone'] as string | undefined;
-    const clockInTime = new Date(clock_in);
-    const clockOutTime = new Date(clock_out);
+    const clockInTime = normalizeToMinute(new Date(clock_in));
+    const clockOutTime = normalizeToMinute(new Date(clock_out));
 
     if (Number.isNaN(clockInTime.getTime()) || Number.isNaN(clockOutTime.getTime())) {
       return res.status(400).json({
@@ -646,7 +655,10 @@ router.post('/time-entries/manual', async (req: Request, res: Response) => {
       `SELECT id, clock_in, clock_out
        FROM attendance_shifts
        WHERE profile_id = $1
-         AND tstzrange(clock_in, COALESCE(clock_out, 'infinity'::timestamptz), '[)')
+         AND (CASE
+                WHEN clock_out IS NULL OR clock_out >= clock_in
+                  THEN tstzrange(clock_in, COALESCE(clock_out, 'infinity'::timestamptz), '[)')
+              END)
              && tstzrange($2::timestamptz, $3::timestamptz, '[)')
        ORDER BY clock_in ASC`,
       [profileId, clockInIso, clockOutIso]
@@ -682,7 +694,10 @@ router.post('/time-entries/manual', async (req: Request, res: Response) => {
       `SELECT id, clock_in, clock_out, sales_order_id
        FROM time_entries
        WHERE profile_id = $1
-         AND tstzrange(clock_in, COALESCE(clock_out, 'infinity'::timestamptz), '[)')
+         AND (CASE
+                WHEN clock_out IS NULL OR clock_out >= clock_in
+                  THEN tstzrange(clock_in, COALESCE(clock_out, 'infinity'::timestamptz), '[)')
+              END)
              && tstzrange($2::timestamptz, $3::timestamptz, '[)')`,
       [profileId, clockInIso, clockOutIso]
     );
@@ -770,7 +785,7 @@ router.put('/time-entries/:id', async (req: Request, res: Response) => {
       });
     }
 
-    const clockInTime = new Date(clock_in);
+    const clockInTime = normalizeToMinute(new Date(clock_in));
     if (Number.isNaN(clockInTime.getTime())) {
       return res.status(400).json({
         error: 'Validation Error',
@@ -780,7 +795,7 @@ router.put('/time-entries/:id', async (req: Request, res: Response) => {
 
     let clockOutTime: Date | null = null;
     if (clock_out) {
-      clockOutTime = new Date(clock_out);
+      clockOutTime = normalizeToMinute(new Date(clock_out));
       if (Number.isNaN(clockOutTime.getTime())) {
         return res.status(400).json({
           error: 'Validation Error',
@@ -801,41 +816,28 @@ router.put('/time-entries/:id', async (req: Request, res: Response) => {
     const clockInIso = clockInTime.toISOString();
     const clockOutIso = clockOutTime ? clockOutTime.toISOString() : null;
 
-    if (clockOutTime) {
-      const attendanceShiftRes = await pool.query(
-        `SELECT id, clock_in, clock_out
-         FROM attendance_shifts
-         WHERE profile_id = $1
-           AND tstzrange(clock_in, COALESCE(clock_out, 'infinity'::timestamptz), '[)')
-               && tstzrange($2::timestamptz, $3::timestamptz, '[)')
-         ORDER BY clock_in ASC`,
-        [profileId, clockInIso, clockOutIso]
-      );
+    const attendanceQueryEnd = clockOutTime ? clockOutTime : new Date(clockInTime.getTime() + 60 * 1000);
+    const attendanceQueryEndIso = attendanceQueryEnd.toISOString();
+    const attendanceCoverageEnd = clockOutTime ? clockOutTime : clockInTime;
 
-      if (!isTimeRangeCoveredByAttendanceShifts(clockInTime, clockOutTime, attendanceShiftRes.rows)) {
-        return res.status(400).json({
-          error: 'Outside Attendance Shift',
-          message: 'The user was not clocked into attendance during that time.'
-        });
-      }
-    } else {
-      const attendanceShiftRes = await pool.query(
-        `SELECT id, clock_in, clock_out
-         FROM attendance_shifts
-         WHERE profile_id = $1
-           AND clock_in <= $2::timestamptz
-           AND (clock_out IS NULL OR clock_out >= $2::timestamptz)
-         ORDER BY clock_in DESC
-         LIMIT 1`,
-        [profileId, clockInIso]
-      );
+    const attendanceShiftRes = await pool.query(
+      `SELECT id, clock_in, clock_out
+       FROM attendance_shifts
+       WHERE profile_id = $1
+         AND (CASE
+                WHEN clock_out IS NULL OR clock_out >= clock_in
+                  THEN tstzrange(clock_in, COALESCE(clock_out, 'infinity'::timestamptz), '[)')
+              END)
+             && tstzrange($2::timestamptz, $3::timestamptz, '[)')
+       ORDER BY clock_in ASC`,
+      [profileId, clockInIso, attendanceQueryEndIso]
+    );
 
-      if (attendanceShiftRes.rows.length === 0) {
-        return res.status(400).json({
-          error: 'Outside Attendance Shift',
-          message: 'The user was not clocked into attendance during that time.'
-        });
-      }
+    if (!isTimeRangeCoveredByAttendanceShifts(clockInTime, attendanceCoverageEnd, attendanceShiftRes.rows)) {
+      return res.status(400).json({
+        error: 'Outside Attendance Shift',
+        message: 'The user was not clocked into attendance during that time.'
+      });
     }
 
     const overlapRes = await pool.query(
@@ -843,7 +845,10 @@ router.put('/time-entries/:id', async (req: Request, res: Response) => {
        FROM time_entries
        WHERE profile_id = $1
          AND id <> $2
-         AND tstzrange(clock_in, COALESCE(clock_out, 'infinity'::timestamptz), '[)')
+         AND (CASE
+                WHEN clock_out IS NULL OR clock_out >= clock_in
+                  THEN tstzrange(clock_in, COALESCE(clock_out, 'infinity'::timestamptz), '[)')
+              END)
              && tstzrange($3::timestamptz, COALESCE($4::timestamptz, 'infinity'::timestamptz), '[)')`,
       [profileId, id, clockInIso, clockOutIso]
     );

@@ -99,6 +99,12 @@ function addDays(date: Date, days: number): Date {
   return result;
 }
 
+function normalizeToMinute(date: Date): Date {
+  const normalized = new Date(date.getTime());
+  normalized.setSeconds(0, 0);
+  return normalized;
+}
+
 // Helper function to calculate effective duration, excluding daily break times
 function calculateEffectiveDuration(
   clockIn: Date,
@@ -334,7 +340,7 @@ router.post('/clock-in', async (req: Request, res: Response) => {
     }
 
     const result = await tenantPool.query(
-      'INSERT INTO attendance_shifts (profile_id, clock_in) VALUES ($1, NOW()) RETURNING *',
+      'INSERT INTO attendance_shifts (profile_id, clock_in) VALUES ($1, date_trunc(\'minute\', NOW())) RETURNING *',
       [profile_id]
     );
     res.status(201).json({ ...result.rows[0], geofence: geofenceCheck });
@@ -391,8 +397,8 @@ router.post('/manual', async (req: Request, res: Response) => {
     });
   }
 
-  const clockInDate = new Date(clock_in);
-  const clockOutDate = new Date(clock_out);
+  const clockInDate = normalizeToMinute(new Date(clock_in));
+  const clockOutDate = normalizeToMinute(new Date(clock_out));
 
   if (Number.isNaN(clockInDate.getTime()) || Number.isNaN(clockOutDate.getTime())) {
     return res.status(400).json({
@@ -474,7 +480,7 @@ router.post('/clock-out', async (req: Request, res: Response) => {
     const dailyBreakStart = breakStartRes.rows.length > 0 ? breakStartRes.rows[0].value : null;
     const dailyBreakEnd = breakEndRes.rows.length > 0 ? breakEndRes.rows[0].value : null;
 
-    const clockOutTime = new Date();
+    const clockOutTime = normalizeToMinute(new Date());
     let targetShiftId = shift_id;
     let shiftRes;
 
@@ -498,7 +504,7 @@ router.post('/clock-out', async (req: Request, res: Response) => {
       }
     }
 
-    const clockInTime = new Date(shiftRes.rows[0].clock_in);
+    const clockInTime = normalizeToMinute(new Date(shiftRes.rows[0].clock_in));
 
     console.log('Clock-out Debug:');
     console.log('  clockInTime:', clockInTime);
@@ -532,9 +538,9 @@ router.post('/clock-out', async (req: Request, res: Response) => {
 
     if (openTimeEntryRes.rows.length > 0) {
       const timeEntryId = openTimeEntryRes.rows[0].id;
-      const timeEntryClockOutTime = new Date();
+      const timeEntryClockOutTime = normalizeToMinute(new Date());
       const timeEntryRes = await pool.query('SELECT clock_in FROM time_entries WHERE id = $1', [timeEntryId]);
-      const timeEntryClockInTime = new Date(timeEntryRes.rows[0].clock_in);
+      const timeEntryClockInTime = normalizeToMinute(new Date(timeEntryRes.rows[0].clock_in));
       const timeEntryEffectiveDuration = calculateEffectiveDuration(
         timeEntryClockInTime,
         timeEntryClockOutTime,
@@ -636,7 +642,7 @@ router.put('/:id', async (req: Request, res: Response) => {
       });
     }
 
-    const newClockInDate = new Date(clock_in);
+    const newClockInDate = normalizeToMinute(new Date(clock_in));
     if (Number.isNaN(newClockInDate.getTime())) {
       return res.status(400).json({
         error: 'Validation Error',
@@ -646,7 +652,7 @@ router.put('/:id', async (req: Request, res: Response) => {
 
     let newClockOutDate: Date | null = null;
     if (clock_out !== null && clock_out !== undefined && clock_out !== '') {
-      newClockOutDate = new Date(clock_out);
+      newClockOutDate = normalizeToMinute(new Date(clock_out));
       if (Number.isNaN(newClockOutDate.getTime())) {
         return res.status(400).json({
           error: 'Validation Error',
@@ -680,8 +686,8 @@ router.put('/:id', async (req: Request, res: Response) => {
       });
     }
 
-    const originalClockIn = new Date(shift.clock_in);
-    const originalClockOut = shift.clock_out ? new Date(shift.clock_out) : null;
+    const originalClockIn = normalizeToMinute(new Date(shift.clock_in));
+    const originalClockOut = shift.clock_out ? normalizeToMinute(new Date(shift.clock_out)) : null;
 
     const timeEntryParams: any[] = [profileId, originalClockIn.toISOString()];
     let timeEntryQuery = `
@@ -697,7 +703,7 @@ router.put('/:id', async (req: Request, res: Response) => {
     const timeEntriesRes = await pool.query(timeEntryQuery, timeEntryParams);
 
     for (const entry of timeEntriesRes.rows) {
-      const entryClockIn = new Date(entry.clock_in);
+      const entryClockIn = normalizeToMinute(new Date(entry.clock_in));
       if (entryClockIn < newClockInDate) {
         return res.status(400).json({
           error: 'Shift Outside Time Entries',
@@ -712,7 +718,7 @@ router.put('/:id', async (req: Request, res: Response) => {
             message: 'Adjust the sales-order entries before shortening this shift.',
           });
         }
-        const entryClockOut = new Date(entry.clock_out);
+        const entryClockOut = normalizeToMinute(new Date(entry.clock_out));
         if (entryClockOut > newClockOutDate) {
           return res.status(400).json({
             error: 'Shift Outside Time Entries',
