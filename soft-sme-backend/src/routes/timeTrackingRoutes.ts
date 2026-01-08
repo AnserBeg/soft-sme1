@@ -216,6 +216,48 @@ function formatDurationForOutput(value: unknown, fractionDigits = 2): string {
   return parsed !== null ? parsed.toFixed(fractionDigits) : '';
 }
 
+type AttendanceShiftWindow = {
+  clock_in: string;
+  clock_out: string | null;
+};
+
+function isTimeRangeCoveredByAttendanceShifts(start: Date, end: Date, shifts: AttendanceShiftWindow[]): boolean {
+  if (shifts.length === 0) {
+    return false;
+  }
+
+  const sorted = shifts
+    .map(shift => ({
+      start: new Date(shift.clock_in),
+      end: shift.clock_out ? new Date(shift.clock_out) : null,
+    }))
+    .sort((a, b) => a.start.getTime() - b.start.getTime());
+
+  const endTime = end.getTime();
+  let cursor = start.getTime();
+
+  for (const shift of sorted) {
+    const shiftStart = shift.start.getTime();
+    const shiftEnd = shift.end ? shift.end.getTime() : Number.POSITIVE_INFINITY;
+
+    if (shiftEnd < cursor) {
+      continue;
+    }
+
+    if (shiftStart > cursor) {
+      return false;
+    }
+
+    if (shiftEnd >= endTime) {
+      return true;
+    }
+
+    cursor = shiftEnd;
+  }
+
+  return false;
+}
+
 async function recalcSalesOrderLabourOverheadAndSupply(soId: number) {
   try {
     const sumRes = await pool.query(
@@ -604,14 +646,13 @@ router.post('/time-entries/manual', async (req: Request, res: Response) => {
       `SELECT id, clock_in, clock_out
        FROM attendance_shifts
        WHERE profile_id = $1
-         AND clock_in <= $2::timestamptz
-         AND (clock_out IS NULL OR clock_out >= $3::timestamptz)
-       ORDER BY clock_in DESC
-       LIMIT 1`,
+         AND tstzrange(clock_in, COALESCE(clock_out, 'infinity'::timestamptz), '[)')
+             && tstzrange($2::timestamptz, $3::timestamptz, '[)')
+       ORDER BY clock_in ASC`,
       [profileId, clockInIso, clockOutIso]
     );
 
-    if (attendanceShiftRes.rows.length === 0) {
+    if (!isTimeRangeCoveredByAttendanceShifts(clockInTime, clockOutTime, attendanceShiftRes.rows)) {
       const nearestShiftRes = await pool.query(
         `SELECT id, clock_in, clock_out
          FROM attendance_shifts
@@ -757,25 +798,44 @@ router.put('/time-entries/:id', async (req: Request, res: Response) => {
       clock_out = clockOutTime.toISOString();
     }
 
-    clock_in = clockInTime.toISOString();
-    const effectiveAttendanceEnd = clock_out ?? clock_in;
+    const clockInIso = clockInTime.toISOString();
+    const clockOutIso = clockOutTime ? clockOutTime.toISOString() : null;
 
-    const attendanceShiftRes = await pool.query(
-      `SELECT id, clock_in, clock_out
-       FROM attendance_shifts
-       WHERE profile_id = $1
-         AND clock_in <= $2::timestamptz
-         AND (clock_out IS NULL OR clock_out >= $3::timestamptz)
-       ORDER BY clock_in DESC
-       LIMIT 1`,
-      [profileId, clock_in, effectiveAttendanceEnd]
-    );
+    if (clockOutTime) {
+      const attendanceShiftRes = await pool.query(
+        `SELECT id, clock_in, clock_out
+         FROM attendance_shifts
+         WHERE profile_id = $1
+           AND tstzrange(clock_in, COALESCE(clock_out, 'infinity'::timestamptz), '[)')
+               && tstzrange($2::timestamptz, $3::timestamptz, '[)')
+         ORDER BY clock_in ASC`,
+        [profileId, clockInIso, clockOutIso]
+      );
 
-    if (attendanceShiftRes.rows.length === 0) {
-      return res.status(400).json({
-        error: 'Outside Attendance Shift',
-        message: 'The user was not clocked into attendance during that time.'
-      });
+      if (!isTimeRangeCoveredByAttendanceShifts(clockInTime, clockOutTime, attendanceShiftRes.rows)) {
+        return res.status(400).json({
+          error: 'Outside Attendance Shift',
+          message: 'The user was not clocked into attendance during that time.'
+        });
+      }
+    } else {
+      const attendanceShiftRes = await pool.query(
+        `SELECT id, clock_in, clock_out
+         FROM attendance_shifts
+         WHERE profile_id = $1
+           AND clock_in <= $2::timestamptz
+           AND (clock_out IS NULL OR clock_out >= $2::timestamptz)
+         ORDER BY clock_in DESC
+         LIMIT 1`,
+        [profileId, clockInIso]
+      );
+
+      if (attendanceShiftRes.rows.length === 0) {
+        return res.status(400).json({
+          error: 'Outside Attendance Shift',
+          message: 'The user was not clocked into attendance during that time.'
+        });
+      }
     }
 
     const overlapRes = await pool.query(
@@ -785,7 +845,7 @@ router.put('/time-entries/:id', async (req: Request, res: Response) => {
          AND id <> $2
          AND tstzrange(clock_in, COALESCE(clock_out, 'infinity'::timestamptz), '[)')
              && tstzrange($3::timestamptz, COALESCE($4::timestamptz, 'infinity'::timestamptz), '[)')`,
-      [profileId, id, clock_in, clock_out]
+      [profileId, id, clockInIso, clockOutIso]
     );
 
     if (overlapRes.rows.length > 0) {
@@ -820,7 +880,7 @@ router.put('/time-entries/:id', async (req: Request, res: Response) => {
            duration = $3
        WHERE id = $4
        RETURNING *`,
-      [clock_in, clock_out, effectiveDuration, id]
+      [clockInIso, clockOutIso, effectiveDuration, id]
     );
 
     if (result.rows.length === 0) {
