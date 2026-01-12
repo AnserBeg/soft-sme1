@@ -54,7 +54,7 @@ const isActiveSalesOrderStatus = (value?: string) => {
 const OpenSalesOrdersPage: React.FC = () => {
   const [search, setSearch] = useState('');
   const [rows, setRows] = useState<any[]>([]);
-  const [status, setStatus] = useState<'all' | 'open' | 'closed'>('open');
+  const [status, setStatus] = useState<'all' | 'open' | 'completed' | 'closed'>('open');
   const [workInProcessTotal, setWorkInProcessTotal] = useState<number>(0);
   const navigate = useNavigate();
   const location = useLocation();
@@ -577,9 +577,11 @@ const OpenSalesOrdersPage: React.FC = () => {
     // Filter rows based on current status selection
     let exportRows = filteredRows;
     if (status === 'open') {
-      exportRows = filteredRows.filter(row => isActiveSalesOrderStatus(row.status));
+      exportRows = filteredRows.filter((row) => isActiveSalesOrderStatus(row.status));
+    } else if (status === 'completed') {
+      exportRows = filteredRows.filter((row) => String(row.status || '').toLowerCase() === 'completed');
     } else if (status === 'closed') {
-      exportRows = filteredRows.filter(row => row.status === 'Closed');
+      exportRows = filteredRows.filter((row) => String(row.status || '').toLowerCase() === 'closed');
     }
     // If status is 'all', use all filteredRows
 
@@ -814,6 +816,14 @@ const OpenSalesOrdersPage: React.FC = () => {
               color={status === 'open' ? 'primary' : 'default'}
               sx={{ fontSize: 18, px: 3, py: 1.5, minWidth: 80, height: 44 }}
             />
+            {user?.access_role !== 'Sales and Purchase' && (
+              <Chip
+                label="Completed"
+                onClick={() => setStatus('completed')}
+                color={status === 'completed' ? 'primary' : 'default'}
+                sx={{ fontSize: 18, px: 3, py: 1.5, minWidth: 110, height: 44 }}
+              />
+            )}
             {user?.access_role !== 'Sales and Purchase' && (
               <Chip
                 label="Closed"
