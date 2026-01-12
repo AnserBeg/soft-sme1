@@ -412,6 +412,7 @@ const SalesOrderDetailPage: React.FC = () => {
 
   const isDirty = Boolean(initialSignature) && initialSignature !== currentSignature && !isSaving;
   const isClosed = !!salesOrder && salesOrder.status?.toLowerCase() === 'closed';
+  const isCompleted = !!salesOrder && salesOrder.status?.toLowerCase() === 'completed';
   const [originalLineItems, setOriginalLineItems] = useState<SalesOrderLineItem[]>([]);
   const [negativeAvailabilityItems, setNegativeAvailabilityItems] = useState<Array<{
     lineItemIndex: number; partNumber: string; partDescription: string; excessQuantity: number; unit: string;
@@ -1388,6 +1389,28 @@ const SalesOrderDetailPage: React.FC = () => {
     }
   };
 
+  const handleCompleteSO = async () => {
+    if (isCreationMode || !salesOrder) return;
+    try {
+      await api.put(`/api/sales-orders/${salesOrder.sales_order_id}`, {
+        customer_id: salesOrder.customer_id,
+        sales_date: salesOrder.sales_date,
+        product_name: product?.label?.trim() || salesOrder.product_name,
+        product_description: productDescription.trim(),
+        terms: terms.trim(),
+        unit_number: unitNumber.trim() || salesOrder.unit_number,
+        status: 'Completed',
+        estimated_cost: estimatedCost ?? salesOrder.estimated_cost,
+        lineItems: buildPayloadLineItems(lineItems),
+      });
+      toast.success('Sales Order marked as completed!');
+      setSalesOrder(prev => prev ? { ...prev, status: 'Completed' } : prev);
+    } catch (err: any) {
+      const message = err?.response?.data?.error || err?.response?.data?.details || err?.response?.data?.message || 'Failed to complete sales order.';
+      setInventoryAlert(message);
+    }
+  };
+
   const handleReopenSO = async () => {
     if (isCreationMode || !salesOrder) return;
     try {
@@ -2119,7 +2142,13 @@ const SalesOrderDetailPage: React.FC = () => {
             {!isCreationMode && (
               <>
                 {user?.access_role !== 'Sales and Purchase' && (
-                  <Button variant="contained" startIcon={<DoneAllIcon />} onClick={handleCloseSO}>Close SO</Button>
+                  <Button
+                    variant="contained"
+                    startIcon={<DoneAllIcon />}
+                    onClick={isCompleted ? handleCloseSO : handleCompleteSO}
+                  >
+                    {isCompleted ? 'Close SO' : 'Complete SO'}
+                  </Button>
                 )}
                 <Button variant="contained" startIcon={<DownloadIcon />} onClick={handleDownloadPDF}>Download PDF</Button>
               </>

@@ -1476,7 +1476,7 @@ router.put('/:id', async (req, res) => {
              FROM sales_order_parts_to_order sopt
              JOIN salesorderhistory soh ON sopt.sales_order_id = soh.sales_order_id
              WHERE REPLACE(REPLACE(UPPER(sopt.part_number), '-', ''), ' ', '') = REPLACE(REPLACE(UPPER($1), '-', ''), ' ', '')
-               AND soh.status = 'Open'
+               AND LOWER(soh.status) IN ('open', 'completed')
              ORDER BY soh.sales_date ASC`,
             [partNumber]
           );
@@ -1497,7 +1497,7 @@ router.put('/:id', async (req, res) => {
    LEFT JOIN inventory inv 
      ON REPLACE(REPLACE(UPPER(inv.part_number), '-', ''), ' ', '') = REPLACE(REPLACE(UPPER(poa.part_number), '-', ''), ' ', '')
    WHERE REPLACE(REPLACE(UPPER(poa.part_number), '-', ''), ' ', '') = REPLACE(REPLACE(UPPER($1), '-', ''), ' ', '')
-     AND soh.status = 'Open'
+     AND LOWER(soh.status) IN ('open', 'completed')
      AND poa.purchase_id = $2
    ORDER BY soh.sales_date ASC`,
   [partNumber, id]
@@ -1719,7 +1719,7 @@ router.put('/:id', async (req, res) => {
           SELECT DISTINCT soh.sales_order_id, soh.sales_order_number
           FROM salesorderhistory soh
           JOIN sales_order_parts_to_order sopt ON soh.sales_order_id = sopt.sales_order_id
-          WHERE soh.status = 'Open'
+          WHERE LOWER(soh.status) IN ('open', 'completed')
           AND sopt.part_number IN (
             SELECT part_number FROM purchaselineitems WHERE purchase_id = $1
           )
@@ -1742,7 +1742,7 @@ router.put('/:id', async (req, res) => {
             FROM sales_order_parts_to_order sopt
             JOIN salesorderhistory soh ON sopt.sales_order_id = soh.sales_order_id
             WHERE REPLACE(REPLACE(UPPER(sopt.part_number), '-', ''), ' ', '') = REPLACE(REPLACE(UPPER($1), '-', ''), ' ', '')
-              AND soh.status = 'Open'
+              AND LOWER(soh.status) IN ('open', 'completed')
             ORDER BY soh.sales_date ASC
           `, [partNumber]);
 
@@ -1762,7 +1762,7 @@ router.put('/:id', async (req, res) => {
    LEFT JOIN inventory inv 
      ON REPLACE(REPLACE(UPPER(inv.part_number), '-', ''), ' ', '') = REPLACE(REPLACE(UPPER(poa.part_number), '-', ''), ' ', '')
    WHERE REPLACE(REPLACE(UPPER(poa.part_number), '-', ''), ' ', '') = REPLACE(REPLACE(UPPER($1), '-', ''), ' ', '')
-     AND soh.status = 'Open'
+     AND LOWER(soh.status) IN ('open', 'completed')
      AND poa.purchase_id = $2
    ORDER BY soh.sales_date ASC`,
   [partNumber, id]
@@ -1868,7 +1868,7 @@ router.put('/:id', async (req, res) => {
             `SELECT SUM(quantity_needed) as total_needed FROM sales_order_parts_to_order sopt 
              JOIN salesorderhistory soh ON sopt.sales_order_id = soh.sales_order_id 
              WHERE REPLACE(REPLACE(UPPER(sopt.part_number), '-', ''), ' ', '') = REPLACE(REPLACE(UPPER($1), '-', ''), ' ', '')
-               AND soh.status = 'Open'`,
+               AND LOWER(soh.status) IN ('open', 'completed')`,
             [partNumber]
           );
           

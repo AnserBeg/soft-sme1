@@ -15,6 +15,17 @@ export class SalesOrderService {
     this.inventoryService = new InventoryService(pool);
   }
 
+  static normalizeStatus(value: any): 'Open' | 'Completed' | 'Closed' {
+    if (typeof value === 'string') {
+      const normalized = value.trim().toLowerCase();
+      if (!normalized) return 'Open';
+      if (['open', 'opened', 'active'].includes(normalized)) return 'Open';
+      if (['completed', 'complete', 'done', 'finished'].includes(normalized)) return 'Completed';
+      if (['closed', 'close', 'archived'].includes(normalized)) return 'Closed';
+    }
+    return 'Open';
+  }
+
   static normalizeInvoiceStatus(value: any): 'needed' | 'done' | null {
     if (value === null || value === undefined) return null;
     if (typeof value === 'string') {
@@ -133,6 +144,7 @@ export class SalesOrderService {
       const estimatedCostNum = estimated_cost !== undefined && estimated_cost !== null ? parseFloat(estimated_cost) : 0;
       const quoteIdInt = quote_id !== undefined && quote_id !== null ? Number(quote_id) : null;
       const sourceQuoteNumberStr = source_quote_number ? String(source_quote_number) : null;
+      const normalizedStatus = SalesOrderService.normalizeStatus(status);
 
       await client.query(
         `INSERT INTO salesorderhistory (
@@ -162,7 +174,7 @@ export class SalesOrderService {
           0,
           0,
           0,
-          status ? String(status) : 'Open',
+          normalizedStatus,
           estimatedCostNum,
           sequenceNumber,
           quoteIdInt,
@@ -722,9 +734,34 @@ export class SalesOrderService {
       }
       const orderRes = await client.query('SELECT * FROM salesorderhistory WHERE sales_order_id = $1 FOR UPDATE', [orderId]);
       if (orderRes.rows.length === 0) throw new Error('Sales order not found');
-      if (orderRes.rows[0].status !== 'Open') throw new Error('Order is already closed');
+      const currentStatus = orderRes.rows[0].status;
+      if (currentStatus === 'Closed') throw new Error('Order is already closed');
+      if (!['Open', 'Completed'].includes(currentStatus)) throw new Error('Order is not open');
       // No inventory change on close
       await client.query('UPDATE salesorderhistory SET status = $1 WHERE sales_order_id = $2', ['Closed', orderId]);
+      if (startedTransaction) await client.query('COMMIT');
+    } catch (err) {
+      if (startedTransaction) await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      if (!clientArg) client.release();
+    }
+  }
+
+  async completeOrder(orderId: number, clientArg?: PoolClient): Promise<void> {
+    const client = clientArg || await this.pool.connect();
+    let startedTransaction = false;
+    try {
+      if (!clientArg) {
+        await client.query('BEGIN');
+        startedTransaction = true;
+      }
+      const orderRes = await client.query('SELECT * FROM salesorderhistory WHERE sales_order_id = $1 FOR UPDATE', [orderId]);
+      if (orderRes.rows.length === 0) throw new Error('Sales order not found');
+      const currentStatus = orderRes.rows[0].status;
+      if (currentStatus === 'Completed') return;
+      if (currentStatus !== 'Open') throw new Error('Only open orders can be completed');
+      await client.query('UPDATE salesorderhistory SET status = $1 WHERE sales_order_id = $2', ['Completed', orderId]);
       if (startedTransaction) await client.query('COMMIT');
     } catch (err) {
       if (startedTransaction) await client.query('ROLLBACK');
@@ -744,7 +781,9 @@ export class SalesOrderService {
       }
       const orderRes = await client.query('SELECT * FROM salesorderhistory WHERE sales_order_id = $1 FOR UPDATE', [orderId]);
       if (orderRes.rows.length === 0) throw new Error('Sales order not found');
-      if (orderRes.rows[0].status !== 'Closed') throw new Error('Order is not closed');
+      const currentStatus = orderRes.rows[0].status;
+      if (currentStatus === 'Open') throw new Error('Order is already open');
+      if (!['Closed', 'Completed'].includes(currentStatus)) throw new Error('Order is not closed');
       // No inventory change on reopen
       await client.query('UPDATE salesorderhistory SET status = $1 WHERE sales_order_id = $2', ['Open', orderId]);
       if (startedTransaction) await client.query('COMMIT');

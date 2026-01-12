@@ -26,6 +26,7 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ErrorIcon from '@mui/icons-material/Error';
 import CancelIcon from '@mui/icons-material/Cancel';
 import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty';
+import DoneAllIcon from '@mui/icons-material/DoneAll';
 import { InputAdornment } from '@mui/material';
 import { parseNumericInput } from '../utils/salesOrderCalculations';
 import ViewColumnIcon from '@mui/icons-material/ViewColumn';
@@ -43,6 +44,11 @@ const normalizeInvoiceStatus = (value: any): '' | 'needed' | 'done' => {
     return value ? 'needed' : '';
   }
   return '';
+};
+
+const isActiveSalesOrderStatus = (value?: string) => {
+  const normalized = String(value || '').toLowerCase();
+  return normalized === 'open' || normalized === 'completed';
 };
 
 const OpenSalesOrdersPage: React.FC = () => {
@@ -164,8 +170,8 @@ const OpenSalesOrdersPage: React.FC = () => {
 
       // Calculate Work In Process total (sum of subtotals from open orders only)
       if (statusFilter === 'open' || statusFilter === 'all') {
-        const openOrders = statusFilter === 'open' ? sortedOrders : sortedOrders.filter((order: any) => order.status === 'Open');
-        const total = openOrders.reduce((sum: number, order: any) => {
+        const activeOrders = sortedOrders.filter((order: any) => isActiveSalesOrderStatus(order.status));
+        const total = activeOrders.reduce((sum: number, order: any) => {
           const subtotal = parseFloat(order.subtotal) || 0;
           return sum + subtotal;
         }, 0);
@@ -214,12 +220,8 @@ const OpenSalesOrdersPage: React.FC = () => {
         const response = await api.get(`/api/sales-orders/${salesOrderId}`);
         const { salesOrder, lineItems } = response.data;
 
-        // Send all fields, but with status: 'Closed'
-        const { subtotal, total_gst_amount, total_amount, ...salesOrderWithoutTotals } = salesOrder;
-        await api.put(`/api/sales-orders/${salesOrderId}`, {
-          ...salesOrderWithoutTotals,
-          status: 'Closed',
-          lineItems: (lineItems || []).map((it: any) => {
+        const buildLineItemsPayload = (items: any[]) =>
+          (items || []).map((it: any) => {
             const pn = String(it.part_number || '').toUpperCase();
 
             const base = {
@@ -249,7 +251,14 @@ const OpenSalesOrdersPage: React.FC = () => {
               ...base,
               quantity: Number(it.quantity_sold ?? it.quantity ?? 0) || 0,
             };
-          }),
+          });
+
+        // Send all fields, but with status: 'Closed'
+        const { subtotal, total_gst_amount, total_amount, ...salesOrderWithoutTotals } = salesOrder;
+        await api.put(`/api/sales-orders/${salesOrderId}`, {
+          ...salesOrderWithoutTotals,
+          status: 'Closed',
+          lineItems: buildLineItemsPayload(lineItems || []),
         });
 
         toast.success('Sales Order closed successfully!');
@@ -273,6 +282,64 @@ const OpenSalesOrdersPage: React.FC = () => {
         } else {
           toast.error(errorMessage);
         }
+      }
+    }
+  };
+
+  const handleCompleteOrder = async (salesOrderId: number) => {
+    if (window.confirm(`Mark this Sales Order as completed?`)) {
+      try {
+        const response = await api.get(`/api/sales-orders/${salesOrderId}`);
+        const { salesOrder, lineItems } = response.data;
+
+        const buildLineItemsPayload = (items: any[]) =>
+          (items || []).map((it: any) => {
+            const pn = String(it.part_number || '').toUpperCase();
+
+            const base = {
+              part_number: String(it.part_number || ''),
+              part_description: String(it.part_description || ''),
+              unit: String(it.unit || ''),
+              unit_price: pn === 'SUPPLY' ? 0 : (Number(it.unit_price) || 0),
+              line_amount: Number(it.line_amount) || 0,
+              ...(it.part_id ? { part_id: Number(it.part_id) } : {}),
+            };
+
+            if (pn === 'SUPPLY') {
+              return { ...base, unit: 'Each', quantity: 1 };
+            }
+
+            if (pn === 'LABOUR' || pn === 'OVERHEAD') {
+              const hours = Number(it.quantity_sold ?? it.quantity ?? 0) || 0;
+              return { ...base, quantity: hours };
+            }
+
+            return {
+              ...base,
+              quantity: Number(it.quantity_sold ?? it.quantity ?? 0) || 0,
+            };
+          });
+
+        const { subtotal, total_gst_amount, total_amount, ...salesOrderWithoutTotals } = salesOrder;
+        await api.put(`/api/sales-orders/${salesOrderId}`, {
+          ...salesOrderWithoutTotals,
+          status: 'Completed',
+          lineItems: buildLineItemsPayload(lineItems || []),
+        });
+
+        toast.success('Sales Order marked as completed!');
+        fetchSalesOrders();
+      } catch (error: any) {
+        console.error('Error completing sales order:', error);
+        let errorMessage = 'Failed to mark sales order as completed.';
+        if (error.response?.data?.error) {
+          errorMessage = error.response.data.error;
+        } else if (error.response?.data?.details) {
+          errorMessage = error.response.data.details;
+        } else if (error.response?.data?.message) {
+          errorMessage = error.response.data.message;
+        }
+        toast.error(errorMessage);
       }
     }
   };
@@ -398,14 +465,22 @@ const OpenSalesOrdersPage: React.FC = () => {
     { field: 'subtotal', headerName: 'Subtotal', flex: 0.8, minWidth: 100, valueFormatter: (params) => params.value != null && !isNaN(Number(params.value)) ? `$${Number(params.value).toFixed(2)}` : '$0.00' },
     { field: 'total_amount', headerName: 'Total', flex: 0.8, minWidth: 100, valueFormatter: (params) => params.value != null && !isNaN(Number(params.value)) ? `$${Number(params.value).toFixed(2)}` : '$0.00' },
     { field: 'status', headerName: 'Status', flex: 0.8, minWidth: 100,
-      renderCell: (params) => (
-        <Chip
-          label={params.value}
-          color={params.value === 'Open' ? 'success' : 'error'}
-          size="small"
-          variant="outlined"
-        />
-      )
+      renderCell: (params) => {
+        const normalized = String(params.value || '').toLowerCase();
+        const color = normalized === 'open'
+          ? 'success'
+          : normalized === 'completed'
+            ? 'warning'
+            : 'error';
+        return (
+          <Chip
+            label={params.value}
+            color={color}
+            size="small"
+            variant="outlined"
+          />
+        );
+      }
     },
     {
       field: 'invoice_status',
@@ -452,7 +527,20 @@ const OpenSalesOrdersPage: React.FC = () => {
       sortable: false,
       renderCell: (params) => (
         <Box sx={{ display: 'flex', gap: 0.5 }}>
-          {params.row.status !== 'Closed' && (
+          {String(params.row.status || '').toLowerCase() === 'open' && (
+            <IconButton
+              size="small"
+              color="success"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleCompleteOrder(params.row.sales_order_id);
+              }}
+              aria-label="Mark completed"
+            >
+              <DoneAllIcon />
+            </IconButton>
+          )}
+          {String(params.row.status || '').toLowerCase() === 'completed' && (
             <IconButton
               size="small"
               color="primary"
@@ -460,11 +548,12 @@ const OpenSalesOrdersPage: React.FC = () => {
                 e.stopPropagation();
                 handleCloseOrder(params.row.sales_order_id);
               }}
+              aria-label="Close sales order"
             >
               <CloseIcon />
             </IconButton>
           )}
-          {params.row.status !== 'Closed' && (
+          {String(params.row.status || '').toLowerCase() !== 'closed' && (
             <IconButton size="small" color="error" onClick={(e) => {
               e.stopPropagation();
               handleDeleteOrder(params.row.sales_order_id);
@@ -488,7 +577,7 @@ const OpenSalesOrdersPage: React.FC = () => {
     // Filter rows based on current status selection
     let exportRows = filteredRows;
     if (status === 'open') {
-      exportRows = filteredRows.filter(row => row.status === 'Open');
+      exportRows = filteredRows.filter(row => isActiveSalesOrderStatus(row.status));
     } else if (status === 'closed') {
       exportRows = filteredRows.filter(row => row.status === 'Closed');
     }

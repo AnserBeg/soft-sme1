@@ -288,7 +288,7 @@ async function recalculateAggregatedPartsToOrder() {
       FROM sales_order_parts_to_order sopt
       JOIN salesorderhistory soh ON sopt.sales_order_id = soh.sales_order_id
       LEFT JOIN inventory i ON sopt.part_number = i.part_number
-      WHERE soh.status = 'Open'
+      WHERE LOWER(soh.status) IN ('open', 'completed')
         AND sopt.quantity_needed > 0
       GROUP BY sopt.part_number, sopt.part_description, sopt.unit, i.last_unit_cost
       ORDER BY sopt.part_number
@@ -368,14 +368,14 @@ router.get('/search', async (req: Request, res: Response) => {
   }
 });
 
-// Get all open sales orders
+// Get all active sales orders (open + completed)
 router.get('/open', async (req: Request, res: Response) => {
   try {
     const result = await pool.query(
       `SELECT soh.*, COALESCE(cm.customer_name, 'Unknown Customer') as customer_name 
        FROM salesorderhistory soh
        LEFT JOIN customermaster cm ON soh.customer_id = cm.customer_id
-       WHERE soh.status = 'Open' ORDER BY soh.sales_date DESC`
+       WHERE LOWER(soh.status) IN ('open', 'completed') ORDER BY soh.sales_date DESC`
     );
     res.json(result.rows);
   } catch (err) {
@@ -462,8 +462,15 @@ router.get('/', async (req: Request, res: Response) => {
     `;
     const params: any[] = [];
     if (status && status !== 'all') {
-      query += ' WHERE LOWER(soh.status) = $1';
-      params.push(String(status).toLowerCase());
+      const normalizedStatus = String(status).toLowerCase();
+      if (normalizedStatus === 'open') {
+        query += " WHERE LOWER(soh.status) IN ('open', 'completed')";
+      } else if (normalizedStatus === 'completed') {
+        query += " WHERE LOWER(soh.status) = 'completed'";
+      } else {
+        query += ' WHERE LOWER(soh.status) = $1';
+        params.push(normalizedStatus);
+      }
     }
     query += ' ORDER BY soh.sales_date DESC';
     console.log('SalesOrders Query:', query, 'Params:', params); // Debug log
@@ -585,6 +592,7 @@ router.get('/:id', async (req: Request, res: Response) => {
 router.put('/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
   const { lineItems, status, user_id, partsToOrder, ...salesOrderData } = req.body;
+  const normalizedStatus = status !== undefined ? SalesOrderService.normalizeStatus(status) : undefined;
 
   // Trim string fields in salesOrderData
   if (salesOrderData.product_name) salesOrderData.product_name = salesOrderData.product_name.trim();
@@ -741,12 +749,18 @@ if (lineItems && lineItems.length > 0) {
     // Recalculate and update summary fields
     await salesOrderService.recalculateAndUpdateSummary(Number(id), client);
     // Handle status change
-    const currentStatusRes = await client.query('SELECT status FROM salesorderhistory WHERE sales_order_id = $1', [id]);
-    const currentStatus = currentStatusRes.rows[0]?.status;
-    if (status === 'Closed' && currentStatus !== 'Closed') {
-      await salesOrderService.closeOrder(Number(id), client);
-    } else if (status === 'Open' && currentStatus === 'Closed') {
-      await salesOrderService.openOrder(Number(id), client);
+    if (normalizedStatus) {
+      const currentStatusRes = await client.query('SELECT status FROM salesorderhistory WHERE sales_order_id = $1', [id]);
+      const currentStatus = currentStatusRes.rows[0]?.status;
+      if (currentStatus && normalizedStatus !== currentStatus) {
+        if (normalizedStatus === 'Closed') {
+          await salesOrderService.closeOrder(Number(id), client);
+        } else if (normalizedStatus === 'Completed') {
+          await salesOrderService.completeOrder(Number(id), client);
+        } else if (normalizedStatus === 'Open') {
+          await salesOrderService.openOrder(Number(id), client);
+        }
+      }
     }
     await client.query('COMMIT');
     
@@ -1047,8 +1061,15 @@ router.get('/export/pdf', async (req: Request, res: Response) => {
     `;
     const params: any[] = [];
     if (status && status !== 'all') {
-      query += ' WHERE LOWER(soh.status) = $1';
-      params.push(String(status).toLowerCase());
+      const normalizedStatus = String(status).toLowerCase();
+      if (normalizedStatus === 'open') {
+        query += " WHERE LOWER(soh.status) IN ('open', 'completed')";
+      } else if (normalizedStatus === 'completed') {
+        query += " WHERE LOWER(soh.status) = 'completed'";
+      } else {
+        query += ' WHERE LOWER(soh.status) = $1';
+        params.push(normalizedStatus);
+      }
     }
     query += ' ORDER BY soh.sales_date DESC';
     
@@ -2185,7 +2206,7 @@ router.get('/parts-to-order/all', async (req: Request, res: Response) => {
         SELECT DISTINCT part_number 
         FROM sales_order_parts_to_order sopt
         JOIN salesorderhistory soh ON sopt.sales_order_id = soh.sales_order_id
-        WHERE soh.status = 'Open' AND sopt.quantity_needed > 0
+        WHERE LOWER(soh.status) IN ('open', 'completed') AND sopt.quantity_needed > 0
       )
     `);
 
@@ -2204,7 +2225,7 @@ router.get('/parts-to-order/all', async (req: Request, res: Response) => {
       FROM sales_order_parts_to_order sopt
       JOIN salesorderhistory soh ON sopt.sales_order_id = soh.sales_order_id
       JOIN customermaster c ON soh.customer_id = c.customer_id
-      WHERE soh.status = 'Open' 
+      WHERE LOWER(soh.status) IN ('open', 'completed') 
         AND sopt.quantity_needed > 0
       ORDER BY sopt.part_number, soh.created_at
     `);
@@ -2289,7 +2310,7 @@ router.put('/parts-to-order/update-quantity', async (req: Request, res: Response
       SELECT COALESCE(SUM(quantity_needed), 0) as min_required
       FROM sales_order_parts_to_order sopt
       JOIN salesorderhistory soh ON sopt.sales_order_id = soh.sales_order_id
-      WHERE sopt.part_number = $1 AND soh.status = 'Open'
+      WHERE sopt.part_number = $1 AND LOWER(soh.status) IN ('open', 'completed')
     `, [part_number]);
 
     const minRequired = parseFloat(minRequiredResult.rows[0].min_required);
@@ -2373,7 +2394,7 @@ router.post('/parts-to-order/add', async (req: Request, res: Response) => {
         SELECT COUNT(*) as count
         FROM sales_order_parts_to_order sopt
         JOIN salesorderhistory soh ON sopt.sales_order_id = soh.sales_order_id
-        WHERE sopt.part_number = $1 AND soh.status = 'Open' AND sopt.quantity_needed > 0
+        WHERE sopt.part_number = $1 AND LOWER(soh.status) IN ('open', 'completed') AND sopt.quantity_needed > 0
       `, [part.part_number]);
 
       const hasSalesOrders = parseInt(salesOrderCheck.rows[0].count) > 0;
@@ -2424,7 +2445,7 @@ router.delete('/:salesOrderId/parts-to-order/:partNumber', async (req: Request, 
       SELECT COALESCE(SUM(quantity_needed), 0) as total_needed
       FROM sales_order_parts_to_order sopt
       JOIN salesorderhistory soh ON sopt.sales_order_id = soh.sales_order_id
-      WHERE sopt.part_number = $1 AND soh.status = 'Open'
+      WHERE sopt.part_number = $1 AND LOWER(soh.status) IN ('open', 'completed')
     `, [partNumber]);
     
     const totalNeeded = parseFloat(remainingQuantityResult.rows[0].total_needed);
