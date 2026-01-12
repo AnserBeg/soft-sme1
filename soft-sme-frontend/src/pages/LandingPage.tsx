@@ -32,9 +32,8 @@ import {
   Store as StoreIcon,
   LocalOffer as LocalOfferIcon,
   LocalShipping as LocalShippingIcon,
-    Backup as BackupIcon,
+  Backup as BackupIcon,
   Email as EmailIcon,
-  AutoAwesome as AutoAwesomeIcon,
   Event as CalendarIcon
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
@@ -81,7 +80,6 @@ const LandingPage: React.FC = () => {
       title: "Purchasing",
       items: [
         { title: 'Purchase Orders', description: 'Manage purchase orders', icon: <AssignmentIcon sx={{ fontSize: 40, color: 'primary.main' }} />, path: '/open-purchase-orders' },
-        { title: 'Invoice Automator', description: 'Create purchase orders from invoice emails', icon: <AutoAwesomeIcon sx={{ fontSize: 40, color: 'primary.main' }} />, path: '/invoice-automator' },
         { title: 'Return Orders', description: 'Track vendor returns tied to POs', icon: <AssignmentReturnIcon sx={{ fontSize: 40, color: 'primary.main' }} />, path: '/return-orders' },
         { title: 'Parts to Order', description: 'Manage parts ordering', icon: <InventoryIcon sx={{ fontSize: 40, color: 'primary.main' }} />, path: '/parts-to-order' },
         { title: 'Vendors', description: 'Manage your vendors', icon: <StoreIcon sx={{ fontSize: 40, color: 'primary.main' }} />, path: '/vendors' }
@@ -144,7 +142,6 @@ const LandingPage: React.FC = () => {
           { title: 'Sales Orders', description: 'Manage sales orders', icon: <ReceiptIcon sx={{ fontSize: 40, color: 'primary.main' }} />, path: '/open-sales-orders' },
           { title: 'Invoices', description: 'Track and edit invoices', icon: <ReceiptIcon sx={{ fontSize: 40, color: 'primary.main' }} />, path: '/invoices' },
           { title: 'Purchase Orders', description: 'Manage purchase orders', icon: <AssignmentIcon sx={{ fontSize: 40, color: 'primary.main' }} />, path: '/open-purchase-orders' },
-          { title: 'Invoice Automator', description: 'Create purchase orders from invoice emails', icon: <AutoAwesomeIcon sx={{ fontSize: 40, color: 'primary.main' }} />, path: '/invoice-automator' },
           { title: 'Return Orders', description: 'Track vendor returns tied to POs', icon: <AssignmentReturnIcon sx={{ fontSize: 40, color: 'primary.main' }} />, path: '/return-orders' },
           { title: 'Parts to Order', description: 'View parts that need to be ordered', icon: <InventoryIcon sx={{ fontSize: 40, color: 'primary.main' }} />, path: '/parts-to-order' },
         ],

@@ -39,7 +39,6 @@ import {
   AccountBalance as AccountBalanceIcon,
   Person as PersonIcon,
   Email as EmailIcon,
-  AutoAwesome as AutoAwesomeIcon,
   Description as DescriptionIcon,
   Chat as ChatIcon,
   Search as SearchIcon,
@@ -177,7 +176,6 @@ const Layout: React.FC = () => {
 
       { type: 'header', text: 'Purchasing' },
       { text: 'Purchase Orders', icon: <AssignmentIcon />, path: '/open-purchase-orders' },
-      { text: 'Invoice Automator', icon: <AutoAwesomeIcon />, path: '/invoice-automator' },
       { text: 'Return Orders', icon: <AssignmentReturnIcon />, path: '/return-orders' },
       { text: 'Parts to Order', icon: <InventoryIcon />, path: '/parts-to-order' },
       { text: 'Vendors', icon: <StoreIcon />, path: '/vendors' },
@@ -243,7 +241,6 @@ const Layout: React.FC = () => {
         { text: 'Sales Orders', icon: <ReceiptIcon />, path: '/open-sales-orders' },
         { text: 'Invoices', icon: <ReceiptIcon />, path: '/invoices' },
         { text: 'Purchase Orders', icon: <AssignmentIcon />, path: '/open-purchase-orders' },
-        { text: 'Invoice Automator', icon: <AutoAwesomeIcon />, path: '/invoice-automator' },
         { text: 'Return Orders', icon: <AssignmentReturnIcon />, path: '/return-orders' },
         { text: 'Parts to Order', icon: <InventoryIcon />, path: '/parts-to-order' },
         { type: 'header', text: 'Inventory' },
