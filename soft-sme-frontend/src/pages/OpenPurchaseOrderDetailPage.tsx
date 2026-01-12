@@ -1834,10 +1834,6 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
           </CardContent>
         </Card>
 
-        {purchaseOrder.return_orders && (
-          <Box mb={3}>{renderReturnOrdersCard()}</Box>
-        )}
-
         <Typography variant="h5" gutterBottom>Items</Typography>
         <Card variant="outlined">
           <CardContent>
@@ -1859,6 +1855,10 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
           <Typography variant="h6">Total GST: {formatCurrency(gst)}</Typography>
           <Typography variant="h6">Total Amount: {formatCurrency(tot)}</Typography>
         </Box>
+
+        {purchaseOrder.return_orders && (
+          <Box mt={4}>{renderReturnOrdersCard()}</Box>
+        )}
 
         <Box mt={4} display="flex" justifyContent={{ xs:'center', sm:'flex-end' }} gap={2}>
           <Button variant="contained" color="primary" startIcon={<DownloadIcon />} onClick={handleSaveAndDownloadPdf}>Download PDF</Button>
@@ -2124,10 +2124,6 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
             )}
           </Stack>
         </Box>
-
-        {!isCreationMode && purchaseOrder && (
-          <Box sx={{ mb: 3 }}>{renderReturnOrdersCard()}</Box>
-        )}
 
         {/* Bill Number Alert Banner */}
         {showBillNumberAlert && (
@@ -2747,6 +2743,10 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
               </Grid>
             </Grid>
           </Paper>
+
+          {!isCreationMode && purchaseOrder && (
+            <Box sx={{ mb: 3 }}>{renderReturnOrdersCard()}</Box>
+          )}
 
           <UnifiedPartDialog
             open={openPartDialog}
