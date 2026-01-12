@@ -71,14 +71,12 @@ export class GeminiLiveBridge {
 1. Introduce yourself professionally as an agent from the company
 2. Ask to speak with the appropriate person for parts/orders
 3. Clearly state the Purchase Order number and what is being ordered
-4. Confirm pickup time and location
-5. Ask for an email address to send the PO PDF
-6. Be polite, professional, and concise
-7. Use natural conversation flow
-8. Extract key information using the available functions
+4. Ask for an email address to send the PO PDF
+5. Be polite, professional, and concise
+6. Use natural conversation flow
+7. Extract key information using the available functions
 
 Current context: You are calling about a Purchase Order. Be ready to use functions to capture:
-- Pickup time and location
 - Vendor email address
 - Any special order details
 - Parts being ordered
@@ -88,36 +86,6 @@ Speak naturally and respond to the vendor's questions professionally.`;
 
   private getFunctionSchemas() {
     return [
-      {
-        name: 'set_pickup_time',
-        description: 'Set the pickup time and location for the order',
-        parameters: {
-          type: 'object',
-          properties: {
-            pickup_time: {
-              type: 'string',
-              description: 'When to pick up the order (e.g., "tomorrow at 2 PM", "Friday morning")'
-            },
-            pickup_location: {
-              type: 'string',
-              description: 'Where to pick up the order (address, building, etc.)'
-            },
-            pickup_contact_person: {
-              type: 'string',
-              description: 'Name of person to contact at pickup location'
-            },
-            pickup_phone: {
-              type: 'string',
-              description: 'Phone number for pickup contact person'
-            },
-            pickup_instructions: {
-              type: 'string',
-              description: 'Special instructions for pickup (parking, loading dock, etc.)'
-            }
-          },
-          required: ['pickup_time']
-        }
-      },
       {
         name: 'set_vendor_email',
         description: 'Capture the vendor\'s email address for sending the PO PDF',

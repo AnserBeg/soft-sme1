@@ -8,7 +8,7 @@
 | REST | `POST /api/voice/vendor-call/webhook` | Provider webhook for streaming transcripts, captured email, and status updates. Persists via `VoiceService.recordVendorCallEvent`, updating transcripts/captured email/status and cascading to structured summaries. | Typically configured with provider signature validation (future hardening). | `vendor_call_events`, `vendor_call_sessions`. |
 | REST | `POST /api/voice/vendor-call/:sessionId/send-po` | Utility endpoint to email PO PDFs after the call. Leverages `VoiceService.sendPurchaseOrderEmail`. | Protected by `authMiddleware`. | `purchasehistory`, `purchaselineitems`, email delivery service (out of scope here). |
 | REST | `GET /api/voice/vendor-call/:sessionId` | Fetches call session with optional event history for UI/analytics. | Protected by `authMiddleware`. | `vendor_call_sessions`, `vendor_call_events`. |
-| WebSocket | `ws://.../api/voice/stream?session_id=...` | Twilio/Telnyx media stream ingress. `GeminiLiveBridge` buffers audio, calls Gemini Live, and invokes helper functions (`set_pickup_time`, etc.). | Enabled when Express WS instance is present and `ENABLE_VENDOR_CALLING` not disabled. Session-scoped auth should be layered via signed URLs. | `GeminiLiveBridge`, `vendor_call_sessions`, `purchasehistory`. |
+| WebSocket | `ws://.../api/voice/stream?session_id=...` | Twilio/Telnyx media stream ingress. `GeminiLiveBridge` buffers audio, calls Gemini Live, and invokes helper functions. | Enabled when Express WS instance is present and `ENABLE_VENDOR_CALLING` not disabled. Session-scoped auth should be layered via signed URLs. | `GeminiLiveBridge`, `vendor_call_sessions`, `purchasehistory`. |
 | Service | `VoiceService` | Core orchestrator for session lifecycle—call initiation, event ingestion, post-call summaries, PO emailing. | Requires PostgreSQL pool and optional Telnyx/Google generative AI credentials. | DB tables above, Gemini API, Telnyx API. |
 | Service | `GeminiLiveBridge` | Handles real-time transcription + function-calling from Gemini Live to update sessions and purchase orders. | Depends on Gemini Live credentials and stable WebSocket session. | `vendor_call_sessions`, `purchasehistory`. |
 
@@ -21,7 +21,7 @@ The planner should treat the voice subagent as a long-running workflow with expl
   "name": "voice_vendor_call",
   "input": {
     "purchaseId": "number",
-    "goals": ["capture_vendor_email", "confirm_pickup", "collect_part_notes"],
+    "goals": ["capture_vendor_email", "collect_part_notes"],
     "metadata": {
       "priority": "normal | urgent",
       "contactStrategy": "dial_out | wait_for_webhook"
@@ -32,7 +32,6 @@ The planner should treat the voice subagent as a long-running workflow with expl
     "status": "initiated | connected | completed | failed",
     "structuredNotes": {
       "email": "string | null",
-      "pickup_time": "string | null",
       "parts": [
         { "part_number": "string", "quantity": "number", "notes": "string | null" }
       ],

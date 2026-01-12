@@ -82,31 +82,6 @@ interface PurchaseOrderData {
   updated_at?: string;
   lineItems: PurchaseOrderLineItem[];
   global_gst_rate: number;
-  pickup_time?: string;
-  pickup_location?: string;
-  pickup_contact_person?: string;
-  pickup_phone?: string;
-  pickup_instructions?: string;
-  pickup_notes?: string;
-  // Order placement tracking fields
-  order_placed?: boolean;
-  order_placed_at?: string;
-  order_placed_by?: number;
-  order_placed_method?: string;
-  vendor_confirmation_status?: string;
-  vendor_confirmation_notes?: string;
-  vendor_confirmation_date?: string;
-  pricing_updated?: boolean;
-  pricing_updated_at?: string;
-  pricing_updated_by?: number;
-  pricing_updated_method?: string;
-  quantity_adjusted?: boolean;
-  quantity_adjusted_at?: string;
-  quantity_adjusted_by?: number;
-  quantity_adjusted_method?: string;
-  original_quantities?: any;
-  adjusted_quantities?: any;
-  vendor_pricing_notes?: string;
   exported_to_qbo?: boolean;
   qbo_export_status?: string;
   return_orders?: Array<{
@@ -620,31 +595,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
         vendor: vendor ? { id: vendor.id, label: vendor.label } : null,
         billNumber: billNumber.trim(),
         date: date?.toISOString(),
-        lineItems: getLineItemsSignature(lineItems),
-        pickup_time: purchaseOrder.pickup_time || null,
-        pickup_location: purchaseOrder.pickup_location || null,
-        pickup_contact_person: purchaseOrder.pickup_contact_person || null,
-        pickup_phone: purchaseOrder.pickup_phone || null,
-        pickup_instructions: purchaseOrder.pickup_instructions || null,
-        pickup_notes: purchaseOrder.pickup_notes || null,
-        order_placed: purchaseOrder.order_placed || false,
-        order_placed_at: purchaseOrder.order_placed_at || null,
-        order_placed_by: purchaseOrder.order_placed_by || null,
-        order_placed_method: purchaseOrder.order_placed_method || null,
-        vendor_confirmation_status: purchaseOrder.vendor_confirmation_status || 'pending',
-        vendor_confirmation_notes: purchaseOrder.vendor_confirmation_notes || null,
-        vendor_confirmation_date: purchaseOrder.vendor_confirmation_date || null,
-        pricing_updated: purchaseOrder.pricing_updated || false,
-        pricing_updated_at: purchaseOrder.pricing_updated_at || null,
-        pricing_updated_by: purchaseOrder.pricing_updated_by || null,
-        pricing_updated_method: purchaseOrder.pricing_updated_method || null,
-        quantity_adjusted: purchaseOrder.quantity_adjusted || false,
-        quantity_adjusted_at: purchaseOrder.quantity_adjusted_at || null,
-        quantity_adjusted_by: purchaseOrder.quantity_adjusted_by || null,
-        quantity_adjusted_method: purchaseOrder.quantity_adjusted_method || null,
-        original_quantities: purchaseOrder.original_quantities || null,
-        adjusted_quantities: purchaseOrder.adjusted_quantities || null,
-        vendor_pricing_notes: purchaseOrder.vendor_pricing_notes || null
+        lineItems: getLineItemsSignature(lineItems)
       });
       setInitialSignature(signature);
     }
@@ -654,31 +605,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
     vendor: vendor ? { id: vendor.id, label: vendor.label } : null,
     billNumber: billNumber.trim(), 
     date: date?.toISOString(),
-    lineItems: getLineItemsSignature(lineItems),
-    pickup_time: purchaseOrder?.pickup_time || null,
-    pickup_location: purchaseOrder?.pickup_location || null,
-    pickup_contact_person: purchaseOrder?.pickup_contact_person || null,
-    pickup_phone: purchaseOrder?.pickup_phone || null,
-    pickup_instructions: purchaseOrder?.pickup_instructions || null,
-    pickup_notes: purchaseOrder?.pickup_notes || null,
-    order_placed: purchaseOrder?.order_placed || false,
-    order_placed_at: purchaseOrder?.order_placed_at || null,
-    order_placed_by: purchaseOrder?.order_placed_by || null,
-    order_placed_method: purchaseOrder?.order_placed_method || null,
-    vendor_confirmation_status: purchaseOrder?.vendor_confirmation_status || 'pending',
-    vendor_confirmation_notes: purchaseOrder?.vendor_confirmation_notes || null,
-    vendor_confirmation_date: purchaseOrder?.vendor_confirmation_date || null,
-    pricing_updated: purchaseOrder?.pricing_updated || false,
-    pricing_updated_at: purchaseOrder?.pricing_updated_at || null,
-    pricing_updated_by: purchaseOrder?.pricing_updated_by || null,
-    pricing_updated_method: purchaseOrder?.pricing_updated_method || null,
-    quantity_adjusted: purchaseOrder?.quantity_adjusted || false,
-    quantity_adjusted_at: purchaseOrder?.quantity_adjusted_at || null,
-    quantity_adjusted_by: purchaseOrder?.quantity_adjusted_by || null,
-    quantity_adjusted_method: purchaseOrder?.quantity_adjusted_method || null,
-    original_quantities: purchaseOrder?.original_quantities || null,
-    adjusted_quantities: purchaseOrder?.adjusted_quantities || null,
-    vendor_pricing_notes: purchaseOrder?.vendor_pricing_notes || null
+    lineItems: getLineItemsSignature(lineItems)
   }), [vendor, billNumber, date, lineItems, purchaseOrder]);
 
   const isDirty = Boolean(initialSignature) && initialSignature !== currentSignature && !isSaving;
@@ -1206,32 +1133,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
           global_gst_rate: globalGstRate,
           company_id: user?.company_id,
           created_by: user?.id,
-          // Include pickup fields
-          pickup_time: purchaseOrder?.pickup_time || null,
-          pickup_location: purchaseOrder?.pickup_location || null,
-          pickup_contact_person: purchaseOrder?.pickup_contact_person || null,
-          pickup_phone: purchaseOrder?.pickup_phone || null,
-          pickup_instructions: purchaseOrder?.pickup_instructions || null,
-          pickup_notes: purchaseOrder?.pickup_notes || null,
-          // Include order placement tracking fields
-          order_placed: purchaseOrder?.order_placed || false,
-          order_placed_at: purchaseOrder?.order_placed_at || null,
-          order_placed_by: purchaseOrder?.order_placed_by || null,
-          order_placed_method: purchaseOrder?.order_placed_method || null,
-          vendor_confirmation_status: purchaseOrder?.vendor_confirmation_status || 'pending',
-          vendor_confirmation_notes: purchaseOrder?.vendor_confirmation_notes || null,
-          vendor_confirmation_date: purchaseOrder?.vendor_confirmation_date || null,
-          pricing_updated: purchaseOrder?.pricing_updated || false,
-          pricing_updated_at: purchaseOrder?.pricing_updated_at || null,
-          pricing_updated_by: purchaseOrder?.pricing_updated_by || null,
-          pricing_updated_method: purchaseOrder?.pricing_updated_method || null,
-          quantity_adjusted: purchaseOrder?.quantity_adjusted || false,
-          quantity_adjusted_at: purchaseOrder?.quantity_adjusted_at || null,
-          quantity_adjusted_by: purchaseOrder?.quantity_adjusted_by || null,
-          quantity_adjusted_method: purchaseOrder?.quantity_adjusted_method || null,
-          original_quantities: purchaseOrder?.original_quantities || null,
-          adjusted_quantities: purchaseOrder?.adjusted_quantities || null,
-          vendor_pricing_notes: purchaseOrder?.vendor_pricing_notes || null
+          gst_rate: globalGstRate
         };
 
         console.log('Creating new purchase order:', newPurchaseOrder);
@@ -1272,33 +1174,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
           total_gst_amount: totalGSTAmount,
           total_amount: totalAmount,
           global_gst_rate: globalGstRate,
-          gst_rate: globalGstRate,
-          // Include pickup fields
-          pickup_time: purchaseOrder?.pickup_time || null,
-          pickup_location: purchaseOrder?.pickup_location || null,
-          pickup_contact_person: purchaseOrder?.pickup_contact_person || null,
-          pickup_phone: purchaseOrder?.pickup_phone || null,
-          pickup_instructions: purchaseOrder?.pickup_instructions || null,
-          pickup_notes: purchaseOrder?.pickup_notes || null,
-          // Include order placement tracking fields
-          order_placed: purchaseOrder?.order_placed || false,
-          order_placed_at: purchaseOrder?.order_placed_at || null,
-          order_placed_by: purchaseOrder?.order_placed_by || null,
-          order_placed_method: purchaseOrder?.order_placed_method || null,
-          vendor_confirmation_status: purchaseOrder?.vendor_confirmation_status || 'pending',
-          vendor_confirmation_notes: purchaseOrder?.vendor_confirmation_notes || null,
-          vendor_confirmation_date: purchaseOrder?.vendor_confirmation_date || null,
-          pricing_updated: purchaseOrder?.pricing_updated || false,
-          pricing_updated_at: purchaseOrder?.pricing_updated_at || null,
-          pricing_updated_by: purchaseOrder?.pricing_updated_by || null,
-          pricing_updated_method: purchaseOrder?.pricing_updated_method || null,
-          quantity_adjusted: purchaseOrder?.quantity_adjusted || false,
-          quantity_adjusted_at: purchaseOrder?.quantity_adjusted_at || null,
-          quantity_adjusted_by: purchaseOrder?.quantity_adjusted_by || null,
-          quantity_adjusted_method: purchaseOrder?.quantity_adjusted_method || null,
-          original_quantities: purchaseOrder?.original_quantities || null,
-          adjusted_quantities: purchaseOrder?.adjusted_quantities || null,
-          vendor_pricing_notes: purchaseOrder?.vendor_pricing_notes || null
+          gst_rate: globalGstRate
         };
 
         console.log('Sending to backend (handleSave):', updatedPurchaseOrder);
@@ -1317,32 +1193,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
             vendor,
             billNumber,
             date,
-            lineItems,
-            pickup_time: purchaseOrder?.pickup_time,
-            pickup_location: purchaseOrder?.pickup_location,
-            pickup_contact_person: purchaseOrder?.pickup_contact_person,
-            pickup_phone: purchaseOrder?.pickup_phone,
-            pickup_instructions: purchaseOrder?.pickup_instructions,
-            pickup_notes: purchaseOrder?.pickup_notes,
-            // Order placement tracking fields
-            order_placed: purchaseOrder?.order_placed,
-            order_placed_at: purchaseOrder?.order_placed_at,
-            order_placed_by: purchaseOrder?.order_placed_by,
-            order_placed_method: purchaseOrder?.order_placed_method,
-            vendor_confirmation_status: purchaseOrder?.vendor_confirmation_status,
-            vendor_confirmation_notes: purchaseOrder?.vendor_confirmation_notes,
-            vendor_confirmation_date: purchaseOrder?.vendor_confirmation_date,
-            pricing_updated: purchaseOrder?.pricing_updated,
-            pricing_updated_at: purchaseOrder?.pricing_updated_at,
-            pricing_updated_by: purchaseOrder?.pricing_updated_by,
-            pricing_updated_method: purchaseOrder?.pricing_updated_method,
-            quantity_adjusted: purchaseOrder?.quantity_adjusted,
-            quantity_adjusted_at: purchaseOrder?.quantity_adjusted_at,
-            quantity_adjusted_by: purchaseOrder?.quantity_adjusted_by,
-            quantity_adjusted_method: purchaseOrder?.quantity_adjusted_method,
-            original_quantities: purchaseOrder?.original_quantities,
-            adjusted_quantities: purchaseOrder?.adjusted_quantities,
-            vendor_pricing_notes: purchaseOrder?.vendor_pricing_notes
+            lineItems
           }));
         }
       }
@@ -1461,33 +1312,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
         total_gst_amount: totalGSTAmount,
         total_amount: totalAmount,
         global_gst_rate: globalGstRate,
-        gst_rate: globalGstRate,
-        // Include pickup fields
-        pickup_time: purchaseOrder?.pickup_time || null,
-        pickup_location: purchaseOrder?.pickup_location || null,
-        pickup_contact_person: purchaseOrder?.pickup_contact_person || null,
-        pickup_phone: purchaseOrder?.pickup_phone || null,
-        pickup_instructions: purchaseOrder?.pickup_instructions || null,
-        pickup_notes: purchaseOrder?.pickup_notes || null,
-        // Include order placement tracking fields
-        order_placed: purchaseOrder?.order_placed || false,
-        order_placed_at: purchaseOrder?.order_placed_at || null,
-        order_placed_by: purchaseOrder?.order_placed_by || null,
-        order_placed_method: purchaseOrder?.order_placed_method || null,
-        vendor_confirmation_status: purchaseOrder?.vendor_confirmation_status || 'pending',
-        vendor_confirmation_notes: purchaseOrder?.vendor_confirmation_notes || null,
-        vendor_confirmation_date: purchaseOrder?.vendor_confirmation_date || null,
-        pricing_updated: purchaseOrder?.pricing_updated || false,
-        pricing_updated_at: purchaseOrder?.pricing_updated_at || null,
-        pricing_updated_by: purchaseOrder?.pricing_updated_by || null,
-        pricing_updated_method: purchaseOrder?.pricing_updated_method || null,
-        quantity_adjusted: purchaseOrder?.quantity_adjusted || false,
-        quantity_adjusted_at: purchaseOrder?.quantity_adjusted_at || null,
-        quantity_adjusted_by: purchaseOrder?.quantity_adjusted_by || null,
-        quantity_adjusted_method: purchaseOrder?.quantity_adjusted_method || null,
-        original_quantities: purchaseOrder?.original_quantities || null,
-        adjusted_quantities: purchaseOrder?.adjusted_quantities || null,
-        vendor_pricing_notes: purchaseOrder?.vendor_pricing_notes || null
+        gst_rate: globalGstRate
       };
 
       const response = await api.put(`/api/purchase-orders/${purchaseOrder.purchase_id}`, updatedPOData);
@@ -1559,33 +1384,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
         total_gst_amount: totalGSTAmount,
         total_amount: totalAmount,
         global_gst_rate: globalGstRate,
-        gst_rate: globalGstRate,
-        // Include pickup fields
-        pickup_time: purchaseOrder?.pickup_time || null,
-        pickup_location: purchaseOrder?.pickup_location || null,
-        pickup_contact_person: purchaseOrder?.pickup_contact_person || null,
-        pickup_phone: purchaseOrder?.pickup_phone || null,
-        pickup_instructions: purchaseOrder?.pickup_instructions || null,
-        pickup_notes: purchaseOrder?.pickup_notes || null,
-        // Include order placement tracking fields
-        order_placed: purchaseOrder?.order_placed || false,
-        order_placed_at: purchaseOrder?.order_placed_at || null,
-        order_placed_by: purchaseOrder?.order_placed_by || null,
-        order_placed_method: purchaseOrder?.order_placed_method || null,
-        vendor_confirmation_status: purchaseOrder?.vendor_confirmation_status || 'pending',
-        vendor_confirmation_notes: purchaseOrder?.vendor_confirmation_notes || null,
-        vendor_confirmation_date: purchaseOrder?.vendor_confirmation_date || null,
-        pricing_updated: purchaseOrder?.pricing_updated || false,
-        pricing_updated_at: purchaseOrder?.pricing_updated_at || null,
-        pricing_updated_by: purchaseOrder?.pricing_updated_by || null,
-        pricing_updated_method: purchaseOrder?.pricing_updated_method || null,
-        quantity_adjusted: purchaseOrder?.quantity_adjusted || false,
-        quantity_adjusted_at: purchaseOrder?.quantity_adjusted_at || null,
-        quantity_adjusted_by: purchaseOrder?.quantity_adjusted_by || null,
-        quantity_adjusted_method: purchaseOrder?.quantity_adjusted_method || null,
-        original_quantities: purchaseOrder?.original_quantities || null,
-        adjusted_quantities: purchaseOrder?.adjusted_quantities || null,
-        vendor_pricing_notes: purchaseOrder?.vendor_pricing_notes || null
+        gst_rate: globalGstRate
       };
 
       await api.put(`/api/purchase-orders/${purchaseOrder.purchase_id}`, updatedPurchaseOrder);
@@ -1647,52 +1446,6 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
   };
 
   // handleCallVendor removed per request
-
-  const handleQuantityAdjustment = () => {
-    if (!purchaseOrder) return;
-    
-    // Store original quantities before adjustment
-    const originalQty = lineItems.map(item => item.quantity);
-    
-    // Show dialog to adjust quantities based on vendor confirmation
-    const newQuantities = prompt(
-      'Enter adjusted quantities (comma-separated, e.g., 50,100,25):\n' +
-      'Current quantities: ' + originalQty.join(', ') + '\n' +
-      'Note: Adjust based on vendor minimum orders (e.g., sold by 10ft packs)'
-    );
-    
-    if (newQuantities) {
-      try {
-        const adjustedQty = newQuantities.split(',').map(q => parseFloat(q.trim()));
-        
-        if (adjustedQty.length !== lineItems.length) {
-          toast.error('Number of quantities must match number of line items');
-          return;
-        }
-        
-        // Update line items with adjusted quantities
-        setLineItems(prev => prev.map((item, idx) => ({
-          ...item,
-          quantity: adjustedQty[idx]
-        })));
-        
-        // Update purchase order with adjustment tracking
-        setPurchaseOrder(prev => prev ? {
-          ...prev,
-          quantity_adjusted: true,
-          quantity_adjusted_at: new Date().toISOString(),
-          quantity_adjusted_by: Number(user?.id),
-          quantity_adjusted_method: 'manual',
-          original_quantities: originalQty,
-          adjusted_quantities: adjustedQty
-        } : prev);
-        
-        toast.success('Quantities adjusted based on vendor confirmation');
-      } catch (error) {
-        toast.error('Invalid quantity format. Please use numbers separated by commas.');
-      }
-    }
-  };
 
   // Add state for allocation modal
   const [isAllocationModalOpen, setIsAllocationModalOpen] = useState(false);
@@ -1970,33 +1723,7 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
           total_amount: totalAmount,
           global_gst_rate: globalGstRate,
           company_id: user?.company_id,
-          created_by: user?.id,
-          // Include pickup fields
-          pickup_time: purchaseOrder?.pickup_time || null,
-          pickup_location: purchaseOrder?.pickup_location || null,
-          pickup_contact_person: purchaseOrder?.pickup_contact_person || null,
-          pickup_phone: purchaseOrder?.pickup_phone || null,
-          pickup_instructions: purchaseOrder?.pickup_instructions || null,
-          pickup_notes: purchaseOrder?.pickup_notes || null,
-          // Include order placement tracking fields
-          order_placed: purchaseOrder?.order_placed || false,
-          order_placed_at: purchaseOrder?.order_placed_at || null,
-          order_placed_by: purchaseOrder?.order_placed_by || null,
-          order_placed_method: purchaseOrder?.order_placed_method || null,
-          vendor_confirmation_status: purchaseOrder?.vendor_confirmation_status || 'pending',
-          vendor_confirmation_notes: purchaseOrder?.vendor_confirmation_notes || null,
-          vendor_confirmation_date: purchaseOrder?.vendor_confirmation_date || null,
-          pricing_updated: purchaseOrder?.pricing_updated || false,
-          pricing_updated_at: purchaseOrder?.pricing_updated_at || null,
-          pricing_updated_by: purchaseOrder?.pricing_updated_by || null,
-          pricing_updated_method: purchaseOrder?.pricing_updated_method || null,
-          quantity_adjusted: purchaseOrder?.quantity_adjusted || false,
-          quantity_adjusted_at: purchaseOrder?.quantity_adjusted_at || null,
-          quantity_adjusted_by: purchaseOrder?.quantity_adjusted_by || null,
-          quantity_adjusted_method: purchaseOrder?.quantity_adjusted_method || null,
-          original_quantities: purchaseOrder?.original_quantities || null,
-          adjusted_quantities: purchaseOrder?.adjusted_quantities || null,
-          vendor_pricing_notes: purchaseOrder?.vendor_pricing_notes || null
+          created_by: user?.id
         };
 
         console.log('Creating new purchase order for email:', newPurchaseOrder);
@@ -2363,40 +2090,6 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
               </Typography>
               {!isCreationMode && purchaseOrder && (
                 <>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mt: 1 }}>
-                    <Chip
-                      label={purchaseOrder.order_placed ? 'Order Placed' : 'Order Not Placed'}
-                      color={purchaseOrder.order_placed ? 'success' : 'warning'}
-                      variant="outlined"
-                      size="small"
-                    />
-                    <Chip
-                      label={`Vendor: ${purchaseOrder.vendor_confirmation_status || 'pending'}`}
-                      color={
-                        purchaseOrder.vendor_confirmation_status === 'confirmed' ? 'success' :
-                        purchaseOrder.vendor_confirmation_status === 'partial' ? 'warning' :
-                        purchaseOrder.vendor_confirmation_status === 'unavailable' ? 'error' : 'default'
-                      }
-                      variant="outlined"
-                      size="small"
-                    />
-                    {purchaseOrder.pricing_updated && (
-                      <Chip
-                        label="Pricing Updated"
-                        color="info"
-                        variant="outlined"
-                        size="small"
-                      />
-                    )}
-                    {purchaseOrder.quantity_adjusted && (
-                      <Chip
-                        label="Quantities Adjusted"
-                        color="secondary"
-                        variant="outlined"
-                        size="small"
-                      />
-                    )}
-                  </Box>
                   {purchaseOrder.created_at && (
                     <Typography variant="subtitle1" color="text.secondary" sx={{ mt: 1 }}>
                       Created On: {new Date(purchaseOrder.created_at).toLocaleDateString()}
@@ -3052,341 +2745,6 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
               <Grid item xs={12} sm={4}> 
                 <Typography variant="h6">Total Amount: ${totalAmount != null && !isNaN(Number(totalAmount)) ? Number(totalAmount).toFixed(2) : '0.00'}</Typography>
               </Grid>
-            </Grid>
-          </Paper>
-
-          {/* Pickup Details Section */} 
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 3, mb: 2 }}>
-            <Typography variant="h6">Pickup Details for Drivers</Typography>
-          </Box>
-          <Paper sx={{ p: 3, mb: 3 }} elevation={3}> 
-            <Grid container spacing={3}> 
-              <Grid item xs={12} sm={6}> 
-                <TextField
-                  label="Pickup Time"
-                  placeholder="e.g., tomorrow at 2 PM, Friday morning"
-                  value={purchaseOrder?.pickup_time || ''}
-                  onChange={(e) => {
-                    if (purchaseOrder) {
-                      setPurchaseOrder({
-                        ...purchaseOrder,
-                        pickup_time: e.target.value
-                      });
-                    }
-                  }}
-                  fullWidth
-                  helperText="When to pick up the order"
-                />
-              </Grid>
-              <Grid item xs={12} sm={6}> 
-                <TextField
-                  label="Pickup Location"
-                  placeholder="e.g., 123 Main St, Building A, Loading Dock"
-                  value={purchaseOrder?.pickup_location || ''}
-                  onChange={(e) => {
-                    if (purchaseOrder) {
-                      setPurchaseOrder({
-                        ...purchaseOrder,
-                        pickup_location: e.target.value
-                      });
-                    }
-                  }}
-                  fullWidth
-                  helperText="Where to pick up the order"
-                />
-              </Grid>
-              <Grid item xs={12} sm={6}> 
-                <TextField
-                  label="Contact Person"
-                  placeholder="e.g., John Smith, Warehouse Manager"
-                  value={purchaseOrder?.pickup_contact_person || ''}
-                  onChange={(e) => {
-                    if (purchaseOrder) {
-                      setPurchaseOrder({
-                        ...purchaseOrder,
-                        pickup_contact_person: e.target.value
-                      });
-                    }
-                  }}
-                  fullWidth
-                  helperText="Name of person to contact at pickup location"
-                />
-              </Grid>
-              <Grid item xs={12} sm={6}> 
-                <TextField
-                  label="Contact Phone"
-                  placeholder="e.g., (555) 123-4567"
-                  value={purchaseOrder?.pickup_phone || ''}
-                  onChange={(e) => {
-                    if (purchaseOrder) {
-                      setPurchaseOrder({
-                        ...purchaseOrder,
-                        pickup_phone: e.target.value
-                      });
-                    }
-                  }}
-                  fullWidth
-                  helperText="Phone number for pickup contact person"
-                />
-              </Grid>
-              <Grid item xs={12}> 
-                <TextField
-                  label="Pickup Instructions"
-                  placeholder="e.g., Use loading dock on east side, call 15 minutes before arrival, parking available in lot B"
-                  value={purchaseOrder?.pickup_instructions || ''}
-                  onChange={(e) => {
-                    if (purchaseOrder) {
-                      setPurchaseOrder({
-                        ...purchaseOrder,
-                        pickup_instructions: e.target.value
-                      });
-                    }
-                  }}
-                  fullWidth
-                  multiline
-                  rows={3}
-                  helperText="Special instructions for pickup (parking, loading dock, etc.)"
-                />
-              </Grid>
-              <Grid item xs={12}> 
-                <TextField
-                  label="Pickup Notes"
-                  placeholder="e.g., After-hours pickup available, bring ID, parts are in warehouse section C"
-                  value={purchaseOrder?.pickup_notes || ''}
-                  onChange={(e) => {
-                    if (purchaseOrder) {
-                      setPurchaseOrder({
-                        ...purchaseOrder,
-                        pickup_notes: e.target.value
-                      });
-                    }
-                  }}
-                  fullWidth
-                  multiline
-                  rows={2}
-                  helperText="General notes about pickup for drivers"
-                />
-              </Grid>
-            </Grid>
-          </Paper>
-
-          {/* Order Placement Tracking Section */} 
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 3, mb: 2 }}>
-            <Typography variant="h6">Order Placement Tracking</Typography>
-          </Box>
-          <Paper sx={{ p: 3, mb: 3 }} elevation={3}> 
-            <Grid container spacing={3}> 
-              {/* Order Placed Status */} 
-              <Grid item xs={12} sm={6}> 
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                  <input
-                    type="checkbox"
-                    checked={purchaseOrder?.order_placed || false}
-                    onChange={(e) => {
-                      if (purchaseOrder) {
-                        setPurchaseOrder({
-                          ...purchaseOrder,
-                          order_placed: e.target.checked,
-                          order_placed_at: e.target.checked ? new Date().toISOString() : undefined,
-                          order_placed_by: e.target.checked ? Number(user?.id) : undefined,
-                          order_placed_method: e.target.checked ? 'manual' : undefined
-                        });
-                      }
-                    }}
-                    style={{ transform: 'scale(1.5)' }}
-                  />
-                  <Box>
-                    <Typography variant="subtitle1" sx={{ fontWeight: 'bold' }}>
-                      Order Placed with Vendor
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      {purchaseOrder?.order_placed ? 
-                        `Placed on ${new Date(purchaseOrder.order_placed_at || '').toLocaleDateString()}` : 
-                        'Order not yet placed'
-                      }
-                    </Typography>
-                  </Box>
-                </Box>
-              </Grid>
-              
-              {/* Vendor Confirmation Status */} 
-              <Grid item xs={12} sm={6}> 
-                <TextField
-                  select
-                  label="Vendor Confirmation Status"
-                  value={purchaseOrder?.vendor_confirmation_status || 'pending'}
-                  onChange={(e) => {
-                    if (purchaseOrder) {
-                      setPurchaseOrder({
-                        ...purchaseOrder,
-                        vendor_confirmation_status: e.target.value,
-                        vendor_confirmation_date: e.target.value !== 'pending' ? new Date().toISOString() : undefined
-                      });
-                    }
-                  }}
-                  fullWidth
-                  helperText="Current vendor confirmation status"
-                >
-                  <MenuItem value="pending">Pending</MenuItem>
-                  <MenuItem value="confirmed">Confirmed</MenuItem>
-                  <MenuItem value="partial">Partially Available</MenuItem>
-                  <MenuItem value="unavailable">Unavailable</MenuItem>
-                </TextField>
-              </Grid>
-
-              {/* Vendor Confirmation Notes */} 
-              <Grid item xs={12}> 
-                <TextField
-                  label="Vendor Confirmation Notes"
-                  placeholder="e.g., Parts available, pricing confirmed, minimum order 10ft packs"
-                  value={purchaseOrder?.vendor_confirmation_notes || ''}
-                  onChange={(e) => {
-                    if (purchaseOrder) {
-                      setPurchaseOrder({
-                        ...purchaseOrder,
-                        vendor_confirmation_notes: e.target.value
-                      });
-                    }
-                  }}
-                  fullWidth
-                  multiline
-                  rows={2}
-                  helperText="Notes from vendor about order confirmation, availability, and pricing"
-                />
-              </Grid>
-
-              {/* Pricing and Quantity Updates */} 
-              <Grid item xs={12} sm={6}> 
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                  <input
-                    type="checkbox"
-                    checked={purchaseOrder?.pricing_updated || false}
-                    onChange={(e) => {
-                      if (purchaseOrder) {
-                        setPurchaseOrder({
-                          ...purchaseOrder,
-                          pricing_updated: e.target.checked,
-                          pricing_updated_at: e.target.checked ? new Date().toISOString() : undefined,
-                          pricing_updated_by: e.target.checked ? Number(user?.id) : undefined,
-                          pricing_updated_method: e.target.checked ? 'manual' : undefined
-                        });
-                      }
-                    }}
-                    style={{ transform: 'scale(1.5)' }}
-                  />
-                  <Box>
-                    <Typography variant="subtitle1" sx={{ fontWeight: 'bold' }}>
-                      Pricing Updated
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      {purchaseOrder?.pricing_updated ? 
-                        `Updated on ${new Date(purchaseOrder.pricing_updated_at || '').toLocaleDateString()}` : 
-                        'Pricing not yet updated'
-                      }
-                    </Typography>
-                  </Box>
-                </Box>
-              </Grid>
-
-              <Grid item xs={12} sm={6}> 
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                  <input
-                    type="checkbox"
-                    checked={purchaseOrder?.quantity_adjusted || false}
-                    onChange={(e) => {
-                      if (purchaseOrder) {
-                        setPurchaseOrder({
-                          ...purchaseOrder,
-                          quantity_adjusted: e.target.checked,
-                          quantity_adjusted_at: e.target.checked ? new Date().toISOString() : undefined,
-                          quantity_adjusted_by: e.target.checked ? Number(user?.id) : undefined,
-                          quantity_adjusted_method: e.target.checked ? 'manual' : undefined
-                        });
-                      }
-                    }}
-                    style={{ transform: 'scale(1.5)' }}
-                  />
-                  <Box>
-                    <Typography variant="subtitle1" sx={{ fontWeight: 'bold' }}>
-                      Quantities Adjusted
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      {purchaseOrder?.quantity_adjusted ? 
-                        `Adjusted on ${new Date(purchaseOrder.quantity_adjusted_at || '').toLocaleDateString()}` : 
-                        'Quantities not yet adjusted'
-                      }
-                    </Typography>
-                  </Box>
-                </Box>
-              </Grid>
-
-              {/* Vendor Pricing Notes */} 
-              <Grid item xs={12}> 
-                <TextField
-                  label="Vendor Pricing Structure Notes"
-                  placeholder="e.g., Sold by 10ft packs, minimum order 50ft, bulk pricing available over 100ft"
-                  value={purchaseOrder?.vendor_pricing_notes || ''}
-                  onChange={(e) => {
-                    if (purchaseOrder) {
-                      setPurchaseOrder({
-                        ...purchaseOrder,
-                        vendor_pricing_notes: e.target.value
-                      });
-                    }
-                  }}
-                  fullWidth
-                  multiline
-                  rows={2}
-                  helperText="Notes about vendor pricing structure, minimum orders, and packaging units"
-                />
-              </Grid>
-
-              {/* Quantity Adjustment Button */} 
-              <Grid item xs={12}> 
-                <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2 }}>
-                  <Button
-                    variant="outlined"
-                    color="primary"
-                    onClick={handleQuantityAdjustment}
-                    disabled={!purchaseOrder || lineItems.length === 0}
-                    sx={{ minWidth: '200px' }}
-                  >
-                    Adjust Quantities (Vendor Confirmation)
-                  </Button>
-                </Box>
-                <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mt: 1 }}>
-                  Use this when vendor confirms different quantities (e.g., sold by 10ft packs)
-                </Typography>
-              </Grid>
-
-              {/* Original vs Adjusted Quantities Display */} 
-              {(purchaseOrder?.original_quantities || purchaseOrder?.adjusted_quantities) && (
-                <Grid item xs={12}> 
-                  <Typography variant="subtitle1" sx={{ fontWeight: 'bold', mb: 2 }}>
-                    Quantity Adjustments
-                  </Typography>
-                  <Grid container spacing={2}> 
-                    {lineItems.map((item, idx) => {
-                      const originalQty = purchaseOrder?.original_quantities?.[idx] || item.quantity;
-                      const adjustedQty = purchaseOrder?.adjusted_quantities?.[idx] || item.quantity;
-                      const hasAdjustment = originalQty !== adjustedQty;
-                      
-                      return hasAdjustment ? (
-                        <Grid item xs={12} sm={6} key={idx}> 
-                          <Paper sx={{ p: 2, backgroundColor: '#f5f5f5' }} elevation={1}> 
-                            <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
-                              {item.part_number}
-                            </Typography>
-                            <Typography variant="body2" color="text.secondary">
-                              Original: {originalQty} → Adjusted: {adjustedQty}
-                            </Typography>
-                          </Paper>
-                        </Grid>
-                      ) : null;
-                    })}
-                  </Grid>
-                </Grid>
-              )}
             </Grid>
           </Paper>
 

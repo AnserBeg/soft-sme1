@@ -76,7 +76,7 @@ try {
     Write-Host "✓ Quotes exported" -ForegroundColor Green
 
     # Export purchase orders (add missing columns)
-    psql -h localhost -p 5432 -U postgres -d soft_sme_db -c "`\copy (SELECT purchase_id, purchase_number, vendor_id, purchase_date, date, bill_number, subtotal, total_gst_amount, total_amount, status, created_at, updated_at, gst_rate, exported_to_qbo, qbo_exported_at, qbo_export_status, qbo_bill_id, NULL as qbo_export_date, NULL as pickup_time, NULL as pickup_location, NULL as pickup_contact_person, NULL as pickup_phone, NULL as pickup_instructions, NULL as pickup_notes, false as order_placed, NULL as order_placed_at, NULL as order_placed_by, NULL as order_placed_method, 'pending' as vendor_confirmation_status, NULL as vendor_confirmation_notes, NULL as vendor_confirmation_date, false as pricing_updated, NULL as pricing_updated_at, NULL as pricing_updated_by, NULL as pricing_updated_method, false as quantity_adjusted, NULL as quantity_adjusted_at, NULL as quantity_adjusted_by, NULL as quantity_adjusted_method, NULL as original_quantities, NULL as adjusted_quantities, NULL as vendor_pricing_notes FROM purchasehistory) TO 'C:\temp\purchasehistory.csv' WITH CSV HEADER"
+    psql -h localhost -p 5432 -U postgres -d soft_sme_db -c "`\copy (SELECT purchase_id, purchase_number, vendor_id, purchase_date, date, bill_number, subtotal, total_gst_amount, total_amount, status, created_at, updated_at, gst_rate, exported_to_qbo, qbo_exported_at, qbo_export_status, qbo_bill_id, NULL as qbo_export_date FROM purchasehistory) TO 'C:\temp\purchasehistory.csv' WITH CSV HEADER"
     Write-Host "✓ Purchase orders exported" -ForegroundColor Green
 
     # Export purchase line items

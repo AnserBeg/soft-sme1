@@ -10,12 +10,6 @@ export interface CreatePurchaseOrderInput {
   total_amount?: number | string | null;
   global_gst_rate?: number | string | null;
   gst_rate?: number | string | null;
-  pickup_notes?: string | null;
-  pickup_time?: string | null;
-  pickup_location?: string | null;
-  pickup_contact_person?: string | null;
-  pickup_phone?: string | null;
-  pickup_instructions?: string | null;
   lineItems?: any[];
 }
 
@@ -125,9 +119,8 @@ export class PurchaseOrderService {
       const purchaseResult = await client.query(
         `INSERT INTO purchasehistory (
           vendor_id, purchase_number, purchase_date, date, bill_number, status, subtotal, total_gst_amount,
-          total_amount, gst_rate, pickup_notes, pickup_time, pickup_location, pickup_contact_person,
-          pickup_phone, pickup_instructions, created_at, updated_at
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,NOW(),NOW()) RETURNING purchase_id`,
+          total_amount, gst_rate, created_at, updated_at
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW(),NOW()) RETURNING purchase_id`,
         [
           vendorId,
           purchaseNumber,
@@ -139,12 +132,6 @@ export class PurchaseOrderService {
           totalGstAmount,
           totalAmount,
           effectiveGstRate,
-          input.pickup_notes ?? null,
-          input.pickup_time ?? null,
-          input.pickup_location ?? null,
-          input.pickup_contact_person ?? null,
-          input.pickup_phone ?? null,
-          input.pickup_instructions ?? null,
         ]
       );
 

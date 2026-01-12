@@ -9,7 +9,6 @@ export interface VoiceCallPartNote {
 
 export interface VoiceStructuredNotes {
   email?: string | null;
-  pickup_time?: string | null;
   parts?: VoiceCallPartNote[];
   summary?: string | null;
   next_steps?: string[];
@@ -29,11 +28,6 @@ export interface VoiceCallSessionRecord {
   updated_at: Date;
   agent_session_id: number | null;
   purchase_number?: string | null;
-  pickup_time?: string | null;
-  pickup_notes?: string | null;
-  pickup_location?: string | null;
-  pickup_contact_person?: string | null;
-  pickup_phone?: string | null;
   vendor_name?: string | null;
 }
 
@@ -122,8 +116,7 @@ export class VoiceService {
 
   async getSession(sessionId: number, options: GetSessionOptions = {}) {
     const sessionRes = await this.pool.query(
-      `SELECT s.*, ph.purchase_number, ph.pickup_time, ph.pickup_notes, ph.pickup_location, ph.pickup_contact_person,
-              ph.pickup_phone, vm.vendor_name
+      `SELECT s.*, ph.purchase_number, vm.vendor_name
          FROM vendor_call_sessions s
          JOIN purchasehistory ph ON ph.purchase_id = s.purchase_id
          JOIN vendormaster vm ON vm.vendor_id = s.vendor_id
@@ -258,11 +251,6 @@ export class VoiceService {
       updated_at: row.updated_at,
       agent_session_id: row.agent_session_id ?? null,
       purchase_number: row.purchase_number,
-      pickup_time: row.pickup_time,
-      pickup_notes: row.pickup_notes,
-      pickup_location: row.pickup_location,
-      pickup_contact_person: row.pickup_contact_person,
-      pickup_phone: row.pickup_phone,
       vendor_name: row.vendor_name,
     };
   }
@@ -308,7 +296,7 @@ export class VoiceService {
         const genAI = new GoogleGenerativeAI(apiKey);
         const model = genAI.getGenerativeModel({ model: process.env.GEMINI_SUMMARY_MODEL || 'gemini-1.5-flash' });
         const prompt =
-          'You are an assistant for a truck and trailer parts shop. Summarize the call transcript. Extract: vendor email (if any), pickup time/window (if any), list of parts with quantities and any notes. Return strict JSON with keys: {"email":string|null,"pickup_time":string|null,"parts":[{"part_number":string,"quantity":number,"notes":string|null}],"summary":string}';
+          'You are an assistant for a truck and trailer parts shop. Summarize the call transcript. Extract: vendor email (if any), list of parts with quantities and any notes. Return strict JSON with keys: {"email":string|null,"parts":[{"part_number":string,"quantity":number,"notes":string|null}],"summary":string}';
         const resp = await model.generateContent([{ text: prompt }, { text: session.transcript }]);
         const text = resp.response.text();
         const parsed = JSON.parse(text);
@@ -321,7 +309,6 @@ export class VoiceService {
     // Fallback summarization using captured fields
     return this.attachNextSteps(session, {
       email: session.captured_email || null,
-      pickup_time: session.pickup_time || null,
       parts: [],
       summary: session.transcript ? session.transcript.split('\n').slice(-3).join('\n') : null,
     });
@@ -340,9 +327,6 @@ export class VoiceService {
     }
     if (!session.emailed_at) {
       nextSteps.push('Email the finalized purchase order PDF.');
-    }
-    if (notes.pickup_time || session.pickup_time) {
-      nextSteps.push(`Confirm pickup at ${notes.pickup_time || session.pickup_time}.`);
     }
     if (!nextSteps.length) {
       nextSteps.push('No immediate follow-up required.');
@@ -370,7 +354,6 @@ export class VoiceService {
         phone: session.vendor_phone,
       },
       capturedEmail: notes?.email || session.captured_email || null,
-      pickupTime: notes?.pickup_time || session.pickup_time || null,
       parts: notes?.parts || [],
       summary: notes?.summary || null,
       nextSteps: notes?.next_steps || [],
@@ -381,9 +364,6 @@ export class VoiceService {
     const details: string[] = [headline];
     if (summaryPayload.capturedEmail) {
       details.push(`Email: ${summaryPayload.capturedEmail}`);
-    }
-    if (summaryPayload.pickupTime) {
-      details.push(`Pickup: ${summaryPayload.pickupTime}`);
     }
     if (summaryPayload.nextSteps?.length) {
       details.push('Next steps:');
