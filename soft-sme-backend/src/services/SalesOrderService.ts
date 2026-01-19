@@ -15,11 +15,12 @@ export class SalesOrderService {
     this.inventoryService = new InventoryService(pool);
   }
 
-  static normalizeStatus(value: any): 'Open' | 'Completed' | 'Closed' {
+  static normalizeStatus(value: any): 'Open' | 'In Progress' | 'Completed' | 'Closed' {
     if (typeof value === 'string') {
       const normalized = value.trim().toLowerCase();
       if (!normalized) return 'Open';
       if (['open', 'opened', 'active'].includes(normalized)) return 'Open';
+      if (['in progress', 'in_progress', 'in-progress', 'progress'].includes(normalized)) return 'In Progress';
       if (['completed', 'complete', 'done', 'finished'].includes(normalized)) return 'Completed';
       if (['closed', 'close', 'archived'].includes(normalized)) return 'Closed';
     }
@@ -736,7 +737,7 @@ export class SalesOrderService {
       if (orderRes.rows.length === 0) throw new Error('Sales order not found');
       const currentStatus = orderRes.rows[0].status;
       if (currentStatus === 'Closed') throw new Error('Order is already closed');
-      if (!['Open', 'Completed'].includes(currentStatus)) throw new Error('Order is not open');
+      if (currentStatus !== 'Completed') throw new Error('Order must be completed before closing');
       // No inventory change on close
       await client.query('UPDATE salesorderhistory SET status = $1 WHERE sales_order_id = $2', ['Closed', orderId]);
       if (startedTransaction) await client.query('COMMIT');
@@ -760,8 +761,31 @@ export class SalesOrderService {
       if (orderRes.rows.length === 0) throw new Error('Sales order not found');
       const currentStatus = orderRes.rows[0].status;
       if (currentStatus === 'Completed') return;
-      if (currentStatus !== 'Open') throw new Error('Only open orders can be completed');
+      if (currentStatus !== 'In Progress') throw new Error('Only in-progress orders can be completed');
       await client.query('UPDATE salesorderhistory SET status = $1 WHERE sales_order_id = $2', ['Completed', orderId]);
+      if (startedTransaction) await client.query('COMMIT');
+    } catch (err) {
+      if (startedTransaction) await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      if (!clientArg) client.release();
+    }
+  }
+
+  async inProgressOrder(orderId: number, clientArg?: PoolClient): Promise<void> {
+    const client = clientArg || await this.pool.connect();
+    let startedTransaction = false;
+    try {
+      if (!clientArg) {
+        await client.query('BEGIN');
+        startedTransaction = true;
+      }
+      const orderRes = await client.query('SELECT * FROM salesorderhistory WHERE sales_order_id = $1 FOR UPDATE', [orderId]);
+      if (orderRes.rows.length === 0) throw new Error('Sales order not found');
+      const currentStatus = orderRes.rows[0].status;
+      if (currentStatus === 'In Progress') return;
+      if (!['Open', 'Completed'].includes(currentStatus)) throw new Error('Only open or completed orders can be set in progress');
+      await client.query('UPDATE salesorderhistory SET status = $1 WHERE sales_order_id = $2', ['In Progress', orderId]);
       if (startedTransaction) await client.query('COMMIT');
     } catch (err) {
       if (startedTransaction) await client.query('ROLLBACK');
@@ -783,7 +807,7 @@ export class SalesOrderService {
       if (orderRes.rows.length === 0) throw new Error('Sales order not found');
       const currentStatus = orderRes.rows[0].status;
       if (currentStatus === 'Open') throw new Error('Order is already open');
-      if (!['Closed', 'Completed'].includes(currentStatus)) throw new Error('Order is not closed');
+      if (currentStatus !== 'In Progress') throw new Error('Only in-progress orders can return to open');
       // No inventory change on reopen
       await client.query('UPDATE salesorderhistory SET status = $1 WHERE sales_order_id = $2', ['Open', orderId]);
       if (startedTransaction) await client.query('COMMIT');

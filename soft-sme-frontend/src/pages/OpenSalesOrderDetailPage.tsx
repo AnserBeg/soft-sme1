@@ -413,6 +413,7 @@ const SalesOrderDetailPage: React.FC = () => {
   const isDirty = Boolean(initialSignature) && initialSignature !== currentSignature && !isSaving;
   const isClosed = !!salesOrder && salesOrder.status?.toLowerCase() === 'closed';
   const isCompleted = !!salesOrder && salesOrder.status?.toLowerCase() === 'completed';
+  const isInProgress = !!salesOrder && salesOrder.status?.toLowerCase() === 'in progress';
   const [originalLineItems, setOriginalLineItems] = useState<SalesOrderLineItem[]>([]);
   const [negativeAvailabilityItems, setNegativeAvailabilityItems] = useState<Array<{
     lineItemIndex: number; partNumber: string; partDescription: string; excessQuantity: number; unit: string;
@@ -1411,6 +1412,28 @@ const SalesOrderDetailPage: React.FC = () => {
     }
   };
 
+  const handleStartSO = async () => {
+    if (isCreationMode || !salesOrder) return;
+    try {
+      await api.put(`/api/sales-orders/${salesOrder.sales_order_id}`, {
+        customer_id: salesOrder.customer_id,
+        sales_date: salesOrder.sales_date,
+        product_name: product?.label?.trim() || salesOrder.product_name,
+        product_description: productDescription.trim(),
+        terms: terms.trim(),
+        unit_number: unitNumber.trim() || salesOrder.unit_number,
+        status: 'In Progress',
+        estimated_cost: estimatedCost ?? salesOrder.estimated_cost,
+        lineItems: buildPayloadLineItems(lineItems),
+      });
+      toast.success('Sales Order moved to In Progress!');
+      setSalesOrder(prev => prev ? { ...prev, status: 'In Progress' } : prev);
+    } catch (err: any) {
+      const message = err?.response?.data?.error || err?.response?.data?.details || err?.response?.data?.message || 'Failed to move sales order to In Progress.';
+      setInventoryAlert(message);
+    }
+  };
+
   const handleReopenSO = async () => {
     if (isCreationMode || !salesOrder) return;
     try {
@@ -1421,15 +1444,39 @@ const SalesOrderDetailPage: React.FC = () => {
         product_description: productDescription.trim(),
         terms: terms.trim(),
         unit_number: unitNumber.trim() || salesOrder.unit_number,
-        status: 'Open',
+        status: 'Completed',
         estimated_cost: estimatedCost ?? salesOrder.estimated_cost,
         lineItems: buildPayloadLineItems(lineItems),
       });
-      toast.success('Sales Order reopened successfully!');
-      setSalesOrder(prev => prev ? { ...prev, status: 'Open' } : prev);
+      toast.success('Sales Order moved back to Completed!');
+      setSalesOrder(prev => prev ? { ...prev, status: 'Completed' } : prev);
       navigate(`/open-sales-orders/${salesOrder.sales_order_id}`);
     } catch (err: any) {
-      const message = err?.response?.data?.error || err?.response?.data?.details || err?.response?.data?.message || 'Failed to reopen sales order.';
+      const message = err?.response?.data?.error || err?.response?.data?.details || err?.response?.data?.message || 'Failed to move sales order back to completed.';
+      setInventoryAlert(message);
+    }
+  };
+
+  const handleBackStage = async () => {
+    if (isCreationMode || !salesOrder) return;
+    const targetStatus = isInProgress ? 'Open' : isCompleted ? 'In Progress' : null;
+    if (!targetStatus) return;
+    try {
+      await api.put(`/api/sales-orders/${salesOrder.sales_order_id}`, {
+        customer_id: salesOrder.customer_id,
+        sales_date: salesOrder.sales_date,
+        product_name: product?.label?.trim() || salesOrder.product_name,
+        product_description: productDescription.trim(),
+        terms: terms.trim(),
+        unit_number: unitNumber.trim() || salesOrder.unit_number,
+        status: targetStatus,
+        estimated_cost: estimatedCost ?? salesOrder.estimated_cost,
+        lineItems: buildPayloadLineItems(lineItems),
+      });
+      toast.success(`Sales Order moved back to ${targetStatus}!`);
+      setSalesOrder(prev => prev ? { ...prev, status: targetStatus } : prev);
+    } catch (err: any) {
+      const message = err?.response?.data?.error || err?.response?.data?.details || err?.response?.data?.message || 'Failed to move sales order back a stage.';
       setInventoryAlert(message);
     }
   };
@@ -1684,7 +1731,7 @@ const SalesOrderDetailPage: React.FC = () => {
             {invoiceCreating ? 'Creating Invoice...' : 'Create Invoice'}
           </Button>
           {user?.access_role !== 'Sales and Purchase' && (
-            <Button variant="contained" color="primary" onClick={handleReopenSO}>Reopen SO</Button>
+            <Button variant="contained" color="primary" onClick={handleReopenSO}>Back to Completed</Button>
           )}
         </Box>
       </Box>
@@ -2142,13 +2189,26 @@ const SalesOrderDetailPage: React.FC = () => {
             {!isCreationMode && (
               <>
                 {user?.access_role !== 'Sales and Purchase' && (
-                  <Button
-                    variant="contained"
-                    startIcon={<DoneAllIcon />}
-                    onClick={isCompleted ? handleCloseSO : handleCompleteSO}
-                  >
-                    {isCompleted ? 'Close SO' : 'Complete SO'}
-                  </Button>
+                  <>
+                    <Button
+                      variant="contained"
+                      startIcon={<DoneAllIcon />}
+                      onClick={
+                        isCompleted
+                          ? handleCloseSO
+                          : isInProgress
+                            ? handleCompleteSO
+                            : handleStartSO
+                      }
+                    >
+                      {isCompleted ? 'Close SO' : isInProgress ? 'Complete SO' : 'Start SO'}
+                    </Button>
+                    {(isInProgress || isCompleted) && (
+                      <Button variant="outlined" onClick={handleBackStage}>
+                        Back a Stage
+                      </Button>
+                    )}
+                  </>
                 )}
                 <Button variant="contained" startIcon={<DownloadIcon />} onClick={handleDownloadPDF}>Download PDF</Button>
               </>
@@ -2854,7 +2914,7 @@ const SalesOrderDetailPage: React.FC = () => {
                   </Button>
                 )}
                 {user?.access_role !== 'Sales and Purchase' && (
-                  <Button variant="outlined" onClick={handleReopenSO}>Reopen SO</Button>
+                  <Button variant="outlined" onClick={handleReopenSO}>Back to Completed</Button>
                 )}
               </Box>
             )}

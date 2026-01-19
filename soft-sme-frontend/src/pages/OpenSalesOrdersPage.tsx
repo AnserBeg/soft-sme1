@@ -22,6 +22,7 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import DownloadIcon from '@mui/icons-material/Download';
 import PrintIcon from '@mui/icons-material/Print';
 import ReplayIcon from '@mui/icons-material/Replay';
+import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ErrorIcon from '@mui/icons-material/Error';
 import CancelIcon from '@mui/icons-material/Cancel';
@@ -48,13 +49,13 @@ const normalizeInvoiceStatus = (value: any): '' | 'needed' | 'done' => {
 
 const isActiveSalesOrderStatus = (value?: string) => {
   const normalized = String(value || '').toLowerCase();
-  return normalized === 'open' || normalized === 'completed';
+  return normalized === 'open' || normalized === 'in progress' || normalized === 'completed';
 };
 
 const OpenSalesOrdersPage: React.FC = () => {
   const [search, setSearch] = useState('');
   const [rows, setRows] = useState<any[]>([]);
-  const [status, setStatus] = useState<'all' | 'open' | 'completed' | 'closed'>('open');
+  const [status, setStatus] = useState<'all' | 'open' | 'in_progress' | 'completed' | 'closed'>('open');
   const [workInProcessTotal, setWorkInProcessTotal] = useState<number>(0);
   const navigate = useNavigate();
   const location = useLocation();
@@ -168,8 +169,8 @@ const OpenSalesOrdersPage: React.FC = () => {
       }));
       setRows(ordersWithId);
 
-      // Calculate Work In Process total (sum of subtotals from open orders only)
-      if (statusFilter === 'open' || statusFilter === 'all') {
+      // Calculate Work In Process total (sum of subtotals from active orders only)
+      if (statusFilter === 'open' || statusFilter === 'in_progress' || statusFilter === 'completed' || statusFilter === 'all') {
         const activeOrders = sortedOrders.filter((order: any) => isActiveSalesOrderStatus(order.status));
         const total = activeOrders.reduce((sum: number, order: any) => {
           const subtotal = parseFloat(order.subtotal) || 0;
@@ -213,45 +214,45 @@ const OpenSalesOrdersPage: React.FC = () => {
     };
   }, [status]);
 
+  const buildLineItemsPayload = (items: any[]) =>
+    (items || []).map((it: any) => {
+      const pn = String(it.part_number || '').toUpperCase();
+
+      const base = {
+        part_number: String(it.part_number || ''),
+        part_description: String(it.part_description || ''),
+        unit: String(it.unit || ''),
+        // For SUPPLY we always force 0; backend should ignore this anyway.
+        unit_price: pn === 'SUPPLY' ? 0 : (Number(it.unit_price) || 0),
+        // Always preserve the UI/server computed amount
+        line_amount: Number(it.line_amount) || 0,
+        ...(it.part_id ? { part_id: Number(it.part_id) } : {}),
+      };
+
+      if (pn === 'SUPPLY') {
+        // SUPPLY is % of LABOUR: quantity 1, unit Each, unit_price 0
+        return { ...base, unit: 'Each', quantity: 1 };
+      }
+
+      if (pn === 'LABOUR' || pn === 'OVERHEAD') {
+        // Hours come from quantity/quantity_sold; preserve the exact line_amount
+        const hours = Number(it.quantity_sold ?? it.quantity ?? 0) || 0;
+        return { ...base, quantity: hours };
+      }
+
+      // Normal inventory part
+      return {
+        ...base,
+        quantity: Number(it.quantity_sold ?? it.quantity ?? 0) || 0,
+      };
+    });
+
   const handleCloseOrder = async (salesOrderId: number) => {
     if (window.confirm(`Are you sure you want to close this Sales Order?`)) {
       try {
         // Fetch the full sales order details first
         const response = await api.get(`/api/sales-orders/${salesOrderId}`);
         const { salesOrder, lineItems } = response.data;
-
-        const buildLineItemsPayload = (items: any[]) =>
-          (items || []).map((it: any) => {
-            const pn = String(it.part_number || '').toUpperCase();
-
-            const base = {
-              part_number: String(it.part_number || ''),
-              part_description: String(it.part_description || ''),
-              unit: String(it.unit || ''),
-              // For SUPPLY we always force 0; backend should ignore this anyway.
-              unit_price: pn === 'SUPPLY' ? 0 : (Number(it.unit_price) || 0),
-              // Always preserve the UI/server computed amount
-              line_amount: Number(it.line_amount) || 0,
-              ...(it.part_id ? { part_id: Number(it.part_id) } : {}),
-            };
-
-            if (pn === 'SUPPLY') {
-              // SUPPLY is % of LABOUR: quantity 1, unit Each, unit_price 0
-              return { ...base, unit: 'Each', quantity: 1 };
-            }
-
-            if (pn === 'LABOUR' || pn === 'OVERHEAD') {
-              // Hours come from quantity/quantity_sold; preserve the exact line_amount
-              const hours = Number(it.quantity_sold ?? it.quantity ?? 0) || 0;
-              return { ...base, quantity: hours };
-            }
-
-            // Normal inventory part
-            return {
-              ...base,
-              quantity: Number(it.quantity_sold ?? it.quantity ?? 0) || 0,
-            };
-          });
 
         // Send all fields, but with status: 'Closed'
         const { subtotal, total_gst_amount, total_amount, ...salesOrderWithoutTotals } = salesOrder;
@@ -286,39 +287,41 @@ const OpenSalesOrdersPage: React.FC = () => {
     }
   };
 
+  const handleStartOrder = async (salesOrderId: number) => {
+    if (window.confirm(`Move this Sales Order to In Progress?`)) {
+      try {
+        const response = await api.get(`/api/sales-orders/${salesOrderId}`);
+        const { salesOrder, lineItems } = response.data;
+
+        const { subtotal, total_gst_amount, total_amount, ...salesOrderWithoutTotals } = salesOrder;
+        await api.put(`/api/sales-orders/${salesOrderId}`, {
+          ...salesOrderWithoutTotals,
+          status: 'In Progress',
+          lineItems: buildLineItemsPayload(lineItems || []),
+        });
+
+        toast.success('Sales Order moved to In Progress!');
+        fetchSalesOrders();
+      } catch (error: any) {
+        console.error('Error moving sales order to in progress:', error);
+        let errorMessage = 'Failed to move sales order to In Progress.';
+        if (error.response?.data?.error) {
+          errorMessage = error.response.data.error;
+        } else if (error.response?.data?.details) {
+          errorMessage = error.response.data.details;
+        } else if (error.response?.data?.message) {
+          errorMessage = error.response.data.message;
+        }
+        toast.error(errorMessage);
+      }
+    }
+  };
+
   const handleCompleteOrder = async (salesOrderId: number) => {
     if (window.confirm(`Mark this Sales Order as completed?`)) {
       try {
         const response = await api.get(`/api/sales-orders/${salesOrderId}`);
         const { salesOrder, lineItems } = response.data;
-
-        const buildLineItemsPayload = (items: any[]) =>
-          (items || []).map((it: any) => {
-            const pn = String(it.part_number || '').toUpperCase();
-
-            const base = {
-              part_number: String(it.part_number || ''),
-              part_description: String(it.part_description || ''),
-              unit: String(it.unit || ''),
-              unit_price: pn === 'SUPPLY' ? 0 : (Number(it.unit_price) || 0),
-              line_amount: Number(it.line_amount) || 0,
-              ...(it.part_id ? { part_id: Number(it.part_id) } : {}),
-            };
-
-            if (pn === 'SUPPLY') {
-              return { ...base, unit: 'Each', quantity: 1 };
-            }
-
-            if (pn === 'LABOUR' || pn === 'OVERHEAD') {
-              const hours = Number(it.quantity_sold ?? it.quantity ?? 0) || 0;
-              return { ...base, quantity: hours };
-            }
-
-            return {
-              ...base,
-              quantity: Number(it.quantity_sold ?? it.quantity ?? 0) || 0,
-            };
-          });
 
         const { subtotal, total_gst_amount, total_amount, ...salesOrderWithoutTotals } = salesOrder;
         await api.put(`/api/sales-orders/${salesOrderId}`, {
@@ -332,6 +335,46 @@ const OpenSalesOrdersPage: React.FC = () => {
       } catch (error: any) {
         console.error('Error completing sales order:', error);
         let errorMessage = 'Failed to mark sales order as completed.';
+        if (error.response?.data?.error) {
+          errorMessage = error.response.data.error;
+        } else if (error.response?.data?.details) {
+          errorMessage = error.response.data.details;
+        } else if (error.response?.data?.message) {
+          errorMessage = error.response.data.message;
+        }
+        toast.error(errorMessage);
+      }
+    }
+  };
+
+  const handleBackStage = async (salesOrderId: number, currentStatus: string) => {
+    const normalized = String(currentStatus || '').toLowerCase();
+    const targetStatus = normalized === 'in progress'
+      ? 'Open'
+      : normalized === 'completed'
+        ? 'In Progress'
+        : normalized === 'closed'
+          ? 'Completed'
+          : null;
+    if (!targetStatus) return;
+
+    if (window.confirm(`Move this Sales Order back to ${targetStatus}?`)) {
+      try {
+        const response = await api.get(`/api/sales-orders/${salesOrderId}`);
+        const { salesOrder, lineItems } = response.data;
+
+        const { subtotal, total_gst_amount, total_amount, ...salesOrderWithoutTotals } = salesOrder;
+        await api.put(`/api/sales-orders/${salesOrderId}`, {
+          ...salesOrderWithoutTotals,
+          status: targetStatus,
+          lineItems: buildLineItemsPayload(lineItems || []),
+        });
+
+        toast.success(`Sales Order moved back to ${targetStatus}!`);
+        fetchSalesOrders();
+      } catch (error: any) {
+        console.error('Error moving sales order back a stage:', error);
+        let errorMessage = 'Failed to move sales order back a stage.';
         if (error.response?.data?.error) {
           errorMessage = error.response.data.error;
         } else if (error.response?.data?.details) {
@@ -371,37 +414,7 @@ const OpenSalesOrdersPage: React.FC = () => {
           sales_order_id: Number(salesOrder.sales_order_id),
           customer_id: Number(salesOrder.customer_id),
           status: 'Open',
-          lineItems: (lineItems || []).map((it: any) => {
-            const pn = String(it.part_number || '').toUpperCase();
-
-            const base = {
-              part_number: String(it.part_number || ''),
-              part_description: String(it.part_description || ''),
-              unit: String(it.unit || ''),
-              // For SUPPLY we always force 0; backend should ignore this anyway.
-              unit_price: pn === 'SUPPLY' ? 0 : (Number(it.unit_price) || 0),
-              // Always preserve the UI/server computed amount
-              line_amount: Number(it.line_amount) || 0,
-              ...(it.part_id ? { part_id: Number(it.part_id) } : {}),
-            };
-
-            if (pn === 'SUPPLY') {
-              // SUPPLY is % of LABOUR: quantity 1, unit Each, unit_price 0
-              return { ...base, unit: 'Each', quantity: 1 };
-            }
-
-            if (pn === 'LABOUR' || pn === 'OVERHEAD') {
-              // Hours come from quantity/quantity_sold; preserve the exact line_amount
-              const hours = Number(it.quantity_sold ?? it.quantity ?? 0) || 0;
-              return { ...base, quantity: hours };
-            }
-
-            // Normal inventory part
-            return {
-              ...base,
-              quantity: Number(it.quantity_sold ?? it.quantity ?? 0) || 0,
-            };
-          }),
+          lineItems: buildLineItemsPayload(lineItems || []),
         });
 
         toast.success('Sales Order reopened successfully!');
@@ -469,9 +482,11 @@ const OpenSalesOrdersPage: React.FC = () => {
         const normalized = String(params.value || '').toLowerCase();
         const color = normalized === 'open'
           ? 'success'
-          : normalized === 'completed'
-            ? 'warning'
-            : 'error';
+          : normalized === 'in progress'
+            ? 'info'
+            : normalized === 'completed'
+              ? 'warning'
+              : 'error';
         return (
           <Chip
             label={params.value}
@@ -530,6 +545,19 @@ const OpenSalesOrdersPage: React.FC = () => {
           {String(params.row.status || '').toLowerCase() === 'open' && (
             <IconButton
               size="small"
+              color="primary"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleStartOrder(params.row.sales_order_id);
+              }}
+              aria-label="Move to in progress"
+            >
+              <PlayArrowIcon />
+            </IconButton>
+          )}
+          {String(params.row.status || '').toLowerCase() === 'in progress' && (
+            <IconButton
+              size="small"
               color="success"
               onClick={(e) => {
                 e.stopPropagation();
@@ -551,6 +579,19 @@ const OpenSalesOrdersPage: React.FC = () => {
               aria-label="Close sales order"
             >
               <CloseIcon />
+            </IconButton>
+          )}
+          {['in progress', 'completed', 'closed'].includes(String(params.row.status || '').toLowerCase()) && (
+            <IconButton
+              size="small"
+              color="secondary"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleBackStage(params.row.sales_order_id, params.row.status);
+              }}
+              aria-label="Move back a stage"
+            >
+              <ReplayIcon />
             </IconButton>
           )}
           {String(params.row.status || '').toLowerCase() !== 'closed' && (
@@ -577,7 +618,9 @@ const OpenSalesOrdersPage: React.FC = () => {
     // Filter rows based on current status selection
     let exportRows = filteredRows;
     if (status === 'open') {
-      exportRows = filteredRows.filter((row) => isActiveSalesOrderStatus(row.status));
+      exportRows = filteredRows.filter((row) => String(row.status || '').toLowerCase() === 'open');
+    } else if (status === 'in_progress') {
+      exportRows = filteredRows.filter((row) => String(row.status || '').toLowerCase() === 'in progress');
     } else if (status === 'completed') {
       exportRows = filteredRows.filter((row) => String(row.status || '').toLowerCase() === 'completed');
     } else if (status === 'closed') {
@@ -738,13 +781,13 @@ const OpenSalesOrdersPage: React.FC = () => {
         <Typography variant="h4" component="h1" gutterBottom>
           {user?.access_role === 'Sales and Purchase' ? 'Sales Orders (Open Only)' : 'Sales Orders'}
         </Typography>
-        {(status === 'open' || status === 'all') && (
+        {(status === 'open' || status === 'in_progress' || status === 'completed' || status === 'all') && (
           <Box sx={{ mb: 2, p: 2, bgcolor: 'background.paper', borderRadius: 1, border: '1px solid', borderColor: 'divider' }}>
             <Typography variant="h6" component="div" sx={{ fontWeight: 'bold', color: 'primary.main' }}>
               Work In Process: ${workInProcessTotal.toFixed(2)}
             </Typography>
             <Typography variant="body2" color="text.secondary">
-              Total subtotal value of all open sales orders
+              Total subtotal value of all active sales orders
             </Typography>
           </Box>
         )}
@@ -816,6 +859,14 @@ const OpenSalesOrdersPage: React.FC = () => {
               color={status === 'open' ? 'primary' : 'default'}
               sx={{ fontSize: 18, px: 3, py: 1.5, minWidth: 80, height: 44 }}
             />
+            {user?.access_role !== 'Sales and Purchase' && (
+              <Chip
+                label="In Progress"
+                onClick={() => setStatus('in_progress')}
+                color={status === 'in_progress' ? 'primary' : 'default'}
+                sx={{ fontSize: 18, px: 3, py: 1.5, minWidth: 130, height: 44 }}
+              />
+            )}
             {user?.access_role !== 'Sales and Purchase' && (
               <Chip
                 label="Completed"

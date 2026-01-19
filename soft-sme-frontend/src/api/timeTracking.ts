@@ -50,7 +50,7 @@ export const timeTrackingApi = {
 
   // Sales Order endpoints
   getOpenSalesOrders: async (): Promise<SalesOrder[]> => {
-    const response = await axios.get(`${API_BASE_URL}/sales-orders?status=open`);
+    const response = await axios.get(`${API_BASE_URL}/sales-orders?status=in_progress`);
     return response.data;
   },
 

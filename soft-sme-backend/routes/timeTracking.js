@@ -49,7 +49,7 @@ router.get('/sales-orders', async (req, res) => {
         sales_order_number as number,
         COALESCE(default_hourly_rate, 0.00) as default_hourly_rate
       FROM salesorderhistory 
-      WHERE status = 'Open'
+      WHERE status = 'In Progress'
       ORDER BY created_at DESC
     `);
     res.json(result.rows);

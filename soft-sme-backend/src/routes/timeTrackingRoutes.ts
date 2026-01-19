@@ -1085,7 +1085,7 @@ router.get('/sales-orders', async (req: Request, res: Response) => {
     );
     console.log('Product name column exists:', schemaCheck.rows.length > 0);
     
-    const whereClause = includeClosed ? '' : "WHERE soh.status = 'Open'";
+    const whereClause = includeClosed ? '' : "WHERE soh.status = 'In Progress'";
     const result = await pool.query(
       `SELECT 
         soh.sales_order_id as id, 

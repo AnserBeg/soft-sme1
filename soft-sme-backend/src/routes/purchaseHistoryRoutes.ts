@@ -1151,7 +1151,7 @@ router.get('/:id/allocation-suggestions', async (req: Request, res: Response) =>
         FROM sales_order_parts_to_order sopt
         JOIN salesorderhistory soh ON sopt.sales_order_id = soh.sales_order_id
         JOIN customermaster cm ON soh.customer_id = cm.customer_id
-        WHERE UPPER(sopt.part_number) = UPPER($1) AND LOWER(soh.status) IN ('open', 'completed')
+        WHERE UPPER(sopt.part_number) = UPPER($1) AND LOWER(soh.status) IN ('open', 'in progress', 'completed')
           AND sopt.quantity_needed > 0
           ORDER BY soh.sales_order_number ASC
       `, [partNumber]);
@@ -1166,7 +1166,7 @@ router.get('/:id/allocation-suggestions', async (req: Request, res: Response) =>
         cm.customer_name
       FROM salesorderhistory soh
       JOIN customermaster cm ON soh.customer_id = cm.customer_id
-      WHERE LOWER(soh.status) IN ('open', 'completed')
+      WHERE LOWER(soh.status) IN ('open', 'in progress', 'completed')
       ORDER BY soh.sales_order_number ASC
     `);
       
