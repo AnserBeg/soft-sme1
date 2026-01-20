@@ -135,9 +135,13 @@ const OpenSalesOrdersPage: React.FC = () => {
 
   const fetchSalesOrders = async (statusFilter = status) => {
     try {
-      // For Sales and Purchase users, only fetch open sales orders
-      const effectiveStatusFilter = user?.access_role === 'Sales and Purchase' ? 'open' : statusFilter;
-      
+      const isSalesPurchaseUser = user?.access_role === 'Sales and Purchase';
+      const allowedSalesPurchaseStatuses = new Set(['open', 'in_progress', 'completed']);
+      const effectiveStatusFilter =
+        isSalesPurchaseUser && !allowedSalesPurchaseStatuses.has(statusFilter)
+          ? 'open'
+          : statusFilter;
+
       // Add cache-busting parameter to ensure fresh data
       const response = await api.get('/api/sales-orders', { 
         params: { 
@@ -779,7 +783,7 @@ const OpenSalesOrdersPage: React.FC = () => {
     <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
       <Box sx={{ mb: 4 }}>
         <Typography variant="h4" component="h1" gutterBottom>
-          {user?.access_role === 'Sales and Purchase' ? 'Sales Orders (Open Only)' : 'Sales Orders'}
+          Sales Orders
         </Typography>
         {(status === 'open' || status === 'in_progress' || status === 'completed' || status === 'all') && (
           <Box sx={{ mb: 2, p: 2, bgcolor: 'background.paper', borderRadius: 1, border: '1px solid', borderColor: 'divider' }}>
@@ -859,22 +863,18 @@ const OpenSalesOrdersPage: React.FC = () => {
               color={status === 'open' ? 'primary' : 'default'}
               sx={{ fontSize: 18, px: 3, py: 1.5, minWidth: 80, height: 44 }}
             />
-            {user?.access_role !== 'Sales and Purchase' && (
-              <Chip
-                label="In Progress"
-                onClick={() => setStatus('in_progress')}
-                color={status === 'in_progress' ? 'primary' : 'default'}
-                sx={{ fontSize: 18, px: 3, py: 1.5, minWidth: 130, height: 44 }}
-              />
-            )}
-            {user?.access_role !== 'Sales and Purchase' && (
-              <Chip
-                label="Completed"
-                onClick={() => setStatus('completed')}
-                color={status === 'completed' ? 'primary' : 'default'}
-                sx={{ fontSize: 18, px: 3, py: 1.5, minWidth: 110, height: 44 }}
-              />
-            )}
+            <Chip
+              label="In Progress"
+              onClick={() => setStatus('in_progress')}
+              color={status === 'in_progress' ? 'primary' : 'default'}
+              sx={{ fontSize: 18, px: 3, py: 1.5, minWidth: 130, height: 44 }}
+            />
+            <Chip
+              label="Completed"
+              onClick={() => setStatus('completed')}
+              color={status === 'completed' ? 'primary' : 'default'}
+              sx={{ fontSize: 18, px: 3, py: 1.5, minWidth: 110, height: 44 }}
+            />
             {user?.access_role !== 'Sales and Purchase' && (
               <Chip
                 label="Closed"
