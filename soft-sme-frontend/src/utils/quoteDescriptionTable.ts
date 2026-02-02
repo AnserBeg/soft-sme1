@@ -11,6 +11,19 @@ export type QuoteDescriptionTableTemplate = {
 
 const sanitizeCell = (value: string): string => value.replace(/\|/g, '¦');
 
+// Remove the single-space padding added by markdown table formatting while
+// preserving any user-entered leading/trailing spaces inside the cell.
+const stripMarkdownCellPadding = (value: string): string => {
+  let result = value;
+  if (result.startsWith(' ')) {
+    result = result.slice(1);
+  }
+  if (result.endsWith(' ')) {
+    result = result.slice(0, -1);
+  }
+  return result;
+};
+
 export const tableToMarkdown = (table: QuoteDescriptionTable): string => {
   const columns = table.columns.length > 0 ? table.columns : ['Column 1', 'Column 2'];
   const columnCount = columns.length;
@@ -46,7 +59,7 @@ const parseMarkdownTableRow = (line: string): string[] | null => {
     return null;
   }
 
-  return parts.map((part) => part.trim());
+  return parts.map((part) => stripMarkdownCellPadding(part));
 };
 
 const isMarkdownTableDividerRow = (line: string): boolean => {
@@ -121,4 +134,3 @@ export const createDefaultTwoColumnTable = (rowCount = 10): QuoteDescriptionTabl
   columns: ['Column 1', 'Column 2'],
   rows: Array.from({ length: Math.max(1, rowCount) }, () => ['', '']),
 });
-
