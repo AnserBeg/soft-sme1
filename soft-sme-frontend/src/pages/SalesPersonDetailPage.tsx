@@ -44,7 +44,21 @@ const SalesPersonDetailPage: React.FC = () => {
     }))
   ), [orders]);
 
+  const monthlyChartData = useMemo(() => {
+    const bucket = new Map<string, number>();
+    (orders || []).forEach((o) => {
+      const date = o.sales_date ? new Date(o.sales_date) : null;
+      if (!date || Number.isNaN(date.getTime())) return;
+      const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+      bucket.set(key, (bucket.get(key) || 0) + Number(o.estimated_cost || 0));
+    });
+    return Array.from(bucket.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, total]) => ({ month: key, total }));
+  }, [orders]);
+
   const chartHeight = Math.max(320, chartData.length * 48);
+  const monthlyChartHeight = Math.max(260, monthlyChartData.length * 40);
 
   return (
     <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
@@ -78,17 +92,36 @@ const SalesPersonDetailPage: React.FC = () => {
             {orders.length === 0 ? (
               <Typography>No sales orders assigned to this sales person yet.</Typography>
             ) : (
-              <Box sx={{ width: '100%', height: chartHeight }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={chartData} layout="vertical" margin={{ left: 16, right: 16, top: 8, bottom: 8 }}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis type="number" tickFormatter={(v) => `$${Number(v).toLocaleString()}`} />
-                    <YAxis type="category" dataKey="name" width={120} />
-                    <Tooltip formatter={(v: any) => formatCurrency(v)} />
-                    <Bar dataKey="estimated_cost" fill="#1976d2" radius={[4, 4, 4, 4]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </Box>
+              <>
+                <Box sx={{ width: '100%', height: monthlyChartHeight, mb: 3 }}>
+                  <Typography variant="subtitle1" sx={{ mb: 1, fontWeight: 600 }}>
+                    Month by Month Total Quoted
+                  </Typography>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={monthlyChartData} margin={{ left: 16, right: 16, top: 8, bottom: 8 }}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="month" />
+                      <YAxis tickFormatter={(v) => `$${Number(v).toLocaleString()}`} />
+                      <Tooltip formatter={(v: any) => formatCurrency(v)} />
+                      <Bar dataKey="total" fill="#0f766e" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </Box>
+                <Box sx={{ width: '100%', height: chartHeight }}>
+                  <Typography variant="subtitle1" sx={{ mb: 1, fontWeight: 600 }}>
+                    Sales Orders (Quoted)
+                  </Typography>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={chartData} layout="vertical" margin={{ left: 16, right: 16, top: 8, bottom: 8 }}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis type="number" tickFormatter={(v) => `$${Number(v).toLocaleString()}`} />
+                      <YAxis type="category" dataKey="name" width={120} />
+                      <Tooltip formatter={(v: any) => formatCurrency(v)} />
+                      <Bar dataKey="estimated_cost" fill="#1976d2" radius={[4, 4, 4, 4]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </Box>
+              </>
             )}
           </Box>
         )}
