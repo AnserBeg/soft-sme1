@@ -45,6 +45,7 @@ interface Quote {
   terms?: string;
   customer_po_number?: string;
   vin_number?: string;
+  vehicle_year?: number | null;
   vehicle_make?: string;
   vehicle_model?: string;
 }
@@ -101,6 +102,7 @@ const QuotePage: React.FC = () => {
       'Quote #': q.quote_number,
       Customer: q.customer_name,
       Product: q.product_name,
+      Year: q.vehicle_year != null ? String(q.vehicle_year) : '',
       Make: q.vehicle_make || '',
       Model: q.vehicle_model || '',
       'Est. Price': formatInt(q.estimated_cost),
@@ -133,6 +135,7 @@ const QuotePage: React.FC = () => {
         q.quote_number?.toLowerCase?.().includes(lowerSearch) ||
         q.customer_name?.toLowerCase?.().includes(lowerSearch) ||
         q.product_name?.toLowerCase?.().includes(lowerSearch) ||
+        String(q.vehicle_year ?? '').toLowerCase().includes(lowerSearch) ||
         q.vehicle_make?.toLowerCase?.().includes(lowerSearch) ||
         q.vehicle_model?.toLowerCase?.().includes(lowerSearch)
     );
@@ -155,6 +158,7 @@ const QuotePage: React.FC = () => {
     { field: 'quote_number', headerName: 'Quote #', flex: 1.05, minWidth: 150, valueFormatter: (params) => params.value ? String(params.value).replace('QO-', '') : '' },
     { field: 'customer_name', headerName: 'Customer', flex: 1.2, minWidth: 170 },
     { field: 'product_name', headerName: 'Product', flex: 1.1, minWidth: 160 },
+    { field: 'vehicle_year', headerName: 'Year', flex: 0.7, minWidth: 90 },
     { field: 'vehicle_make', headerName: 'Make', flex: 0.9, minWidth: 130 },
     { field: 'vehicle_model', headerName: 'Model', flex: 0.9, minWidth: 130 },
     {

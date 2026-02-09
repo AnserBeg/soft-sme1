@@ -598,6 +598,9 @@ router.put('/:id', async (req: Request, res: Response) => {
   if (salesOrderData.terms) salesOrderData.terms = salesOrderData.terms.trim();
   if (salesOrderData.customer_po_number) salesOrderData.customer_po_number = salesOrderData.customer_po_number.trim();
   if (salesOrderData.vin_number) salesOrderData.vin_number = salesOrderData.vin_number.trim();
+  if (salesOrderData.vehicle_year !== undefined && salesOrderData.vehicle_year !== null) {
+    salesOrderData.vehicle_year = String(salesOrderData.vehicle_year).trim();
+  }
   if (salesOrderData.unit_number) salesOrderData.unit_number = salesOrderData.unit_number.trim();
   if (salesOrderData.vehicle_make) salesOrderData.vehicle_make = salesOrderData.vehicle_make.trim();
   if (salesOrderData.vehicle_model) salesOrderData.vehicle_model = salesOrderData.vehicle_model.trim();
@@ -660,6 +663,7 @@ if (lineItems && lineItems.length > 0) {
     'sequence_number',
     'customer_po_number',
     'vin_number',
+    'vehicle_year',
     'unit_number',
     'vehicle_make',
     'vehicle_model',
@@ -704,6 +708,10 @@ if (lineItems && lineItems.length > 0) {
           if (key === 'mileage') {
             const parsedMileage = parseFloat(value as any);
             coercedValue = Number.isFinite(parsedMileage) ? parsedMileage : null;
+          }
+          if (key === 'vehicle_year') {
+            const parsedYear = Number(value as any);
+            coercedValue = Number.isFinite(parsedYear) ? parsedYear : null;
           }
           updateFields.push(`${key} = $${paramCount}`);
           updateValues.push(coercedValue);
@@ -994,6 +1002,14 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
         salesOrder.mileage !== null && salesOrder.mileage !== undefined ? String(salesOrder.mileage) : 'N/A',
         170, y
       );
+      y += 16;
+    }
+    const yearValue = salesOrder.vehicle_year !== null && salesOrder.vehicle_year !== undefined
+      ? String(salesOrder.vehicle_year).trim()
+      : '';
+    if (isFieldVisible('vehicleYear')) {
+      doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Year:', 50, y);
+      doc.font('Helvetica').fontSize(11).fillColor('#000000').text(yearValue || 'N/A', 170, y);
       y += 16;
     }
     const makeValue = salesOrder.vehicle_make?.trim() || '';

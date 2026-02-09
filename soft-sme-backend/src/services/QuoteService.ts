@@ -13,6 +13,7 @@ export interface CreateQuoteInput {
   terms?: string | null;
   customer_po_number?: string | null;
   vin_number?: string | null;
+  vehicle_year?: string | number | null;
   vehicle_make?: string | null;
   vehicle_model?: string | null;
 }
@@ -69,6 +70,8 @@ export class QuoteService {
       const terms = sanitizePlainText(input.terms).trim() || null;
       const customerPoNumber = sanitizePlainText(input.customer_po_number).trim() || null;
       const vinNumber = sanitizePlainText(input.vin_number).trim() || null;
+      const vehicleYearRaw = sanitizePlainText(input.vehicle_year).trim();
+      const vehicleYear = vehicleYearRaw ? Number(vehicleYearRaw) : null;
       const vehicleMake = sanitizePlainText(input.vehicle_make).trim() || null;
       const vehicleModel = sanitizePlainText(input.vehicle_model).trim() || null;
       const productDescription = sanitizePlainText(input.product_description).trim() || null;
@@ -86,8 +89,8 @@ export class QuoteService {
         `INSERT INTO quotes (
           quote_number, customer_id, quote_date, valid_until, product_name, product_description,
           estimated_cost, status, sequence_number, terms, customer_po_number, vin_number,
-          vehicle_make, vehicle_model
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+          vehicle_year, vehicle_make, vehicle_model
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
         RETURNING quote_id, quote_number`,
         [
           quoteNumber,
@@ -102,6 +105,7 @@ export class QuoteService {
           terms,
           customerPoNumber,
           vinNumber,
+          Number.isFinite(vehicleYear as number) ? vehicleYear : null,
           vehicleMake,
           vehicleModel,
         ]

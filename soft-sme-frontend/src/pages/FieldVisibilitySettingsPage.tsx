@@ -31,6 +31,7 @@ const salesOrderFields: Array<{ key: keyof FieldVisibilitySettings['salesOrders'
   { key: 'quotedPrice', label: 'Quoted Price' },
   { key: 'sourceQuote', label: 'Source Quote' },
   { key: 'vin', label: 'VIN #' },
+  { key: 'vehicleYear', label: 'Vehicle Year' },
   { key: 'unitNumber', label: 'Unit #' },
   { key: 'vehicleMake', label: 'Vehicle Make' },
   { key: 'vehicleModel', label: 'Vehicle Model' },

@@ -73,6 +73,7 @@ interface Quote {
   terms?: string;
   customer_po_number?: string;
   vin_number?: string;
+  vehicle_year?: number | null;
   vehicle_make?: string;
   vehicle_model?: string;
 }
@@ -152,6 +153,7 @@ const QuoteEditorPage: React.FC = () => {
   const [terms, setTerms] = useState('');
   const [customerPoNumber, setCustomerPoNumber] = useState('');
   const [vinNumber, setVinNumber] = useState('');
+  const [vehicleYear, setVehicleYear] = useState('');
   const [vehicleMake, setVehicleMake] = useState('');
   const [vehicleModel, setVehicleModel] = useState('');
 
@@ -200,9 +202,10 @@ const QuoteEditorPage: React.FC = () => {
     terms: (terms || '').trim(),
     customerPoNumber: (customerPoNumber || '').trim(),
     vinNumber: (vinNumber || '').trim(),
+    vehicleYear: (vehicleYear || '').trim(),
     vehicleMake: (vehicleMake || '').trim(),
     vehicleModel: (vehicleModel || '').trim(),
-  }), [selectedCustomer, quote, selectedProduct, quoteDate, validUntil, estimatedCost, productDescription, terms, customerPoNumber, vinNumber, vehicleMake, vehicleModel]);
+  }), [selectedCustomer, quote, selectedProduct, quoteDate, validUntil, estimatedCost, productDescription, terms, customerPoNumber, vinNumber, vehicleYear, vehicleMake, vehicleModel]);
 
   const handleTemplateInsert = useCallback((template: QuoteDescriptionTemplate) => {
     setProductDescription(template.content);
@@ -289,6 +292,7 @@ const QuoteEditorPage: React.FC = () => {
         setTerms(q.terms || '');
         setCustomerPoNumber(q.customer_po_number || '');
         setVinNumber(q.vin_number || '');
+        setVehicleYear(q.vehicle_year ? String(q.vehicle_year) : '');
         setVehicleMake(q.vehicle_make || '');
         setVehicleModel(q.vehicle_model || '');
         setCustomerInput(q.customer_name || '');
@@ -363,6 +367,7 @@ const QuoteEditorPage: React.FC = () => {
     setTerms('');
     setCustomerPoNumber('');
     setVinNumber('');
+    setVehicleYear('');
     setVehicleMake('');
     setVehicleModel('');
     setCustomerInput('');
@@ -378,6 +383,8 @@ const QuoteEditorPage: React.FC = () => {
     setLoading(true);
     setIsSaving(true);
     try {
+      const vehicleYearValue = vehicleYear.trim();
+      const vehicleYearNumber = vehicleYearValue ? Number(vehicleYearValue) : null;
       const payload = {
         customer_id: selectedCustomer.id,
         product_name: selectedProduct.label.trim(),
@@ -388,6 +395,7 @@ const QuoteEditorPage: React.FC = () => {
         terms,
         customer_po_number: customerPoNumber,
         vin_number: vinNumber,
+        vehicle_year: Number.isFinite(vehicleYearNumber) ? vehicleYearNumber : null,
         vehicle_make: vehicleMake.trim(),
         vehicle_model: vehicleModel.trim(),
         status: quote?.status ?? 'Open',
@@ -453,6 +461,7 @@ const QuoteEditorPage: React.FC = () => {
             terms: payload.terms,
             customer_po_number: payload.customer_po_number,
             vin_number: payload.vin_number,
+            vehicle_year: payload.vehicle_year,
             vehicle_make: payload.vehicle_make,
             vehicle_model: payload.vehicle_model,
           };
@@ -1054,6 +1063,20 @@ const QuoteEditorPage: React.FC = () => {
                   placeholder="Optional"
                   value={vinNumber}
                   onChange={(e) => setVinNumber(e.target.value)}
+                  sx={input56Sx}
+                  InputLabelProps={{ sx: labelSx }}
+                />
+              </Grid>
+
+              {/* Vehicle Year */}
+              <Grid item xs={12} md={6}>
+                <TextField
+                  label="Year"
+                  fullWidth
+                  placeholder="Optional"
+                  value={vehicleYear}
+                  onChange={(e) => setVehicleYear(e.target.value)}
+                  inputProps={{ inputMode: 'numeric', maxLength: 4 }}
                   sx={input56Sx}
                   InputLabelProps={{ sx: labelSx }}
                 />

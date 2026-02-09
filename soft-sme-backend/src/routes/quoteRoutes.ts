@@ -126,6 +126,7 @@ router.put('/:id', async (req: Request, res: Response) => {
     terms,
     customer_po_number,
     vin_number,
+    vehicle_year,
     vehicle_make,
     vehicle_model
   } = req.body;
@@ -154,6 +155,8 @@ router.put('/:id', async (req: Request, res: Response) => {
     const sanitizedTerms = sanitizePlainText(terms).trim() || null;
     const sanitizedCustomerPoNumber = sanitizePlainText(customer_po_number).trim() || null;
     const sanitizedVinNumber = sanitizePlainText(vin_number).trim() || null;
+    const vehicleYearRaw = sanitizePlainText(vehicle_year).trim();
+    const sanitizedVehicleYear = vehicleYearRaw ? Number(vehicleYearRaw) : null;
     const sanitizedVehicleMake = sanitizePlainText(vehicle_make).trim() || null;
     const sanitizedVehicleModel = sanitizePlainText(vehicle_model).trim() || null;
 
@@ -176,10 +179,11 @@ router.put('/:id', async (req: Request, res: Response) => {
         terms = $8,
         customer_po_number = $9,
         vin_number = $10,
-        vehicle_make = $11,
-        vehicle_model = $12,
+        vehicle_year = $11,
+        vehicle_make = $12,
+        vehicle_model = $13,
         updated_at = NOW()
-      WHERE quote_id = $13 RETURNING *;`,
+      WHERE quote_id = $14 RETURNING *;`,
       [
         customer_id,
         quote_date,
@@ -191,6 +195,7 @@ router.put('/:id', async (req: Request, res: Response) => {
         sanitizedTerms,
         sanitizedCustomerPoNumber,
         sanitizedVinNumber,
+        Number.isFinite(sanitizedVehicleYear as number) ? sanitizedVehicleYear : null,
         sanitizedVehicleMake,
         sanitizedVehicleModel,
         id
@@ -268,9 +273,9 @@ router.post('/:id/convert-to-sales-order', async (req: Request, res: Response) =
     const salesOrderResult = await client.query(
       `INSERT INTO salesorderhistory (
         sales_order_number, customer_id, sales_date, product_name, product_description,
-        estimated_cost, status, quote_id, subtotal, total_gst_amount, total_amount, sequence_number, terms, customer_po_number, vin_number, vehicle_make, vehicle_model, invoice_status, source_quote_number
+        estimated_cost, status, quote_id, subtotal, total_gst_amount, total_amount, sequence_number, terms, customer_po_number, vin_number, vehicle_year, vehicle_make, vehicle_model, invoice_status, source_quote_number
       ) VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20
       ) RETURNING *`,
       [
         formattedSONumber,
@@ -288,6 +293,7 @@ router.post('/:id/convert-to-sales-order', async (req: Request, res: Response) =
         quote.terms || null,
         quote.customer_po_number || null,
         quote.vin_number || null,
+        quote.vehicle_year || null,
         quote.vehicle_make || null,
         quote.vehicle_model || null,
         null,
@@ -578,6 +584,11 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
       if (quote.vin_number && quote.vin_number.trim() !== '') {
         doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('VIN #:', 50, y);
         doc.font('Helvetica').fontSize(11).fillColor('#000000').text(quote.vin_number, 170, y);
+        y += 16;
+      }
+      if (quote.vehicle_year !== null && quote.vehicle_year !== undefined && String(quote.vehicle_year).trim() !== '') {
+        doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Year:', 50, y);
+        doc.font('Helvetica').fontSize(11).fillColor('#000000').text(String(quote.vehicle_year), 170, y);
         y += 16;
       }
       if (quote.vehicle_make && quote.vehicle_make.trim() !== '') {

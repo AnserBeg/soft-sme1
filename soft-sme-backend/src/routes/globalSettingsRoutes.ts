@@ -9,6 +9,7 @@ type SalesOrderFieldVisibility = {
   quotedPrice: boolean;
   sourceQuote: boolean;
   vin: boolean;
+  vehicleYear: boolean;
   unitNumber: boolean;
   vehicleMake: boolean;
   vehicleModel: boolean;
@@ -42,6 +43,7 @@ const DEFAULT_FIELD_VISIBILITY: FieldVisibilitySettings = {
     quotedPrice: true,
     sourceQuote: true,
     vin: true,
+    vehicleYear: true,
     unitNumber: true,
     vehicleMake: true,
     vehicleModel: true,

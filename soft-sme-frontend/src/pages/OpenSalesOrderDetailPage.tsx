@@ -98,6 +98,7 @@ interface SalesOrder {
   customer_po_number?: string | null;
   vin_number?: string | null;
   unit_number?: string | null;
+  vehicle_year?: number | null;
   wanted_by_date?: string | null;
   wanted_by_time_of_day?: WantedTimeOfDay | null;
   exported_to_qbo?: boolean;
@@ -130,6 +131,7 @@ type OptionalFieldKey =
   | 'quotedPrice'
   | 'sourceQuote'
   | 'vin'
+  | 'vehicleYear'
   | 'unitNumber'
   | 'vehicleMake'
   | 'vehicleModel'
@@ -205,6 +207,7 @@ const SalesOrderDetailPage: React.FC = () => {
   const [customerPoNumber, setCustomerPoNumber] = useState('');
   const [vinNumber, setVinNumber] = useState('');
   const [unitNumber, setUnitNumber] = useState('');
+  const [vehicleYear, setVehicleYear] = useState('');
   const [vehicleMake, setVehicleMake] = useState('');
   const [vehicleModel, setVehicleModel] = useState('');
   const [mileage, setMileage] = useState<number | ''>('');
@@ -388,11 +391,12 @@ const SalesOrderDetailPage: React.FC = () => {
     vinNumber: (vinNumber || '').trim(),
     unitNumber: (unitNumber || '').trim(),
     estimatedCost: estimatedCost != null ? Number(estimatedCost) : null,
+    vehicleYear: (vehicleYear || '').trim(),
     vehicleMake: (vehicleMake || '').trim(),
     vehicleModel: (vehicleModel || '').trim(),
     mileage: mileage === '' ? '' : Number(mileage),
     invoiceStatus,
-  }), [customer, product, salesDate, wantedByDate, wantedByTimeOfDay, terms, customerPoNumber, vinNumber, unitNumber, estimatedCost, vehicleMake, vehicleModel, mileage, invoiceStatus]);
+  }), [customer, product, salesDate, wantedByDate, wantedByTimeOfDay, terms, customerPoNumber, vinNumber, unitNumber, estimatedCost, vehicleYear, vehicleMake, vehicleModel, mileage, invoiceStatus]);
 
   // Set initial signature only once after data is fully loaded
   useEffect(() => {
@@ -465,7 +469,7 @@ const SalesOrderDetailPage: React.FC = () => {
       xs: '1fr',
       sm: 'repeat(2, minmax(0, 1fr))',
       md: 'repeat(3, minmax(0, 1fr))',
-      lg: '1.2fr repeat(4, minmax(0, 1fr))',
+      lg: '1.2fr repeat(5, minmax(0, 1fr))',
     },
   };
   const jobGridSx = {
@@ -841,6 +845,11 @@ const SalesOrderDetailPage: React.FC = () => {
         setCustomerPoNumber(data.salesOrder?.customer_po_number || '');
         setVinNumber(data.salesOrder?.vin_number || '');
         setUnitNumber(data.salesOrder?.unit_number || '');
+        setVehicleYear(
+          data.salesOrder?.vehicle_year === null || data.salesOrder?.vehicle_year === undefined
+            ? ''
+            : String(data.salesOrder.vehicle_year)
+        );
         setMileage(
           data.salesOrder?.mileage === null || data.salesOrder?.mileage === undefined
             ? ''
@@ -1258,6 +1267,12 @@ const SalesOrderDetailPage: React.FC = () => {
       customer_po_number: customerPoNumber.trim(),
       vin_number: vinNumber.trim(),
       unit_number: unitNumber.trim(),
+      vehicle_year: (() => {
+        const trimmed = vehicleYear.trim();
+        if (!trimmed) return null;
+        const parsed = Number(trimmed);
+        return Number.isFinite(parsed) ? parsed : null;
+      })(),
       vehicle_make: vehicleMake.trim(),
       vehicle_model: vehicleModel.trim(),
       mileage: mileage === '' ? null : Number(mileage),
@@ -1655,6 +1670,7 @@ const SalesOrderDetailPage: React.FC = () => {
               <Grid item xs={12} sm={6}><b>Wanted By:</b> {salesOrder.wanted_by_date ? new Date(salesOrder.wanted_by_date).toLocaleDateString() : 'N/A'}{salesOrder.wanted_by_time_of_day ? ` (${String(salesOrder.wanted_by_time_of_day).charAt(0).toUpperCase()}${String(salesOrder.wanted_by_time_of_day).slice(1)})` : ''}</Grid>
               <Grid item xs={12} sm={6}><b>Status:</b> {salesOrder.status?.toUpperCase() || 'N/A'}</Grid>
               <Grid item xs={12} sm={6}><b>VIN #:</b> {salesOrder.vin_number || 'N/A'}</Grid>
+              <Grid item xs={12} sm={6}><b>Year:</b> {salesOrder.vehicle_year ?? 'N/A'}</Grid>
               <Grid item xs={12} sm={6}><b>Unit #:</b> {salesOrder.unit_number || 'N/A'}</Grid>
               <Grid item xs={12} sm={6}><b>Mileage:</b> {salesOrder.mileage ?? 'N/A'}</Grid>
               <Grid item xs={12} sm={6}><b>Make:</b> {salesOrder.vehicle_make || 'N/A'}</Grid>
@@ -1973,6 +1989,21 @@ const SalesOrderDetailPage: React.FC = () => {
           ),
         }
       : null,
+    effectiveFieldVisibility.vehicleYear
+      ? {
+          key: 'vehicleYear',
+          element: (
+            <TextField
+              label="Year"
+              value={vehicleYear}
+              onChange={e => setVehicleYear(e.target.value)}
+              fullWidth
+              placeholder="Optional"
+              inputProps={{ inputMode: 'numeric', maxLength: 4 }}
+            />
+          ),
+        }
+      : null,
     effectiveFieldVisibility.unitNumber
       ? {
           key: 'unitNumber',
@@ -2175,7 +2206,7 @@ const SalesOrderDetailPage: React.FC = () => {
               setCustomer(null); setCustomerInput(''); setSalesDate(dayjs()); setWantedByDate(null); setWantedByTimeOfDay('');
               setProduct(null); setProductInput(''); setProductDescription('');
               setTerms(''); setCustomerPoNumber(''); setVinNumber('');
-              setUnitNumber(''); setVehicleMake(''); setVehicleModel(''); setInvoiceStatus(''); setMileage('');
+              setUnitNumber(''); setVehicleYear(''); setVehicleMake(''); setVehicleModel(''); setInvoiceStatus(''); setMileage('');
               setEstimatedCost(null);
               setLineItems([{
                 part_number: '', part_description: '', quantity: '',
@@ -2231,6 +2262,7 @@ const SalesOrderDetailPage: React.FC = () => {
                 { key: 'quotedPrice', label: 'Quoted Price' },
                 { key: 'sourceQuote', label: 'Source Quote #' },
                 { key: 'vin', label: 'VIN #' },
+                { key: 'vehicleYear', label: 'Year' },
                 { key: 'unitNumber', label: 'Unit #' },
                 { key: 'mileage', label: 'Mileage' },
                 { key: 'vehicleMake', label: 'Make' },
