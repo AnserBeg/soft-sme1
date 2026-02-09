@@ -21,6 +21,7 @@ import quoteTemplateRouter from './routes/quoteTemplateRoutes';
 import salesOrderRouter from './routes/salesOrderRoutes';
 import purchaseOrderRouter from './routes/purchaseOrderRoutes';
 import returnOrderRouter from './routes/returnOrderRoutes';
+import salesPeopleRouter from './routes/salesPeopleRoutes';
 import employeeRouter from './routes/employeeRoutes';
 import marginScheduleRouter from './routes/marginScheduleRoutes';
 import timeTrackingRouter from './routes/timeTrackingRoutes';
@@ -246,6 +247,9 @@ console.log('Registered business profile routes');
 
 app.use('/api/customers', salesPurchaseAccess, customerRouter);
 console.log('Registered customer routes');
+
+app.use('/api/sales-people', salesPurchaseAccess, salesPeopleRouter);
+console.log('Registered sales people routes');
 
 app.use('/api/products', salesPurchaseAccess, productRouter);
 console.log('Registered product routes');

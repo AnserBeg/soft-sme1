@@ -58,9 +58,11 @@ router.get('/', async (req: Request, res: Response) => {
         q.*,
         c.customer_name,
         CAST(q.estimated_cost AS FLOAT) as estimated_cost,
-        q.quote_number
+        q.quote_number,
+        sp.sales_person_name
       FROM quotes q
       JOIN customermaster c ON q.customer_id = c.customer_id
+      LEFT JOIN sales_people sp ON q.sales_person_id = sp.sales_person_id
       ORDER BY q.quote_date DESC;
     `);
     res.status(200).json(result.rows);
@@ -79,9 +81,11 @@ router.get('/:id', async (req: Request, res: Response) => {
         q.*,
         c.customer_name,
         CAST(q.estimated_cost AS FLOAT) as estimated_cost,
-        q.quote_number
+        q.quote_number,
+        sp.sales_person_name
       FROM quotes q
       JOIN customermaster c ON q.customer_id = c.customer_id
+      LEFT JOIN sales_people sp ON q.sales_person_id = sp.sales_person_id
       WHERE q.quote_id = $1
     `, [id]);
     
@@ -128,7 +132,8 @@ router.put('/:id', async (req: Request, res: Response) => {
     vin_number,
     vehicle_year,
     vehicle_make,
-    vehicle_model
+    vehicle_model,
+    sales_person_id
   } = req.body;
 
   const sanitizedProductName = sanitizePlainText(product_name).trim();
@@ -159,6 +164,12 @@ router.put('/:id', async (req: Request, res: Response) => {
     const sanitizedVehicleYear = vehicleYearRaw ? Number(vehicleYearRaw) : null;
     const sanitizedVehicleMake = sanitizePlainText(vehicle_make).trim() || null;
     const sanitizedVehicleModel = sanitizePlainText(vehicle_model).trim() || null;
+    const salesPersonId =
+      sales_person_id === undefined
+        ? undefined
+        : sales_person_id === null
+          ? null
+          : Number(sales_person_id);
 
     // Verify that the customer exists
     const customerCheck = await client.query('SELECT customer_id FROM customermaster WHERE customer_id = $1', [customer_id]);
@@ -166,6 +177,22 @@ router.put('/:id', async (req: Request, res: Response) => {
       await client.query('ROLLBACK');
       return res.status(400).json({ error: `Customer with ID ${customer_id} not found` });
     }
+    if (salesPersonId !== undefined) {
+      if (salesPersonId !== null && !Number.isFinite(salesPersonId)) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'sales_person_id must be a number' });
+      }
+      if (salesPersonId !== null) {
+        const salesPersonCheck = await client.query('SELECT sales_person_id FROM sales_people WHERE sales_person_id = $1', [salesPersonId]);
+        if (salesPersonCheck.rows.length === 0) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: `Sales person with ID ${salesPersonId} not found` });
+        }
+      }
+    }
+
+    const salesPersonIdToUse =
+      salesPersonId === undefined ? (existingQuote.sales_person_id ?? null) : salesPersonId;
 
     const result = await client.query(
       `UPDATE quotes SET
@@ -182,8 +209,9 @@ router.put('/:id', async (req: Request, res: Response) => {
         vehicle_year = $11,
         vehicle_make = $12,
         vehicle_model = $13,
+        sales_person_id = $14,
         updated_at = NOW()
-      WHERE quote_id = $14 RETURNING *;`,
+      WHERE quote_id = $15 RETURNING *;`,
       [
         customer_id,
         quote_date,
@@ -198,6 +226,7 @@ router.put('/:id', async (req: Request, res: Response) => {
         Number.isFinite(sanitizedVehicleYear as number) ? sanitizedVehicleYear : null,
         sanitizedVehicleMake,
         sanitizedVehicleModel,
+        salesPersonIdToUse,
         id
       ]
     );
@@ -273,9 +302,9 @@ router.post('/:id/convert-to-sales-order', async (req: Request, res: Response) =
     const salesOrderResult = await client.query(
       `INSERT INTO salesorderhistory (
         sales_order_number, customer_id, sales_date, product_name, product_description,
-        estimated_cost, status, quote_id, subtotal, total_gst_amount, total_amount, sequence_number, terms, customer_po_number, vin_number, vehicle_year, vehicle_make, vehicle_model, invoice_status, source_quote_number
+        estimated_cost, status, quote_id, subtotal, total_gst_amount, total_amount, sequence_number, terms, customer_po_number, vin_number, vehicle_year, vehicle_make, vehicle_model, invoice_status, source_quote_number, sales_person_id
       ) VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21
       ) RETURNING *`,
       [
         formattedSONumber,
@@ -297,7 +326,8 @@ router.post('/:id/convert-to-sales-order', async (req: Request, res: Response) =
         quote.vehicle_make || null,
         quote.vehicle_model || null,
         null,
-        quote.quote_number || null
+        quote.quote_number || null,
+        quote.sales_person_id || null
       ]
     );
 

@@ -183,6 +183,7 @@ const Layout: React.FC = () => {
       { type: 'header', text: 'Sales' },
       { text: 'Quotes', icon: <ListAltIcon />, path: '/quotes' },
       { text: 'Sales Orders', icon: <ReceiptIcon />, path: '/open-sales-orders' },
+      { text: 'Sales People', icon: <PersonIcon />, path: '/sales-people' },
       { text: 'Invoices', icon: <ReceiptIcon />, path: '/invoices' },
       { text: 'Customers', icon: <PeopleIcon />, path: '/customers' },
 
@@ -239,6 +240,7 @@ const Layout: React.FC = () => {
         ...dashboardSection,
         { type: 'header', text: 'Sales & Purchase' },
         { text: 'Sales Orders', icon: <ReceiptIcon />, path: '/open-sales-orders' },
+        { text: 'Sales People', icon: <PersonIcon />, path: '/sales-people' },
         { text: 'Invoices', icon: <ReceiptIcon />, path: '/invoices' },
         { text: 'Purchase Orders', icon: <AssignmentIcon />, path: '/open-purchase-orders' },
         { text: 'Return Orders', icon: <AssignmentReturnIcon />, path: '/return-orders' },

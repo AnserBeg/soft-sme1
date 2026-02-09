@@ -350,9 +350,10 @@ router.get('/search', async (req: Request, res: Response) => {
     }
 
     const sql = `
-      SELECT soh.*, cm.customer_name
+      SELECT soh.*, cm.customer_name, sp.sales_person_name
       FROM salesorderhistory soh
       LEFT JOIN customermaster cm ON cm.customer_id = soh.customer_id
+      LEFT JOIN sales_people sp ON sp.sales_person_id = soh.sales_person_id
       WHERE ${where.join(' AND ')}
       ORDER BY soh.sales_date DESC
       LIMIT 5
@@ -372,9 +373,10 @@ router.get('/search', async (req: Request, res: Response) => {
 router.get('/open', async (req: Request, res: Response) => {
   try {
     const result = await pool.query(
-      `SELECT soh.*, COALESCE(cm.customer_name, 'Unknown Customer') as customer_name 
+      `SELECT soh.*, COALESCE(cm.customer_name, 'Unknown Customer') as customer_name, sp.sales_person_name 
        FROM salesorderhistory soh
        LEFT JOIN customermaster cm ON soh.customer_id = cm.customer_id
+       LEFT JOIN sales_people sp ON sp.sales_person_id = soh.sales_person_id
        WHERE LOWER(soh.status) IN ('open', 'in progress') ORDER BY soh.sales_date DESC`
     );
     res.json(result.rows);
@@ -433,9 +435,10 @@ router.get('/history', async (req: Request, res: Response) => {
     console.log('Direct SQL Result (Closed):', debugResult.rows);
 
     const result = await pool.query(
-      `SELECT soh.*, COALESCE(cm.customer_name, 'Unknown Customer') as customer_name 
+      `SELECT soh.*, COALESCE(cm.customer_name, 'Unknown Customer') as customer_name, sp.sales_person_name 
        FROM salesorderhistory soh
        LEFT JOIN customermaster cm ON soh.customer_id = cm.customer_id
+       LEFT JOIN sales_people sp ON sp.sales_person_id = soh.sales_person_id
        WHERE soh.status = 'Closed' ORDER BY soh.sales_date DESC`
     );
     res.json(result.rows);
@@ -456,9 +459,10 @@ router.get('/', async (req: Request, res: Response) => {
     const debugResult = await pool.query("SELECT * FROM salesorderhistory WHERE status = 'Closed'");
     console.log('Direct SQL Result (Closed):', debugResult.rows);
     let query = `
-      SELECT soh.*, COALESCE(cm.customer_name, 'Unknown Customer') as customer_name
+      SELECT soh.*, COALESCE(cm.customer_name, 'Unknown Customer') as customer_name, sp.sales_person_name
       FROM salesorderhistory soh
       LEFT JOIN customermaster cm ON soh.customer_id = cm.customer_id
+      LEFT JOIN sales_people sp ON sp.sales_person_id = soh.sales_person_id
     `;
     const params: any[] = [];
     if (status && status !== 'all') {
@@ -536,9 +540,10 @@ router.get('/:id', async (req: Request, res: Response) => {
   }
   try {
     const salesOrderResult = await pool.query(
-      `SELECT soh.*, COALESCE(cm.customer_name, 'Unknown Customer') as customer_name, soh.total_gst_amount as gst_amount
+      `SELECT soh.*, COALESCE(cm.customer_name, 'Unknown Customer') as customer_name, soh.total_gst_amount as gst_amount, sp.sales_person_name
        FROM salesorderhistory soh
        LEFT JOIN customermaster cm ON soh.customer_id = cm.customer_id
+       LEFT JOIN sales_people sp ON sp.sales_person_id = soh.sales_person_id
        WHERE soh.sales_order_id = $1`,
       [id]
     );
@@ -677,12 +682,14 @@ if (lineItems && lineItems.length > 0) {
     'quote_id',
     'source_quote_number',
     'tech_story',
+    'sales_person_id',
   ];
     // Update sales order header fields if provided
     if (Object.keys(salesOrderData).length > 0) {
       const updateFields: string[] = [];
       const updateValues: any[] = [];
       let paramCount = 1;
+      let salesPersonIdToValidate: number | null | undefined = undefined;
       for (const [key, value] of Object.entries(salesOrderData)) {
         if (allowedFields.includes(key) && value !== undefined && (value !== null || key === 'invoice_status')) {
           let coercedValue: any = value;
@@ -713,9 +720,27 @@ if (lineItems && lineItems.length > 0) {
             const parsedYear = Number(value as any);
             coercedValue = Number.isFinite(parsedYear) ? parsedYear : null;
           }
+          if (key === 'sales_person_id') {
+            if (value === null) {
+              coercedValue = null;
+            } else {
+              const parsed = Number(value as any);
+              coercedValue = Number.isFinite(parsed) ? parsed : null;
+            }
+            salesPersonIdToValidate = coercedValue;
+          }
           updateFields.push(`${key} = $${paramCount}`);
           updateValues.push(coercedValue);
           paramCount++;
+        }
+      }
+      if (salesPersonIdToValidate !== undefined && salesPersonIdToValidate !== null) {
+        const salesPersonCheck = await client.query(
+          'SELECT sales_person_id FROM sales_people WHERE sales_person_id = $1',
+          [salesPersonIdToValidate]
+        );
+        if (salesPersonCheck.rows.length === 0) {
+          throw new Error(`Sales person with ID ${salesPersonIdToValidate} not found`);
         }
       }
       if (updateFields.length > 0) {

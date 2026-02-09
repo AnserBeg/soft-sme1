@@ -26,6 +26,7 @@ import { useAuth } from '../contexts/AuthContext';
 import UnifiedProductDialog, { ProductFormValues } from '../components/UnifiedProductDialog';
 import UnifiedPartDialog, { PartFormValues } from '../components/UnifiedPartDialog';
 import UnifiedCustomerDialog, { CustomerFormValues } from '../components/UnifiedCustomerDialog';
+import UnifiedSalesPersonDialog, { SalesPersonFormValues } from '../components/UnifiedSalesPersonDialog';
 import {
   parseNumericInput,
   SalesOrderLineItem as RobustLineItem,
@@ -66,6 +67,7 @@ const normalizeInvoiceStatus = (value: any): InvoiceStatus => {
 
 interface CustomerOption { label: string; id?: number; isNew?: true; }
 interface ProductOption { label: string; id?: number; description?: string; isNew?: true; }
+interface SalesPersonOption { label: string; id?: number; email?: string; isNew?: true; }
 
 interface SalesOrderLineItem {
   line_item_id?: number;
@@ -85,6 +87,8 @@ interface SalesOrder {
   sales_order_number: string;
   customer_id: number;
   customer_name: string;
+  sales_person_id?: number | null;
+  sales_person_name?: string | null;
   source_quote_number?: string | null;
   subtotal: number | null;
   gst_amount: number | null;
@@ -179,6 +183,7 @@ const SalesOrderDetailPage: React.FC = () => {
   // Shared state
   const [customers, setCustomers] = useState<CustomerOption[]>([]);
   const [products, setProducts] = useState<ProductOption[]>([]);
+  const [salesPeople, setSalesPeople] = useState<SalesPersonOption[]>([]);
   const [inventoryItems, setInventoryItems] = useState<any[]>([]);
   const [globalLabourRate, setGlobalLabourRate] = useState<number | null>(null);
   const [globalOverheadRate, setGlobalOverheadRate] = useState<number | null>(null);
@@ -191,6 +196,11 @@ const SalesOrderDetailPage: React.FC = () => {
   const [customerTypingTimer, setCustomerTypingTimer] = useState<number | null>(null);
   const [customerEnterPressed, setCustomerEnterPressed] = useState(false);
   const customerInputRef = useRef<HTMLInputElement | null>(null);
+  const [salesPerson, setSalesPerson] = useState<SalesPersonOption | null>(null);
+  const [salesPersonInput, setSalesPersonInput] = useState('');
+  const [salesPersonOpen, setSalesPersonOpen] = useState(false);
+  const [salesPersonTypingTimer, setSalesPersonTypingTimer] = useState<number | null>(null);
+  const [salesPersonEnterPressed, setSalesPersonEnterPressed] = useState(false);
   const [vehicleHistory, setVehicleHistory] = useState<VehicleHistoryRecord[]>([]);
   const [vehicleHistoryLoading, setVehicleHistoryLoading] = useState(false);
   const lastVehicleHistoryCustomerId = useRef<number | null>(null);
@@ -382,6 +392,7 @@ const SalesOrderDetailPage: React.FC = () => {
 
   const getHeaderSignature = useCallback(() => ({
     customer: customer ? { id: customer.id, label: customer.label } : null,
+    salesPerson: salesPerson ? { id: salesPerson.id, label: salesPerson.label } : null,
     product: product ? { id: product.id, label: product.label } : null,
     salesDate: salesDate ? salesDate.toISOString() : null,
     wantedByDate: wantedByDate ? wantedByDate.toISOString() : null,
@@ -396,7 +407,7 @@ const SalesOrderDetailPage: React.FC = () => {
     vehicleModel: (vehicleModel || '').trim(),
     mileage: mileage === '' ? '' : Number(mileage),
     invoiceStatus,
-  }), [customer, product, salesDate, wantedByDate, wantedByTimeOfDay, terms, customerPoNumber, vinNumber, unitNumber, estimatedCost, vehicleYear, vehicleMake, vehicleModel, mileage, invoiceStatus]);
+  }), [customer, salesPerson, product, salesDate, wantedByDate, wantedByTimeOfDay, terms, customerPoNumber, vinNumber, unitNumber, estimatedCost, vehicleYear, vehicleMake, vehicleModel, mileage, invoiceStatus]);
 
   // Set initial signature only once after data is fully loaded
   useEffect(() => {
@@ -460,7 +471,7 @@ const SalesOrderDetailPage: React.FC = () => {
     gridTemplateColumns: {
       xs: '1fr',
       sm: 'repeat(2, minmax(0, 1fr))',
-      md: '2fr 1fr 1fr',
+      md: '2fr 1fr 1fr 1fr',
     },
   };
   const vehicleGridSx = {
@@ -660,12 +671,15 @@ const SalesOrderDetailPage: React.FC = () => {
 
   // Shared UI helpers
   const exactCustomerMatch = (q: string) => customers.find(c => normalize(c.label) === normalize(q)) || null;
+  const exactSalesPersonMatch = (q: string) => salesPeople.find(s => normalize(s.label) === normalize(q)) || null;
 
   // Dialogs (shared)
   const [isAddCustomerModalOpen, setIsAddCustomerModalOpen] = useState(false);
   const [newCustomerName, setNewCustomerName] = useState('');
   const [isAddProductModalOpen, setIsAddProductModalOpen] = useState(false);
   const [newProductName, setNewProductName] = useState('');
+  const [isAddSalesPersonModalOpen, setIsAddSalesPersonModalOpen] = useState(false);
+  const [newSalesPersonName, setNewSalesPersonName] = useState('');
 
   // Import dialog (both modes)
   const [importDialogOpen, setImportDialogOpen] = useState(false);
@@ -679,6 +693,7 @@ const SalesOrderDetailPage: React.FC = () => {
   const [exportSuccess, setExportSuccess] = useState<string | null>(null);
   const [invoiceCreating, setInvoiceCreating] = useState(false);
   const [customersLoading, setCustomersLoading] = useState(false);
+  const [salesPeopleLoading, setSalesPeopleLoading] = useState(false);
 
   const [inventoryAlert, setInventoryAlert] = useState<string | null>(null);
 
@@ -686,14 +701,20 @@ const SalesOrderDetailPage: React.FC = () => {
   useEffect(() => {
     (async () => {
       try {
-        const [custRes, prodRes, invRes] = await Promise.all([
+        const [custRes, prodRes, invRes, salesPeopleRes] = await Promise.all([
           api.get('/api/customers'),
           api.get('/api/products'),
           api.get('/api/inventory'),
+          api.get('/api/sales-people'),
         ]);
         setCustomers(custRes.data.map((c: any) => ({ label: c.customer_name, id: c.customer_id })));
         setProducts(prodRes.data.map((p: any) => ({ label: p.product_name, id: p.product_id, description: p.product_description })));
         setInventoryItems(invRes.data);
+        setSalesPeople(
+          (salesPeopleRes.data || [])
+            .filter((sp: any) => sp.is_active !== false)
+            .map((sp: any) => ({ label: sp.sales_person_name, id: sp.sales_person_id, email: sp.email }))
+        );
         
         // For creation mode, mark as loaded after lists are fetched
         if (isCreationMode) {
@@ -732,6 +753,23 @@ const SalesOrderDetailPage: React.FC = () => {
       setCustomersLoading(false);
     }
   }, [customers.length, customersLoading]);
+
+  const reloadSalesPeopleIfNeeded = useCallback(async () => {
+    if (salesPeopleLoading || salesPeople.length > 0) return;
+    setSalesPeopleLoading(true);
+    try {
+      const res = await api.get('/api/sales-people');
+      setSalesPeople(
+        (res.data || [])
+          .filter((sp: any) => sp.is_active !== false)
+          .map((sp: any) => ({ label: sp.sales_person_name, id: sp.sales_person_id, email: sp.email }))
+      );
+    } catch (e) {
+      console.error('Failed to reload sales people', e);
+    } finally {
+      setSalesPeopleLoading(false);
+    }
+  }, [salesPeople.length, salesPeopleLoading]);
 
   const loadVehicleHistory = useCallback(
     async (customerId?: number | null) => {
@@ -859,6 +897,7 @@ const SalesOrderDetailPage: React.FC = () => {
         setVehicleModel(data.salesOrder?.vehicle_model || '');
         setInvoiceStatus(normalizedStatus);
         setTechStory(data.salesOrder?.tech_story || '');
+        setSalesPersonInput(data.salesOrder?.sales_person_name || '');
         
         // hydrate dropdown selections
         const cust = customers.find(c => c.id === data.salesOrder?.customer_id) ||
@@ -885,6 +924,24 @@ const SalesOrderDetailPage: React.FC = () => {
     const customerId = customer?.id ?? salesOrder?.customer_id ?? null;
     loadVehicleHistory(customerId ? Number(customerId) : null);
   }, [customer?.id, loadVehicleHistory, salesOrder?.customer_id]);
+
+  useEffect(() => {
+    if (!salesOrder) return;
+    const spId = salesOrder.sales_person_id ?? null;
+    if (!spId) {
+      setSalesPerson(null);
+      return;
+    }
+    if (salesPeople.length === 0) return;
+    const match = salesPeople.find(sp => sp.id === spId) ||
+      { label: salesOrder.sales_person_name || '', id: spId };
+    if (match?.id) {
+      setSalesPerson(match);
+      if (!salesPersonInput) {
+        setSalesPersonInput(match.label);
+      }
+    }
+  }, [salesOrder, salesPeople, salesPersonInput]);
 
   // debouncedLineItems derives from lineItems directly
 
@@ -1258,6 +1315,7 @@ const SalesOrderDetailPage: React.FC = () => {
 
     const payload = {
       customer_id: customer?.id,
+      sales_person_id: salesPerson?.id ?? null,
       sales_date: salesDate ? salesDate.toISOString() : new Date().toISOString(),
       wanted_by_date: wantedByDate ? wantedByDate.format('YYYY-MM-DD') : null,
       wanted_by_time_of_day: wantedByTimeOfDay || null,
@@ -1639,6 +1697,22 @@ const SalesOrderDetailPage: React.FC = () => {
       else { setCustomerEnterPressed(true); setNewCustomerName(inputValue); setIsAddCustomerModalOpen(true); }
     }
   };
+  const handleSalesPersonKeyDown = (e: React.KeyboardEvent) => {
+    const inputValue = salesPersonInput.trim();
+    const isEnter = e.key === 'Enter', isTab = e.key === 'Tab', isEsc = e.key === 'Escape';
+    if (isEsc) { setSalesPersonOpen(false); return; }
+    if (isEnter || isTab) {
+      if (isEnter && (e as any).ctrlKey && inputValue) {
+        e.preventDefault(); setSalesPersonEnterPressed(true); setNewSalesPersonName(inputValue); setIsAddSalesPersonModalOpen(true); return;
+      }
+      if (salesPersonOpen) return;
+      if (!inputValue) return;
+      e.preventDefault();
+      const match = exactSalesPersonMatch(inputValue);
+      if (match) { setSalesPerson(match); setSalesPersonInput(match.label); }
+      else { setSalesPersonEnterPressed(true); setNewSalesPersonName(inputValue); setIsAddSalesPersonModalOpen(true); }
+    }
+  };
   const handleProductKeyDown = (e: React.KeyboardEvent) => {
     if (e.key !== 'Enter') return;
     e.preventDefault();
@@ -1666,6 +1740,7 @@ const SalesOrderDetailPage: React.FC = () => {
             <Grid container spacing={{ xs:2, md:3 }}>
               <Grid item xs={12} sm={6}><b>Sales Order #:</b> {salesOrder.sales_order_number}</Grid>
               <Grid item xs={12} sm={6}><b>Customer:</b> {salesOrder.customer_name || 'N/A'}</Grid>
+              <Grid item xs={12} sm={6}><b>Sales Person:</b> {salesOrder.sales_person_name || 'N/A'}</Grid>
               <Grid item xs={12} sm={6}><b>Sales Date:</b> {salesOrder.sales_date ? new Date(salesOrder.sales_date).toLocaleDateString() : ''}</Grid>
               <Grid item xs={12} sm={6}><b>Wanted By:</b> {salesOrder.wanted_by_date ? new Date(salesOrder.wanted_by_date).toLocaleDateString() : 'N/A'}{salesOrder.wanted_by_time_of_day ? ` (${String(salesOrder.wanted_by_time_of_day).charAt(0).toUpperCase()}${String(salesOrder.wanted_by_time_of_day).slice(1)})` : ''}</Grid>
               <Grid item xs={12} sm={6}><b>Status:</b> {salesOrder.status?.toUpperCase() || 'N/A'}</Grid>
@@ -1861,6 +1936,83 @@ const SalesOrderDetailPage: React.FC = () => {
                 }
               }}
               inputRef={el => { customerInputRef.current = el; }}
+            />
+          )}
+        />
+      ),
+    },
+    {
+      key: 'salesPerson',
+      element: (
+        <Autocomplete<SalesPersonOption, false, false, true>
+          open={salesPersonOpen}
+          onOpen={() => setSalesPersonOpen(true)}
+          onClose={() => setSalesPersonOpen(false)}
+          autoHighlight
+          value={salesPerson}
+          onChange={(_, newValue) => {
+            if (salesPersonEnterPressed) { setSalesPersonEnterPressed(false); return; }
+            if (newValue && (newValue as any).isNew) {
+              setIsAddSalesPersonModalOpen(true);
+              setNewSalesPersonName(salesPersonInput);
+              setSalesPerson(null);
+              setSalesPersonInput('');
+              setSalesPersonOpen(false);
+            } else {
+              setSalesPerson(newValue as SalesPersonOption);
+              setSalesPersonOpen(false);
+            }
+          }}
+          inputValue={salesPersonInput}
+          onInputChange={(_, v, reason) => {
+            setSalesPersonInput(v);
+            if (salesPersonTypingTimer) window.clearTimeout(salesPersonTypingTimer);
+            if (reason === 'reset') return;
+            const text = (v || '').trim();
+            if (text.length > 0) {
+              const t = window.setTimeout(() => setSalesPersonOpen(true), 200);
+              setSalesPersonTypingTimer(t as unknown as number);
+            } else {
+              setSalesPersonOpen(false);
+            }
+          }}
+          options={salesPeople}
+          filterOptions={(options, params) => {
+            const ranked = rankAndFilter(options, params.inputValue || '');
+            const hasExact = !!exactSalesPersonMatch(params.inputValue || '');
+            const out: any[] = [...ranked];
+            if ((params.inputValue || '').trim() !== '' && !hasExact) {
+              out.push({ label: `Add "${params.inputValue}" as New Sales Person`, isNew: true } as any);
+            }
+            return out;
+          }}
+          getOptionLabel={o => typeof o === 'string' ? o : o.label}
+          isOptionEqualToValue={(o, v) => o.id === v.id}
+          renderOption={(props, option) => {
+            const isNew = (option as any).isNew;
+            const { key, ...other } = props;
+            return (
+              <li key={key} {...other} style={{ display:'flex', alignItems:'center', opacity: isNew ? 0.9 : 1 }}>
+                {isNew && <AddCircleOutlineIcon fontSize="small" style={{ marginRight:8, color:'#666' }} />}
+                <span>{(option as any).label}</span>
+              </li>
+            );
+          }}
+          renderInput={params => (
+            <TextField
+              {...params}
+              label="Sales Person"
+              onFocus={reloadSalesPeopleIfNeeded}
+              onKeyDown={handleSalesPersonKeyDown}
+              onBlur={() => {
+                if (!salesPerson) {
+                  const input = salesPersonInput.trim();
+                  if (input) {
+                    const match = exactSalesPersonMatch(input);
+                    if (match) { setSalesPerson(match); setSalesPersonInput(match.label); }
+                  }
+                }
+              }}
             />
           )}
         />
@@ -2203,7 +2355,7 @@ const SalesOrderDetailPage: React.FC = () => {
             </Button>
             {isCreationMode && <Button variant="outlined" onClick={() => {
               // reset to pristine
-              setCustomer(null); setCustomerInput(''); setSalesDate(dayjs()); setWantedByDate(null); setWantedByTimeOfDay('');
+              setCustomer(null); setCustomerInput(''); setSalesPerson(null); setSalesPersonInput(''); setSalesDate(dayjs()); setWantedByDate(null); setWantedByTimeOfDay('');
               setProduct(null); setProductInput(''); setProductDescription('');
               setTerms(''); setCustomerPoNumber(''); setVinNumber('');
               setUnitNumber(''); setVehicleYear(''); setVehicleMake(''); setVehicleModel(''); setInvoiceStatus(''); setMileage('');
@@ -2904,6 +3056,22 @@ const SalesOrderDetailPage: React.FC = () => {
             } catch { toast.error('Failed to add customer.'); }
           }}
           initialCustomer={{ customer_name: newCustomerName }}
+          isEditMode={false}
+        />
+        <UnifiedSalesPersonDialog
+          open={isAddSalesPersonModalOpen}
+          onClose={() => setIsAddSalesPersonModalOpen(false)}
+          onSave={async (person: SalesPersonFormValues) => {
+            try {
+              const res = await api.post('/api/sales-people', person);
+              const opt = { label: person.sales_person_name, id: res.data.sales_person_id, email: res.data.email || (person as any).email };
+              setSalesPeople(prev => [...prev, opt]);
+              setSalesPerson(opt);
+              setIsAddSalesPersonModalOpen(false);
+              toast.success('Sales person added successfully!');
+            } catch { toast.error('Failed to add sales person.'); }
+          }}
+          initialSalesPerson={{ sales_person_name: newSalesPersonName }}
           isEditMode={false}
         />
         <UnifiedProductDialog

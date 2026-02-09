@@ -26,6 +26,7 @@ if (process.env.NODE_ENV !== 'production') {
 import authRoutes from './routes/authRoutes';
 import businessProfileRoutes from './routes/businessProfile';
 import customerRoutes from './routes/customerRoutes';
+import salesPeopleRoutes from './routes/salesPeopleRoutes';
 import productRoutes from './routes/productRoutes';
 import purchaseHistoryRoutes from './routes/purchaseHistoryRoutes';
 import marginScheduleRoutes from './routes/marginScheduleRoutes';
@@ -315,6 +316,7 @@ app.use('/api/business-profile', adminOnly, businessProfileRoutes);
 console.log('Registered business profile routes');
 
 app.use('/api/customers', salesPurchaseAccess, customerRoutes);
+app.use('/api/sales-people', salesPurchaseAccess, salesPeopleRoutes);
 console.log('Registered customer routes');
 
 app.use('/api/products', salesPurchaseAccess, productRoutes);

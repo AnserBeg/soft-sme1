@@ -87,6 +87,7 @@ export class SalesOrderService {
         quote_id,
         source_quote_number,
         tech_story,
+        sales_person_id,
       } = headerSource;
 
       const customerId = headerSource.customer_id !== undefined && headerSource.customer_id !== null
@@ -100,6 +101,10 @@ export class SalesOrderService {
       if (!trimmedProductName) {
         throw new Error('product_name is required to create a sales order');
       }
+      const salesPersonId =
+        sales_person_id === null || sales_person_id === undefined
+          ? null
+          : Number(sales_person_id);
       const trimmedUnitNumber = unit_number ? String(unit_number).trim() : '';
       const vehicleYearRaw = vehicle_year ? String(vehicle_year).trim() : '';
       const vehicleYear = vehicleYearRaw ? Number(vehicleYearRaw) : null;
@@ -150,14 +155,24 @@ export class SalesOrderService {
       const sourceQuoteNumberStr = source_quote_number ? String(source_quote_number) : null;
       const normalizedStatus = SalesOrderService.normalizeStatus(status);
 
+      if (salesPersonId !== null) {
+        if (!Number.isFinite(salesPersonId)) {
+          throw new Error('sales_person_id must be a number');
+        }
+        const salesPersonCheck = await client.query('SELECT sales_person_id FROM sales_people WHERE sales_person_id = $1', [salesPersonId]);
+        if (salesPersonCheck.rowCount === 0) {
+          throw new Error(`Sales person with ID ${salesPersonId} not found`);
+        }
+      }
+
       await client.query(
         `INSERT INTO salesorderhistory (
           sales_order_id, sales_order_number, customer_id, sales_date, product_name, product_description, terms,
           customer_po_number, vin_number, vehicle_year, unit_number, vehicle_make, vehicle_model, mileage,
           wanted_by_date, wanted_by_time_of_day,
           invoice_status, subtotal, total_gst_amount, total_amount,
-          status, estimated_cost, sequence_number, quote_id, source_quote_number, tech_story
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)`,
+          status, estimated_cost, sequence_number, quote_id, source_quote_number, tech_story, sales_person_id
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)`,
         [
           newSalesOrderId,
           formattedSONumber,
@@ -185,6 +200,7 @@ export class SalesOrderService {
           quoteIdInt,
           sourceQuoteNumberStr,
           typeof tech_story === 'string' ? tech_story : null,
+          salesPersonId,
         ]
       );
 

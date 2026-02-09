@@ -16,6 +16,7 @@ export interface CreateQuoteInput {
   vehicle_year?: string | number | null;
   vehicle_make?: string | null;
   vehicle_model?: string | null;
+  sales_person_id?: number | string | null;
 }
 
 export interface CreateQuoteResult {
@@ -75,10 +76,24 @@ export class QuoteService {
       const vehicleMake = sanitizePlainText(input.vehicle_make).trim() || null;
       const vehicleModel = sanitizePlainText(input.vehicle_model).trim() || null;
       const productDescription = sanitizePlainText(input.product_description).trim() || null;
+      const salesPersonIdRaw = input.sales_person_id;
+      const salesPersonId =
+        salesPersonIdRaw === null || salesPersonIdRaw === undefined
+          ? null
+          : Number(salesPersonIdRaw);
 
       const customerCheck = await client.query('SELECT customer_id FROM customermaster WHERE customer_id = $1', [customerId]);
       if (customerCheck.rowCount === 0) {
         throw new Error(`Customer with ID ${customerId} not found`);
+      }
+      if (salesPersonId !== null) {
+        if (!Number.isFinite(salesPersonId)) {
+          throw new Error('sales_person_id must be a number');
+        }
+        const salesPersonCheck = await client.query('SELECT sales_person_id FROM sales_people WHERE sales_person_id = $1', [salesPersonId]);
+        if (salesPersonCheck.rowCount === 0) {
+          throw new Error(`Sales person with ID ${salesPersonId} not found`);
+        }
       }
 
       const currentYear = new Date().getFullYear();
@@ -89,8 +104,8 @@ export class QuoteService {
         `INSERT INTO quotes (
           quote_number, customer_id, quote_date, valid_until, product_name, product_description,
           estimated_cost, status, sequence_number, terms, customer_po_number, vin_number,
-          vehicle_year, vehicle_make, vehicle_model
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+          vehicle_year, vehicle_make, vehicle_model, sales_person_id
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
         RETURNING quote_id, quote_number`,
         [
           quoteNumber,
@@ -108,6 +123,7 @@ export class QuoteService {
           Number.isFinite(vehicleYear as number) ? vehicleYear : null,
           vehicleMake,
           vehicleModel,
+          salesPersonId,
         ]
       );
 

@@ -23,6 +23,8 @@ import QuotePage from './pages/QuotePage';
 import QuoteEditorPage from './pages/QuoteEditorPage';
 import MessagingPage from './pages/MessagingPage';
 import SmartInventorySearchPage from './pages/SmartInventorySearchPage';
+import SalesPeoplePage from './pages/SalesPeoplePage';
+import SalesPersonDetailPage from './pages/SalesPersonDetailPage';
 
 // import SalesOrderPage from './pages/SalesOrderPage';
 
@@ -112,6 +114,7 @@ const PrivateRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => 
       '/supply',
       '/service',
       '/email-settings',
+      '/sales-people',
       '/tasks',
       '/messaging',
     ];
@@ -122,7 +125,8 @@ const PrivateRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => 
       !path.startsWith('/invoices/') &&
       !path.startsWith('/open-purchase-orders/') &&
       !path.startsWith('/purchase-order/') &&
-      !path.startsWith('/return-orders/')
+      !path.startsWith('/return-orders/') &&
+      !path.startsWith('/sales-people/')
     ) {
       return <Navigate to="/" replace />;
     }
@@ -210,6 +214,8 @@ const AppRoutes: React.FC = () => {
         {/* <Route path="sales-order/:id" element={<SalesOrderDetailPage />} /> */}
         <Route path="open-sales-orders" element={<OpenSalesOrdersPage />} />
         <Route path="open-sales-orders/:id" element={<OpenSalesOrderDetailPage />} />
+        <Route path="sales-people" element={<SalesPeoplePage />} />
+        <Route path="sales-people/:id" element={<SalesPersonDetailPage />} />
         <Route path="invoices" element={<InvoicesPage />} />
         <Route path="invoices/:id" element={<InvoiceDetailPage />} />
         <Route path="worker-sales-orders" element={<WokerSalesOrderPage />} />

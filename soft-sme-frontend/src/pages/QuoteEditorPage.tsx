@@ -34,6 +34,7 @@ import { AxiosError } from 'axios';
 import EmailModal from '../components/EmailModal';
 import UnifiedCustomerDialog, { CustomerFormValues } from '../components/UnifiedCustomerDialog';
 import UnifiedProductDialog, { ProductFormValues } from '../components/UnifiedProductDialog';
+import UnifiedSalesPersonDialog, { SalesPersonFormValues } from '../components/UnifiedSalesPersonDialog';
 import UnsavedChangesGuard from '../components/UnsavedChangesGuard';
 import { normalizeQuoteStatus, QuoteStatus } from '../utils/quoteStatus';
 import QuoteTemplatesDialog, { QuoteDescriptionTemplate } from '../components/QuoteTemplatesDialog';
@@ -59,6 +60,13 @@ interface ProductOption {
   inputValue?: string;
 }
 
+interface SalesPersonOption {
+  label: string;
+  id?: number;
+  email?: string;
+  isNew?: boolean;
+}
+
 interface Quote {
   quote_id: number;
   quote_number: string;
@@ -76,6 +84,8 @@ interface Quote {
   vehicle_year?: number | null;
   vehicle_make?: string;
   vehicle_model?: string;
+  sales_person_id?: number | null;
+  sales_person_name?: string | null;
 }
 
 const formatInt = (v: number | string | null | undefined) => {
@@ -132,6 +142,23 @@ const rankAndFilterCustomers = (options: CustomerOption[], query: string): Custo
   return scored.slice(0, 8).map((x) => x.opt);
 };
 
+const rankAndFilterSalesPeople = (options: SalesPersonOption[], query: string): SalesPersonOption[] => {
+  const q = normalizeString(query);
+  if (!q) return options.slice(0, 8);
+  const scored = options
+    .map((opt) => {
+      const labelNorm = normalizeString(opt.label);
+      let score = -1;
+      if (labelNorm.startsWith(q)) score = 3;
+      else if (labelNorm.split(' ').some((w) => w.startsWith(q))) score = 2;
+      else if (labelNorm.includes(q)) score = 1;
+      return { opt, score };
+    })
+    .filter((x) => x.score >= 0)
+    .sort((a, b) => b.score - a.score || a.opt.label.localeCompare(b.opt.label));
+  return scored.slice(0, 8).map((x) => x.opt);
+};
+
 const QuoteEditorPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -141,11 +168,13 @@ const QuoteEditorPage: React.FC = () => {
   // lists & data
   const [customers, setCustomers] = useState<CustomerOption[]>([]);
   const [products, setProducts] = useState<ProductOption[]>([]);
+  const [salesPeople, setSalesPeople] = useState<SalesPersonOption[]>([]);
   const [quote, setQuote] = useState<Quote | null>(null);
 
   // form state
   const [selectedCustomer, setSelectedCustomer] = useState<CustomerOption | null>(null);
   const [selectedProduct, setSelectedProduct] = useState<ProductOption | null>(null);
+  const [selectedSalesPerson, setSelectedSalesPerson] = useState<SalesPersonOption | null>(null);
   const [quoteDate, setQuoteDate] = useState<Dayjs | null>(dayjs());
   const [validUntil, setValidUntil] = useState<Dayjs | null>(dayjs().add(30, 'day'));
   const [estimatedCost, setEstimatedCost] = useState<number | null>(null);
@@ -167,6 +196,10 @@ const QuoteEditorPage: React.FC = () => {
   const [customerInput, setCustomerInput] = useState('');
   const [customerTypingTimer, setCustomerTypingTimer] = useState<number | null>(null);
   const [customerEnterPressed, setCustomerEnterPressed] = useState(false);
+  const [salesPersonOpen, setSalesPersonOpen] = useState(false);
+  const [salesPersonInput, setSalesPersonInput] = useState('');
+  const [salesPersonTypingTimer, setSalesPersonTypingTimer] = useState<number | null>(null);
+  const [salesPersonEnterPressed, setSalesPersonEnterPressed] = useState(false);
   const customerInputRef = useRef<HTMLInputElement | null>(null);
   const productDescriptionRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -180,6 +213,8 @@ const QuoteEditorPage: React.FC = () => {
   const [newCustomerName, setNewCustomerName] = useState('');
   const [isAddProductModalOpen, setIsAddProductModalOpen] = useState(false);
   const [newProductName, setNewProductName] = useState('');
+  const [isAddSalesPersonModalOpen, setIsAddSalesPersonModalOpen] = useState(false);
+  const [newSalesPersonName, setNewSalesPersonName] = useState('');
 
   // email modal
   const [isEmailModalOpen, setIsEmailModalOpen] = useState(false);
@@ -194,6 +229,7 @@ const QuoteEditorPage: React.FC = () => {
   
   const getNormalizedSignature = useCallback(() => ({
     customer: selectedCustomer?.id || quote?.customer_id || null,
+    salesPerson: selectedSalesPerson?.id || quote?.sales_person_id || null,
     product: selectedProduct?.label || quote?.product_name || '',
     quoteDate: quoteDate?.toISOString?.() || quote?.quote_date || null,
     validUntil: validUntil?.toISOString?.() || quote?.valid_until || null,
@@ -205,7 +241,7 @@ const QuoteEditorPage: React.FC = () => {
     vehicleYear: (vehicleYear || '').trim(),
     vehicleMake: (vehicleMake || '').trim(),
     vehicleModel: (vehicleModel || '').trim(),
-  }), [selectedCustomer, quote, selectedProduct, quoteDate, validUntil, estimatedCost, productDescription, terms, customerPoNumber, vinNumber, vehicleYear, vehicleMake, vehicleModel]);
+  }), [selectedCustomer, selectedSalesPerson, quote, selectedProduct, quoteDate, validUntil, estimatedCost, productDescription, terms, customerPoNumber, vinNumber, vehicleYear, vehicleMake, vehicleModel]);
 
   const handleTemplateInsert = useCallback((template: QuoteDescriptionTemplate) => {
     setProductDescription(template.content);
@@ -264,6 +300,7 @@ const QuoteEditorPage: React.FC = () => {
   useEffect(() => {
     fetchCustomers();
     fetchProducts();
+    fetchSalesPeople();
     // For creation mode, mark as loaded after lists are fetched
     if (!isEditMode) {
       setIsDataLoaded(true);
@@ -297,6 +334,7 @@ const QuoteEditorPage: React.FC = () => {
         setVehicleModel(q.vehicle_model || '');
         setCustomerInput(q.customer_name || '');
         setProductInput(q.product_name || '');
+        setSalesPersonInput(q.sales_person_name || '');
         setIsDataLoaded(true); // Mark data as loaded
       } catch (error) {
         console.error('Failed to load quote:', error);
@@ -317,11 +355,24 @@ const QuoteEditorPage: React.FC = () => {
   }, [customers, quote]);
 
   useEffect(() => {
+    if (quote && salesPeople.length > 0) {
+      const salesPerson = salesPeople.find((sp) => sp.id === quote.sales_person_id);
+      if (salesPerson) {
+        setSelectedSalesPerson(salesPerson);
+        if (!salesPersonInput) {
+          setSalesPersonInput(salesPerson.label);
+        }
+      }
+    }
+  }, [salesPeople, quote, salesPersonInput]);
+
+  useEffect(() => {
     return () => {
       if (customerTypingTimer) window.clearTimeout(customerTypingTimer);
       if (productTypingTimer) window.clearTimeout(productTypingTimer);
+      if (salesPersonTypingTimer) window.clearTimeout(salesPersonTypingTimer);
     };
-  }, [customerTypingTimer, productTypingTimer]);
+  }, [customerTypingTimer, productTypingTimer, salesPersonTypingTimer]);
 
   const fetchCustomers = async () => {
     try {
@@ -352,14 +403,36 @@ const QuoteEditorPage: React.FC = () => {
     }
   };
 
+  const fetchSalesPeople = async () => {
+    try {
+      const res = await api.get('/api/sales-people');
+      const mapped = (res.data || [])
+        .filter((sp: any) => sp.is_active !== false)
+        .map((sp: any) => ({
+          label: sp.sales_person_name,
+          id: sp.sales_person_id,
+          email: sp.email,
+        }));
+      setSalesPeople(mapped);
+    } catch {
+      setError('Failed to load sales people');
+    }
+  };
+
   const exactCustomerMatch = (query: string): CustomerOption | null => {
     const nq = normalizeString(query);
     return customers.find((c) => normalizeString(c.label) === nq) || null;
   };
 
+  const exactSalesPersonMatch = (query: string): SalesPersonOption | null => {
+    const nq = normalizeString(query);
+    return salesPeople.find((s) => normalizeString(s.label) === nq) || null;
+  };
+
   const resetForm = () => {
     setSelectedCustomer(null);
     setSelectedProduct(null);
+    setSelectedSalesPerson(null);
     setQuoteDate(dayjs());
     setValidUntil(dayjs().add(30, 'day'));
     setEstimatedCost(null);
@@ -372,6 +445,7 @@ const QuoteEditorPage: React.FC = () => {
     setVehicleModel('');
     setCustomerInput('');
     setProductInput('');
+    setSalesPersonInput('');
   };
 
   const handleSaveQuote = async () => {
@@ -387,6 +461,7 @@ const QuoteEditorPage: React.FC = () => {
       const vehicleYearNumber = vehicleYearValue ? Number(vehicleYearValue) : null;
       const payload = {
         customer_id: selectedCustomer.id,
+        sales_person_id: selectedSalesPerson?.id ?? null,
         product_name: selectedProduct.label.trim(),
         quote_date: quoteDate.format('YYYY-MM-DD'),
         valid_until: validUntil.format('YYYY-MM-DD'),
@@ -452,6 +527,8 @@ const QuoteEditorPage: React.FC = () => {
             quote_number: data.quote_number || `Q${newId}`,
             customer_id: selectedCustomer.id!,
             customer_name: selectedCustomer.label,
+            sales_person_id: selectedSalesPerson?.id ?? null,
+            sales_person_name: selectedSalesPerson?.label ?? null,
             quote_date: payload.quote_date,
             valid_until: payload.valid_until,
             product_name: payload.product_name,
@@ -725,6 +802,40 @@ const QuoteEditorPage: React.FC = () => {
     }
   };
 
+  const handleSalesPersonKeyDown = (event: React.KeyboardEvent) => {
+    const inputValue = salesPersonInput.trim();
+    const isEnter = event.key === 'Enter';
+    const isTab = event.key === 'Tab';
+    const isEsc = event.key === 'Escape';
+    const isArrow = event.key === 'ArrowDown' || event.key === 'ArrowUp';
+
+    if (isEsc) { setSalesPersonOpen(false); return; }
+    if (isArrow) return;
+
+    if (isEnter || isTab) {
+      if (isEnter && event.ctrlKey && inputValue) {
+        event.preventDefault();
+        setSalesPersonEnterPressed(true);
+        setNewSalesPersonName(inputValue);
+        setIsAddSalesPersonModalOpen(true);
+        return;
+      }
+      const match = exactSalesPersonMatch(inputValue);
+      if (salesPersonOpen) return;
+      if (!inputValue) return;
+
+      event.preventDefault();
+      if (match) {
+        setSelectedSalesPerson(match);
+        setSalesPersonInput(match.label);
+      } else {
+        setSalesPersonEnterPressed(true);
+        setNewSalesPersonName(inputValue);
+        setIsAddSalesPersonModalOpen(true);
+      }
+    }
+  };
+
   const handleProductKeyDown = (event: React.KeyboardEvent) => {
     if (event.key === 'Enter') {
       event.preventDefault();
@@ -855,7 +966,7 @@ const QuoteEditorPage: React.FC = () => {
           <Paper sx={{ p: 3, backgroundColor: '#fff' }} elevation={3}>
             <Grid container spacing={2}>
               {/* Customer */}
-              <Grid item xs={12} md={4}>
+              <Grid item xs={12} md={3}>
                 <Autocomplete<CustomerOption>
                   open={customerOpen}
                   onOpen={() => setCustomerOpen(true)}
@@ -942,8 +1053,94 @@ const QuoteEditorPage: React.FC = () => {
                 />
               </Grid>
 
+              {/* Sales Person */}
+              <Grid item xs={12} md={3}>
+                <Autocomplete<SalesPersonOption>
+                  open={salesPersonOpen}
+                  onOpen={() => setSalesPersonOpen(true)}
+                  onClose={() => setSalesPersonOpen(false)}
+                  autoHighlight
+                  options={salesPeople}
+                  value={selectedSalesPerson}
+                  onChange={(_, newValue) => {
+                    if (salesPersonEnterPressed) { setSalesPersonEnterPressed(false); return; }
+                    if (newValue && (newValue as SalesPersonOption).isNew) {
+                      setIsAddSalesPersonModalOpen(true);
+                      setNewSalesPersonName(salesPersonInput);
+                      setSelectedSalesPerson(null);
+                      setSalesPersonInput('');
+                    } else {
+                      setSelectedSalesPerson(newValue as SalesPersonOption);
+                    }
+                  }}
+                  filterOptions={(options, params) => {
+                    const ranked = rankAndFilterSalesPeople(options as SalesPersonOption[], params.inputValue || '');
+                    const hasExact = !!(params.inputValue && salesPeople.some(s => normalizeString(s.label) === normalizeString(params.inputValue)));
+                    const result: any[] = [...ranked];
+                    if ((params.inputValue || '').trim() !== '' && !hasExact) {
+                      result.push({ label: `Add "${params.inputValue}" as New Sales Person`, isNew: true });
+                    }
+                    if (ranked.length === 0 && (params.inputValue || '').trim() !== '' && !hasExact) {
+                      return result;
+                    }
+                    return result;
+                  }}
+                  inputValue={salesPersonInput}
+                  onInputChange={(_, newInputValue, reason) => {
+                    setSalesPersonInput(newInputValue);
+                    if (salesPersonTypingTimer) window.clearTimeout(salesPersonTypingTimer);
+                    if (reason === 'reset') return;
+                    const text = newInputValue.trim();
+                    if (text.length > 0) {
+                      const t = window.setTimeout(() => setSalesPersonOpen(true), 180);
+                      setSalesPersonTypingTimer(t as unknown as number);
+                    } else {
+                      setSalesPersonOpen(false);
+                    }
+                  }}
+                  getOptionLabel={(option) => (typeof option === 'string' ? option : option.label)}
+                  isOptionEqualToValue={(option, value) => option.id === value?.id}
+                  renderOption={(props, option) => {
+                    const isNew = (option as SalesPersonOption).isNew;
+                    const { key, ...otherProps } = props;
+                    return (
+                      <li key={key} {...otherProps} style={{ display: 'flex', alignItems: 'center', opacity: isNew ? 0.9 : 1 }}>
+                        {isNew && <AddCircleOutlineIcon fontSize="small" style={{ marginRight: 8, color: '#666' }} />}
+                        <span>{(option as SalesPersonOption).label}</span>
+                      </li>
+                    );
+                  }}
+                  renderInput={(params) => {
+                    const hasText = Boolean((params.inputProps as any)?.value);
+                    const shrink = Boolean(selectedSalesPerson) || hasText;
+                    return (
+                      <TextField
+                        {...params}
+                        label="Sales Person"
+                        fullWidth
+                        onKeyDown={handleSalesPersonKeyDown}
+                        onBlur={() => {
+                          if (!selectedSalesPerson) {
+                            const inputValue = salesPersonInput.trim();
+                            if (inputValue) {
+                              const match = exactSalesPersonMatch(inputValue);
+                              if (match) {
+                                setSelectedSalesPerson(match);
+                                setSalesPersonInput(match.label);
+                              }
+                            }
+                          }
+                        }}
+                        sx={input56Sx}
+                        InputLabelProps={{ ...params.InputLabelProps, sx: labelSx, shrink }}
+                      />
+                    );
+                  }}
+                />
+              </Grid>
+
               {/* Customer PO # */}
-              <Grid item xs={12} md={4}>
+              <Grid item xs={12} md={3}>
                 <TextField
                   label="Customer PO #"
                   fullWidth
@@ -955,7 +1152,7 @@ const QuoteEditorPage: React.FC = () => {
               </Grid>
 
               {/* Estimated Price */}
-              <Grid item xs={12} md={4}>
+              <Grid item xs={12} md={3}>
                 <TextField
                   label="Estimated Price"
                   type="number"
@@ -1251,6 +1448,27 @@ const QuoteEditorPage: React.FC = () => {
             }
           }}
           initialCustomer={{ customer_name: newCustomerName }}
+          isEditMode={false}
+        />
+
+        {/* Add Sales Person Dialog */}
+        <UnifiedSalesPersonDialog
+          open={isAddSalesPersonModalOpen}
+          onClose={() => setIsAddSalesPersonModalOpen(false)}
+          onSave={async (person: SalesPersonFormValues) => {
+            try {
+              const response = await api.post('/api/sales-people', person);
+              const newPerson = response.data;
+              const opt = { label: newPerson.sales_person_name, id: newPerson.sales_person_id, email: newPerson.email || (person as any).email };
+              setSalesPeople((prev) => [...prev, opt]);
+              setSelectedSalesPerson(opt);
+              setIsAddSalesPersonModalOpen(false);
+              setSalesPersonInput(opt.label);
+            } catch {
+              setError('Failed to add sales person');
+            }
+          }}
+          initialSalesPerson={{ sales_person_name: newSalesPersonName }}
           isEditMode={false}
         />
 
