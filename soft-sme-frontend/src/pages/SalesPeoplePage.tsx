@@ -118,12 +118,17 @@ const SalesPeoplePage: React.FC = () => {
         onClose={() => setDialogOpen(false)}
         onSave={async (values: SalesPersonFormValues) => {
           try {
+            const payload = {
+              sales_person_name: values.sales_person_name,
+              email: values.email,
+              phone_number: values.phone_number,
+            };
             if (editTarget?.sales_person_id) {
-              const updated = await updateSalesPerson(editTarget.sales_person_id, values);
+              const updated = await updateSalesPerson(editTarget.sales_person_id, payload);
               setSalesPeople(prev => prev.map(sp => sp.sales_person_id === updated.sales_person_id ? updated : sp));
               toast.success('Sales person updated');
             } else {
-              const created = await createSalesPerson(values);
+              const created = await createSalesPerson(payload);
               setSalesPeople(prev => [...prev, created]);
               toast.success('Sales person created');
             }
