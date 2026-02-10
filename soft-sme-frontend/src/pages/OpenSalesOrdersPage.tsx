@@ -135,12 +135,16 @@ const OpenSalesOrdersPage: React.FC = () => {
 
   const fetchSalesOrders = async (statusFilter = status) => {
     try {
-      const isSalesPurchaseUser = user?.access_role === 'Sales and Purchase';
+      const role = user?.access_role;
+      const isTimeTrackingUser = role === 'Time Tracking';
+      const requestedStatus = isTimeTrackingUser ? 'in_progress' : statusFilter;
+
+      const isSalesPurchaseUser = role === 'Sales and Purchase';
       const allowedSalesPurchaseStatuses = new Set(['open', 'in_progress', 'completed']);
       const effectiveStatusFilter =
-        isSalesPurchaseUser && !allowedSalesPurchaseStatuses.has(statusFilter)
+        isSalesPurchaseUser && !allowedSalesPurchaseStatuses.has(requestedStatus)
           ? 'open'
-          : statusFilter;
+          : requestedStatus;
 
       // Add cache-busting parameter to ensure fresh data
       const response = await api.get('/api/sales-orders', { 
@@ -174,7 +178,7 @@ const OpenSalesOrdersPage: React.FC = () => {
       setRows(ordersWithId);
 
       // Calculate Work In Process total (sum of subtotals from active orders only)
-      if (statusFilter === 'open' || statusFilter === 'in_progress' || statusFilter === 'completed' || statusFilter === 'all') {
+      if (effectiveStatusFilter === 'open' || effectiveStatusFilter === 'in_progress' || effectiveStatusFilter === 'completed' || effectiveStatusFilter === 'all') {
         const activeOrders = sortedOrders.filter((order: any) => isActiveSalesOrderStatus(order.status));
         const total = activeOrders.reduce((sum: number, order: any) => {
           const subtotal = parseFloat(order.subtotal) || 0;
@@ -468,6 +472,10 @@ const OpenSalesOrdersPage: React.FC = () => {
       .filter((value) => value !== undefined && value !== null)
       .some((value) => value.toString().toLowerCase().includes(searchTerm))
   );
+  const isTimeTrackingUser = user?.access_role === 'Time Tracking';
+  const timeTrackingRows = isTimeTrackingUser
+    ? filteredRows.filter((row) => String(row.status || '').toLowerCase() === 'in progress')
+    : filteredRows;
 
   const columns: GridColDef[] = [
     { field: 'sales_order_number', headerName: 'Sales Order #', flex: 1, minWidth: 120, valueFormatter: (params) => params.value ? String(params.value).replace('SO-', '') : '' },
@@ -681,7 +689,7 @@ const OpenSalesOrdersPage: React.FC = () => {
   };
 
   if (user?.access_role === 'Time Tracking') {
-    // For time tracking users, show all orders but hide delete functionality
+    // For time tracking users, show only in progress orders and hide delete functionality
     return (
       <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
         <Box sx={{ mb: 4 }}>
@@ -734,7 +742,7 @@ const OpenSalesOrdersPage: React.FC = () => {
               />
             </Stack>
             <DataGrid
-              rows={filteredRows}
+              rows={timeTrackingRows}
               columns={columns.filter(col => col.field !== 'actions')} // Hide actions column for time tracking users
               loading={false}
               columnVisibilityModel={columnVisibilityModel}
