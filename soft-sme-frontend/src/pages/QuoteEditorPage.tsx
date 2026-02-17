@@ -202,6 +202,7 @@ const QuoteEditorPage: React.FC = () => {
   const [salesPersonEnterPressed, setSalesPersonEnterPressed] = useState(false);
   const customerInputRef = useRef<HTMLInputElement | null>(null);
   const productDescriptionRef = useRef<HTMLTextAreaElement | null>(null);
+  const hasHydratedSalesPerson = useRef(false);
 
   // autocomplete state (product)
   const [productOpen, setProductOpen] = useState(false);
@@ -355,16 +356,23 @@ const QuoteEditorPage: React.FC = () => {
   }, [customers, quote]);
 
   useEffect(() => {
+    hasHydratedSalesPerson.current = false;
+  }, [id]);
+
+  useEffect(() => {
     if (quote && salesPeople.length > 0) {
+      if (hasHydratedSalesPerson.current) return;
       const salesPerson = salesPeople.find((sp) => sp.id === quote.sales_person_id);
       if (salesPerson) {
         setSelectedSalesPerson(salesPerson);
-        if (!salesPersonInput) {
-          setSalesPersonInput(salesPerson.label);
-        }
+        setSalesPersonInput(salesPerson.label);
+      } else {
+        setSelectedSalesPerson(null);
+        setSalesPersonInput(quote?.sales_person_name || '');
       }
+      hasHydratedSalesPerson.current = true;
     }
-  }, [salesPeople, quote, salesPersonInput]);
+  }, [salesPeople, quote]);
 
   useEffect(() => {
     return () => {

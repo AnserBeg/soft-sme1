@@ -204,6 +204,7 @@ const SalesOrderDetailPage: React.FC = () => {
   const [vehicleHistory, setVehicleHistory] = useState<VehicleHistoryRecord[]>([]);
   const [vehicleHistoryLoading, setVehicleHistoryLoading] = useState(false);
   const lastVehicleHistoryCustomerId = useRef<number | null>(null);
+  const hasHydratedSalesPerson = useRef(false);
 
   const [product, setProduct] = useState<ProductOption | null>(null);
   const [productInput, setProductInput] = useState('');
@@ -926,10 +927,17 @@ const SalesOrderDetailPage: React.FC = () => {
   }, [customer?.id, loadVehicleHistory, salesOrder?.customer_id]);
 
   useEffect(() => {
+    hasHydratedSalesPerson.current = false;
+  }, [id]);
+
+  useEffect(() => {
+    if (hasHydratedSalesPerson.current) return;
     if (!salesOrder) return;
     const spId = salesOrder.sales_person_id ?? null;
     if (!spId) {
       setSalesPerson(null);
+      setSalesPersonInput(salesOrder.sales_person_name || '');
+      hasHydratedSalesPerson.current = true;
       return;
     }
     if (salesPeople.length === 0) return;
@@ -937,11 +945,10 @@ const SalesOrderDetailPage: React.FC = () => {
       { label: salesOrder.sales_person_name || '', id: spId };
     if (match?.id) {
       setSalesPerson(match);
-      if (!salesPersonInput) {
-        setSalesPersonInput(match.label);
-      }
+      setSalesPersonInput(match.label);
     }
-  }, [salesOrder, salesPeople, salesPersonInput]);
+    hasHydratedSalesPerson.current = true;
+  }, [salesOrder, salesPeople]);
 
   // debouncedLineItems derives from lineItems directly
 
