@@ -1909,6 +1909,7 @@ const SalesOrderDetailPage: React.FC = () => {
           }}
           getOptionLabel={o => typeof o === 'string' ? o : o.label}
           isOptionEqualToValue={(o, v) => o.id === v.id}
+          ListboxProps={{ onMouseDown: (event) => event.preventDefault() }}
           renderOption={(props, option) => {
             const isNew = (option as any).isNew;
             const { key, ...other } = props;

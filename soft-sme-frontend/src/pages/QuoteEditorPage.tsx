@@ -1100,6 +1100,7 @@ const QuoteEditorPage: React.FC = () => {
                   }}
                   getOptionLabel={(option) => (typeof option === 'string' ? option : option.label)}
                   isOptionEqualToValue={(option, value) => option.id === value?.id}
+                  ListboxProps={{ onMouseDown: (event) => event.preventDefault() }}
                   renderOption={(props, option) => {
                     const isNew = (option as SalesPersonOption).isNew;
                     const { key, ...otherProps } = props;
