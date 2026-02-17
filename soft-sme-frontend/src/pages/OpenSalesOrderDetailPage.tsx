@@ -1960,7 +1960,9 @@ const SalesOrderDetailPage: React.FC = () => {
               setSalesPersonInput('');
               setSalesPersonOpen(false);
             } else {
-              setSalesPerson(newValue as SalesPersonOption);
+              const chosen = newValue as SalesPersonOption | null;
+              setSalesPerson(chosen);
+              setSalesPersonInput(chosen?.label ?? '');
               setSalesPersonOpen(false);
             }
           }}

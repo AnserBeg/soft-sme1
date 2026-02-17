@@ -1070,7 +1070,9 @@ const QuoteEditorPage: React.FC = () => {
                       setSelectedSalesPerson(null);
                       setSalesPersonInput('');
                     } else {
-                      setSelectedSalesPerson(newValue as SalesPersonOption);
+                      const chosen = newValue as SalesPersonOption | null;
+                      setSelectedSalesPerson(chosen);
+                      setSalesPersonInput(chosen?.label ?? '');
                     }
                   }}
                   filterOptions={(options, params) => {
