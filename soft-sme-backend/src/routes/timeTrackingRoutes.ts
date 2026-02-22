@@ -5,7 +5,7 @@ import Papa from 'papaparse';
 import { SalesOrderService } from '../services/SalesOrderService';
 import { resolveTenantUserId } from '../utils/tenantUser';
 
-const DEFAULT_TIMEZONE = process.env.TIME_TRACKING_TIMEZONE || process.env.TZ || 'Etc/GMT-6';
+const DEFAULT_TIMEZONE = process.env.TIME_TRACKING_TIMEZONE || 'America/Edmonton';
 const FORCE_TIMEZONE = process.env.FORCE_TIME_TRACKING_TIMEZONE !== 'false';
 
 function normalizeTimeZone(timeZone?: string | null): string {

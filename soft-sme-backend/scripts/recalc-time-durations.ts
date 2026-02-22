@@ -8,7 +8,7 @@ type Args = {
   dryRun: boolean;
 };
 
-const DEFAULT_TIMEZONE = process.env.TIME_TRACKING_TIMEZONE || process.env.TZ || 'Etc/GMT-6';
+const DEFAULT_TIMEZONE = process.env.TIME_TRACKING_TIMEZONE || process.env.TZ || 'America/Edmonton';
 const FORCE_TIMEZONE = process.env.FORCE_TIME_TRACKING_TIMEZONE !== 'false';
 
 function normalizeTimeZone(timeZone?: string | null): string {
