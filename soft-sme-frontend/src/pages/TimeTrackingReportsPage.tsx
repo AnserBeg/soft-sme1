@@ -56,6 +56,7 @@ import {
 import { getShiftsInRange, updateShift, createShift, deleteShift as deleteShiftRecord } from '../services/attendanceService';
 import api from '../api/axios';
 import { Edit as EditIcon, Save as SaveIcon, Delete as DeleteIcon } from '@mui/icons-material';
+import Papa from 'papaparse';
 
 // Helper to convert UTC string to local datetime-local input value
 function toLocalInputValue(dateString: string) {
@@ -321,6 +322,68 @@ const TimeTrackingReportsPage: React.FC = () => {
       const endDateExclusive = new Date(toDate.getFullYear(), toDate.getMonth(), toDate.getDate() + 1);
       const fromDateStr = formatDateAtLocalMidnight(startDate);
       const toDateStr = formatDateAtLocalMidnight(endDateExclusive);
+
+      if (format === 'csv') {
+        const exportShifts = await getShiftsInRange(
+          selectedProfile ? Number(selectedProfile) : undefined,
+          fromDateStr,
+          toDateStr
+        );
+        const normalizedShifts = exportShifts.map((shift: any) => ({
+          ...shift,
+          id: Number(shift.id),
+          profile_id: Number(shift.profile_id),
+        }));
+
+        const resolvedShifts = normalizedShifts.map((shift: any) => {
+          const profileName =
+            shift.profile_name ||
+            profiles.find(p => p.id === Number(shift.profile_id))?.name ||
+            `Profile ${shift.profile_id}`;
+          const clockInDate = shift.clock_in ? new Date(shift.clock_in) : null;
+          const clockOutDate = shift.clock_out ? new Date(shift.clock_out) : null;
+          const durationHours =
+            shift.clock_in && shift.clock_out
+              ? resolveShiftDurationHours(
+                  shift.duration,
+                  shift.clock_in,
+                  shift.clock_out,
+                  dailyBreakStart,
+                  dailyBreakEnd,
+                  browserTimeZone
+                )
+              : null;
+          const regularHours = durationHours !== null ? Math.min(durationHours, 8) : null;
+          const overtimeHours = durationHours !== null ? Math.max(0, durationHours - 8) : null;
+
+          return {
+            profileName,
+            clockInTimestamp: clockInDate ? clockInDate.getTime() : 0,
+            row: {
+              'Clock In Date': clockInDate ? clockInDate.toLocaleDateString() : '',
+              'Profile Name': profileName,
+              'Clock In Date/Time': clockInDate ? clockInDate.toLocaleString() : '',
+              'Clock Out Date/Time': clockOutDate ? clockOutDate.toLocaleString() : '',
+              'Total Duration (hrs)': durationHours !== null ? durationHours.toFixed(2) : '',
+              'Regular Hours (hrs)': regularHours !== null ? regularHours.toFixed(2) : '',
+              'Overtime Hours (hrs)': overtimeHours !== null ? overtimeHours.toFixed(2) : '',
+            }
+          };
+        });
+
+        resolvedShifts.sort((a, b) => {
+          const nameCompare = a.profileName.localeCompare(b.profileName, undefined, { sensitivity: 'base' });
+          if (nameCompare !== 0) return nameCompare;
+          return a.clockInTimestamp - b.clockInTimestamp;
+        });
+
+        const csvRows = resolvedShifts.map(item => item.row);
+        const csv = Papa.unparse(csvRows);
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const filename = `time-tracking-shifts-${formatDateAtLocalMidnight(startDate)}-to-${formatDateAtLocalMidnight(toDate)}.csv`;
+        triggerDownload(blob, filename);
+        return;
+      }
 
       const blob = await exportTimeEntryReport(
         fromDateStr,
