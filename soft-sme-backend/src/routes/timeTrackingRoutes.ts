@@ -5,9 +5,13 @@ import Papa from 'papaparse';
 import { SalesOrderService } from '../services/SalesOrderService';
 import { resolveTenantUserId } from '../utils/tenantUser';
 
-const DEFAULT_TIMEZONE = process.env.TIME_TRACKING_TIMEZONE || process.env.TZ || 'UTC';
+const DEFAULT_TIMEZONE = process.env.TIME_TRACKING_TIMEZONE || process.env.TZ || 'Etc/GMT-6';
+const FORCE_TIMEZONE = process.env.FORCE_TIME_TRACKING_TIMEZONE !== 'false';
 
 function normalizeTimeZone(timeZone?: string | null): string {
+  if (FORCE_TIMEZONE) {
+    return DEFAULT_TIMEZONE;
+  }
   const candidate = (timeZone || '').toString().trim();
   if (!candidate) {
     return DEFAULT_TIMEZONE;
