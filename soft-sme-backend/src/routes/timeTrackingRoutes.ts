@@ -1489,6 +1489,147 @@ router.get('/reports/time-entries/export', async (req: Request, res: Response) =
   }
 });
 
+// Recalculate durations for time entries and attendance shifts (admin/time tracking only)
+router.post('/reports/recalculate-durations', async (req: Request, res: Response) => {
+  try {
+    const role = req.user?.access_role;
+    if (role !== 'Admin' && role !== 'Time Tracking') {
+      return res.status(403).json({ error: 'Admin or Time Tracking access required' });
+    }
+
+    const { from, to, dry_run } = req.body || {};
+    const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+    if (from && !datePattern.test(from)) {
+      return res.status(400).json({ error: 'Invalid from date. Use YYYY-MM-DD.' });
+    }
+    if (to && !datePattern.test(to)) {
+      return res.status(400).json({ error: 'Invalid to date. Use YYYY-MM-DD.' });
+    }
+
+    const breakStartRes = await pool.query("SELECT value FROM global_settings WHERE key = 'daily_break_start'");
+    const breakEndRes = await pool.query("SELECT value FROM global_settings WHERE key = 'daily_break_end'");
+    const dailyBreakStart = breakStartRes.rows.length > 0 ? breakStartRes.rows[0].value : null;
+    const dailyBreakEnd = breakEndRes.rows.length > 0 ? breakEndRes.rows[0].value : null;
+
+    if (!dailyBreakStart || !dailyBreakEnd) {
+      return res.status(400).json({ error: 'Daily break start/end are not configured.' });
+    }
+
+    const entryWhere: string[] = ['clock_out IS NOT NULL'];
+    const entryParams: any[] = [];
+    if (from) {
+      entryParams.push(from);
+      entryWhere.push(`DATE(clock_in) >= $${entryParams.length}`);
+    }
+    if (to) {
+      entryParams.push(to);
+      entryWhere.push(`DATE(clock_in) <= $${entryParams.length}`);
+    }
+
+    const entriesRes = await pool.query(
+      `SELECT id, clock_in, clock_out, duration, sales_order_id
+       FROM time_entries
+       WHERE ${entryWhere.join(' AND ')}
+       ORDER BY id`,
+      entryParams
+    );
+
+    const salesOrderIds = new Set<number>();
+    let entryChecked = 0;
+    let entryChanged = 0;
+    let entryUpdated = 0;
+
+    for (const row of entriesRes.rows) {
+      entryChecked += 1;
+      const clockIn = normalizeToMinute(new Date(row.clock_in));
+      const clockOut = normalizeToMinute(new Date(row.clock_out));
+      const nextDuration = calculateEffectiveDuration(
+        clockIn,
+        clockOut,
+        dailyBreakStart,
+        dailyBreakEnd,
+        undefined,
+      );
+      const currentDuration = parseDurationHours(row.duration);
+      const delta = currentDuration === null ? Infinity : Math.abs(currentDuration - nextDuration);
+      if (delta > 0.0001) {
+        entryChanged += 1;
+        if (!dry_run) {
+          await pool.query('UPDATE time_entries SET duration = $1 WHERE id = $2', [nextDuration, row.id]);
+          entryUpdated += 1;
+        }
+      }
+      if (row.sales_order_id) {
+        salesOrderIds.add(Number(row.sales_order_id));
+      }
+    }
+
+    const shiftWhere: string[] = ['clock_out IS NOT NULL'];
+    const shiftParams: any[] = [];
+    if (from) {
+      shiftParams.push(from);
+      shiftWhere.push(`DATE(clock_in) >= $${shiftParams.length}`);
+    }
+    if (to) {
+      shiftParams.push(to);
+      shiftWhere.push(`DATE(clock_in) <= $${shiftParams.length}`);
+    }
+
+    const shiftsRes = await pool.query(
+      `SELECT id, clock_in, clock_out, duration
+       FROM attendance_shifts
+       WHERE ${shiftWhere.join(' AND ')}
+       ORDER BY id`,
+      shiftParams
+    );
+
+    let shiftChecked = 0;
+    let shiftChanged = 0;
+    let shiftUpdated = 0;
+
+    for (const row of shiftsRes.rows) {
+      shiftChecked += 1;
+      const clockIn = normalizeToMinute(new Date(row.clock_in));
+      const clockOut = normalizeToMinute(new Date(row.clock_out));
+      const nextDuration = calculateEffectiveDuration(
+        clockIn,
+        clockOut,
+        dailyBreakStart,
+        dailyBreakEnd,
+        undefined,
+      );
+      const currentDuration = parseDurationHours(row.duration);
+      const delta = currentDuration === null ? Infinity : Math.abs(currentDuration - nextDuration);
+      if (delta > 0.0001) {
+        shiftChanged += 1;
+        if (!dry_run) {
+          await pool.query(
+            'UPDATE attendance_shifts SET duration = $1, updated_at = NOW() WHERE id = $2',
+            [nextDuration, row.id]
+          );
+          shiftUpdated += 1;
+        }
+      }
+    }
+
+    if (!dry_run && salesOrderIds.size > 0) {
+      for (const soId of salesOrderIds) {
+        await recalcSalesOrderLabourOverheadAndSupply(soId);
+      }
+    }
+
+    return res.json({
+      dry_run: Boolean(dry_run),
+      entries: { checked: entryChecked, changed: entryChanged, updated: entryUpdated },
+      shifts: { checked: shiftChecked, changed: shiftChanged, updated: shiftUpdated },
+      sales_orders_recalculated: dry_run ? 0 : salesOrderIds.size,
+    });
+  } catch (error) {
+    console.error('Error recalculating durations:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Admin endpoints for managing user profile access
 // Only Admin users can access these endpoints
 

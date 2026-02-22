@@ -148,6 +148,8 @@ const TimeTrackingReportsPage: React.FC = () => {
   const [deleteShiftError, setDeleteShiftError] = useState<string | null>(null);
   const [dailyBreakStart, setDailyBreakStart] = useState<string | null>(null);
   const [dailyBreakEnd, setDailyBreakEnd] = useState<string | null>(null);
+  const [recalcLoading, setRecalcLoading] = useState(false);
+  const [recalcResult, setRecalcResult] = useState<string | null>(null);
   const browserTimeZone = useMemo(() => {
     try {
       const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -619,6 +621,44 @@ const TimeTrackingReportsPage: React.FC = () => {
     );
   };
 
+  const handleRecalcDurations = async () => {
+    if (!fromDate || !toDate) {
+      setError('Please select both from and to dates');
+      return;
+    }
+    const confirmRecalc = window.confirm(
+      'This will recalculate shift and time entry durations for the selected date range and update sales orders. Continue?'
+    );
+    if (!confirmRecalc) {
+      return;
+    }
+    try {
+      setRecalcLoading(true);
+      setRecalcResult(null);
+      setError(null);
+      const fromDateStr = formatDateAtLocalMidnight(normalizeToLocalMidnight(fromDate));
+      const toDateStr = formatDateAtLocalMidnight(normalizeToLocalMidnight(toDate));
+      const response = await api.post('/api/time-tracking/reports/recalculate-durations', {
+        from: fromDateStr,
+        to: toDateStr
+      });
+      const data = response.data || {};
+      const entrySummary = data.entries
+        ? `entries: ${data.entries.updated ?? 0}/${data.entries.checked ?? 0} updated`
+        : 'entries: n/a';
+      const shiftSummary = data.shifts
+        ? `shifts: ${data.shifts.updated ?? 0}/${data.shifts.checked ?? 0} updated`
+        : 'shifts: n/a';
+      setRecalcResult(`Recalc complete (${entrySummary}, ${shiftSummary}).`);
+      await handleGenerateReport();
+    } catch (err: any) {
+      const message = err?.response?.data?.error || 'Failed to recalculate durations.';
+      setError(message);
+    } finally {
+      setRecalcLoading(false);
+    }
+  };
+
   const chartHeight = Math.max(320, stackedChartData.length * 80);
 
   if (loading) {
@@ -713,6 +753,11 @@ const TimeTrackingReportsPage: React.FC = () => {
       {error && (
         <Alert severity="error" sx={{ mb: 2 }}>
           {error}
+        </Alert>
+      )}
+      {recalcResult && (
+        <Alert severity="success" sx={{ mb: 2 }}>
+          {recalcResult}
         </Alert>
       )}
 
@@ -857,6 +902,14 @@ const TimeTrackingReportsPage: React.FC = () => {
                 onClick={() => handleExportReport('pdf')}
               >
                 Download PDF
+              </Button>
+              <Button
+                variant="outlined"
+                color="warning"
+                onClick={handleRecalcDurations}
+                disabled={recalcLoading}
+              >
+                {recalcLoading ? 'Recalculating...' : 'Recalculate Durations'}
               </Button>
             </Box>
           </Paper>
