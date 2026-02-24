@@ -1050,6 +1050,12 @@ router.post('/profiles', async (req: Request, res: Response) => {
 
     res.status(201).json(result.rows[0]);
   } catch (err) {
+    if ((err as any)?.code === '23505') {
+      return res.status(409).json({
+        error: 'Duplicate profile',
+        message: 'A profile with this email already exists.',
+      });
+    }
     console.error('Error creating profile:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
@@ -1075,6 +1081,12 @@ router.put('/profiles/:id', async (req: Request, res: Response) => {
 
     res.json(result.rows[0]);
   } catch (err) {
+    if ((err as any)?.code === '23505') {
+      return res.status(409).json({
+        error: 'Duplicate profile',
+        message: 'A profile with this email already exists.',
+      });
+    }
     console.error('Error updating profile:', err);
     res.status(500).json({ error: 'Internal server error' });
   }

@@ -781,7 +781,9 @@ export class SalesOrderService {
       if (orderRes.rows.length === 0) throw new Error('Sales order not found');
       const currentStatus = orderRes.rows[0].status;
       if (currentStatus === 'Completed') return;
-      if (currentStatus !== 'In Progress') throw new Error('Only in-progress orders can be completed');
+      if (!['In Progress', 'Closed'].includes(currentStatus)) {
+        throw new Error('Only in-progress or closed orders can be completed');
+      }
       await client.query('UPDATE salesorderhistory SET status = $1 WHERE sales_order_id = $2', ['Completed', orderId]);
       if (startedTransaction) await client.query('COMMIT');
     } catch (err) {

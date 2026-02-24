@@ -260,7 +260,7 @@ const AttendancePage: React.FC = () => {
       setEditingProfileId(null);
       setError(null);
     } catch (err) {
-      setError('Failed to save profile. Please try again.');
+      setError(formatErrorMessage(err, 'Failed to save profile. Please try again.'));
       console.error('Error saving profile:', err);
     }
   };
