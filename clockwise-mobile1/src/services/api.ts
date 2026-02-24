@@ -71,6 +71,18 @@ export const timeTrackingAPI = {
     const response = await api.get(`/time-tracking/time-entries?date=${date}`);
     return response.data;
   },
+
+  getTimeEntryReport: async (from: string, to: string, profileId?: string, salesOrderId?: string) => {
+    const response = await api.get('/time-tracking/reports/time-entries', {
+      params: {
+        from,
+        to,
+        profile: profileId,
+        so: salesOrderId,
+      },
+    });
+    return response.data;
+  },
   
   getActiveTimeEntries: async (profileId?: string) => {
     const today = new Date().toLocaleDateString('en-CA');
@@ -142,7 +154,7 @@ export const attendanceAPI = {
     const response = await api.get('/attendance/geofence');
     return response.data;
   },
-  getShifts: async (params?: { from?: string; to?: string }) => {
+  getShifts: async (params?: { from?: string; to?: string; profile_id?: string }) => {
     const response = await api.get('/attendance', { params });
     return response.data;
   },

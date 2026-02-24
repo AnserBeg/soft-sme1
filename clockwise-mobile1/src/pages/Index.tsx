@@ -4,15 +4,16 @@ import { LoginScreen } from '@/components/screens/LoginScreen';
 import { TimeTrackingScreen } from '@/components/screens/TimeTrackingScreen';
 import { LeaveManagementScreen } from '@/components/screens/LeaveManagementScreen';
 import DocumentsScreen from '@/components/screens/DocumentsScreen';
-import { Clock, Calendar, Menu, FileText, MapPin } from 'lucide-react';
+import { Clock, Calendar, Menu, FileText, MapPin, BarChart3 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
 import { LoadingScreen } from '@/components/LoadingScreen';
 import { AttendanceScreen } from '@/components/screens/AttendanceScreen';
+import WorkSummaryScreen from '@/components/screens/WorkSummaryScreen';
 
 const Index = () => {
   const { isAuthenticated, isLoading, logout } = useAuth();
-  const [currentScreen, setCurrentScreen] = useState<'attendance' | 'time-tracking' | 'leave-management' | 'documents'>('time-tracking');
+  const [currentScreen, setCurrentScreen] = useState<'attendance' | 'time-tracking' | 'work-summary' | 'leave-management' | 'documents'>('time-tracking');
   const [isMenuOpen, setIsMenuOpen] = useState(false);
 
   if (isLoading) {
@@ -23,7 +24,7 @@ const Index = () => {
     return <LoginScreen />;
   }
 
-  const handleScreenChange = (screen: 'attendance' | 'time-tracking' | 'leave-management' | 'documents') => {
+  const handleScreenChange = (screen: 'attendance' | 'time-tracking' | 'work-summary' | 'leave-management' | 'documents') => {
     setCurrentScreen(screen);
     setIsMenuOpen(false);
   };
@@ -79,6 +80,15 @@ const Index = () => {
                     <Clock className="h-5 w-5 mr-3" />
                     Time Tracking
                   </Button>
+
+                  <Button
+                    variant={currentScreen === 'work-summary' ? 'default' : 'ghost'}
+                    onClick={() => handleScreenChange('work-summary')}
+                    className="w-full justify-start h-12"
+                  >
+                    <BarChart3 className="h-5 w-5 mr-3" />
+                    Work Summary
+                  </Button>
                   
                   <Button
                     variant={currentScreen === 'leave-management' ? 'default' : 'ghost'}
@@ -109,6 +119,8 @@ const Index = () => {
         <AttendanceScreen />
       ) : currentScreen === 'time-tracking' ? (
         <TimeTrackingScreen />
+      ) : currentScreen === 'work-summary' ? (
+        <WorkSummaryScreen />
       ) : currentScreen === 'leave-management' ? (
         <LeaveManagementScreen />
       ) : (
