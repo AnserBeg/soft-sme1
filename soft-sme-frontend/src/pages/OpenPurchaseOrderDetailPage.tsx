@@ -1354,7 +1354,11 @@ const OpenPurchaseOrderDetailPage: React.FC = () => {
   const handleAllocationSaved = () => {
     // Refresh the data to show updated allocation status
     fetchData();
-    toast.success('Allocation changes saved successfully. Purchase order remains open.');
+    if (status === 'Closed') {
+      toast.success('Allocation changes saved for this closed purchase order. Sales orders and inventory updated.');
+    } else {
+      toast.success('Allocation changes saved successfully. Purchase order remains open.');
+    }
   };
 
   const handleOpenAllocationModal = async () => {

@@ -1700,11 +1700,6 @@ router.post('/:id/save-allocations', async (req: Request, res: Response) => {
     
     const purchaseOrder = poResult.rows[0];
     
-    if (purchaseOrder.status === 'Closed') {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'Purchase order is already closed' });
-    }
-    
     // Get purchase order line items
     const poLineItemsResult = await client.query(
       'SELECT * FROM purchaselineitems WHERE purchase_id = $1',
@@ -1712,6 +1707,471 @@ router.post('/:id/save-allocations', async (req: Request, res: Response) => {
     );
     
     const poLineItems = poLineItemsResult.rows;
+
+    const normalizePartNumber = (value: unknown) => (value == null ? '' : String(value).trim().toUpperCase());
+
+    if (String(purchaseOrder.status || '').toLowerCase() === 'closed') {
+      const allocationList = Array.isArray(allocations) ? allocations : [];
+      const surplusInput = surplusPerPart && typeof surplusPerPart === 'object' ? surplusPerPart : {};
+
+      const newAllocationsByPart = new Map<string, Map<number, number>>();
+      const partNumbersInRequest = new Set<string>();
+      const normalizedSurplus = new Map<string, number>();
+
+      for (const [key, value] of Object.entries(surplusInput)) {
+        const partNumber = normalizePartNumber(key);
+        if (!partNumber) continue;
+        const surplusValue = parseFloat(String(value));
+        if (!Number.isFinite(surplusValue) || surplusValue < 0) continue;
+        normalizedSurplus.set(partNumber, surplusValue);
+        partNumbersInRequest.add(partNumber);
+      }
+
+      for (const allocation of allocationList) {
+        const partNumber = normalizePartNumber(allocation?.part_number);
+        const salesOrderId = Number(allocation?.sales_order_id);
+        const allocateQty = parseFloat(String(allocation?.allocate_qty));
+
+        if (!partNumber || !Number.isFinite(salesOrderId) || !Number.isFinite(allocateQty) || allocateQty <= 0) {
+          continue;
+        }
+
+        if (!newAllocationsByPart.has(partNumber)) {
+          newAllocationsByPart.set(partNumber, new Map());
+        }
+        newAllocationsByPart.get(partNumber)!.set(salesOrderId, allocateQty);
+        partNumbersInRequest.add(partNumber);
+      }
+
+      if (partNumbersInRequest.size === 0) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'No allocations or surplus provided for closed purchase order update.' });
+      }
+
+      // Aggregate PO line items by normalized part number
+      const poPartMap = new Map<string, { quantity: number; part_description: string; unit: string; unit_cost: number }>();
+      for (const poItem of poLineItems) {
+        const partNumber = normalizePartNumber(poItem?.part_number);
+        if (!partNumber) continue;
+        const quantity = parseFloat(String(poItem?.quantity || 0)) || 0;
+        if (poPartMap.has(partNumber)) {
+          const existing = poPartMap.get(partNumber)!;
+          existing.quantity += quantity;
+          existing.part_description = poItem.part_description || existing.part_description;
+          existing.unit = poItem.unit || existing.unit;
+          existing.unit_cost = Number(poItem.unit_cost) || existing.unit_cost;
+        } else {
+          poPartMap.set(partNumber, {
+            quantity,
+            part_description: poItem.part_description || '',
+            unit: poItem.unit || 'Each',
+            unit_cost: Number(poItem.unit_cost) || 0
+          });
+        }
+      }
+
+      const partNumbersForLookup = Array.from(partNumbersInRequest.values());
+      const partTypeMap = new Map<string, string>();
+      const partIdMap = new Map<string, number | null>();
+      const inventoryMetaMap = new Map<string, { part_description: string; unit: string; unit_cost: number }>();
+
+      if (partNumbersForLookup.length > 0) {
+        const placeholders = partNumbersForLookup.map((_, idx) => `$${idx + 1}`).join(',');
+        const inventoryResult = await client.query(
+          `SELECT part_id, part_number, part_description, unit, last_unit_cost, part_type
+           FROM inventory
+           WHERE UPPER(part_number) IN (${placeholders})`,
+          partNumbersForLookup
+        );
+        for (const row of inventoryResult.rows) {
+          const normalized = normalizePartNumber(row.part_number);
+          if (!normalized) continue;
+          partTypeMap.set(normalized, (row.part_type || '').toLowerCase());
+          partIdMap.set(normalized, row.part_id ?? null);
+          inventoryMetaMap.set(normalized, {
+            part_description: row.part_description || '',
+            unit: row.unit || 'Each',
+            unit_cost: Number(row.last_unit_cost) || 0
+          });
+        }
+      }
+
+      const tolerance = 0.0001;
+      const newSurplusMap = new Map<string, number>();
+
+      for (const partNumber of partNumbersInRequest) {
+        if (!poPartMap.has(partNumber)) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: `Part ${partNumber} is not present on this purchase order.` });
+        }
+
+        const quantityOrdered = poPartMap.get(partNumber)!.quantity;
+        const allocationsForPart = newAllocationsByPart.get(partNumber) || new Map();
+        const totalAllocated = Array.from(allocationsForPart.values()).reduce((sum, val) => sum + (Number(val) || 0), 0);
+        const computedSurplus = Math.max(0, quantityOrdered - totalAllocated);
+        const providedSurplus = normalizedSurplus.get(partNumber);
+        const surplus = Number.isFinite(providedSurplus) ? Number(providedSurplus) : computedSurplus;
+
+        if (totalAllocated + surplus > quantityOrdered + tolerance) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({
+            error: `Total allocation (${totalAllocated}) + surplus (${surplus}) exceeds ordered quantity (${quantityOrdered}) for part ${partNumber}`
+          });
+        }
+
+        if (partTypeMap.get(partNumber) === 'service') {
+          if (Math.abs(totalAllocated - quantityOrdered) > tolerance || surplus > tolerance) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({
+              error: 'SERVICE_ALLOCATION_REQUIRED',
+              message: `Service item ${partNumber} must be fully allocated to a sales order with no surplus.`
+            });
+          }
+        }
+
+        newSurplusMap.set(partNumber, Math.max(0, surplus));
+      }
+
+      const oldAllocationsResult = await client.query(
+        'SELECT * FROM purchase_order_allocations WHERE purchase_id = $1',
+        [id]
+      );
+
+      const oldAllocationsByPart = new Map<string, Map<number, number>>();
+      for (const allocation of oldAllocationsResult.rows) {
+        const partNumber = normalizePartNumber(allocation.part_number);
+        if (!partNumbersInRequest.has(partNumber)) continue;
+        const salesOrderId = Number(allocation.sales_order_id);
+        const allocateQty = parseFloat(String(allocation.allocate_qty));
+        if (!Number.isFinite(salesOrderId) || !Number.isFinite(allocateQty)) continue;
+        if (!oldAllocationsByPart.has(partNumber)) {
+          oldAllocationsByPart.set(partNumber, new Map());
+        }
+        oldAllocationsByPart.get(partNumber)!.set(salesOrderId, allocateQty);
+      }
+
+      const oldSurplusMap = new Map<string, number>();
+      for (const partNumber of partNumbersInRequest) {
+        const quantityOrdered = poPartMap.get(partNumber)!.quantity;
+        const oldAllocMap = oldAllocationsByPart.get(partNumber) || new Map();
+        const oldTotalAllocated = Array.from(oldAllocMap.values()).reduce((sum, val) => sum + (Number(val) || 0), 0);
+        oldSurplusMap.set(partNumber, Math.max(0, quantityOrdered - oldTotalAllocated));
+      }
+
+      const allocationDeltas: Array<{ partNumber: string; salesOrderId: number; delta: number }> = [];
+      const affectedSalesOrders = new Set<number>();
+
+      for (const partNumber of partNumbersInRequest) {
+        const oldMap = oldAllocationsByPart.get(partNumber) || new Map();
+        const newMap = newAllocationsByPart.get(partNumber) || new Map();
+        const salesOrderIds = new Set<number>([...oldMap.keys(), ...newMap.keys()]);
+
+        for (const salesOrderId of salesOrderIds) {
+          const delta = (newMap.get(salesOrderId) || 0) - (oldMap.get(salesOrderId) || 0);
+          if (Math.abs(delta) > tolerance) {
+            allocationDeltas.push({ partNumber, salesOrderId, delta });
+            affectedSalesOrders.add(salesOrderId);
+          }
+        }
+      }
+
+      const hasQuantityToOrderResult = await client.query(
+        `SELECT 1 FROM information_schema.columns WHERE table_name = 'salesorderlineitems' AND column_name = 'quantity_to_order'`
+      );
+      const hasQuantityToOrder = hasQuantityToOrderResult.rows.length > 0;
+
+      const loadPartMeta = async (salesOrderId: number, partNumber: string) => {
+        const partsToOrderRes = await client.query(
+          'SELECT part_description, unit, unit_price FROM sales_order_parts_to_order WHERE sales_order_id = $1 AND part_number = $2',
+          [salesOrderId, partNumber]
+        );
+        if (partsToOrderRes.rows.length > 0) {
+          const row = partsToOrderRes.rows[0];
+          return {
+            part_description: row.part_description || '',
+            unit: row.unit || 'Each',
+            unit_price: Number(row.unit_price) || 0
+          };
+        }
+
+        const poMeta = poPartMap.get(partNumber);
+        if (poMeta) {
+          return {
+            part_description: poMeta.part_description || '',
+            unit: poMeta.unit || 'Each',
+            unit_price: Number(poMeta.unit_cost) || 0
+          };
+        }
+
+        const invMeta = inventoryMetaMap.get(partNumber);
+        return {
+          part_description: invMeta?.part_description || '',
+          unit: invMeta?.unit || 'Each',
+          unit_price: Number(invMeta?.unit_cost) || 0
+        };
+      };
+
+      for (const change of allocationDeltas) {
+        const { partNumber, salesOrderId, delta } = change;
+        const partId = partIdMap.get(partNumber) ?? null;
+
+        const lineItemResult = await client.query(
+          'SELECT * FROM salesorderlineitems WHERE sales_order_id = $1 AND (part_id = $2 OR part_number = $3) FOR UPDATE',
+          [salesOrderId, partId, partNumber]
+        );
+
+        if (delta > 0) {
+          if (lineItemResult.rows.length > 0) {
+            const lineItem = lineItemResult.rows[0];
+            const currentQuantitySold = parseFloat(lineItem.quantity_sold) || 0;
+            const currentQuantityCommitted = parseFloat(lineItem.quantity_committed) || 0;
+            const currentQuantityToOrder = parseFloat(lineItem.quantity_to_order) || 0;
+            const unitPrice = Number(lineItem.unit_price) || 0;
+            const newQuantitySold = currentQuantitySold + delta;
+            const newQuantityCommitted = currentQuantityCommitted + delta;
+            const newQuantityToOrder = Math.max(0, currentQuantityToOrder - delta);
+            const newLineAmount = round2(unitPrice * newQuantitySold);
+
+            if (hasQuantityToOrder) {
+              await client.query(
+                `UPDATE salesorderlineitems
+                 SET quantity_sold = $1,
+                     quantity_committed = $2,
+                     quantity_to_order = $3,
+                     line_amount = $4,
+                     updated_at = CURRENT_TIMESTAMP
+                 WHERE sales_order_id = $5 AND (part_id = $6 OR part_number = $7)`,
+                [newQuantitySold, newQuantityCommitted, newQuantityToOrder, newLineAmount, salesOrderId, partId, partNumber]
+              );
+            } else {
+              await client.query(
+                `UPDATE salesorderlineitems
+                 SET quantity_sold = $1,
+                     quantity_committed = $2,
+                     line_amount = $3,
+                     updated_at = CURRENT_TIMESTAMP
+                 WHERE sales_order_id = $4 AND (part_id = $5 OR part_number = $6)`,
+                [newQuantitySold, newQuantityCommitted, newLineAmount, salesOrderId, partId, partNumber]
+              );
+            }
+          } else {
+            const meta = await loadPartMeta(salesOrderId, partNumber);
+            const insertQuantitySold = delta;
+            const insertQuantityCommitted = delta;
+            const insertUnitPrice = meta.unit_price || 0;
+            const insertLineAmount = round2(insertUnitPrice * insertQuantitySold);
+
+            if (hasQuantityToOrder) {
+              await client.query(
+                `INSERT INTO salesorderlineitems
+                 (sales_order_id, part_number, part_description, quantity_sold, quantity_committed, unit, unit_price, line_amount, quantity_to_order, part_id)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, $9)`,
+                [salesOrderId, partNumber, meta.part_description, insertQuantitySold, insertQuantityCommitted, meta.unit, insertUnitPrice, insertLineAmount, partId]
+              );
+            } else {
+              await client.query(
+                `INSERT INTO salesorderlineitems
+                 (sales_order_id, part_number, part_description, quantity_sold, quantity_committed, unit, unit_price, line_amount, part_id)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+                [salesOrderId, partNumber, meta.part_description, insertQuantitySold, insertQuantityCommitted, meta.unit, insertUnitPrice, insertLineAmount, partId]
+              );
+            }
+          }
+
+          const partsToOrderResult = await client.query(
+            'SELECT * FROM sales_order_parts_to_order WHERE sales_order_id = $1 AND part_number = $2',
+            [salesOrderId, partNumber]
+          );
+          if (partsToOrderResult.rows.length > 0) {
+            const currentNeeded = parseFloat(partsToOrderResult.rows[0].quantity_needed) || 0;
+            const newNeeded = Math.max(0, currentNeeded - delta);
+            if (newNeeded > 0) {
+              await client.query(
+                'UPDATE sales_order_parts_to_order SET quantity_needed = $1 WHERE sales_order_id = $2 AND part_number = $3',
+                [newNeeded, salesOrderId, partNumber]
+              );
+            } else {
+              await client.query(
+                'DELETE FROM sales_order_parts_to_order WHERE sales_order_id = $1 AND part_number = $2',
+                [salesOrderId, partNumber]
+              );
+            }
+          }
+        } else if (delta < 0) {
+          if (lineItemResult.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({
+              error: `Cannot remove allocation for sales order ${salesOrderId}, part ${partNumber}: line item not found.`
+            });
+          }
+
+          const lineItem = lineItemResult.rows[0];
+          const currentQuantitySold = parseFloat(lineItem.quantity_sold) || 0;
+          const currentQuantityCommitted = parseFloat(lineItem.quantity_committed) || 0;
+          const currentQuantityToOrder = parseFloat(lineItem.quantity_to_order) || 0;
+          const unitPrice = Number(lineItem.unit_price) || 0;
+          const newQuantitySold = currentQuantitySold + delta;
+          const newQuantityCommitted = currentQuantityCommitted + delta;
+          const newQuantityToOrder = currentQuantityToOrder + Math.abs(delta);
+
+          if (newQuantitySold < -tolerance || newQuantityCommitted < -tolerance) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({
+              error: `Cannot reduce allocation below zero for sales order ${salesOrderId}, part ${partNumber}.`
+            });
+          }
+
+          const adjustedQuantitySold = Math.max(0, newQuantitySold);
+          const adjustedQuantityCommitted = Math.max(0, newQuantityCommitted);
+          const adjustedLineAmount = round2(unitPrice * adjustedQuantitySold);
+
+          if (hasQuantityToOrder) {
+            await client.query(
+              `UPDATE salesorderlineitems
+               SET quantity_sold = $1,
+                   quantity_committed = $2,
+                   quantity_to_order = $3,
+                   line_amount = $4,
+                   updated_at = CURRENT_TIMESTAMP
+               WHERE sales_order_id = $5 AND (part_id = $6 OR part_number = $7)`,
+              [adjustedQuantitySold, adjustedQuantityCommitted, newQuantityToOrder, adjustedLineAmount, salesOrderId, partId, partNumber]
+            );
+          } else {
+            await client.query(
+              `UPDATE salesorderlineitems
+               SET quantity_sold = $1,
+                   quantity_committed = $2,
+                   line_amount = $3,
+                   updated_at = CURRENT_TIMESTAMP
+               WHERE sales_order_id = $4 AND (part_id = $5 OR part_number = $6)`,
+              [adjustedQuantitySold, adjustedQuantityCommitted, adjustedLineAmount, salesOrderId, partId, partNumber]
+            );
+          }
+
+          const increaseBy = Math.abs(delta);
+          const meta = {
+            part_description: lineItem.part_description || '',
+            unit: lineItem.unit || 'Each',
+            unit_price: Number(lineItem.unit_price) || 0
+          };
+
+          const partsToOrderResult = await client.query(
+            'SELECT * FROM sales_order_parts_to_order WHERE sales_order_id = $1 AND part_number = $2',
+            [salesOrderId, partNumber]
+          );
+          if (partsToOrderResult.rows.length > 0) {
+            const currentNeeded = parseFloat(partsToOrderResult.rows[0].quantity_needed) || 0;
+            const newNeeded = currentNeeded + increaseBy;
+            await client.query(
+              'UPDATE sales_order_parts_to_order SET quantity_needed = $1 WHERE sales_order_id = $2 AND part_number = $3',
+              [newNeeded, salesOrderId, partNumber]
+            );
+          } else {
+            const lineAmount = round2(increaseBy * (meta.unit_price || 0));
+            await client.query(
+              `INSERT INTO sales_order_parts_to_order
+               (sales_order_id, part_number, part_description, quantity_needed, unit, unit_price, line_amount)
+               VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+              [salesOrderId, partNumber, meta.part_description, increaseBy, meta.unit, meta.unit_price || 0, lineAmount]
+            );
+          }
+        }
+      }
+
+      for (const partNumber of partNumbersInRequest) {
+        const partType = partTypeMap.get(partNumber);
+        if (partType === 'service') {
+          continue;
+        }
+
+        const oldSurplus = oldSurplusMap.get(partNumber) || 0;
+        const newSurplus = newSurplusMap.get(partNumber) || 0;
+        const deltaSurplus = newSurplus - oldSurplus;
+        if (Math.abs(deltaSurplus) <= tolerance) {
+          continue;
+        }
+
+        if (deltaSurplus > 0) {
+          const poMeta = poPartMap.get(partNumber);
+          const unitCost = poMeta?.unit_cost || inventoryMetaMap.get(partNumber)?.unit_cost || 0;
+          const unit = poMeta?.unit || inventoryMetaMap.get(partNumber)?.unit || 'Each';
+          const description = poMeta?.part_description || inventoryMetaMap.get(partNumber)?.part_description || '';
+          await client.query(
+            `INSERT INTO inventory (part_number, part_description, unit, last_unit_cost, quantity_on_hand)
+             VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT (part_number)
+             DO UPDATE SET
+               quantity_on_hand = COALESCE(CAST(inventory.quantity_on_hand AS NUMERIC), 0) + CAST($5 AS NUMERIC),
+               last_unit_cost = $4,
+               part_description = $2,
+               unit = $3`,
+            [partNumber, description, unit, unitCost, deltaSurplus]
+          );
+        } else {
+          const decreaseBy = Math.abs(deltaSurplus);
+          const invRes = await client.query(
+            'SELECT quantity_on_hand FROM inventory WHERE UPPER(part_number) = UPPER($1)',
+            [partNumber]
+          );
+          const currentOnHand = parseFloat(invRes.rows[0]?.quantity_on_hand) || 0;
+          if (currentOnHand + tolerance < decreaseBy) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({
+              error: `Insufficient inventory to reallocate ${decreaseBy} units of ${partNumber} from stock.`
+            });
+          }
+          await client.query(
+            `UPDATE inventory
+             SET quantity_on_hand = COALESCE(CAST(quantity_on_hand AS NUMERIC), 0) - CAST($1 AS NUMERIC)
+             WHERE UPPER(part_number) = UPPER($2)`,
+            [decreaseBy, partNumber]
+          );
+        }
+      }
+
+      await updateAggregatedPartsToOrder(poLineItems, client);
+
+      if (partNumbersInRequest.size > 0) {
+        const partsList = Array.from(partNumbersInRequest.values());
+        const placeholders = partsList.map((_, idx) => `$${idx + 2}`).join(',');
+        await client.query(
+          `DELETE FROM purchase_order_allocations WHERE purchase_id = $1 AND UPPER(part_number) IN (${placeholders})`,
+          [id, ...partsList]
+        );
+      }
+
+      for (const [partNumber, salesOrderAllocations] of newAllocationsByPart.entries()) {
+        const partDescription = poPartMap.get(partNumber)?.part_description || inventoryMetaMap.get(partNumber)?.part_description || '';
+        const partId = partIdMap.get(partNumber) ?? null;
+
+        for (const [salesOrderId, allocateQty] of salesOrderAllocations.entries()) {
+          if (allocateQty <= 0) continue;
+          await client.query(
+            `INSERT INTO purchase_order_allocations
+             (purchase_id, sales_order_id, part_number, part_description, allocate_qty, created_at, updated_at, part_id)
+             VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, $6)`,
+            [id, salesOrderId, partNumber, partDescription, allocateQty, partId]
+          );
+        }
+      }
+
+      for (const salesOrderId of affectedSalesOrders) {
+        try {
+          await salesOrderService.recalculateAndUpdateSummary(salesOrderId, client);
+        } catch (error) {
+          console.warn(`Failed to recalculate totals for sales order ${salesOrderId} after allocation update:`, error);
+        }
+      }
+
+      await client.query('COMMIT');
+
+      return res.json({
+        message: 'Allocations updated successfully for closed purchase order',
+        purchase_order_id: id,
+        allocations_processed: allocationList.length,
+        allocations_changed: allocationDeltas.length
+      });
+    }
     
     // Validate allocations
     for (const poItem of poLineItems) {
