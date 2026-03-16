@@ -869,7 +869,7 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
 
     const salesOrder = salesOrderResult.rows[0];
     const lineItemsResult = await pool.query(
-      'SELECT * FROM salesorderlineitems WHERE sales_order_id = $1',
+      'SELECT * FROM salesorderlineitems WHERE sales_order_id = $1 ORDER BY sales_order_line_item_id ASC',
       [id]
     );
     
@@ -1061,12 +1061,115 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
     doc.moveTo(50, y).lineTo(550, y).strokeColor('#444444').lineWidth(1).stroke();
     y += 14;
 
-    // --- Line Items temporarily suppressed ---
-    y += 6;
+    // --- Line Items ---
+    const formatMoney = (value: any) => {
+      const num = Number(value);
+      return Number.isFinite(num) ? num.toFixed(2) : '0.00';
+    };
+    const formatQuantity = (item: any) => {
+      const raw = item?.quantity_sold ?? item?.quantity ?? '';
+      const num = Number(raw);
+      if (Number.isFinite(num)) {
+        if (Number.isInteger(num)) return num.toString();
+        return num.toFixed(2).replace(/\.00$/, '');
+      }
+      const partNumber = String(item?.part_number || '').toUpperCase();
+      if (partNumber === 'SUPPLY') return 'N/A';
+      return raw ? String(raw) : '';
+    };
 
-    // Totals intentionally hidden (temporary)
+    const renderLineItemsHeader = () => {
+      doc.font('Helvetica-Bold').fontSize(12).fillColor('#000000').text('Line Items', 50, y);
+      y += 16;
+      const tableHeaders = ['SN', 'Item Code', 'Description', 'Qty', 'Unit', 'Unit Price', 'Line Total'];
+      const colWidths = [30, 70, 160, 40, 40, 80, 80];
+      let currentX = 50;
+      doc.font('Helvetica-Bold').fontSize(10).fillColor('#000000');
+      tableHeaders.forEach((header, i) => {
+        doc.text(header, currentX, y, { width: colWidths[i], align: 'left' });
+        currentX += colWidths[i];
+      });
+      y += 16;
+      doc.moveTo(50, y - 2).lineTo(550, y - 2).strokeColor('#888888').stroke();
+      doc.font('Helvetica').fontSize(10).fillColor('#000000');
+      return { colWidths };
+    };
+
+    if (y > doc.page.height - 140) {
+      doc.addPage();
+      y = 50;
+    }
+
+    const { colWidths } = renderLineItemsHeader();
+    const lineItems = salesOrder.lineItems || [];
+    if (lineItems.length === 0) {
+      doc.font('Helvetica-Oblique').fontSize(10).fillColor('#000000').text('No line items.', 50, y);
+      y += 16;
+    } else {
+      let sn = 1;
+      lineItems.forEach((item: any) => {
+        let currentX = 50;
+        let rowY = y;
+        const rowValues = [
+          sn.toString(),
+          item.part_number || '',
+          item.part_description || '',
+          formatQuantity(item),
+          item.unit || '',
+          formatMoney(item.unit_price),
+          formatMoney(item.line_amount),
+        ];
+
+        const rowHeights = rowValues.map((value, idx) =>
+          doc.heightOfString(String(value || ''), { width: colWidths[idx] })
+        );
+        const rowHeight = Math.max(Math.max(...rowHeights) + 6, 16);
+
+        if (y + rowHeight > doc.page.height - 100) {
+          doc.addPage();
+          y = 50;
+          renderLineItemsHeader();
+          rowY = y;
+        }
+
+        rowValues.forEach((value, idx) => {
+          const align = idx >= 5 ? 'right' : 'left';
+          doc.text(String(value || ''), currentX, rowY, {
+            width: colWidths[idx],
+            align,
+            height: rowHeight,
+          });
+          currentX += colWidths[idx];
+        });
+
+        y += rowHeight + 8;
+        doc.moveTo(50, y - 2).lineTo(550, y - 2).strokeColor('#eeeeee').stroke();
+        sn++;
+      });
+    }
+    y += 10;
+    doc.moveTo(50, y).lineTo(550, y).strokeColor('#444444').stroke();
+    y += 10;
+
+    // --- Totals Section ---
+    if (y > doc.page.height - 120) {
+      doc.addPage();
+      y = 50;
+    }
+    doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Sub Total:', 400, y, { align: 'left', width: 80 });
+    doc.font('Helvetica').fontSize(11).fillColor('#000000').text(formatMoney(salesOrder.subtotal), 480, y, { align: 'right', width: 70 });
+    y += 16;
+    doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Total GST:', 400, y, { align: 'left', width: 80 });
+    doc.font('Helvetica').fontSize(11).fillColor('#000000').text(formatMoney(salesOrder.total_gst_amount), 480, y, { align: 'right', width: 70 });
+    y += 16;
+    doc.font('Helvetica-Bold').fontSize(13).fillColor('#000000').text('Total:', 400, y, { align: 'left', width: 80 });
+    doc.font('Helvetica-Bold').fontSize(13).fillColor('#000000').text(formatMoney(salesOrder.total_amount), 480, y, { align: 'right', width: 70 });
 
     // --- Terms Section ---
+    if (y > doc.page.height - 140) {
+      doc.addPage();
+      y = 50;
+    }
     y += 40;
     if (isFieldVisible('terms') && salesOrder.terms && salesOrder.terms.trim()) {
       doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('Terms:', 50, y);
