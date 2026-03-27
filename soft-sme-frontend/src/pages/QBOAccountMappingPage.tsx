@@ -58,12 +58,14 @@ interface AccountMapping {
   qbo_inventory_account_id: string;
   qbo_ap_account_id: string;
   qbo_supply_expense_account_id?: string;
+  qbo_service_expense_account_id?: string;
   qbo_purchase_tax_code_id?: string;
   qbo_sales_account_id?: string;
   qbo_labour_sales_account_id?: string;
   qbo_ar_account_id?: string;
   qbo_cogs_account_id?: string;
   qbo_cost_of_labour_account_id?: string;
+  qbo_cost_of_services_account_id?: string;
   qbo_cost_of_materials_account_id?: string;
   qbo_labour_expense_reduction_account_id?: string;
   qbo_overhead_cogs_account_id?: string;
@@ -91,12 +93,14 @@ const QBOAccountMappingPage: React.FC = () => {
   const [selectedInventoryAccount, setSelectedInventoryAccount] = useState<string>('');
   const [selectedAPAccount, setSelectedAPAccount] = useState<string>('');
   const [selectedSupplyExpenseAccount, setSelectedSupplyExpenseAccount] = useState<string>('');
+  const [selectedServiceExpenseAccount, setSelectedServiceExpenseAccount] = useState<string>('');
   const [selectedPurchaseTaxCode, setSelectedPurchaseTaxCode] = useState<string>('');
   const [selectedSalesAccount, setSelectedSalesAccount] = useState<string>('');
   const [selectedLabourSalesAccount, setSelectedLabourSalesAccount] = useState<string>('');
   const [selectedARAccount, setSelectedARAccount] = useState<string>('');
   const [selectedCOGSAccount, setSelectedCOGSAccount] = useState<string>('');
   const [selectedCostOfLabourAccount, setSelectedCostOfLabourAccount] = useState<string>('');
+  const [selectedCostOfServicesAccount, setSelectedCostOfServicesAccount] = useState<string>('');
   const [selectedCostOfMaterialsAccount, setSelectedCostOfMaterialsAccount] = useState<string>('');
   const [selectedLabourExpenseReductionAccount, setSelectedLabourExpenseReductionAccount] = useState<string>('');
   const [selectedOverheadCOGSAccount, setSelectedOverheadCOGSAccount] = useState<string>('');
@@ -180,15 +184,17 @@ const QBOAccountMappingPage: React.FC = () => {
           setSelectedInventoryAccount(mappingResponse.data.mapping.qbo_inventory_account_id);
           setSelectedAPAccount(mappingResponse.data.mapping.qbo_ap_account_id);
           setSelectedSupplyExpenseAccount(mappingResponse.data.mapping.qbo_supply_expense_account_id || '');
+          setSelectedServiceExpenseAccount(mappingResponse.data.mapping.qbo_service_expense_account_id || '');
           setSelectedPurchaseTaxCode(mappingResponse.data.mapping.qbo_purchase_tax_code_id || '');
           setSelectedSalesAccount(mappingResponse.data.mapping.qbo_sales_account_id || '');
           setSelectedLabourSalesAccount(mappingResponse.data.mapping.qbo_labour_sales_account_id || '');
           setSelectedARAccount(mappingResponse.data.mapping.qbo_ar_account_id || '');
           setSelectedCOGSAccount(mappingResponse.data.mapping.qbo_cogs_account_id || '');
           setSelectedCostOfLabourAccount(mappingResponse.data.mapping.qbo_cost_of_labour_account_id || '');
+          setSelectedCostOfServicesAccount(mappingResponse.data.mapping.qbo_cost_of_services_account_id || '');
           setSelectedCostOfMaterialsAccount(mappingResponse.data.mapping.qbo_cost_of_materials_account_id || '');
           setSelectedLabourExpenseReductionAccount(mappingResponse.data.mapping.qbo_labour_expense_reduction_account_id || '');
-        setSelectedOverheadCOGSAccount(mappingResponse.data.mapping.qbo_overhead_cogs_account_id || '');
+          setSelectedOverheadCOGSAccount(mappingResponse.data.mapping.qbo_overhead_cogs_account_id || '');
         }
       }
     } catch (error: any) {
@@ -213,12 +219,14 @@ const QBOAccountMappingPage: React.FC = () => {
           qbo_inventory_account_id: selectedInventoryAccount,
           qbo_ap_account_id: selectedAPAccount,
           qbo_supply_expense_account_id: selectedSupplyExpenseAccount,
+          qbo_service_expense_account_id: selectedServiceExpenseAccount,
           qbo_purchase_tax_code_id: selectedPurchaseTaxCode || null,
           qbo_sales_account_id: selectedSalesAccount,
           qbo_labour_sales_account_id: selectedLabourSalesAccount,
           qbo_ar_account_id: selectedARAccount,
           qbo_cogs_account_id: selectedCOGSAccount,
           qbo_cost_of_labour_account_id: selectedCostOfLabourAccount,
+          qbo_cost_of_services_account_id: selectedCostOfServicesAccount,
           qbo_cost_of_materials_account_id: selectedCostOfMaterialsAccount,
           qbo_labour_expense_reduction_account_id: selectedLabourExpenseReductionAccount,
           qbo_overhead_cogs_account_id: selectedOverheadCOGSAccount,
@@ -255,12 +263,14 @@ const QBOAccountMappingPage: React.FC = () => {
       setSelectedInventoryAccount('');
       setSelectedAPAccount('');
       setSelectedSupplyExpenseAccount('');
+      setSelectedServiceExpenseAccount('');
       setSelectedPurchaseTaxCode('');
       setSelectedSalesAccount('');
       setSelectedLabourSalesAccount('');
       setSelectedARAccount('');
       setSelectedCOGSAccount('');
       setSelectedCostOfLabourAccount('');
+      setSelectedCostOfServicesAccount('');
       setSelectedCostOfMaterialsAccount('');
       setSelectedLabourExpenseReductionAccount('');
       setSelectedOverheadCOGSAccount('');
@@ -460,10 +470,10 @@ const QBOAccountMappingPage: React.FC = () => {
                  <strong>How this works:</strong> Configure your QuickBooks accounts to map to your business transactions. Accounts used by both purchase orders and sales orders are shown at the top.
                </Typography>
                <Typography variant="body2" sx={{ mt: 1 }}>
-                 <strong>Purchase Orders:</strong> Stock items → Inventory Account, Supply items → Supply Expense Account, Total → Accounts Payable.
+                 <strong>Purchase Orders:</strong> Stock items → Inventory Account, Supply items → Supply Expense Account, Service items → Service Expense Account, Total → Accounts Payable.
                </Typography>
                <Typography variant="body2" sx={{ mt: 1 }}>
-                 <strong>Sales Orders:</strong> Materials → Sales Account, Labour → Labour Sales Account, Total → Accounts Receivable, Costs → COGS Account.
+                 <strong>Sales Orders:</strong> Materials → Sales Account, Labour → Labour Sales Account, Service costs → Cost of Services Account, Total → Accounts Receivable, Costs → COGS Account.
                </Typography>
              </Alert>
 
@@ -534,14 +544,38 @@ const QBOAccountMappingPage: React.FC = () => {
                        ))}
                      </Select>
                    </FormControl>
-                   <Typography variant="caption" color="text.secondary">
-                     Account for supply items (e.g., Office Supplies, Tools, etc.) - Optional
-                   </Typography>
-                 </Grid>
+                 <Typography variant="caption" color="text.secondary">
+                   Account for supply items (e.g., Office Supplies, Tools, etc.) - Optional
+                 </Typography>
+               </Grid>
+
+                {/* Service Expense Account */}
+                <Grid item xs={12} md={6}>
+                  <FormControl fullWidth>
+                    <InputLabel>Service Expense Account</InputLabel>
+                    <Select
+                      value={selectedServiceExpenseAccount}
+                      onChange={(e) => setSelectedServiceExpenseAccount(e.target.value)}
+                      label="Service Expense Account"
+                    >
+                      <MenuItem value="">
+                        <em>Optional - Select an expense account</em>
+                      </MenuItem>
+                      {getAccountOptions('Expense').map((account) => (
+                        <MenuItem key={account.Id} value={account.Id}>
+                          {getAccountDisplayName(account)}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                  <Typography variant="caption" color="text.secondary">
+                    Account for service purchases (e.g., subcontracted work) - Optional
+                  </Typography>
+                </Grid>
   
-                 {/* AP Account */}
-                 <Grid item xs={12} md={6}>
-                   <FormControl fullWidth>
+                {/* AP Account */}
+                <Grid item xs={12} md={6}>
+                  <FormControl fullWidth>
                      <InputLabel>Accounts Payable</InputLabel>
                      <Select
                        value={selectedAPAccount}
@@ -659,6 +693,29 @@ const QBOAccountMappingPage: React.FC = () => {
                   </FormControl>
                   <Typography variant="caption" color="text.secondary">
                     Expense account for tracking cost of materials sold - Used for COGS journal entries - Optional
+                  </Typography>
+                </Grid>
+
+                <Grid item xs={12} md={6}>
+                  <FormControl fullWidth>
+                    <InputLabel>Cost of Services</InputLabel>
+                    <Select
+                      value={selectedCostOfServicesAccount}
+                      onChange={(e) => setSelectedCostOfServicesAccount(e.target.value)}
+                      label="Cost of Services"
+                    >
+                      <MenuItem value="">
+                        <em>Optional - Select an expense account</em>
+                      </MenuItem>
+                      {getAccountOptions('Expense').map((account) => (
+                        <MenuItem key={account.Id} value={account.Id}>
+                          {getAccountDisplayName(account)}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                  <Typography variant="caption" color="text.secondary">
+                    Expense account for tracking cost of services sold - Used for COGS journal entries - Optional
                   </Typography>
                 </Grid>
 
@@ -798,19 +855,27 @@ const QBOAccountMappingPage: React.FC = () => {
                   Purchase Order Accounts
                 </Typography>
                   <Grid container spacing={2}>
-                    <Grid item xs={12} md={6}>
-                      <Typography variant="body2" color="text.secondary">
-                        Supply Expense: {(() => {
-                          const account = accounts.find(a => a.Id === mapping.qbo_supply_expense_account_id);
-                          return account ? `${account.Name}${account.AccountNumber ? ` (#${account.AccountNumber})` : ''}` : 'Not configured';
-                        })()}
-                      </Typography>
-                    </Grid>
-                    <Grid item xs={12} md={6}>
-                      <Typography variant="body2" color="text.secondary">
-                        Accounts Payable: {(() => {
-                          const account = accounts.find(a => a.Id === mapping.qbo_ap_account_id);
-                          return account ? `${account.Name}${account.AccountNumber ? ` (#${account.AccountNumber})` : ''}` : 'Not configured';
+                  <Grid item xs={12} md={6}>
+                    <Typography variant="body2" color="text.secondary">
+                      Supply Expense: {(() => {
+                        const account = accounts.find(a => a.Id === mapping.qbo_supply_expense_account_id);
+                        return account ? `${account.Name}${account.AccountNumber ? ` (#${account.AccountNumber})` : ''}` : 'Not configured';
+                      })()}
+                    </Typography>
+                  </Grid>
+                  <Grid item xs={12} md={6}>
+                    <Typography variant="body2" color="text.secondary">
+                      Service Expense: {(() => {
+                        const account = accounts.find(a => a.Id === mapping.qbo_service_expense_account_id);
+                        return account ? `${account.Name}${account.AccountNumber ? ` (#${account.AccountNumber})` : ''}` : 'Not configured';
+                      })()}
+                    </Typography>
+                  </Grid>
+                  <Grid item xs={12} md={6}>
+                    <Typography variant="body2" color="text.secondary">
+                      Accounts Payable: {(() => {
+                        const account = accounts.find(a => a.Id === mapping.qbo_ap_account_id);
+                        return account ? `${account.Name}${account.AccountNumber ? ` (#${account.AccountNumber})` : ''}` : 'Not configured';
                         })()}
                       </Typography>
                     </Grid>
@@ -852,19 +917,27 @@ const QBOAccountMappingPage: React.FC = () => {
                    Cost Accounts
                  </Typography>
                  <Grid container spacing={2}>
-                   <Grid item xs={12} md={6}>
-                     <Typography variant="body2" color="text.secondary">
-                       Cost of Materials: {(() => {
-                         const account = accounts.find(a => a.Id === mapping.qbo_cost_of_materials_account_id);
-                         return account ? `${account.Name}${account.AccountNumber ? ` (#${account.AccountNumber})` : ''}` : 'Not configured';
-                       })()}
-                     </Typography>
-                   </Grid>
-                   <Grid item xs={12} md={6}>
-                     <Typography variant="body2" color="text.secondary">
-                       Cost of Labour: {(() => {
-                         const account = accounts.find(a => a.Id === mapping.qbo_cost_of_labour_account_id);
-                         return account ? `${account.Name}${account.AccountNumber ? ` (#${account.AccountNumber})` : ''}` : 'Not configured';
+                  <Grid item xs={12} md={6}>
+                    <Typography variant="body2" color="text.secondary">
+                      Cost of Materials: {(() => {
+                        const account = accounts.find(a => a.Id === mapping.qbo_cost_of_materials_account_id);
+                        return account ? `${account.Name}${account.AccountNumber ? ` (#${account.AccountNumber})` : ''}` : 'Not configured';
+                      })()}
+                    </Typography>
+                  </Grid>
+                  <Grid item xs={12} md={6}>
+                    <Typography variant="body2" color="text.secondary">
+                      Cost of Services: {(() => {
+                        const account = accounts.find(a => a.Id === mapping.qbo_cost_of_services_account_id);
+                        return account ? `${account.Name}${account.AccountNumber ? ` (#${account.AccountNumber})` : ''}` : 'Not configured';
+                      })()}
+                    </Typography>
+                  </Grid>
+                  <Grid item xs={12} md={6}>
+                    <Typography variant="body2" color="text.secondary">
+                      Cost of Labour: {(() => {
+                        const account = accounts.find(a => a.Id === mapping.qbo_cost_of_labour_account_id);
+                        return account ? `${account.Name}${account.AccountNumber ? ` (#${account.AccountNumber})` : ''}` : 'Not configured';
                        })()}
                      </Typography>
                    </Grid>

@@ -199,11 +199,13 @@ router.post('/mapping', async (req, res) => {
           qbo_inventory_account_id,
           qbo_ap_account_id,
           qbo_supply_expense_account_id,
+          qbo_service_expense_account_id,
           qbo_sales_account_id,
           qbo_labour_sales_account_id,
           qbo_ar_account_id,
           qbo_cogs_account_id,
           qbo_cost_of_labour_account_id,
+          qbo_cost_of_services_account_id,
           qbo_cost_of_materials_account_id,
           qbo_labour_expense_reduction_account_id,
           qbo_overhead_cogs_account_id,
@@ -230,33 +232,37 @@ router.post('/mapping', async (req, res) => {
         qbo_inventory_account_id, 
         qbo_ap_account_id, 
         qbo_supply_expense_account_id,
+        qbo_service_expense_account_id,
         qbo_sales_account_id,
         qbo_labour_sales_account_id,
         qbo_ar_account_id,
         qbo_cogs_account_id,
         qbo_cost_of_labour_account_id,
+        qbo_cost_of_services_account_id,
         qbo_cost_of_materials_account_id,
         qbo_labour_expense_reduction_account_id,
         qbo_overhead_cogs_account_id,
         qbo_purchase_tax_code_id
       )
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
         ON CONFLICT (company_id) DO UPDATE SET
         qbo_inventory_account_id = EXCLUDED.qbo_inventory_account_id,
         qbo_ap_account_id = EXCLUDED.qbo_ap_account_id,
         qbo_supply_expense_account_id = EXCLUDED.qbo_supply_expense_account_id,
+        qbo_service_expense_account_id = EXCLUDED.qbo_service_expense_account_id,
         qbo_sales_account_id = EXCLUDED.qbo_sales_account_id,
         qbo_labour_sales_account_id = EXCLUDED.qbo_labour_sales_account_id,
         qbo_ar_account_id = EXCLUDED.qbo_ar_account_id,
         qbo_cogs_account_id = EXCLUDED.qbo_cogs_account_id,
         qbo_cost_of_labour_account_id = EXCLUDED.qbo_cost_of_labour_account_id,
+        qbo_cost_of_services_account_id = EXCLUDED.qbo_cost_of_services_account_id,
         qbo_cost_of_materials_account_id = EXCLUDED.qbo_cost_of_materials_account_id,
         qbo_labour_expense_reduction_account_id = EXCLUDED.qbo_labour_expense_reduction_account_id,
         qbo_overhead_cogs_account_id = EXCLUDED.qbo_overhead_cogs_account_id,
         qbo_purchase_tax_code_id = EXCLUDED.qbo_purchase_tax_code_id,
         updated_at = NOW()
         RETURNING *`,
-        [companyId, qbo_inventory_account_id, qbo_ap_account_id, qbo_supply_expense_account_id, qbo_sales_account_id, qbo_labour_sales_account_id, qbo_ar_account_id, qbo_cogs_account_id, qbo_cost_of_labour_account_id, qbo_cost_of_materials_account_id, qbo_labour_expense_reduction_account_id, qbo_overhead_cogs_account_id, qbo_purchase_tax_code_id]
+        [companyId, qbo_inventory_account_id, qbo_ap_account_id, qbo_supply_expense_account_id, qbo_service_expense_account_id, qbo_sales_account_id, qbo_labour_sales_account_id, qbo_ar_account_id, qbo_cogs_account_id, qbo_cost_of_labour_account_id, qbo_cost_of_services_account_id, qbo_cost_of_materials_account_id, qbo_labour_expense_reduction_account_id, qbo_overhead_cogs_account_id, qbo_purchase_tax_code_id]
     );
 
     console.log('Account mapping saved successfully');

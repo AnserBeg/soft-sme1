@@ -1460,9 +1460,32 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
           customerData: customerData
         });
       }
-    } catch (customerError) {
-      console.error('Error checking customer:', customerError instanceof Error ? customerError.message : String(customerError));
-      return res.status(500).json({ error: 'Failed to check customer in QuickBooks' });
+    } catch (customerError: any) {
+      const response = customerError?.response;
+      const status = response?.status;
+      const data = response?.data;
+      const intuitTid = response?.headers?.['intuit_tid'] || response?.headers?.['intuit-tid'];
+      console.error('Error checking customer in QuickBooks:', {
+        message: customerError instanceof Error ? customerError.message : String(customerError),
+        status,
+        intuitTid,
+        data,
+      });
+
+      const faultErrors = Array.isArray(data?.Fault?.Error)
+        ? data.Fault.Error.map((err: any) => ({
+            code: err?.code,
+            message: err?.Message,
+            detail: err?.Detail,
+          }))
+        : null;
+
+      return res.status(500).json({
+        error: 'Failed to check customer in QuickBooks',
+        qboStatus: status ?? null,
+        qboErrors: faultErrors,
+        intuitTid: intuitTid ?? null,
+      });
     }
 
     // 6. Create invoice line items from the actual sales order line items
@@ -1470,6 +1493,7 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
     const materialItems: any[] = [];
     const labourItems: any[] = [];
     const overheadItems: any[] = [];
+    const serviceItems: any[] = [];
 
     // Separate line items by type (ignore supply and non-stock items)
     lineItems.forEach(item => {
@@ -1481,6 +1505,9 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
       } else if (item.part_number === 'SUPPLY' || partType === 'supply') {
         // Ignore supply items - they should not be exported to QuickBooks
         console.log(`Skipping SUPPLY line item for QBO export: ${item.part_number}`);
+      } else if (partType === 'service') {
+        serviceItems.push(item);
+        console.log(`Adding SERVICE line item for QBO COGS: ${item.part_number}`);
       } else if (partType && partType !== 'stock') {
         console.log(`Skipping non-stock line item for QBO COGS: ${item.part_number} (part_type=${partType})`);
       } else {
@@ -1550,7 +1577,7 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
       console.log(`No time entries found for SO ${id}, labour and overhead will remain at 0`);
     }
 
-    console.log(`Processing ${materialItems.length} material items, ${labourItems.length} labour items, and ${overheadItems.length} overhead items`);
+    console.log(`Processing ${materialItems.length} material items, ${labourItems.length} labour items, ${serviceItems.length} service items, and ${overheadItems.length} overhead items`);
 
     // 7. Create invoice with proper account mapping
     // Calculate amounts based on estimated price for revenue
@@ -1661,12 +1688,13 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
     // 9. Create journal entry for COGS and inventory reduction
     let totalMaterialCOGS = 0;
     let totalLabourCOGS = 0;
+    let totalServiceCOGS = 0;
     let totalOverheadCOGS = 0;
 
     let journalEntryId: string | null = null;
     let journalEntryError: any = null;
 
-    if (materialItems.length > 0 || labourItems.length > 0) {
+    if (materialItems.length > 0 || labourItems.length > 0 || serviceItems.length > 0 || overheadItems.length > 0) {
       const journalEntryLines = [];
 
       // Calculate COGS for material items
@@ -1687,6 +1715,15 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
 
         console.log(`COGS calculation for labour ${item.part_number}: quantity_sold=${item.quantity_sold}, unit_price=${item.unit_price}, line_amount=${item.line_amount}, itemCOGS=${itemCOGS}`);
         console.log(`Running total Labour COGS: ${totalLabourCOGS}`);
+      }
+
+      // Calculate COGS for service items
+      for (const item of serviceItems) {
+        const itemCOGS = roundCurrency(item.line_amount);
+        totalServiceCOGS += itemCOGS;
+
+        console.log(`COGS for service ${item.part_number}: ${itemCOGS} (line amount)`);
+        console.log(`Running total Service COGS: ${totalServiceCOGS}`);
       }
 
       // Calculate COGS for overhead items (use actual values from time entries)
@@ -1767,6 +1804,42 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
         }
       }
 
+      // Add service COGS entries (if any services)
+      if (totalServiceCOGS > 0) {
+        if (!accountMapping.qbo_cost_of_services_account_id || !accountMapping.qbo_service_expense_account_id) {
+          console.warn('Service COGS skipped due to missing QBO service account mapping.', {
+            costOfServicesAccount: accountMapping.qbo_cost_of_services_account_id,
+            serviceExpenseAccount: accountMapping.qbo_service_expense_account_id
+          });
+        } else {
+          // Debit Cost of Services Account (expense)
+          journalEntryLines.push({
+            Description: `Cost of Services for SO #${salesOrder.sales_order_number}`,
+            Amount: roundCurrency(totalServiceCOGS),
+            DetailType: 'JournalEntryLineDetail',
+            JournalEntryLineDetail: {
+              PostingType: 'Debit',
+              AccountRef: {
+                value: accountMapping.qbo_cost_of_services_account_id
+              }
+            }
+          });
+
+          // Credit Service Expense Account (reducing the expense)
+          journalEntryLines.push({
+            Description: `Service expense reduction for SO #${salesOrder.sales_order_number}`,
+            Amount: roundCurrency(totalServiceCOGS),
+            DetailType: 'JournalEntryLineDetail',
+            JournalEntryLineDetail: {
+              PostingType: 'Credit',
+              AccountRef: {
+                value: accountMapping.qbo_service_expense_account_id
+              }
+            }
+          });
+        }
+      }
+
       // Add overhead allocation entries (if any overhead)
       if (totalOverheadCOGS > 0 && accountMapping.qbo_overhead_cogs_account_id) {
         const distributionResult = await pool.query(
@@ -1825,12 +1898,12 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
           Line: journalEntryLines,
           TxnDate: exportDate,
           DocNumber: `COGS-${salesOrder.sales_order_number}`,
-          PrivateNote: `Cost of Goods Sold for Sales Order #${salesOrder.sales_order_number} (Materials: ${materialItems.length}, Labour: ${labourItems.length})`
+          PrivateNote: `Cost of Goods Sold for Sales Order #${salesOrder.sales_order_number} (Materials: ${materialItems.length}, Labour: ${labourItems.length}, Services: ${serviceItems.length}, Overhead: ${overheadItems.length})`
         };
 
         console.log(`Creating Journal Entry for COGS: lineCount=${journalEntryData.Line?.length || 0}`);
         console.log(`Total journal entry lines: ${journalEntryLines.length}`);
-        console.log(`Material COGS: ${totalMaterialCOGS}, Labour COGS: ${totalLabourCOGS}, Overhead COGS: ${totalOverheadCOGS}`);
+        console.log(`Material COGS: ${totalMaterialCOGS}, Labour COGS: ${totalLabourCOGS}, Service COGS: ${totalServiceCOGS}, Overhead COGS: ${totalOverheadCOGS}`);
 
         try {
           const journalResponse = await qboHttp.post(
@@ -1887,14 +1960,16 @@ router.post('/:id/export-to-qbo', async (req: Request, res: Response) => {
         totalAmount: totalAmount.toFixed(2),
         materials: materialItems.length,
         labour: labourItems.length,
+        services: serviceItems.length,
         overhead: overheadItems.length,
-        total: materialItems.length + labourItems.length + overheadItems.length
+        total: materialItems.length + labourItems.length + serviceItems.length + overheadItems.length
       },
       costSummary: {
         materialCOGS: totalMaterialCOGS ? totalMaterialCOGS.toFixed(2) : '0.00',
         labourCOGS: totalLabourCOGS ? totalLabourCOGS.toFixed(2) : '0.00',
+        serviceCOGS: totalServiceCOGS ? totalServiceCOGS.toFixed(2) : '0.00',
         overheadCOGS: totalOverheadCOGS ? totalOverheadCOGS.toFixed(2) : '0.00',
-        totalCOGS: ((totalMaterialCOGS || 0) + (totalLabourCOGS || 0) + (totalOverheadCOGS || 0)).toFixed(2)
+        totalCOGS: ((totalMaterialCOGS || 0) + (totalLabourCOGS || 0) + (totalServiceCOGS || 0) + (totalOverheadCOGS || 0)).toFixed(2)
       },
       journalEntryId: journalEntryId,
       journalEntryError: journalEntryError,
@@ -1975,6 +2050,7 @@ router.post('/:id/export-to-qbo-with-customer', async (req: Request, res: Respon
     const materialItems: any[] = [];
     const labourItems: any[] = [];
     const overheadItems: any[] = [];
+    const serviceItems: any[] = [];
     const supplyItems: any[] = [];
 
     lineItems.forEach(item => {
@@ -1988,6 +2064,8 @@ router.post('/:id/export-to-qbo-with-customer', async (req: Request, res: Respon
         console.log(`Skipping SUPPLY line item for QBO export: ${item.part_number}`);
       } else if (partType === 'supply') {
         supplyItems.push(item);
+      } else if (partType === 'service') {
+        serviceItems.push(item);
       } else if (partType && partType !== 'stock') {
         console.log(`Skipping non-stock line item for QBO COGS: ${item.part_number} (part_type=${partType})`);
       } else {
@@ -2085,12 +2163,13 @@ router.post('/:id/export-to-qbo-with-customer', async (req: Request, res: Respon
     // Create journal entry for COGS and inventory reduction
     let totalMaterialCOGS = 0;
     let totalLabourCOGS = 0;
+    let totalServiceCOGS = 0;
     let totalOverheadCOGS = 0;
 
     let journalEntryId: string | null = null;
     let journalEntryError: any = null;
 
-    if (materialItems.length > 0 || labourItems.length > 0) {
+    if (materialItems.length > 0 || labourItems.length > 0 || serviceItems.length > 0 || overheadItems.length > 0) {
       const journalEntryLines = [];
 
       // Calculate COGS for material items
@@ -2104,6 +2183,12 @@ router.post('/:id/export-to-qbo-with-customer', async (req: Request, res: Respon
       for (const item of labourItems) {
         const itemCOGS = roundCurrency(item.line_amount);
         totalLabourCOGS += itemCOGS;
+      }
+
+      // Calculate COGS for service items
+      for (const item of serviceItems) {
+        const itemCOGS = roundCurrency(item.line_amount);
+        totalServiceCOGS += itemCOGS;
       }
 
       // Calculate COGS for overhead items
@@ -2176,6 +2261,40 @@ router.post('/:id/export-to-qbo-with-customer', async (req: Request, res: Respon
         }
       }
 
+      // Add service COGS entries (if any services)
+      if (totalServiceCOGS > 0) {
+        if (!accountMapping.qbo_cost_of_services_account_id || !accountMapping.qbo_service_expense_account_id) {
+          console.warn('Service COGS skipped due to missing QBO service account mapping.', {
+            costOfServicesAccount: accountMapping.qbo_cost_of_services_account_id,
+            serviceExpenseAccount: accountMapping.qbo_service_expense_account_id
+          });
+        } else {
+          journalEntryLines.push({
+            Description: `Cost of Services for SO #${salesOrder.sales_order_number}`,
+            Amount: roundCurrency(totalServiceCOGS),
+            DetailType: 'JournalEntryLineDetail',
+            JournalEntryLineDetail: {
+              PostingType: 'Debit',
+              AccountRef: {
+                value: accountMapping.qbo_cost_of_services_account_id
+              }
+            }
+          });
+
+          journalEntryLines.push({
+            Description: `Service expense reduction for SO #${salesOrder.sales_order_number}`,
+            Amount: roundCurrency(totalServiceCOGS),
+            DetailType: 'JournalEntryLineDetail',
+            JournalEntryLineDetail: {
+              PostingType: 'Credit',
+              AccountRef: {
+                value: accountMapping.qbo_service_expense_account_id
+              }
+            }
+          });
+        }
+      }
+
       // Add overhead allocation entries (if any overhead)
       if (totalOverheadCOGS > 0 && accountMapping.qbo_overhead_cogs_account_id) {
         const distributionResult = await pool.query(
@@ -2234,7 +2353,7 @@ router.post('/:id/export-to-qbo-with-customer', async (req: Request, res: Respon
           Line: journalEntryLines,
           TxnDate: exportDate,
           DocNumber: `COGS-${salesOrder.sales_order_number}`,
-          PrivateNote: `Cost of Goods Sold for Sales Order #${salesOrder.sales_order_number} (Materials: ${materialItems.length}, Labour: ${labourItems.length})`
+          PrivateNote: `Cost of Goods Sold for Sales Order #${salesOrder.sales_order_number} (Materials: ${materialItems.length}, Labour: ${labourItems.length}, Services: ${serviceItems.length}, Overhead: ${overheadItems.length})`
         };
 
         try {
@@ -2287,14 +2406,16 @@ router.post('/:id/export-to-qbo-with-customer', async (req: Request, res: Respon
         totalAmount: totalAmount.toFixed(2),
         materials: materialItems.length,
         labour: labourItems.length,
+        services: serviceItems.length,
         overhead: overheadItems.length,
-        total: materialItems.length + labourItems.length + overheadItems.length
+        total: materialItems.length + labourItems.length + serviceItems.length + overheadItems.length
       },
       costSummary: {
         materialCOGS: totalMaterialCOGS ? totalMaterialCOGS.toFixed(2) : '0.00',
         labourCOGS: totalLabourCOGS ? totalLabourCOGS.toFixed(2) : '0.00',
+        serviceCOGS: totalServiceCOGS ? totalServiceCOGS.toFixed(2) : '0.00',
         overheadCOGS: totalOverheadCOGS ? totalOverheadCOGS.toFixed(2) : '0.00',
-        totalCOGS: ((totalMaterialCOGS || 0) + (totalLabourCOGS || 0) + (totalOverheadCOGS || 0)).toFixed(2)
+        totalCOGS: ((totalMaterialCOGS || 0) + (totalLabourCOGS || 0) + (totalServiceCOGS || 0) + (totalOverheadCOGS || 0)).toFixed(2)
       },
       journalEntryId: journalEntryId,
       journalEntryError: journalEntryError

@@ -535,6 +535,7 @@ router.post('/:id/export-to-qbo', adminOnly, async (req, res) => {
     // Filter line items by part type and create separate arrays
     const stockLineItems = [];
     const supplyLineItems = [];
+    const serviceLineItems = [];
     console.log('=== QBO Export Debug ===');
     console.log('Total line items:', lineItems.length);
     console.log('QBO account mapping loaded');
@@ -560,6 +561,9 @@ router.post('/:id/export-to-qbo', adminOnly, async (req, res) => {
         } else if (partType === 'supply') {
           supplyLineItems.push(item);
           console.log(`  -> Added to SUPPLY items`);
+        } else if (partType === 'service') {
+          serviceLineItems.push(item);
+          console.log(`  -> Added to SERVICE items`);
         }
       } else {
         console.log(`  -> Item not found in inventory, skipping`);
@@ -569,6 +573,8 @@ router.post('/:id/export-to-qbo', adminOnly, async (req, res) => {
     console.log('Stock items count:', stockLineItems.length);
     console.log('Supply items count:', supplyLineItems.length);
     console.log('Supply expense account configured:', !!accountMapping.qbo_supply_expense_account_id);
+    console.log('Service items count:', serviceLineItems.length);
+    console.log('Service expense account configured:', !!accountMapping.qbo_service_expense_account_id);
 
     // Create QBO Bill with separate line items for stock and supply items
     const qboBillLines: any[] = [];
@@ -622,6 +628,35 @@ router.post('/:id/export-to-qbo', adminOnly, async (req, res) => {
         supply_items_count: supplyLineItems.length
       });
     }
+
+    // Add service items to expense account (if service expense account is configured)
+    if (accountMapping.qbo_service_expense_account_id && serviceLineItems.length > 0) {
+      console.log(`Adding ${serviceLineItems.length} service items to expense account: ${accountMapping.qbo_service_expense_account_id}`);
+      serviceLineItems.forEach((item: any) => {
+        const amount = parseFloat(item.unit_cost) * parseFloat(item.quantity);
+        console.log(`Adding service item ${item.part_number} to expense account: ${accountMapping.qbo_service_expense_account_id}`);
+        console.log(`  - Unit cost: ${item.unit_cost} (parsed: ${parseFloat(item.unit_cost)})`);
+        console.log(`  - Quantity: ${item.quantity} (parsed: ${parseFloat(item.quantity)})`);
+        console.log(`  - Calculated amount: ${amount}`);
+        const taxCodeRef = taxableTaxCodeId ? { TaxCodeRef: { value: taxableTaxCodeId } } : {};
+        qboBillLines.push({
+          Amount: amount,
+          DetailType: 'AccountBasedExpenseLineDetail',
+          AccountBasedExpenseLineDetail: {
+            AccountRef: {
+              value: accountMapping.qbo_service_expense_account_id
+            },
+            BillableStatus: 'NotBillable',
+            ...taxCodeRef
+          }
+        });
+      });
+    } else {
+      console.log('Service items not added because:', {
+        service_expense_account_configured: !!accountMapping.qbo_service_expense_account_id,
+        service_items_count: serviceLineItems.length
+      });
+    }
     
     console.log('Final QBO bill lines count:', qboBillLines.length);
 
@@ -666,8 +701,9 @@ router.post('/:id/export-to-qbo', adminOnly, async (req, res) => {
     // Calculate summary for response
     const totalStockAmount = stockLineItems.reduce((sum, item) => sum + (parseFloat(item.unit_cost) * parseFloat(item.quantity)), 0);
     const totalSupplyAmount = supplyLineItems.reduce((sum, item) => sum + (parseFloat(item.unit_cost) * parseFloat(item.quantity)), 0);
+    const totalServiceAmount = serviceLineItems.reduce((sum, item) => sum + (parseFloat(item.unit_cost) * parseFloat(item.quantity)), 0);
     const gstAmount = parseFloat(po.total_gst_amount) || 0;
-    const totalAmount = totalStockAmount + totalSupplyAmount + gstAmount;
+    const totalAmount = totalStockAmount + totalSupplyAmount + totalServiceAmount + gstAmount;
 
     res.json({ 
       success: true, 
@@ -678,6 +714,8 @@ router.post('/:id/export-to-qbo', adminOnly, async (req, res) => {
         totalStockAmount: totalStockAmount.toFixed(2),
         supplyItems: supplyLineItems.length,
         totalSupplyAmount: totalSupplyAmount.toFixed(2),
+        serviceItems: serviceLineItems.length,
+        totalServiceAmount: totalServiceAmount.toFixed(2),
         gstAmount: gstAmount.toFixed(2),
         totalAmount: totalAmount.toFixed(2),
         vendorName: vendor.vendor_name
@@ -784,40 +822,90 @@ router.post('/:id/export-to-qbo-with-vendor', adminOnly, async (req, res) => {
     // Create vendor in QBO first
     const qboVendorId = await createQBOVendor(vendorData, accessContext.accessToken, accessContext.realmId);
 
-    // Filter line items to only include stock items (not supply)
+    // Filter line items by part type
     const stockLineItems = [];
+    const supplyLineItems = [];
+    const serviceLineItems = [];
     for (const item of lineItems) {
-      // Check if this part exists in inventory and is marked as stock
+      // Check if this part exists in inventory and is marked as stock/supply/service
       const inventoryResult = await pool.query(
         'SELECT part_type FROM inventory WHERE part_number = $1',
         [item.part_number]
       );
       
-      if (inventoryResult.rows.length > 0 && inventoryResult.rows[0].part_type === 'stock') {
-        stockLineItems.push(item);
+      if (inventoryResult.rows.length > 0) {
+        const partType = inventoryResult.rows[0].part_type;
+        if (partType === 'stock') {
+          stockLineItems.push(item);
+        } else if (partType === 'supply') {
+          supplyLineItems.push(item);
+        } else if (partType === 'service') {
+          serviceLineItems.push(item);
+        }
       }
     }
 
-    // Create QBO Bill with individual line items for stock items
+    const qboBillLines: any[] = [];
+
+    // Add stock items to inventory account
+    stockLineItems.forEach((item: any) => {
+      const taxCodeRef = taxableTaxCodeId ? { TaxCodeRef: { value: taxableTaxCodeId } } : {};
+      qboBillLines.push({
+        Amount: parseFloat(item.unit_cost) * parseFloat(item.quantity),
+        DetailType: 'AccountBasedExpenseLineDetail',
+        AccountBasedExpenseLineDetail: {
+          AccountRef: {
+            value: accountMapping.qbo_inventory_account_id
+          },
+          BillableStatus: 'NotBillable',
+          ...taxCodeRef
+        }
+      });
+    });
+
+    // Add supply items to expense account (if supply expense account is configured)
+    if (accountMapping.qbo_supply_expense_account_id && supplyLineItems.length > 0) {
+      supplyLineItems.forEach((item: any) => {
+        const taxCodeRef = taxableTaxCodeId ? { TaxCodeRef: { value: taxableTaxCodeId } } : {};
+        qboBillLines.push({
+          Amount: parseFloat(item.unit_cost) * parseFloat(item.quantity),
+          DetailType: 'AccountBasedExpenseLineDetail',
+          AccountBasedExpenseLineDetail: {
+            AccountRef: {
+              value: accountMapping.qbo_supply_expense_account_id
+            },
+            BillableStatus: 'NotBillable',
+            ...taxCodeRef
+          }
+        });
+      });
+    }
+
+    // Add service items to expense account (if service expense account is configured)
+    if (accountMapping.qbo_service_expense_account_id && serviceLineItems.length > 0) {
+      serviceLineItems.forEach((item: any) => {
+        const taxCodeRef = taxableTaxCodeId ? { TaxCodeRef: { value: taxableTaxCodeId } } : {};
+        qboBillLines.push({
+          Amount: parseFloat(item.unit_cost) * parseFloat(item.quantity),
+          DetailType: 'AccountBasedExpenseLineDetail',
+          AccountBasedExpenseLineDetail: {
+            AccountRef: {
+              value: accountMapping.qbo_service_expense_account_id
+            },
+            BillableStatus: 'NotBillable',
+            ...taxCodeRef
+          }
+        });
+      });
+    }
+
+    // Create QBO Bill with individual line items
     const billDocNumber = (po.bill_number || '').trim() || po.purchase_number;
     const qboBill = {
       VendorRef: {
         value: qboVendorId
       },
-      Line: stockLineItems.map((item: any) => {
-        const taxCodeRef = taxableTaxCodeId ? { TaxCodeRef: { value: taxableTaxCodeId } } : {};
-        return {
-          Amount: parseFloat(item.unit_cost) * parseFloat(item.quantity), // Individual item cost
-          DetailType: 'AccountBasedExpenseLineDetail',
-          AccountBasedExpenseLineDetail: {
-            AccountRef: {
-              value: accountMapping.qbo_inventory_account_id
-            },
-            BillableStatus: 'NotBillable',
-            ...taxCodeRef
-          }
-        };
-      }),
+      Line: qboBillLines,
       APAccountRef: {
         value: accountMapping.qbo_ap_account_id
       },
@@ -850,8 +938,10 @@ router.post('/:id/export-to-qbo-with-vendor', adminOnly, async (req, res) => {
 
     // Calculate summary for response
     const totalStockAmount = stockLineItems.reduce((sum, item) => sum + (parseFloat(item.unit_cost) * parseFloat(item.quantity)), 0);
+    const totalSupplyAmount = supplyLineItems.reduce((sum, item) => sum + (parseFloat(item.unit_cost) * parseFloat(item.quantity)), 0);
+    const totalServiceAmount = serviceLineItems.reduce((sum, item) => sum + (parseFloat(item.unit_cost) * parseFloat(item.quantity)), 0);
     const gstAmount = parseFloat(po.total_gst_amount) || 0;
-    const totalAmount = totalStockAmount + gstAmount;
+    const totalAmount = totalStockAmount + totalSupplyAmount + totalServiceAmount + gstAmount;
 
     res.json({ 
       success: true, 
@@ -861,6 +951,10 @@ router.post('/:id/export-to-qbo-with-vendor', adminOnly, async (req, res) => {
       summary: {
         stockItems: stockLineItems.length,
         totalStockAmount: totalStockAmount.toFixed(2),
+        supplyItems: supplyLineItems.length,
+        totalSupplyAmount: totalSupplyAmount.toFixed(2),
+        serviceItems: serviceLineItems.length,
+        totalServiceAmount: totalServiceAmount.toFixed(2),
         gstAmount: gstAmount.toFixed(2),
         totalAmount: totalAmount.toFixed(2),
         vendorName: vendor.vendor_name
@@ -2281,20 +2375,27 @@ router.get('/qbo-account-mapping/:companyId', adminOnly, async (req, res) => {
 
 router.post('/qbo-account-mapping/:companyId', adminOnly, async (req, res) => {
   const { companyId } = req.params;
-  const { qbo_inventory_account_id, qbo_ap_account_id, qbo_supply_expense_account_id, qbo_purchase_tax_code_id } = req.body;
+  const {
+    qbo_inventory_account_id,
+    qbo_ap_account_id,
+    qbo_supply_expense_account_id,
+    qbo_service_expense_account_id,
+    qbo_purchase_tax_code_id
+  } = req.body;
   try {
     // Upsert mapping
     const result = await pool.query(
-      `INSERT INTO qbo_account_mapping (company_id, qbo_inventory_account_id, qbo_ap_account_id, qbo_supply_expense_account_id, qbo_purchase_tax_code_id)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO qbo_account_mapping (company_id, qbo_inventory_account_id, qbo_ap_account_id, qbo_supply_expense_account_id, qbo_service_expense_account_id, qbo_purchase_tax_code_id)
+       VALUES ($1, $2, $3, $4, $5, $6)
        ON CONFLICT (company_id) DO UPDATE SET
          qbo_inventory_account_id = EXCLUDED.qbo_inventory_account_id,
          qbo_ap_account_id = EXCLUDED.qbo_ap_account_id,
          qbo_supply_expense_account_id = EXCLUDED.qbo_supply_expense_account_id,
+         qbo_service_expense_account_id = EXCLUDED.qbo_service_expense_account_id,
          qbo_purchase_tax_code_id = EXCLUDED.qbo_purchase_tax_code_id,
          updated_at = NOW()
        RETURNING *`,
-      [companyId, qbo_inventory_account_id, qbo_ap_account_id, qbo_supply_expense_account_id, qbo_purchase_tax_code_id]
+      [companyId, qbo_inventory_account_id, qbo_ap_account_id, qbo_supply_expense_account_id, qbo_service_expense_account_id, qbo_purchase_tax_code_id]
     );
     res.json(result.rows[0]);
   } catch (err) {

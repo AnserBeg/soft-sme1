@@ -203,16 +203,35 @@ router.post('/export-purchase-order/:poId', async (req, res) => {
         billLineItems.push({
           DetailType: 'AccountBasedExpenseLineDetail',
           Amount: parseFloat(item.unit_cost) * parseFloat(item.quantity),
-        AccountBasedExpenseLineDetail: {
-          AccountRef: {
-            value: accountMapping.qbo_supply_expense_account_id
-          },
-          BillableStatus: 'NotBillable',
-          ...taxCodeRef
-        }
+          AccountBasedExpenseLineDetail: {
+            AccountRef: {
+              value: accountMapping.qbo_supply_expense_account_id
+            },
+            BillableStatus: 'NotBillable',
+            ...taxCodeRef
+          }
+        });
       });
-    });
-  }
+    }
+
+    // Add service items to expense account (if service expense account is configured)
+    const serviceItems = lineItems.filter(item => item.part_type === 'service');
+    if (accountMapping.qbo_service_expense_account_id && serviceItems.length > 0) {
+      serviceItems.forEach(item => {
+        const taxCodeRef = taxableTaxCodeId ? { TaxCodeRef: { value: taxableTaxCodeId } } : {};
+        billLineItems.push({
+          DetailType: 'AccountBasedExpenseLineDetail',
+          Amount: parseFloat(item.unit_cost) * parseFloat(item.quantity),
+          AccountBasedExpenseLineDetail: {
+            AccountRef: {
+              value: accountMapping.qbo_service_expense_account_id
+            },
+            BillableStatus: 'NotBillable',
+            ...taxCodeRef
+          }
+        });
+      });
+    }
 
     const exportDate = purchaseOrder.purchase_date
       ? new Date(purchaseOrder.purchase_date).toISOString().slice(0, 10)
@@ -269,7 +288,8 @@ router.post('/export-purchase-order/:poId', async (req, res) => {
       exportedItems: {
         stock: stockItems.length,
         supply: supplyItems.length,
-        total: stockItems.length + supplyItems.length
+        service: serviceItems.length,
+        total: stockItems.length + supplyItems.length + serviceItems.length
       },
       gstExported: purchaseOrder.total_gst_amount > 0
     });
