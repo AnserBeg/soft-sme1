@@ -74,6 +74,133 @@ E-11,Hyphen allowed visually,pcs,5,15.75,2,stock,Electrical,XYZ Electronics
   res.send(csvTemplate);
 });
 
+// Get purchase/sales/edit history for a part number
+router.get('/:partNumber/history', async (req: Request, res: Response) => {
+  const { partNumber } = req.params;
+  const decodedPartNumber = decodeURIComponent(partNumber);
+  try {
+    let partResult = await pool.query(
+      'SELECT part_id, part_number FROM inventory WHERE part_number = $1',
+      [decodedPartNumber]
+    );
+
+    if (partResult.rows.length === 0) {
+      const canonicalPartNumber = canonicalizePartNumber(decodedPartNumber) || decodedPartNumber;
+      partResult = await pool.query(
+        'SELECT part_id, part_number FROM inventory WHERE canonical_part_number = $1',
+        [canonicalPartNumber]
+      );
+    }
+
+    if (partResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Inventory item not found' });
+    }
+
+    const partId = partResult.rows[0].part_id;
+
+    const purchaseResult = await pool.query(
+      `SELECT
+        'PO' AS kind,
+        ph.purchase_id AS order_id,
+        ph.purchase_number AS order_number,
+        ph.purchase_date AS order_date,
+        ph.status AS status,
+        pli.line_item_id AS line_item_id,
+        CAST(pli.quantity AS FLOAT) AS quantity,
+        CAST(pli.unit_cost AS FLOAT) AS unit_price,
+        CAST(pli.line_total AS FLOAT) AS line_total,
+        pli.part_number AS part_number,
+        pli.part_description AS part_description
+       FROM purchaselineitems pli
+       JOIN purchasehistory ph ON ph.purchase_id = pli.purchase_id
+       WHERE (pli.part_id = $1 OR UPPER(pli.part_number) = UPPER($2))`,
+      [partId, decodedPartNumber]
+    );
+
+    const salesResult = await pool.query(
+      `SELECT
+        'SO' AS kind,
+        soh.sales_order_id AS order_id,
+        soh.sales_order_number AS order_number,
+        soh.sales_date AS order_date,
+        soh.status AS status,
+        soli.sales_order_line_item_id AS line_item_id,
+        CAST(soli.quantity_sold AS FLOAT) AS quantity,
+        CAST(soli.unit_price AS FLOAT) AS unit_price,
+        CAST(soli.line_amount AS FLOAT) AS line_total,
+        soli.part_number AS part_number,
+        soli.part_description AS part_description
+       FROM salesorderlineitems soli
+       JOIN salesorderhistory soh ON soh.sales_order_id = soli.sales_order_id
+       WHERE (soli.part_id = $1 OR UPPER(soli.part_number) = UPPER($2))`,
+      [partId, decodedPartNumber]
+    );
+
+    const auditResult = await pool.query(
+      `SELECT
+        'EDIT' AS kind,
+        ial.id AS audit_id,
+        ial.created_at AS order_date,
+        ial.delta AS delta,
+        ial.new_on_hand AS new_on_hand,
+        ial.reason AS reason,
+        ial.sales_order_id AS sales_order_id
+       FROM inventory_audit_log ial
+       WHERE ial.part_id = $1
+       ORDER BY ial.created_at DESC
+       LIMIT 200`,
+      [partId]
+    );
+
+    const history = [
+      ...purchaseResult.rows.map((row: any) => ({
+        id: `po-${row.line_item_id}`,
+        kind: row.kind,
+        orderId: row.order_id,
+        orderNumber: row.order_number,
+        orderDate: row.order_date,
+        status: row.status,
+        quantity: row.quantity,
+        unitPrice: row.unit_price,
+        lineTotal: row.line_total,
+        partNumber: row.part_number,
+        partDescription: row.part_description,
+      })),
+      ...salesResult.rows.map((row: any) => ({
+        id: `so-${row.line_item_id}`,
+        kind: row.kind,
+        orderId: row.order_id,
+        orderNumber: row.order_number,
+        orderDate: row.order_date,
+        status: row.status,
+        quantity: row.quantity,
+        unitPrice: row.unit_price,
+        lineTotal: row.line_total,
+        partNumber: row.part_number,
+        partDescription: row.part_description,
+      })),
+      ...auditResult.rows.map((row: any) => ({
+        id: `audit-${row.audit_id}`,
+        kind: row.kind,
+        orderDate: row.order_date,
+        delta: row.delta,
+        newOnHand: row.new_on_hand,
+        reason: row.reason,
+        salesOrderId: row.sales_order_id,
+      })),
+    ].sort((a: any, b: any) => {
+      const dateA = a.orderDate ? new Date(a.orderDate).getTime() : 0;
+      const dateB = b.orderDate ? new Date(b.orderDate).getTime() : 0;
+      return dateB - dateA;
+    });
+
+    res.json({ part_id: partId, part_number: partResult.rows[0].part_number, history });
+  } catch (err) {
+    console.error('inventoryRoutes: Error fetching part history:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Get a single inventory item by part number
 router.get('/:partNumber', async (req: Request, res: Response) => {
   const { partNumber } = req.params;
@@ -326,6 +453,14 @@ router.put('/:id', async (req: Request, res: Response) => {
   const trimmedCategory = category ? category.toString().trim() : undefined;
   const trimmedPartNumber = part_number ? part_number.toString().trim().toUpperCase() : undefined;
   let canonicalWarning: string | undefined;
+  const changeNotes: string[] = [];
+  let quantityDelta: number | null = null;
+
+  const addChangeNote = (label: string, fromValue: any, toValue: any) => {
+    if (String(fromValue ?? '') !== String(toValue ?? '')) {
+      changeNotes.push(`${label}: ${fromValue ?? ''} -> ${toValue ?? ''}`);
+    }
+  };
 
   const client = await pool.connect();
   try {
@@ -345,6 +480,7 @@ router.put('/:id', async (req: Request, res: Response) => {
     console.log(`🔍 Checking part number change: trimmedPartNumber="${trimmedPartNumber}", decodedPartNumber="${decodedPartNumber}"`);
     if (trimmedPartNumber && trimmedPartNumber !== decodedPartNumber) {
       console.log(`✅ Part number change detected: ${decodedPartNumber} -> ${trimmedPartNumber}`);
+      addChangeNote('Part #', decodedPartNumber, trimmedPartNumber);
 
       const canonicalPartNumber = canonicalizePartNumber(trimmedPartNumber) || trimmedPartNumber;
       // Check if new part number already exists
@@ -384,14 +520,22 @@ router.put('/:id', async (req: Request, res: Response) => {
     if (quantity_on_hand !== undefined) {
       fields.push(`quantity_on_hand = $${idx++}`);
       values.push(quantity_on_hand);
+      addChangeNote('Quantity on Hand', existingItem.quantity_on_hand, quantity_on_hand);
+      const oldQty = Number(existingItem.quantity_on_hand);
+      const newQty = Number(quantity_on_hand);
+      if (Number.isFinite(oldQty) && Number.isFinite(newQty)) {
+        quantityDelta = newQty - oldQty;
+      }
     }
     if (reorder_point !== undefined) {
       fields.push(`reorder_point = $${idx++}`);
       values.push(reorder_point);
+      addChangeNote('Reorder Point', existingItem.reorder_point, reorder_point);
     }
     if (last_unit_cost !== undefined) {
       fields.push(`last_unit_cost = $${idx++}`);
       values.push(last_unit_cost);
+      addChangeNote('Last Unit Cost', existingItem.last_unit_cost, last_unit_cost);
     }
     if (trimmedPartDescription !== undefined) {
       const canonicalDescription = canonicalizeName(trimmedPartDescription);
@@ -399,34 +543,51 @@ router.put('/:id', async (req: Request, res: Response) => {
       values.push(trimmedPartDescription);
       fields.push(`canonical_name = $${idx++}`);
       values.push(canonicalDescription);
+      addChangeNote('Part Description', existingItem.part_description, trimmedPartDescription);
     }
     if (trimmedUnit !== undefined) {
       fields.push(`unit = $${idx++}`);
       values.push(trimmedUnit);
+      addChangeNote('Unit', existingItem.unit, trimmedUnit);
     }
     if (trimmedPartType !== undefined) {
       fields.push(`part_type = $${idx++}`);
       values.push(trimmedPartType);
+      addChangeNote('Part Type', existingItem.part_type, trimmedPartType);
     }
     if (trimmedCategory !== undefined) {
       fields.push(`category = $${idx++}`);
       values.push(trimmedCategory);
+      addChangeNote('Category', existingItem.category, trimmedCategory);
     }
 
+    let updatedRow: any;
     if (fields.length > 0) {
       values.push(partId);
       const updateQuery = `UPDATE inventory SET ${fields.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE part_id = $${idx} RETURNING *`;
       const result = await client.query(updateQuery, values);
-      await client.query('COMMIT');
-      const { canonical_part_number, canonical_name, ...updatedItem } = result.rows[0];
-      res.json({ message: 'Inventory item updated successfully', updatedItem, warning: canonicalWarning });
+      updatedRow = result.rows[0];
     } else {
       // Just get the updated item if no other fields changed
       const result = await client.query('SELECT * FROM inventory WHERE part_id = $1', [partId]);
-      await client.query('COMMIT');
-      const { canonical_part_number, canonical_name, ...updatedItem } = result.rows[0];
-      res.json({ message: 'Inventory item updated successfully', updatedItem, warning: canonicalWarning });
+      updatedRow = result.rows[0];
     }
+
+    if (changeNotes.length > 0) {
+      const newOnHandRaw = updatedRow?.quantity_on_hand;
+      const newOnHandNum = Number(newOnHandRaw);
+      const newOnHand = Number.isFinite(newOnHandNum) ? Math.round(newOnHandNum) : 0;
+      const deltaValue = Number.isFinite(quantityDelta ?? NaN) ? Math.round(quantityDelta as number) : 0;
+      const reason = `Manual edit: ${changeNotes.join('; ')}`;
+      await client.query(
+        'INSERT INTO inventory_audit_log (part_id, delta, new_on_hand, reason) VALUES ($1, $2, $3, $4)',
+        [partId, deltaValue, newOnHand, reason]
+      );
+    }
+
+    await client.query('COMMIT');
+    const { canonical_part_number, canonical_name, ...updatedItem } = updatedRow;
+    res.json({ message: 'Inventory item updated successfully', updatedItem, warning: canonicalWarning });
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('inventoryRoutes: Error updating inventory item:', err);

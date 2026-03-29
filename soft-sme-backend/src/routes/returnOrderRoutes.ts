@@ -4,9 +4,18 @@ import { InventoryService } from '../services/InventoryService';
 import { PoolClient } from 'pg';
 import PDFDocument from 'pdfkit';
 import { getLogoImageSource } from '../utils/pdfLogoHelper';
+import { qboHttp } from '../utils/qboHttp';
+import { ensureFreshQboAccess } from '../utils/qboTokens';
+import { getQboApiBaseUrl } from '../utils/qboBaseUrl';
+import { resolveTenantCompanyIdFromRequest } from '../utils/companyContext';
+import { fetchQboTaxCodeById, resolvePurchaseTaxableQboTaxCodeId } from '../utils/qboTaxCodes';
+import { ACCESS_ROLES, requireAccessRoles } from '../middleware/roleAccessMiddleware';
 
 const router = express.Router();
 const inventoryService = new InventoryService(pool);
+const adminOnly = requireAccessRoles([ACCESS_ROLES.ADMIN]);
+
+const escapeQboQueryValue = (value: string): string => value.replace(/'/g, "''");
 
 type ReturnOrderStatus = 'Requested' | 'Returned';
 
@@ -119,6 +128,53 @@ function mapLineItemPayload(item: any, purchaseLine: any) {
   };
 }
 
+async function checkQBOVendorExists(vendorName: string, accessToken: string, realmId: string): Promise<boolean> {
+  try {
+    const searchResponse = await qboHttp.get(
+      `${getQboApiBaseUrl()}/v3/company/${realmId}/query`,
+      {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+        },
+        params: {
+          query: `SELECT * FROM Vendor WHERE DisplayName = '${escapeQboQueryValue(vendorName)}'`,
+          minorversion: '75',
+        },
+      }
+    );
+
+    return !!(searchResponse.data.QueryResponse?.Vendor && searchResponse.data.QueryResponse.Vendor.length > 0);
+  } catch (error) {
+    console.error('Error checking QBO vendor existence:', error instanceof Error ? error.message : String(error));
+    return false;
+  }
+}
+
+async function getQBOVendorId(vendorName: string, accessToken: string, realmId: string): Promise<string> {
+  const searchResponse = await qboHttp.get(
+    `${getQboApiBaseUrl()}/v3/company/${realmId}/query`,
+    {
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+      },
+      params: {
+        query: `SELECT * FROM Vendor WHERE DisplayName = '${escapeQboQueryValue(vendorName)}'`,
+        minorversion: '75',
+      },
+    }
+  );
+
+  if (searchResponse.data.QueryResponse?.Vendor && searchResponse.data.QueryResponse.Vendor.length > 0) {
+    return searchResponse.data.QueryResponse.Vendor[0].Id;
+  }
+
+  throw new Error(`Vendor '${vendorName}' not found in QuickBooks`);
+}
+
 async function fetchReturnOrderById(client: PoolClient, id: number) {
   const headerRes = await client.query(
     `SELECT ro.*, ph.purchase_number, ph.status AS purchase_status,
@@ -155,6 +211,7 @@ router.get('/', async (req: Request, res: Response) => {
     const result = await pool.query(
       `SELECT ro.return_id, ro.return_number, ro.status, ro.requested_at, ro.returned_at,
               ro.purchase_id, ph.purchase_number, ph.status AS purchase_status,
+              ro.exported_to_qbo, ro.qbo_exported_at, ro.qbo_export_status, ro.qbo_vendor_credit_id,
               COALESCE(vm.vendor_name, 'No Vendor') AS vendor_name,
               COALESCE(SUM(rol.quantity), 0) AS total_quantity
        FROM return_orders ro
@@ -816,6 +873,230 @@ router.put('/:id', async (req: Request, res: Response) => {
     res.status(400).json({ error: message });
   } finally {
     client.release();
+  }
+});
+
+// Export return order to QuickBooks as Vendor Credit
+router.post('/:id/export-to-qbo', adminOnly, async (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) {
+    return res.status(400).json({ error: 'Invalid return order id' });
+  }
+
+  try {
+    const companyId = await resolveTenantCompanyIdFromRequest(req, pool);
+    if (!companyId) {
+      return res.status(400).json({ error: 'Company ID not found' });
+    }
+
+    const returnResult = await pool.query(
+      `SELECT ro.*,
+              ph.purchase_number,
+              ph.vendor_id,
+              ph.purchase_date,
+              vm.vendor_name,
+              vm.email AS vendor_email,
+              vm.telephone_number AS vendor_phone,
+              vm.street_address AS vendor_address,
+              vm.city AS vendor_city,
+              vm.province AS vendor_province,
+              vm.country AS vendor_country,
+              vm.postal_code AS vendor_postal_code
+       FROM return_orders ro
+       JOIN purchasehistory ph ON ph.purchase_id = ro.purchase_id
+       LEFT JOIN vendormaster vm ON vm.vendor_id = ph.vendor_id
+       WHERE ro.return_id = $1`,
+      [id]
+    );
+
+    if (returnResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Return order not found' });
+    }
+
+    const returnOrder = returnResult.rows[0];
+    if (normalizeStatus(returnOrder.status) !== 'Returned') {
+      return res.status(400).json({ error: 'Return order must be marked as Returned to export.' });
+    }
+    if (returnOrder.exported_to_qbo) {
+      return res.status(400).json({ error: 'Return order already exported to QuickBooks.' });
+    }
+
+    const [qboResult, mappingResult] = await Promise.all([
+      pool.query('SELECT * FROM qbo_connection WHERE company_id = $1', [companyId]),
+      pool.query('SELECT * FROM qbo_account_mapping WHERE company_id = $1', [companyId]),
+    ]);
+
+    if (qboResult.rows.length === 0) {
+      return res.status(400).json({ error: 'QuickBooks connection not found. Please connect your QuickBooks account first.' });
+    }
+
+    if (mappingResult.rows.length === 0) {
+      return res.status(400).json({ error: 'QuickBooks account mapping not configured. Please set up account mapping in QBO Settings first.' });
+    }
+
+    let accessContext;
+    try {
+      accessContext = await ensureFreshQboAccess(pool, qboResult.rows[0], companyId);
+    } catch (refreshError) {
+      console.error('Error refreshing QBO token:', refreshError instanceof Error ? refreshError.message : String(refreshError));
+      return res.status(401).json({ error: 'QuickBooks token expired and could not be refreshed. Please reconnect your account.' });
+    }
+
+    const accountMapping = mappingResult.rows[0];
+    if (!accountMapping.qbo_inventory_account_id || !accountMapping.qbo_ap_account_id) {
+      return res.status(400).json({
+        error: 'QuickBooks account mapping incomplete. Please configure Inventory and Accounts Payable accounts in QBO Settings.',
+      });
+    }
+
+    const mappedTaxCodeId = (accountMapping.qbo_purchase_tax_code_id || '').trim();
+    const mappedTaxCode = mappedTaxCodeId
+      ? await fetchQboTaxCodeById(accessContext.accessToken, accessContext.realmId, mappedTaxCodeId)
+      : null;
+    if (mappedTaxCodeId && mappedTaxCode) {
+      const purchaseRates = mappedTaxCode?.PurchaseTaxRateList?.TaxRateDetail || [];
+      if (!Array.isArray(purchaseRates) || purchaseRates.length === 0) {
+        return res.status(400).json({
+          error: 'QBO_PURCHASE_TAX_CODE_INVALID',
+          message: 'Selected QBO purchase tax code has no purchase tax rates. Choose a tax code with GST/HST purchase rates.',
+        });
+      }
+    }
+    const taxableTaxCodeId = mappedTaxCodeId || await resolvePurchaseTaxableQboTaxCodeId(
+      accessContext.accessToken,
+      accessContext.realmId
+    );
+
+    const vendorName = returnOrder.vendor_name || '';
+    if (!vendorName) {
+      return res.status(400).json({ error: 'Vendor not found for this return order.' });
+    }
+
+    const vendorExists = await checkQBOVendorExists(vendorName, accessContext.accessToken, accessContext.realmId);
+    if (!vendorExists) {
+      return res.status(400).json({
+        error: 'VENDOR_NOT_FOUND',
+        message: `Vendor '${vendorName}' does not exist in QuickBooks.`,
+        vendorName,
+        vendorData: {
+          DisplayName: vendorName,
+          CompanyName: vendorName,
+          PrimaryEmailAddr: returnOrder.vendor_email ? { Address: returnOrder.vendor_email } : undefined,
+          PrimaryPhone: returnOrder.vendor_phone ? { FreeFormNumber: returnOrder.vendor_phone } : undefined,
+          BillAddr: {
+            Line1: returnOrder.vendor_address,
+            City: returnOrder.vendor_city,
+            CountrySubDivisionCode: returnOrder.vendor_province,
+            Country: returnOrder.vendor_country,
+            PostalCode: returnOrder.vendor_postal_code,
+          },
+        },
+      });
+    }
+
+    const qboVendorId = await getQBOVendorId(vendorName, accessContext.accessToken, accessContext.realmId);
+
+    const lineItemsResult = await pool.query(
+      `SELECT rol.*, i.part_type
+       FROM return_order_line_items rol
+       LEFT JOIN inventory i
+         ON (i.part_id = rol.part_id OR (rol.part_id IS NULL AND i.part_number = rol.part_number))
+       WHERE rol.return_id = $1`,
+      [id]
+    );
+    const lineItems = lineItemsResult.rows;
+    if (lineItems.length === 0) {
+      return res.status(400).json({ error: 'Return order has no line items to export.' });
+    }
+
+    const stockLineItems = lineItems.filter((item) => item.part_type === 'stock');
+    const supplyLineItems = lineItems.filter((item) => item.part_type === 'supply');
+    const serviceLineItems = lineItems.filter((item) => item.part_type === 'service');
+
+    const qboLines: any[] = [];
+    const pushLine = (item: any, accountId: string) => {
+      const amount = Number(item.unit_cost) * Number(item.quantity);
+      if (!Number.isFinite(amount) || amount <= 0) {
+        return;
+      }
+      const taxCodeRef = taxableTaxCodeId ? { TaxCodeRef: { value: taxableTaxCodeId } } : {};
+      qboLines.push({
+        Amount: amount,
+        DetailType: 'AccountBasedExpenseLineDetail',
+        AccountBasedExpenseLineDetail: {
+          AccountRef: { value: accountId },
+          BillableStatus: 'NotBillable',
+          ...taxCodeRef,
+        },
+      });
+    };
+
+    stockLineItems.forEach((item) => pushLine(item, accountMapping.qbo_inventory_account_id));
+
+    if (accountMapping.qbo_supply_expense_account_id && supplyLineItems.length > 0) {
+      supplyLineItems.forEach((item) => pushLine(item, accountMapping.qbo_supply_expense_account_id));
+    }
+
+    if (accountMapping.qbo_service_expense_account_id && serviceLineItems.length > 0) {
+      serviceLineItems.forEach((item) => pushLine(item, accountMapping.qbo_service_expense_account_id));
+    }
+
+    if (qboLines.length === 0) {
+      return res.status(400).json({ error: 'No eligible line items to export to QuickBooks.' });
+    }
+
+    const exportDate = returnOrder.returned_at
+      ? new Date(returnOrder.returned_at).toISOString().slice(0, 10)
+      : new Date().toISOString().slice(0, 10);
+
+    const vendorCredit = {
+      VendorRef: { value: qboVendorId },
+      Line: qboLines,
+      APAccountRef: { value: accountMapping.qbo_ap_account_id },
+      GlobalTaxCalculation: 'TaxExcluded',
+      DocNumber: returnOrder.return_number || `RET-${returnOrder.return_id}`,
+      TxnDate: exportDate,
+      PrivateNote: `Return Order ${returnOrder.return_number} (PO ${returnOrder.purchase_number})`,
+    };
+
+    const vendorCreditResponse = await qboHttp.post(
+      `${getQboApiBaseUrl()}/v3/company/${accessContext.realmId}/vendorcredit`,
+      vendorCredit,
+      {
+        headers: {
+          'Authorization': `Bearer ${accessContext.accessToken}`,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        params: { minorversion: '75' },
+      }
+    );
+
+    const qboVendorCreditId = vendorCreditResponse.data?.VendorCredit?.Id;
+
+    await pool.query(
+      `UPDATE return_orders
+       SET exported_to_qbo = TRUE,
+           qbo_exported_at = NOW(),
+           qbo_export_status = 'exported',
+           qbo_vendor_credit_id = $1
+       WHERE return_id = $2`,
+      [qboVendorCreditId || null, id]
+    );
+
+    res.json({
+      success: true,
+      message: 'Return order exported to QuickBooks successfully',
+      qboVendorCreditId,
+    });
+  } catch (error: any) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error('Error exporting return order to QuickBooks:', errorMessage);
+    await pool.query(
+      'UPDATE return_orders SET qbo_export_status = $1 WHERE return_id = $2',
+      [errorMessage, id]
+    );
+    res.status(500).json({ error: 'Failed to export return order to QuickBooks', details: errorMessage });
   }
 });
 

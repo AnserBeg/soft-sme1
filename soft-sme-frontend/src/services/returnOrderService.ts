@@ -13,6 +13,10 @@ export interface ReturnOrderSummary {
   purchase_number?: string;
   vendor_name?: string;
   purchase_status?: string;
+  exported_to_qbo?: boolean;
+  qbo_exported_at?: string | null;
+  qbo_export_status?: string | null;
+  qbo_vendor_credit_id?: string | null;
 }
 
 export interface ReturnOrderLineItem {
@@ -161,4 +165,11 @@ export const downloadReturnOrderPdf = async (id: number): Promise<boolean> => {
     console.error('Failed to download return order PDF', error);
     return false;
   }
+};
+
+export const exportReturnOrderToQbo = async (
+  id: number
+): Promise<{ success: boolean; qboVendorCreditId?: string; message?: string }> => {
+  const response = await api.post(`/api/return-orders/${id}/export-to-qbo`);
+  return response.data;
 };

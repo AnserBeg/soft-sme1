@@ -24,6 +24,10 @@ import dayjs from 'dayjs';
 import SaveIcon from '@mui/icons-material/Save';
 import DownloadIcon from '@mui/icons-material/Download';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
+import CloudUploadIcon from '@mui/icons-material/CloudUpload';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import ErrorIcon from '@mui/icons-material/Error';
+import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty';
 import { toast } from 'react-toastify';
 import CircularProgress from '@mui/material/CircularProgress';
 import {
@@ -32,12 +36,14 @@ import {
   ReturnOrderStatus,
   createReturnOrder,
   downloadReturnOrderPdf,
+  exportReturnOrderToQbo,
   fetchReturnOrderDetail,
   fetchReturnableLineItems,
   fetchReturnOrdersForPurchase,
   updateReturnOrder,
 } from '../services/returnOrderService';
 import { getPurchaseOrders, PurchaseOrder } from '../services/purchaseOrderService';
+import { useAuth } from '../contexts/AuthContext';
 
 interface PurchaseOption {
   label: string;
@@ -69,8 +75,10 @@ const ReturnOrderDetailPage: React.FC = () => {
   const navigate = useNavigate();
   const query = useQuery();
   const isCreationMode = !id || id === 'new';
+  const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [exportLoading, setExportLoading] = useState(false);
   const [purchaseOptions, setPurchaseOptions] = useState<PurchaseOption[]>([]);
   const [selectedPurchase, setSelectedPurchase] = useState<PurchaseOption | null>(null);
   const [status, setStatus] = useState<ReturnOrderStatus>('Requested');
@@ -288,6 +296,32 @@ const ReturnOrderDetailPage: React.FC = () => {
     }
   };
 
+  const handleExportToQbo = async () => {
+    if (!existingDetail) return;
+    setExportLoading(true);
+    try {
+      const response = await exportReturnOrderToQbo(existingDetail.return_id);
+      toast.success(response?.message || 'Return order exported to QuickBooks.');
+      setExistingDetail((prev) =>
+        prev
+          ? {
+              ...prev,
+              exported_to_qbo: true,
+              qbo_vendor_credit_id: response?.qboVendorCreditId ?? prev.qbo_vendor_credit_id,
+              qbo_export_status: 'exported',
+              qbo_exported_at: new Date().toISOString(),
+            }
+          : prev
+      );
+    } catch (err: any) {
+      console.error('Failed to export return order to QBO', err);
+      const message = err?.response?.data?.error || err?.response?.data?.message || 'Failed to export to QuickBooks.';
+      toast.error(message);
+    } finally {
+      setExportLoading(false);
+    }
+  };
+
   if (loading) {
     return (
       <Box display="flex" justifyContent="center" alignItems="center" minHeight="60vh">
@@ -314,6 +348,32 @@ const ReturnOrderDetailPage: React.FC = () => {
                   variant="outlined"
                   color="secondary"
                 />
+                {!isCreationMode && existingDetail && (
+                  <Chip
+                    icon={
+                      existingDetail.exported_to_qbo
+                        ? <CheckCircleIcon />
+                        : existingDetail.qbo_export_status
+                          ? <ErrorIcon />
+                          : <HourglassEmptyIcon />
+                    }
+                    label={
+                      existingDetail.exported_to_qbo
+                        ? 'QBO Exported'
+                        : existingDetail.qbo_export_status
+                          ? 'QBO Error'
+                          : 'QBO Not Exported'
+                    }
+                    color={
+                      existingDetail.exported_to_qbo
+                        ? 'success'
+                        : existingDetail.qbo_export_status
+                          ? 'error'
+                          : 'warning'
+                    }
+                    variant="outlined"
+                  />
+                )}
                 {purchaseReturnSummaries[selectedPurchase.purchase_id] && (
                   <Chip
                     label={`Returns - Requested: ${purchaseReturnSummaries[selectedPurchase.purchase_id].requested} • Completed: ${purchaseReturnSummaries[selectedPurchase.purchase_id].returned}`}
@@ -346,6 +406,20 @@ const ReturnOrderDetailPage: React.FC = () => {
                 Download
               </Button>
             )}
+            {!isCreationMode &&
+              existingDetail?.status === 'Returned' &&
+              !existingDetail?.exported_to_qbo &&
+              user?.access_role === 'Admin' && (
+                <Button
+                  variant="contained"
+                  color="success"
+                  startIcon={<CloudUploadIcon />}
+                  onClick={handleExportToQbo}
+                  disabled={exportLoading}
+                >
+                  {exportLoading ? 'Exporting...' : 'Export to QuickBooks'}
+                </Button>
+              )}
             <Button
               variant="contained"
               startIcon={<SaveIcon />}

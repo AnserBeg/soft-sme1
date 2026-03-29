@@ -16,6 +16,9 @@ import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import SearchIcon from '@mui/icons-material/Search';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import ErrorIcon from '@mui/icons-material/Error';
+import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty';
 import dayjs from 'dayjs';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -161,6 +164,24 @@ const ReturnOrdersPage: React.FC = () => {
       minWidth: 110,
       type: 'number',
       valueFormatter: (params) => Number(params.value ?? 0).toFixed(2),
+    },
+    {
+      field: 'qbo_exported',
+      headerName: 'QBO Exported',
+      flex: 0.8,
+      minWidth: 120,
+      renderCell: (params) => {
+        if (params.row.exported_to_qbo) {
+          return <CheckCircleIcon color="success" titleAccess="Exported to QuickBooks" />;
+        }
+        if (params.row.qbo_export_status) {
+          return <ErrorIcon color="error" titleAccess={`QBO Export Error: ${params.row.qbo_export_status}`} />;
+        }
+        if (params.row.status === 'Returned') {
+          return <HourglassEmptyIcon color="warning" titleAccess="Not exported to QuickBooks" />;
+        }
+        return null;
+      },
     },
     {
       field: 'actions',

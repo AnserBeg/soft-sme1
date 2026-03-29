@@ -12,10 +12,20 @@ import {
   Typography,
   Alert,
   Box,
+  Divider,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Chip,
+  LinearProgress,
+  Paper,
 } from '@mui/material';
 import { toast } from 'react-toastify';
 import api from '../api/axios';
-import { getPartVendors, getPartVendorsById, createPartVendor, createPartVendorById, updatePartVendor, updatePartVendorById, deletePartVendor, deletePartVendorById, InventoryVendorLink, getInventoryForPart } from '../services/inventoryService';
+import { getPartVendors, getPartVendorsById, createPartVendor, createPartVendorById, updatePartVendor, updatePartVendorById, deletePartVendor, deletePartVendorById, InventoryVendorLink, getInventoryForPart, getPartHistory, PartHistoryItem } from '../services/inventoryService';
 import CategorySelect from './CategorySelect';
 import { useAuth } from '../contexts/AuthContext';
 // Debounced PN lookup warns about duplicate canonical entries while editing
@@ -76,6 +86,9 @@ const UnifiedPartDialog: React.FC<UnifiedPartDialogProps> = ({
   const partNumberRef = useRef<HTMLInputElement>(null);
   const [existingPartWarning, setExistingPartWarning] = useState<string | null>(null);
   const partLookupTimer = useRef<number | null>(null);
+  const [historyItems, setHistoryItems] = useState<PartHistoryItem[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
   
   
 
@@ -98,6 +111,33 @@ const UnifiedPartDialog: React.FC<UnifiedPartDialogProps> = ({
       setExistingPartWarning(null);
     }
   }, [open, initialPart?.part_id, initialPart?.part_number]);
+
+  const loadHistory = async () => {
+    if (!initialPart?.part_number) {
+      setHistoryItems([]);
+      return;
+    }
+    setHistoryLoading(true);
+    setHistoryError(null);
+    try {
+      const items = await getPartHistory(initialPart.part_number);
+      setHistoryItems(items || []);
+    } catch (error) {
+      console.error('Failed to load part history:', error);
+      setHistoryError('Failed to load history.');
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    if (!initialPart?.part_number) {
+      setHistoryItems([]);
+      return;
+    }
+    loadHistory();
+  }, [open, initialPart?.part_number]);
 
   // Focus part number field when dialog opens
   useEffect(() => {
@@ -377,6 +417,35 @@ const UnifiedPartDialog: React.FC<UnifiedPartDialogProps> = ({
     } catch { toast.error('Failed to delete mapping'); }
   };
 
+  const formatDate = (value?: string) => {
+    if (!value) return '';
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString();
+  };
+
+  const formatCurrency = (value?: number) => {
+    if (value === null || value === undefined || !Number.isFinite(value)) return '';
+    return `$${Number(value).toFixed(2)}`;
+  };
+
+  const renderQuantity = (item: PartHistoryItem) => {
+    if (item.kind === 'EDIT') {
+      if (item.delta === null || item.delta === undefined || !Number.isFinite(item.delta)) return '';
+      const sign = item.delta > 0 ? '+' : '';
+      return `${sign}${item.delta}`;
+    }
+    if (item.quantity === null || item.quantity === undefined || !Number.isFinite(item.quantity)) return '';
+    const signed = item.kind === 'SO' ? -item.quantity : item.quantity;
+    const sign = signed > 0 ? '+' : '';
+    return `${sign}${signed}`;
+  };
+
+  const kindChip = (kind: PartHistoryItem['kind']) => {
+    if (kind === 'PO') return <Chip size="small" color="success" label="PO" />;
+    if (kind === 'SO') return <Chip size="small" color="error" label="SO" />;
+    return <Chip size="small" label="Edit" />;
+  };
+
   return (
     <Dialog open={open} onClose={handleClose} maxWidth="md" fullWidth>
       <DialogTitle>{dialogTitle}</DialogTitle>
@@ -598,6 +667,74 @@ const UnifiedPartDialog: React.FC<UnifiedPartDialogProps> = ({
                   </Grid>
                 )}
               </>
+            )}
+          </Box>
+
+          <Divider />
+
+          <Box>
+            <Stack direction="row" spacing={2} alignItems="center" justifyContent="space-between">
+              <Typography variant="h6">History</Typography>
+              {initialPart?.part_number && (
+                <Button size="small" variant="outlined" onClick={loadHistory} disabled={historyLoading}>
+                  Refresh
+                </Button>
+              )}
+            </Stack>
+
+            {!initialPart?.part_number && (
+              <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                Save the part to view history.
+              </Typography>
+            )}
+
+            {historyLoading && (
+              <LinearProgress sx={{ mt: 1 }} />
+            )}
+
+            {historyError && (
+              <Alert severity="error" sx={{ mt: 1 }}>
+                {historyError}
+              </Alert>
+            )}
+
+            {!historyLoading && initialPart?.part_number && historyItems.length === 0 && !historyError && (
+              <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                No history found.
+              </Typography>
+            )}
+
+            {historyItems.length > 0 && (
+              <TableContainer component={Paper} variant="outlined" sx={{ mt: 1, maxHeight: 320 }}>
+                <Table size="small" stickyHeader>
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>Date</TableCell>
+                      <TableCell>Type</TableCell>
+                      <TableCell>Order #</TableCell>
+                      <TableCell>Status</TableCell>
+                      <TableCell align="right">Qty</TableCell>
+                      <TableCell align="right">Unit Price</TableCell>
+                      <TableCell align="right">Line Total</TableCell>
+                      <TableCell>Details</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {historyItems.map((item) => (
+                      <TableRow key={item.id} hover>
+                        <TableCell>{formatDate(item.orderDate)}</TableCell>
+                        <TableCell>{kindChip(item.kind)}</TableCell>
+                        <TableCell>{item.orderNumber || (item.salesOrderId ? `SO ${item.salesOrderId}` : '')}</TableCell>
+                        <TableCell>{item.status || ''}</TableCell>
+                        <TableCell align="right">{renderQuantity(item)}</TableCell>
+                        <TableCell align="right">{formatCurrency(item.unitPrice)}</TableCell>
+                        <TableCell align="right">{formatCurrency(item.lineTotal)}</TableCell>
+                        <TableCell>{item.kind === 'EDIT' ? (item.reason || '') : (item.partDescription || '')}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
             )}
           </Box>
         </Stack>

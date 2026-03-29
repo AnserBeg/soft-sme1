@@ -103,3 +103,26 @@ export const recordVendorUsage = async (partNumber: string, vendorId: number, ve
   });
   return res.data;
 };
+
+export type PartHistoryItem = {
+  id: string;
+  kind: 'PO' | 'SO' | 'EDIT';
+  orderId?: number;
+  orderNumber?: string;
+  orderDate?: string;
+  status?: string;
+  quantity?: number;
+  unitPrice?: number;
+  lineTotal?: number;
+  partNumber?: string;
+  partDescription?: string;
+  reason?: string;
+  delta?: number;
+  newOnHand?: number;
+  salesOrderId?: number;
+};
+
+export const getPartHistory = async (partNumber: string): Promise<PartHistoryItem[]> => {
+  const res = await api.get(`/api/inventory/${encodeURIComponent(partNumber)}/history`);
+  return res.data?.history || [];
+};
