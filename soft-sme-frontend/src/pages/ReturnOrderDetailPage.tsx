@@ -23,7 +23,6 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import dayjs from 'dayjs';
 import SaveIcon from '@mui/icons-material/Save';
 import DownloadIcon from '@mui/icons-material/Download';
-import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ErrorIcon from '@mui/icons-material/Error';
@@ -342,12 +341,6 @@ const ReturnOrderDetailPage: React.FC = () => {
             </Typography>
             {selectedPurchase && (
               <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
-                <Chip label={`Purchase: ${selectedPurchase.purchase_number}`} color="primary" variant="outlined" />
-                <Chip
-                  label={`Vendor: ${selectedPurchase.vendor_name ?? 'No Vendor'}`}
-                  variant="outlined"
-                  color="secondary"
-                />
                 {!isCreationMode && existingDetail && (
                   <Chip
                     icon={
@@ -385,13 +378,6 @@ const ReturnOrderDetailPage: React.FC = () => {
             )}
           </Box>
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
-            <Button
-              variant="outlined"
-              startIcon={<ArrowBackIcon />}
-              onClick={() => navigate('/return-orders')}
-            >
-              Back to List
-            </Button>
             {!isCreationMode && id && (
               <Button
                 variant="outlined"
